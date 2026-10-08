@@ -45,17 +45,22 @@
 > - 보조 표현 동반: `GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION`(와이어), `MANIFOLD_SURFACE_SHAPE_REPRESENTATION`(서피스), `CONSTRUCTIVE_GEOMETRY_REPRESENTATION`(보조 지오메트리)
 > - **S1 확인 항목:** 메인 셰이프(`SHAPE_REPRESENTATION` #36)는 AXIS2_PLACEMENT뿐인 사실상 빈 표현이고, 솔리드 30개는 `SHAPE_REPRESENTATION_RELATIONSHIP`으로 연결된 `ADVANCED_BREP_SHAPE_REPRESENTATION`(#25)에 있음 → V1에서 OCCT가 관계 표현까지 전개해 로드하는지 확인 필수
 
-### 1.3 외부 기술 검증 (공식 자료 확인)
+### 1.3 외부 기술 검증 (공식 자료 확인 + 실측)
 
 | 항목 | 검증 결과 |
 |---|---|
-| C++/CLI + .NET 8 (R1) | MS 공식 문서에서 `<CLRSupport>NetCore</CLRSupport>` + `<TargetFramework>net8.0</TargetFramework>` 정식 지원 확인. 제약: **DLL만 빌드 가능**(WPF 앱이 exe이므로 문제 없음), vcxproj 비-SDK 형식, .NET 7+는 기본 AssemblyLoadContext 로드(이중 로드 문제 없음) → **실컴파일 검증만 남음** |
-| OCCT 릴리스 | 최신 8.0.1(2026-07-30, C++17 기준·빌드시스템 대개편·API 대규모 변경) / 7.9.3(7.9 계열 최종) → **7.9.3 고정 권장** (샘플·문서 호환성) |
-| OCCT 바이너리 | prebuilt vc14-64 + 3rdparty(zip) 제공. vc14 = VS2015 ABI로 v143과 호환 → 소스 빌드 전 prebuilt 우선 |
+| C++/CLI + .NET 8 (R1) | MS 공식 문서에서 `<CLRSupport>NetCore</CLRSupport>` + `<TargetFramework>net8.0</TargetFramework>` 정식 지원 확인. 제약: **DLL만 빌드 가능**(WPF 앱이 exe이므로 문제 없음), Windows 전용, vcxproj 비-SDK 형식, `-clr:netcore`만 지원, .NET 7+는 기본 AssemblyLoadContext 로드(이중 로드 문제 없음) → **실컴파일·로드 검증 완료** |
+| OCCT 릴리스 | 최신 8.0.1(2026-07-30, C++17/ABI 기준은 8.0.0에서 확립 — 7.9.0 대비 500+ 변경) / 7.9.3(2025-12-06, 7.9 계열 최종 — 7.9.4 없음) → **7.9.3 고정 권장** (샘플·문서 호환성) |
+| OCCT 바이너리 | prebuilt vc14-64 + 3rdparty(zip) 제공. vc14 = VS2015 ABI로 v143과 호환 → **TKernel 링크·실행 실측 통과** |
+
+> **1.3 검증 실행 결과 (2026-10-08, GitHub Releases API·MS Learn·로컬 스모크):**
+> - C++/CLI net8.0: MSVC v143(14.44)으로 `/clr:netcore` DLL 빌드 성공 → C# net8 콘솔에서 로드·호출 성공(`clr-net8-load-ok`). **앱 프로젝트에 `<UseIJWHost>true</UseIJWHost>` 필수** — 미설정 시 `ijwhost.dll`이 출력에 복사되지 않아 `FileNotFoundException`("지정된 모듈을 찾을 수 없음") 발생, 설정 시 자동 복사 확인.
+> - OCCT prebuilt: v143 툴셋으로 `TKernel.lib` 링크 + 실행 성공(`occt-link-ok 7.9.3`) → E3 실측 해소 방향.
+> - 참고: vswhere/설치 상태에는 별도 "C++/CLI 지원" 구성 요소가 표시되지 않으나 빌드 성공(17.14 기본 포함으로 판단).
 
 ### 1.4 사전 판정
 
-7개 핵심 체인 모두 표준 기술 조합으로 **구현 가능성 높음**. 유일한 진입 장벽은 C++ 도구체인 미설치(반나절 작업)이며, 나머지 위험은 S1 스파이크에서 조기 판정한다.
+7개 핵심 체인 모두 표준 기술 조합으로 **구현 가능성 높음**. S0(도구체인·OCCT 배치)와 1.3 실측(C++/CLI 빌드·로드, prebuilt 링크)으로 초기 진입 장벽은 해소 — 남은 판정 대상은 S1 통합 스파이크(관계 표현 로드, HwndHost 뷰어, HLR)뿐이다.
 
 ---
 
@@ -137,7 +142,7 @@ HeatingMold.Mvp.sln
 3. 평면 면 UV 경계 폴리곤이 기하학적 예상과 일치 (치수 대조)
 4. `SampleUvTo3D` 반환점이 실제 면 위에 위치 (편차 확인)
 5. 단순 형상으로 `HlrProject` 스모크 — 윤곽선 분리 확인
-6. C++/CLI net8.0 DLL이 WPF 앱에서 로드·호출 (R1 판정)
+6. C++/CLI net8.0 DLL이 WPF 앱에서 로드·호출 (R1 판정) — 앱 csproj에 `<UseIJWHost>true</UseIJWHost>` 필요(1.3 확인)
 
 **NO-GO 시 대비**
 
@@ -187,8 +192,8 @@ V1~V7 각각 GO/NO-GO + 근거, 로드·HLR 소요시간, 곡면 관찰 결과, 
 | # | 위험 | 완화 |
 |---|---|---|
 | E1 | C++ 워크로드 설치 실패(권한/디스크) | 사전 관리자 승인 확보. 실패 시 MVP 자체 불가 → 조기 보고 |
-| E2 | `/clr:netcore` + net8.0 실컴파일 문제 | 공식 문서상 지원 확인됨. 실패 시 net6.0 하향 또는 C ABI 전환(1~2일) |
-| E3 | prebuilt OCCT(vc14)와 v143 링크 호환 | MSVC ABI는 VS2015 이후 호환. 문제 시 소스 빌드 |
+| E2 | `/clr:netcore` + net8.0 실컴파일 문제 | **1.3에서 실컴파일·로드 성공**(`UseIJWHost` 필요 확인). 잔여는 WPF 앱 호출(S1 V6)만 |
+| E3 | prebuilt OCCT(vc14)와 v143 링크 호환 | **1.3에서 TKernel 링크·실행 실측 통과.** 잔여는 뷰어 모듈 링크(S1) — 문제 시 소스 빌드 |
 | E4 | Mold.stp에 솔리드 B-rep 없음(와이어프레임만) | **1.2 계량 분석으로 사전 해소: 솔리드 30개 확인** — S1 V1은 관계 표현 전개·로드만 검증 |
 | E5 | 자유곡면 pcurve 품질(UV 경계 추출) | MVP는 평면 면 주경로. 곡면은 관찰만. Seam(주기면) 처리는 본 개발 항목으로 기록 |
 | E6 | HLR 성능 (수백 면) | S1 스모크에서 시간 측정. 느리면 HLR 대상 축소(발열선+윤곽만) |
