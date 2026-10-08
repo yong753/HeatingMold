@@ -28,6 +28,12 @@
 | OCCT 소스/바이너리 | 전 디스크 미발견 | 다운로드 필요 |
 | 작업공간 | 문서 1건 + `resource\Mold.stp`만 존재, Git 아님 | MVP 시작 시 저장소 초기화 권장 |
 
+> **S0 실행 결과 (2026-10-08 재점검):** C++ 워크로드 설치 완료 — MSVC 14.44.35207 · VS 번들 CMake 3.31.6 · Windows SDK 10.0.26100.0, `cl.exe` 컴파일·링크·실행 스모크 통과. OCCT 7.9.3 prebuilt(vc14-64)+3rdparty를 `third_party/`에 배치(저장소 제외, `env.bat vc143 64` 경로 검증 완료). 저장소 초기 커밋 `60dca06`.
+> - 정정 1: Windows SDK는 "폴더 존재 ✅"가 아니라 Include/Lib 부재 상태였음 → 워크로드 설치로 해결.
+> - 정정 2: STEP 모듈명은 7.9부터 `TKDESTEP`(구 TKSTEP 아님) — S1 브리지 링크 시 주의.
+> - OCCT 경로: inc `third_party/opencascade-7.9.3-vc14-64/inc` · lib `…/win64/vc14/lib` · bin `…/win64/vc14/bin` · 3rdparty `third_party/3rdparty-vc14-64`.
+> - 위 표는 최초 점검 기록으로 유지.
+
 ### 1.2 Mold.stp 실물 확인
 
 - NX 12.0에서 ST-Developer v16.7로 내보낸 파일
