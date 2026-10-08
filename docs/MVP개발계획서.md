@@ -36,9 +36,14 @@
 
 ### 1.2 Mold.stp 실물 확인
 
-- NX 12.0에서 ST-Developer v16.7로 내보낸 파일
-- 스키마: `AUTOMOTIVE_DESIGN`(AP214 계열) — **모문서의 "AP242" 기재와 불일치** (기능 영향은 낮으나 문서 정정 필요)
-- `CONSTRUCTIVE_GEOMETRY_REPRESENTATION`, `GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION` 엔티티 포함 → **솔리드 B-rep 포함 여부는 로드 시 확인 필요** (S1에서 조기 판별)
+- NX 12.0에서 ST-Developer v16.7로 내보낸 파일 — 헤더 검증 완료(`SIEMENS PLM Software NX 12.0` · `ST-DEVELOPER v16.7`, 2024-03-14 생성, 원본명 `DT24-020 FRONT INTERIOR PANEL_LSE24_240202.stp`)
+- 스키마: `AUTOMOTIVE_DESIGN { 1 0 10303 214 3 1 1 1 }`(AP214 계열) — **모문서의 "AP242" 기재와 불일치** (기능 영향은 낮으나 문서 정정 필요)
+- 단위 mm(`SI_UNIT(.MILLI.,.METRE.)`) · 단일 PRODUCT, 어셈블리 구조 없음(관계 엔티티 0건)
+
+> **실물 계량 분석 (2026-10-08, 37,472 엔티티):** E4(솔리드 부재) 위험은 파일 수준에서 해소 — `MANIFOLD_SOLID_BREP` 30개(CLOSED_SHELL 30개, 574면) 존재.
+> - 전체 `ADVANCED_FACE` 664개 = 솔리드 574 + 보조 서피스(OPEN_SHELL 2개) 90. 면 타입: **평면 317** · 원통 208 · 원뿔 54 · B스플라인 59 · 원환 8 · 구 7 · 압출 11 → MVP 주경로(평면)에 충분
+> - 보조 표현 동반: `GEOMETRICALLY_BOUNDED_WIREFRAME_SHAPE_REPRESENTATION`(와이어), `MANIFOLD_SURFACE_SHAPE_REPRESENTATION`(서피스), `CONSTRUCTIVE_GEOMETRY_REPRESENTATION`(보조 지오메트리)
+> - **S1 확인 항목:** 메인 셰이프(`SHAPE_REPRESENTATION` #36)는 AXIS2_PLACEMENT뿐인 사실상 빈 표현이고, 솔리드 30개는 `SHAPE_REPRESENTATION_RELATIONSHIP`으로 연결된 `ADVANCED_BREP_SHAPE_REPRESENTATION`(#25)에 있음 → V1에서 OCCT가 관계 표현까지 전개해 로드하는지 확인 필수
 
 ### 1.3 외부 기술 검증 (공식 자료 확인)
 
@@ -184,7 +189,7 @@ V1~V7 각각 GO/NO-GO + 근거, 로드·HLR 소요시간, 곡면 관찰 결과, 
 | E1 | C++ 워크로드 설치 실패(권한/디스크) | 사전 관리자 승인 확보. 실패 시 MVP 자체 불가 → 조기 보고 |
 | E2 | `/clr:netcore` + net8.0 실컴파일 문제 | 공식 문서상 지원 확인됨. 실패 시 net6.0 하향 또는 C ABI 전환(1~2일) |
 | E3 | prebuilt OCCT(vc14)와 v143 링크 호환 | MSVC ABI는 VS2015 이후 호환. 문제 시 소스 빌드 |
-| E4 | Mold.stp에 솔리드 B-rep 없음(와이어프레임만) | `GetShapeInfo`로 S1 초기에 판별 — 조기 확인 필수 |
+| E4 | Mold.stp에 솔리드 B-rep 없음(와이어프레임만) | **1.2 계량 분석으로 사전 해소: 솔리드 30개 확인** — S1 V1은 관계 표현 전개·로드만 검증 |
 | E5 | 자유곡면 pcurve 품질(UV 경계 추출) | MVP는 평면 면 주경로. 곡면은 관찰만. Seam(주기면) 처리는 본 개발 항목으로 기록 |
 | E6 | HLR 성능 (수백 면) | S1 스모크에서 시간 측정. 느리면 HLR 대상 축소(발열선+윤곽만) |
 | E7 | VS Community 상용 라이선스 | 상용 배포 시 사용 조건(5명 미만·비엔터프라이즈) 충족 여부 확인 — 위반 시 Professional 구매. **개발 시작 전 확인 권장** |
