@@ -1,0 +1,23 @@
+# Visual Studio / MSBuild
+.vs/
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.user
+*.suo
+*.ncb
+*.sdf
+
+# NuGet
+*.nupkg
+packages/
+
+# Third-party binaries (OCCT prebuilt, 3rdparty) — 저장소에 포함하지 않음
+third_party/
+
+# 기타
+Thumbs.db
+Desktop.ini
