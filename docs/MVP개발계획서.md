@@ -147,6 +147,9 @@ HeatingMold.Mvp.sln
 5. 단순 형상으로 `HlrProject` 스모크 — 윤곽선 분리 확인
 6. C++/CLI net8.0 DLL이 WPF 앱에서 로드·호출 (R1 판정) — 앱 csproj에 `<UseIJWHost>true</UseIJWHost>` 필요(1.3 확인)
 
+> **S1 진행 기록 (2026-10-08):** OccBridge C++/CLI(/clr:netcore net8.0) 생성 — `HeatingMold.Mvp.sln` + `src/OccBridge`. 최소 API 구현: `LoadStep`·`GetShapeInfo`·`GetFaceUvBoundary`·`SampleUvTo3D`(+`GetFaceType` 보조). C# 스모크(브리지 경유) 결과: **솔리드 30 · 셸 32 · 면 664 · 평면 317**(2.1 사전 스모크와 일치) · 첫 평면 UV 경계 26점 `(-3,0)×(-20,20)` · `SampleUvTo3D` 평면 이탈 편차 0 → **검증 항목 2·3·4 통과(브리지 경로)**. 잔여: WPF 뷰어(항목 1·6)·HLR(항목 5).
+> - 빌드 교훈: ① OCCT 타입을 ref 클래스 메서드에서 직접 사용하면 C2711(C3821/C3645 연쇄) → OCCT 호출을 native 헬퍼(`#pragma managed(off)`)로 격리, managed 메서드는 마샬링만. ② 헤더 전역 `using namespace System;`은 Windows SDK COM(`IServiceProvider`)과 충돌(C3699). ③ C++/CLI 배열은 `System::array<T>`가 아니라 키워드 `array<T>^`.
+
 **NO-GO 시 대비**
 
 | 상황 | 대응 |
