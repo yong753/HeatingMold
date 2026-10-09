@@ -18,5 +18,7 @@
       <HintPath>$(MSBuildThisFileDirectory)..\..\x64\Release\OccBridge.dll</HintPath>
       <Private>true</Private>
     </Reference>
+    <ProjectReference Include="..\HeatingMold.Core\HeatingMold.Core.csproj" />
+    <ProjectReference Include="..\HeatingMold.Export\HeatingMold.Export.csproj" />
   </ItemGroup>
 </Project>

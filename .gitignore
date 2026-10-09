@@ -18,6 +18,9 @@ packages/
 # Third-party binaries (OCCT prebuilt, 3rdparty) — 저장소에 포함하지 않음
 third_party/
 
+# 산출물 (DXF 등)
+output/
+
 # 기타
 Thumbs.db
 Desktop.ini

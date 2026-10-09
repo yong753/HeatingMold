@@ -46,6 +46,17 @@ public static class RegionOps
         return FromPaths(result);
     }
 
+    /// <summary>열린 폴리라인을 width 두께의 리본(닫힌 외곽선)으로 변환 (S3 — 선폭).</summary>
+    public static List<List<Vec2>> StrokePath(IReadOnlyList<Vec2> path, double width)
+    {
+        if (path.Count < 2 || width <= 0) return new List<List<Vec2>>();
+        var p = new PathD(path.Count);
+        foreach (Vec2 v in path) p.Add(new PointD(v.X, v.Y));
+        PathsD result = Clipper.InflatePaths(
+            new PathsD { p }, width / 2.0, JoinType.Round, EndType.Butt);
+        return FromPaths(result);
+    }
+
     private static IReadOnlyList<Vec2> EnsureOrientation(IReadOnlyList<Vec2> ring, bool ccw)
     {
         bool isCcw = SignedArea(ring) > 0;

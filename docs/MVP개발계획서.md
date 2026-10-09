@@ -192,6 +192,10 @@ HeatingMold.Mvp.sln
 - 곡면 면 1개 시도 → UV 왜곡 **관찰 기록** (개선은 본 개발)
 - **GO**: 평면 면에서 전 체인 성공 + 산출 DXF를 AutoCAD에서 열어 레이어·치수·윤곽 검수 통과
 
+> **S3 진행 기록 (2026-10-09):** 전 체인 성공 — 앱에서 최대 평면 **#626(500×981mm)** → 경계 추출 → 마진·홀 차집합 → 사행(**48레인·30,421.5mm·84ms**) → 리본 스트로크 → `BuildWire3D` 오버레이(적색)·정면 뷰 표시. DXF `output/heat_pattern_face626.dxf` 생성 — **netDxf 재로드 검증 통과**(MOLD_OUTLINE/HEAT_WIRE/DIMENSION 3레이어 + 치수 2개). AutoCAD 검수는 사용자 확인 대기.
+> - 곡면 관찰: 원통면 #4 — **u=0.058rad(각도)·v=127.7mm, 단위 불일치로 UV 사행 불가**(NO SEGMENTS). 평면 #626 UV↔3D 길이 비율 1.0000(등방) → UV 패턴 성립. 곡면 스케일 보정은 본 개발 이관(E5).
+> - 구현 노트: 브리지 +`BuildWire3D`/`ClearOverlay`/`SetViewDirection`/`GetFaceNormal`; Core +`RegionOps.StrokePath`(open-path offset, EndType.Butt); `HeatingMold.Export` 신설 — netDxf **2023.11.10**(2.4.1 미배포, 3.x API `Polyline2D`); 면 콤보 = UV 크기순 정렬(큰 면 우선).
+
 ### S4 — 판정 문서화 (0.5일)
 
 V1~V7 각각 GO/NO-GO + 근거, 로드·HLR 소요시간, 곡면 관찰 결과, 잔여 위험 목록을 정리 → **본 개발(M0~M5) 착수 여부 결정 자료**로 제출.
@@ -206,7 +210,7 @@ V1~V7 각각 GO/NO-GO + 근거, 로드·HLR 소요시간, 곡면 관찰 결과, 
 | E2 | `/clr:netcore` + net8.0 실컴파일 문제 | **해소** — 1.3 실컴파일·로드 + **S1 WPF 앱 경유 로드·렌더·호출 확인**(`UseIJWHost` 필요) |
 | E3 | prebuilt OCCT(vc14)와 v143 링크 호환 | **해소** — 1.3 TKernel + **S1 뷰어(TKV3d·TKOpenGl·TKService)·HLR(TKHLR) 링크·렌더 실측 통과** |
 | E4 | Mold.stp에 솔리드 B-rep 없음(와이어프레임만) | **1.2 계량(솔리드 30개) + 2.1 사전 스모크(관계 표현 전개·30솔리드 로드 실측)로 해소** — S1 V1은 C++/CLI 브리지 경유 로드만 확인 |
-| E5 | 자유곡면 pcurve 품질(UV 경계 추출) | MVP는 평면 면 주경로. 곡면은 관찰만. Seam(주기면) 처리는 본 개발 항목으로 기록 |
+| E5 | 자유곡면 pcurve 품질(UV 경계 추출) | MVP는 평면 면 주경로. 곡면은 관찰만. **S3 관찰 완료: 원통면 u=각도(rad)·v=mm — UV 스케일 보정 없이는 패턴 불가 확인.** Seam(주기면) 처리는 본 개발 항목으로 기록 |
 | E6 | HLR 성능 (수백 면) | **S1 실측: 면 664(솔리드 30) 전체 1.9~2.1초 — 양호.** 필요 시 HLR 대상 축소(발열선+윤곽만) |
 | E7 | VS Community 상용 라이선스 | 상용 배포 시 사용 조건(5명 미만·비엔터프라이즈) 충족 여부 확인 — 위반 시 Professional 구매. **개발 시작 전 확인 권장** |
 

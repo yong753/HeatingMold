@@ -28,6 +28,8 @@
 #include <BRep_Tool.hxx>
 #include <BRepTools.hxx>
 #include <BRepTools_WireExplorer.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <Geom2dAdaptor_Curve.hxx>
 #include <Geom2d_Curve.hxx>
@@ -81,6 +83,7 @@ namespace
     Handle(V3d_View) g_view;
     Handle(WNT_Window) g_window;
     Handle(AIS_Shape) g_aisShape;
+    Handle(AIS_Shape) g_overlay;   // S3 사행 오버레이 (별도 색상)
 
     void RebuildFaceCache()
     {
@@ -356,6 +359,79 @@ namespace
         out[3] = cam->Scale();
     }
 
+    // ================= 오버레이 natives (S3) =================
+
+    bool BuildWire3DNative(int faceIndex, const std::vector<double>& uv, bool closed)
+    {
+        if (faceIndex < 0 || faceIndex >= (int)g_faces.size()) return false;
+        if (uv.size() < 4) return false;
+
+        BRepAdaptor_Surface surf(g_faces[faceIndex]);
+        BRepBuilderAPI_MakePolygon poly;
+        for (size_t i = 0; i + 1 < uv.size(); i += 2)
+            poly.Add(surf.Value(uv[i], uv[i + 1]));
+        if (!poly.IsDone()) return false;
+        if (closed) poly.Close();
+        if (!poly.IsDone()) return false;
+
+        TopoDS_Shape displayShape = poly.Wire();
+        if (closed)
+        {
+            // 평면이면 리본 면으로 채움 (곡면은 와이어 유지)
+            BRepBuilderAPI_MakeFace mkFace(poly.Wire());
+            if (mkFace.IsDone()) displayShape = mkFace.Face();
+        }
+
+        if (g_ctx.IsNull()) return true;   // 헤드리스(테스트) — 기하 생성만
+        if (!g_overlay.IsNull())
+        {
+            g_ctx->Remove(g_overlay, Standard_False);
+            g_overlay.Nullify();
+        }
+        g_overlay = new AIS_Shape(displayShape);
+        g_ctx->SetColor(g_overlay, Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB), Standard_False);
+        g_ctx->Display(g_overlay, Standard_False);
+        if (!g_view.IsNull()) g_view->Redraw();
+        return true;
+    }
+
+    void ClearOverlayNative()
+    {
+        if (!g_ctx.IsNull() && !g_overlay.IsNull())
+        {
+            g_ctx->Remove(g_overlay, Standard_False);
+            g_overlay.Nullify();
+        }
+        if (!g_view.IsNull()) g_view->Redraw();
+    }
+
+    void SetViewDirectionNative(double x, double y, double z)
+    {
+        if (g_view.IsNull()) return;
+        const double len = std::sqrt(x * x + y * y + z * z);
+        if (len < 1e-12) return;
+        g_view->SetProj(x / len, y / len, z / len);
+        g_view->FitAll(0.01, Standard_False);
+        g_view->Redraw();
+    }
+
+    bool FaceNormalNative(int faceIndex, double* out)
+    {
+        if (faceIndex < 0 || faceIndex >= (int)g_faces.size()) return false;
+        BRepAdaptor_Surface surf(g_faces[faceIndex]);
+        const Standard_Real u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
+        const Standard_Real v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+        gp_Pnt p;
+        gp_Vec d1u, d1v;
+        surf.D1(0.5 * (u0 + u1), 0.5 * (v0 + v1), p, d1u, d1v);
+        gp_Vec n = d1u.Crossed(d1v);
+        if (n.SquareMagnitude() < 1e-18) return false;
+        n.Normalize();
+        if (g_faces[faceIndex].Orientation() == TopAbs_REVERSED) n.Reverse();
+        out[0] = n.X(); out[1] = n.Y(); out[2] = n.Z();
+        return true;
+    }
+
     // ================= HLR natives (S1 항목 5) =================
 
     struct HlrCounts { int vis; int hid; double ms; };
@@ -394,6 +470,7 @@ namespace HeatingMold { namespace OccBridge {
 bool Bridge::LoadStep(String^ path)
 {
     ClearDisplayedShape();
+    ClearOverlayNative();
     g_shape.Nullify();
     g_faces.clear();
     if (String::IsNullOrWhiteSpace(path)) return false;
@@ -498,6 +575,35 @@ array<double>^ Bridge::GetViewState()
     GetViewStateNative(s);
     array<double>^ r = gcnew array<double>(4);
     for (int i = 0; i < 4; ++i) r[i] = s[i];
+    return r;
+}
+
+// ================= 오버레이 managed (S3) =================
+
+bool Bridge::BuildWire3D(int faceIndex, array<double>^ uvFlat, bool closed)
+{
+    if (uvFlat == nullptr) return false;
+    std::vector<double> uv(uvFlat->Length);
+    for (int i = 0; i < uvFlat->Length; ++i) uv[i] = uvFlat[i];
+    return BuildWire3DNative(faceIndex, uv, closed);
+}
+
+void Bridge::ClearOverlay()
+{
+    ClearOverlayNative();
+}
+
+void Bridge::SetViewDirection(double dx, double dy, double dz)
+{
+    SetViewDirectionNative(dx, dy, dz);
+}
+
+array<double>^ Bridge::GetFaceNormal(int faceIndex)
+{
+    double n[3];
+    if (!FaceNormalNative(faceIndex, n)) return nullptr;
+    array<double>^ r = gcnew array<double>(3);
+    r[0] = n[0]; r[1] = n[1]; r[2] = n[2];
     return r;
 }
 

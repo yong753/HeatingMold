@@ -83,6 +83,19 @@ public:
     /// <summary>뷰 상태 [dirX, dirY, dirZ, cameraScale] — 자동 검증·로깅용</summary>
     static array<double>^ GetViewState();
 
+    // ---- 오버레이 (S3 통합 데모) ----
+    /// <summary>UV 폴리라인을 면 위 3D 와이어(닫힘이면 리본 면)로 오버레이 표시</summary>
+    static bool BuildWire3D(int faceIndex, array<double>^ uvFlat, bool closed);
+
+    /// <summary>오버레이 제거 + Redraw</summary>
+    static void ClearOverlay();
+
+    /// <summary>지정 방향에서 바라보는 시점으로 설정 + FitAll (S3 평면 뷰)</summary>
+    static void SetViewDirection(double dx, double dy, double dz);
+
+    /// <summary>면 중앙 UV의 단위 법선 [nx,ny,nz] (S3 정면 뷰)</summary>
+    static array<double>^ GetFaceNormal(int faceIndex);
+
     // ---- HLR (S1 항목 5, S3 측면 뷰에서 본격 사용) ----
     /// <summary>현재 셰이프를 축측(1,1,1) 방향으로 HLR 투영 — 가시/은선 엣지 수 + 소요 ms</summary>
     static HlrResult^ HlrProject();
