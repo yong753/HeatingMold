@@ -176,6 +176,9 @@ HeatingMold.Mvp.sln
 
 **GO**: 전체 테스트 통과. OCCT와 무관하므로 실패 위험 낮음 — 일정 버퍼로 활용.
 
+> **S2 진행 기록 (2026-10-09):** `src/HeatingMold.Core`(net8.0, Clipper2 2.0.0) 구현 — `Geometry/Vec2.cs`·`RegionOps.cs`(마진·홀 차집합)·`Serpentine.cs`(스캔라인 레인 분절 + U턴 호 연결 + 장축 자동), `Model/PatternParams`·`FacePlacement`, `IUvMapper`. 테스트 `tests/HeatingMold.Core.Tests`(xUnit): **T1~T5 전부 통과 (5/5, 268ms)** — T1 레인 5·길이 90·간격 10 / T2 홀 분절(6세그먼트) / T3 홀수 레인 방향 교대·단일 연속 / T4 장축 자동(0°/90°)·회전 불변 / T5 총 길이 = 레인합 + U턴(4×π×5) ±2%. 빌드: dotnet SDK 9.0.315(net8.0 타깃).
+> - 구현 노트: 마진 = Clipper2 Miter 오프셋(외곽 −margin, 홀 +margin), 레인 분절 = even-odd 스캔라인(반개구간 규칙), U턴 = 반원 12분할 근사, 홀 분절 구간 사이는 직선 연결(2.2 제외 항목 '홀 자동회피'에 따름).
+
 ### S3 — 통합 데모 (1.5일)
 
 ```
