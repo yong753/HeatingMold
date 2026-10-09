@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <!-- C++/CLI net8.0 mixed-mode DLL 로드 필수 (1.3 실측) — ijwhost.dll 자동 복사 -->
+    <UseIJWHost>true</UseIJWHost>
+    <AssemblyName>HeatingMold.App</AssemblyName>
+    <RootNamespace>HeatingMold.App</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- OccBridge는 솔루션 빌드 순서(ProjectDependencies)로 먼저 빌드됨 -->
+    <Reference Include="OccBridge">
+      <HintPath>$(MSBuildThisFileDirectory)..\..\x64\Release\OccBridge.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

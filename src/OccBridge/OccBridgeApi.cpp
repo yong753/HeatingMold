@@ -4,6 +4,15 @@
 //       ref class 메서드는 marshaling만 담당 (C2711/C3821 회피).
 #include "OccBridgeApi.h"
 
+// Windows SDK (WNT_Window 경유) — using namespace System 보다 먼저 포함 (C3699 회피)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
 #include <msclr/marshal_cppstd.h>
 
 #include <STEPControl_Reader.hxx>
@@ -26,8 +35,32 @@
 #include <GeomAbs_SurfaceType.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Pnt2d.hxx>
+#include <gp_Ax2.hxx>
+#include <gp_Dir.hxx>
 
+// 뷰어 (S1 항목 1·6) — WNT_Window/Aspect_DisplayConnection=TKService, OpenGl_GraphicDriver=TKOpenGl, V3d_*/AIS_*=TKV3d
+#include <Aspect_DisplayConnection.hxx>
+#include <OpenGl_GraphicDriver.hxx>
+#include <V3d_Viewer.hxx>
+#include <V3d_View.hxx>
+#include <AIS_InteractiveContext.hxx>
+#include <AIS_Shape.hxx>
+#include <WNT_Window.hxx>
+#include <Quantity_Color.hxx>
+#include <Graphic3d_Camera.hxx>
+#include <OpenGl_Context.hxx>
+#include <Message.hxx>
+#include <Message_PrinterOStream.hxx>
+
+// HLR (S1 항목 5) — TKHLR
+#include <HLRBRep_Algo.hxx>
+#include <HLRBRep_HLRToShape.hxx>
+#include <HLRAlgo_Projector.hxx>
+
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -40,12 +73,30 @@ namespace
     TopoDS_Shape g_shape;
     std::vector<TopoDS_Face> g_faces;
 
+    // ---- AIS 뷰어 상태 (S1 항목 1·6) — 프로세스 전역, UI 스레드 전용 ----
+    Handle(Aspect_DisplayConnection) g_disp;
+    Handle(OpenGl_GraphicDriver) g_driver;
+    Handle(V3d_Viewer) g_viewer;
+    Handle(AIS_InteractiveContext) g_ctx;
+    Handle(V3d_View) g_view;
+    Handle(WNT_Window) g_window;
+    Handle(AIS_Shape) g_aisShape;
+
     void RebuildFaceCache()
     {
         g_faces.clear();
         if (g_shape.IsNull()) return;
         for (TopExp_Explorer ex(g_shape, TopAbs_FACE); ex.More(); ex.Next())
             g_faces.push_back(TopoDS::Face(ex.Current()));
+    }
+
+    void ClearDisplayedShape()
+    {
+        if (!g_ctx.IsNull() && !g_aisShape.IsNull())
+        {
+            g_ctx->Remove(g_aisShape, Standard_False);
+            g_aisShape.Nullify();
+        }
     }
 
     bool LoadStepFile(const char* path)
@@ -56,6 +107,16 @@ namespace
         g_shape = reader.OneShape();
         if (g_shape.IsNull()) return false;
         RebuildFaceCache();
+
+        // 뷰어가 이미 초기화된 경우 즉시 표시 (S1 항목 1)
+        if (!g_ctx.IsNull())
+        {
+            ClearDisplayedShape();
+            g_aisShape = new AIS_Shape(g_shape);
+            g_ctx->Display(g_aisShape, Standard_False);
+            g_view->FitAll(0.01, Standard_False);
+            g_view->Redraw();
+        }
         return true;
     }
 
@@ -166,6 +227,165 @@ namespace
         if (faceIndex < 0 || faceIndex >= (int)g_faces.size()) return nullptr;
         return SurfaceTypeName(BRepAdaptor_Surface(g_faces[faceIndex]).GetType());
     }
+
+    // ================= 뷰어 natives (S1 항목 1·6) =================
+
+    bool InitViewerNative(void* hwnd)
+    {
+        if (!g_view.IsNull()) return true;
+        if (hwnd == nullptr) return false;
+
+        // 진단 로그: HEATINGMOLD_OCC_LOG 환경변수가 있으면 OCCT 메시지 + GL 컨텍스트 정보를 파일로 수집
+        // (.NET의 프로세스 환경변수 변경은 CRT getenv에 반영되지 않음 → Win32 API로 읽음)
+        char logPathBuf[MAX_PATH] = { 0 };
+        const DWORD logLen = ::GetEnvironmentVariableA("HEATINGMOLD_OCC_LOG", logPathBuf, MAX_PATH);
+        const char* logPath = (logLen > 0 && logLen < MAX_PATH) ? logPathBuf : nullptr;
+        const bool hasLog = (logPath != nullptr && *logPath != '\0');
+        std::ofstream diag;
+        if (hasLog)
+        {
+            diag.open(logPath, std::ios::app);
+            Handle(Message_PrinterOStream) printer =
+                new Message_PrinterOStream(logPath, Standard_False, Message_Info);
+            Message::DefaultMessenger()->AddPrinter(printer);
+        }
+
+        try
+        {
+            g_disp = new Aspect_DisplayConnection();
+            g_driver = new OpenGl_GraphicDriver(g_disp);
+            g_viewer = new V3d_Viewer(g_driver);
+            g_viewer->SetDefaultLights();
+            g_viewer->SetLightOn();
+
+            g_ctx = new AIS_InteractiveContext(g_viewer);
+            g_window = new WNT_Window((Aspect_Handle)hwnd);
+            g_view = new V3d_View(g_viewer);
+            g_view->SetWindow(g_window);
+            g_view->SetImmediateUpdate(Standard_False);
+            g_view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_GOLD, 0.08, V3d_ZBUFFER);
+            if (!g_window->IsMapped()) g_window->Map();
+
+            if (diag.is_open())
+            {
+                const bool ctxOk = g_driver->InitContext();
+                diag << "[bridge] InitContext=" << (ctxOk ? "true" : "false") << "\n";
+                const Handle(OpenGl_Context)& glCtx = g_driver->GetSharedContext();
+                if (!glCtx.IsNull())
+                {
+                    diag << "[bridge] ctxValid=" << (glCtx->IsValid() ? "true" : "false")
+                          << " gl>=2.1=" << (glCtx->IsGlGreaterEqual(2, 1) ? "true" : "false")
+                          << " vendor=" << glCtx->Vendor().ToCString() << "\n";
+                }
+                else
+                {
+                    diag << "[bridge] sharedContext=null\n";
+                }
+                diag.flush();
+            }
+
+            if (!g_shape.IsNull())
+            {
+                g_aisShape = new AIS_Shape(g_shape);
+                g_ctx->Display(g_aisShape, Standard_False);
+            }
+            g_view->MustBeResized();
+            g_view->FitAll(0.01, Standard_False);
+            g_view->Redraw();
+            return true;
+        }
+        catch (const Standard_Failure& f)
+        {
+            if (diag.is_open())
+            {
+                diag << "[bridge] Standard_Failure: " << f.GetMessageString() << "\n";
+                diag.flush();
+            }
+            return false;
+        }
+    }
+
+    void ResizeViewNative()
+    {
+        if (g_view.IsNull()) return;
+        g_view->MustBeResized();
+        g_view->Redraw();
+    }
+
+    void FitViewNative()
+    {
+        if (g_view.IsNull()) return;
+        g_view->FitAll(0.01, Standard_False);
+        g_view->Redraw();
+    }
+
+    void RotateStartNative(int x, int y)
+    {
+        if (!g_view.IsNull()) g_view->StartRotation(x, y);
+    }
+
+    void RotateMoveNative(int x, int y)
+    {
+        if (g_view.IsNull()) return;
+        g_view->Rotation(x, y);
+        g_view->Redraw();
+    }
+
+    void ZoomViewNative(double factor)
+    {
+        if (g_view.IsNull()) return;
+        g_view->SetZoom(factor, Standard_False);   // 현재 배율 기준 상대 줌
+        g_view->Redraw();
+    }
+
+    void SetShapeColorNative(double r, double g, double b)
+    {
+        if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
+        g_ctx->SetColor(g_aisShape, Quantity_Color(r, g, b, Quantity_TOC_RGB), Standard_False);
+        g_view->Redraw();
+    }
+
+    void GetViewStateNative(double* out)
+    {
+        out[0] = out[1] = out[2] = out[3] = 0.0;
+        if (g_view.IsNull()) return;
+        const Handle(Graphic3d_Camera)& cam = g_view->Camera();
+        if (cam.IsNull()) return;
+        const gp_Dir dir = cam->Direction();
+        out[0] = dir.X(); out[1] = dir.Y(); out[2] = dir.Z();
+        out[3] = cam->Scale();
+    }
+
+    // ================= HLR natives (S1 항목 5) =================
+
+    struct HlrCounts { int vis; int hid; double ms; };
+
+    int CountEdges(const TopoDS_Shape& s)
+    {
+        int n = 0;
+        for (TopExp_Explorer ex(s, TopAbs_EDGE); ex.More(); ex.Next()) ++n;
+        return n;
+    }
+
+    HlrCounts RunHlrNative()
+    {
+        HlrCounts r = { 0, 0, 0.0 };
+        if (g_shape.IsNull()) return r;
+
+        const auto t0 = std::chrono::steady_clock::now();
+        Handle(HLRBRep_Algo) algo = new HLRBRep_Algo();
+        algo->Add(g_shape);
+        algo->Projector(HLRAlgo_Projector(gp_Ax2(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(1.0, 1.0, 1.0))));
+        algo->Update();
+        algo->Hide();
+
+        HLRBRep_HLRToShape hlr(algo);
+        r.vis = CountEdges(hlr.VCompound()) + CountEdges(hlr.Rg1LineVCompound()) + CountEdges(hlr.OutLineVCompound());
+        r.hid = CountEdges(hlr.HCompound()) + CountEdges(hlr.Rg1LineHCompound()) + CountEdges(hlr.OutLineHCompound());
+        const auto t1 = std::chrono::steady_clock::now();
+        r.ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        return r;
+    }
 }
 #pragma managed(pop)
 
@@ -173,6 +393,7 @@ namespace HeatingMold { namespace OccBridge {
 
 bool Bridge::LoadStep(String^ path)
 {
+    ClearDisplayedShape();
     g_shape.Nullify();
     g_faces.clear();
     if (String::IsNullOrWhiteSpace(path)) return false;
@@ -224,6 +445,71 @@ array<double>^ Bridge::SampleUvTo3D(int faceIndex, double u, double v)
     if (!SamplePoint(faceIndex, u, v, p)) return nullptr;
     array<double>^ r = gcnew array<double>(3);
     r[0] = p[0]; r[1] = p[1]; r[2] = p[2];
+    return r;
+}
+
+// ================= 뷰어 managed (S1 항목 1·6) =================
+
+bool Bridge::InitViewer(IntPtr hwnd, int width, int height)
+{
+    (void)width; (void)height;
+    return InitViewerNative(hwnd.ToPointer());
+}
+
+void Bridge::ResizeView(int width, int height)
+{
+    (void)width; (void)height;
+    ResizeViewNative();
+}
+
+void Bridge::FitView()
+{
+    FitViewNative();
+}
+
+void Bridge::RotateStart(int x, int y)
+{
+    RotateStartNative(x, y);
+}
+
+void Bridge::RotateMove(int x, int y)
+{
+    RotateMoveNative(x, y);
+}
+
+void Bridge::RotateEnd()
+{
+    // StartRotation/Rotation 쌍으로 충분 — 종료 시 별도 처리 없음
+}
+
+void Bridge::ZoomView(double factor)
+{
+    ZoomViewNative(factor);
+}
+
+void Bridge::SetShapeColor(double r, double g, double b)
+{
+    SetShapeColorNative(r, g, b);
+}
+
+array<double>^ Bridge::GetViewState()
+{
+    double s[4];
+    GetViewStateNative(s);
+    array<double>^ r = gcnew array<double>(4);
+    for (int i = 0; i < 4; ++i) r[i] = s[i];
+    return r;
+}
+
+// ================= HLR managed (S1 항목 5) =================
+
+HlrResult^ Bridge::HlrProject()
+{
+    const HlrCounts c = RunHlrNative();
+    HlrResult^ r = gcnew HlrResult();
+    r->VisibleEdges = c.vis;
+    r->HiddenEdges = c.hid;
+    r->Milliseconds = c.ms;
     return r;
 }
 

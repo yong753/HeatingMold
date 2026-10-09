@@ -147,8 +147,10 @@ HeatingMold.Mvp.sln
 5. 단순 형상으로 `HlrProject` 스모크 — 윤곽선 분리 확인
 6. C++/CLI net8.0 DLL이 WPF 앱에서 로드·호출 (R1 판정) — 앱 csproj에 `<UseIJWHost>true</UseIJWHost>` 필요(1.3 확인)
 
-> **S1 진행 기록 (2026-10-08):** OccBridge C++/CLI(/clr:netcore net8.0) 생성 — `HeatingMold.Mvp.sln` + `src/OccBridge`. 최소 API 구현: `LoadStep`·`GetShapeInfo`·`GetFaceUvBoundary`·`SampleUvTo3D`(+`GetFaceType` 보조). C# 스모크(브리지 경유) 결과: **솔리드 30 · 셸 32 · 면 664 · 평면 317**(2.1 사전 스모크와 일치) · 첫 평면 UV 경계 26점 `(-3,0)×(-20,20)` · `SampleUvTo3D` 평면 이탈 편차 0 → **검증 항목 2·3·4 통과(브리지 경로)**. 잔여: WPF 뷰어(항목 1·6)·HLR(항목 5).
+> **S1 진행 기록 (2026-10-08):** OccBridge C++/CLI(/clr:netcore net8.0) 생성 — `HeatingMold.Mvp.sln` + `src/OccBridge`. 최소 API 구현: `LoadStep`·`GetShapeInfo`·`GetFaceUvBoundary`·`SampleUvTo3D`(+`GetFaceType` 보조). C# 스모크(브리지 경유) 결과: **솔리드 30 · 셸 32 · 면 664 · 평면 317**(2.1 사전 스모크와 일치) · 첫 평면 UV 경계 26점 `(-3,0)×(-20,20)` · `SampleUvTo3D` 평면 이탈 편차 0 → **검증 항목 2·3·4 통과(브리지 경로)**.
 > - 빌드 교훈: ① OCCT 타입을 ref 클래스 메서드에서 직접 사용하면 C2711(C3821/C3645 연쇄) → OCCT 호출을 native 헬퍼(`#pragma managed(off)`)로 격리, managed 메서드는 마샬링만. ② 헤더 전역 `using namespace System;`은 Windows SDK COM(`IServiceProvider`)과 충돌(C3699). ③ C++/CLI 배열은 `System::array<T>`가 아니라 키워드 `array<T>^`.
+> - **뷰어·HLR 확장 (같은 날):** 브리지에 뷰어 API(`InitViewer`·`ResizeView`·`FitView`·`RotateStart/Move/End`·`ZoomView`·`SetShapeColor`·`GetViewState`) + `HlrProject` 추가, WPF 앱 `src/HeatingMold.App`(HwndHost 임베드) 생성. 실측: 앱에서 Mold.stp 표시(로드 690ms) → **드래그 회전·휠 줌·색상 전환·HLR 버튼 모두 동작 — 검증 항목 1·5·6 통과 → S1 6항목 전부 통과**. HLR(30솔리드 전체): 가시 520 · 은선 1650 · **1.9~2.1초**(E6 양호). GL 컨텍스트 진단: `ctxValid=true, gl>=2.1=true, vendor=nvidia corporation`.
+> - 뷰어 교훈: HwndHost 자식 창을 `"static"` 클래스로 만들면 **CS_PARENTDC** 때문에 GL DC가 부모 DC와 공유되어 렌더링이 화면에 표시되지 않음 → 배경 브러시 없는 **커스텀 창 클래스**(`HeatingMoldOccViewport`)로 교체 + WM_PAINT/WM_ERASEBKGND 무효화 처리로 해결. 앱은 `HEATINGMOLD_OCC_LOG` 환경변수로 OCCT 메시지·GL 정보를 `x64\Release\occ_viewer_log.txt`에 수집.
 
 **NO-GO 시 대비**
 
@@ -198,11 +200,11 @@ V1~V7 각각 GO/NO-GO + 근거, 로드·HLR 소요시간, 곡면 관찰 결과, 
 | # | 위험 | 완화 |
 |---|---|---|
 | E1 | C++ 워크로드 설치 실패(권한/디스크) | 사전 관리자 승인 확보. 실패 시 MVP 자체 불가 → 조기 보고 |
-| E2 | `/clr:netcore` + net8.0 실컴파일 문제 | **1.3에서 실컴파일·로드 성공**(`UseIJWHost` 필요 확인). 잔여는 WPF 앱 호출(S1 V6)만 |
-| E3 | prebuilt OCCT(vc14)와 v143 링크 호환 | **1.3에서 TKernel 링크·실행 실측 통과.** 잔여는 뷰어 모듈 링크(S1) — 문제 시 소스 빌드 |
+| E2 | `/clr:netcore` + net8.0 실컴파일 문제 | **해소** — 1.3 실컴파일·로드 + **S1 WPF 앱 경유 로드·렌더·호출 확인**(`UseIJWHost` 필요) |
+| E3 | prebuilt OCCT(vc14)와 v143 링크 호환 | **해소** — 1.3 TKernel + **S1 뷰어(TKV3d·TKOpenGl·TKService)·HLR(TKHLR) 링크·렌더 실측 통과** |
 | E4 | Mold.stp에 솔리드 B-rep 없음(와이어프레임만) | **1.2 계량(솔리드 30개) + 2.1 사전 스모크(관계 표현 전개·30솔리드 로드 실측)로 해소** — S1 V1은 C++/CLI 브리지 경유 로드만 확인 |
 | E5 | 자유곡면 pcurve 품질(UV 경계 추출) | MVP는 평면 면 주경로. 곡면은 관찰만. Seam(주기면) 처리는 본 개발 항목으로 기록 |
-| E6 | HLR 성능 (수백 면) | S1 스모크에서 시간 측정. 느리면 HLR 대상 축소(발열선+윤곽만) |
+| E6 | HLR 성능 (수백 면) | **S1 실측: 면 664(솔리드 30) 전체 1.9~2.1초 — 양호.** 필요 시 HLR 대상 축소(발열선+윤곽만) |
 | E7 | VS Community 상용 라이선스 | 상용 배포 시 사용 조건(5명 미만·비엔터프라이즈) 충족 여부 확인 — 위반 시 Professional 구매. **개발 시작 전 확인 권장** |
 
 ---

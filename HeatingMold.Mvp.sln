@@ -5,6 +5,11 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "OccBridge", "src\OccBridge\OccBridge.vcxproj", "{7A3C9E21-4B5D-4F8A-9C2E-6D1B8F0A3C4E}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "HeatingMold.App", "src\HeatingMold.App\HeatingMold.App.csproj", "{2F8A5C31-9D4B-4E6A-B1C7-3E5D9F2A6B84}"
+	ProjectSection(ProjectDependencies) = postProject
+		{7A3C9E21-4B5D-4F8A-9C2E-6D1B8F0A3C4E} = {7A3C9E21-4B5D-4F8A-9C2E-6D1B8F0A3C4E}
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Release|x64 = Release|x64
@@ -12,6 +17,8 @@ Global
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{7A3C9E21-4B5D-4F8A-9C2E-6D1B8F0A3C4E}.Release|x64.ActiveCfg = Release|x64
 		{7A3C9E21-4B5D-4F8A-9C2E-6D1B8F0A3C4E}.Release|x64.Build.0 = Release|x64
+		{2F8A5C31-9D4B-4E6A-B1C7-3E5D9F2A6B84}.Release|x64.ActiveCfg = Release|x64
+		{2F8A5C31-9D4B-4E6A-B1C7-3E5D9F2A6B84}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
