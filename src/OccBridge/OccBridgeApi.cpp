@@ -50,6 +50,8 @@
 #include <AIS_Shape.hxx>
 #include <WNT_Window.hxx>
 #include <Quantity_Color.hxx>
+#include <Graphic3d_ZLayerId.hxx>
+#include <Graphic3d_ZLayerSettings.hxx>
 #include <OpenGl_Context.hxx>
 #include <Message.hxx>
 #include <Message_PrinterOStream.hxx>
@@ -303,6 +305,12 @@ namespace
             g_viewer->SetDefaultLights();
             g_viewer->SetLightOn();
 
+            // Overlay Z-layer (Topmost) with depth test off -> the pattern is never hidden by the solid.
+            Graphic3d_ZLayerSettings aTopSettings = g_viewer->ZLayerSettings(Graphic3d_ZLayerId_Topmost);
+            aTopSettings.SetEnableDepthTest(Standard_False);
+            aTopSettings.SetEnableDepthWrite(Standard_False);
+            g_viewer->SetZLayerSettings(Graphic3d_ZLayerId_Topmost, aTopSettings);
+
             g_ctx = new AIS_InteractiveContext(g_viewer);
             g_window = new WNT_Window((Aspect_Handle)hwnd);
             g_view = new V3d_View(g_viewer);
@@ -426,6 +434,7 @@ namespace
         Handle(AIS_Shape) overlay = new AIS_Shape(displayShape);
         g_ctx->SetColor(overlay, Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB), Standard_False);
         g_ctx->Display(overlay, Standard_False);
+        g_ctx->SetZLayer(overlay, Graphic3d_ZLayerId_Topmost);   // always on top (no depth test)
         g_ctx->Deactivate(overlay, Standard_False);   // 오버레이가 면 픽킹/호버를 가로채지 않도록 선택 비활성
         g_overlays[faceIndex] = overlay;
         if (!g_view.IsNull()) g_view->Redraw();
