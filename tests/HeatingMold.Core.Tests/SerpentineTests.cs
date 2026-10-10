@@ -116,4 +116,60 @@ public class SerpentineTests
         Assert.True(r.TotalLength > straight);
         Assert.InRange(r.TotalLength, straight + turns * 0.98, straight + turns * 1.02);
     }
+
+    // T6: 비볼록(쐐기) 면 — 인접 레인 극단점이 크게 어긋나도 커넥터가 면 밖으로 이탈하지 않아야 함 (#597 회귀)
+    [Fact]
+    public void T6_NonConvexWedge_ConnectorStaysInsideFace()
+    {
+        // 상단이 완만하게 기울어진 쐐기 — 레인 극단점이 레인당 ~130mm씩 이동
+        var outer = new List<Vec2> { new(0, 0), new(400, 0), new(400, 120), new(0, 90) };
+        double margin = 5, spacing = 10;
+        var r = Serpentine.Generate(outer, null, new PatternParams { Margin = margin, Spacing = spacing });
+
+        // 트리거 존재 확인: 인접 레인 끝↔시작 직선거리가 간격보다 훨씬 큼
+        double maxJump = 0;
+        for (int i = 0; i + 1 < r.Segments.Count; i++)
+        {
+            if (r.Segments[i].LaneIndex == r.Segments[i + 1].LaneIndex) continue;
+            maxJump = Math.Max(maxJump, r.Segments[i].End.DistanceTo(r.Segments[i + 1].Start));
+        }
+        Assert.True(maxJump > 3 * spacing, $"트리거 없음 (maxJump={maxJump:F1})");
+
+        foreach (Vec2 p in r.Path)
+            Assert.True(InsideOrOn(outer, p), $"면 밖 경로점 {p}");
+    }
+
+    // T7: 볼록 직사각형이라도 margin < Spacing/2 이면 반원이 면 밖으로 나가므로 경계 라우팅되어야 함
+    [Fact]
+    public void T7_ConvexButTightMargin_StaysInsideFace()
+    {
+        var outer = Rect(0, 0, 100, 60);
+        var r = Serpentine.Generate(outer, null, new PatternParams { Margin = 2, Spacing = 10 });
+
+        foreach (Vec2 p in r.Path)
+            Assert.True(InsideOrOn(outer, p), $"면 밖 경로점 {p}");
+    }
+
+    private static bool InsideOrOn(IReadOnlyList<Vec2> ring, Vec2 p)
+    {
+        for (int i = 0; i < ring.Count; i++)
+            if (DistanceToSegment(p, ring[i], ring[(i + 1) % ring.Count]) <= 1e-6) return true;
+
+        bool inside = false;
+        for (int i = 0, j = ring.Count - 1; i < ring.Count; j = i++)
+        {
+            if (((ring[i].Y > p.Y) != (ring[j].Y > p.Y)) &&
+                (p.X < (ring[j].X - ring[i].X) * (p.Y - ring[i].Y) / (ring[j].Y - ring[i].Y) + ring[i].X))
+                inside = !inside;
+        }
+        return inside;
+    }
+
+    private static double DistanceToSegment(Vec2 p, Vec2 a, Vec2 b)
+    {
+        double abx = b.X - a.X, aby = b.Y - a.Y, len2 = abx * abx + aby * aby;
+        if (len2 < 1e-18) return p.DistanceTo(a);
+        double t = Math.Max(0.0, Math.Min(1.0, ((p.X - a.X) * abx + (p.Y - a.Y) * aby) / len2));
+        return p.DistanceTo(new Vec2(a.X + t * abx, a.Y + t * aby));
+    }
 }
