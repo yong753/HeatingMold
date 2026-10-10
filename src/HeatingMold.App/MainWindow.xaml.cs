@@ -19,6 +19,8 @@ namespace HeatingMold.App
         private int _patternFaceIndex = -1;
         private List<List<Vec2>> _outlineRings;
         private List<Vec2> _heatPath2D;
+        private List<Vec3> _heatPath3D;   // pattern centerline on the surface (world 3D)
+        private List<Vec3> _heatBand3D;   // pattern ribbon band on the surface (world 3D)
 
         private sealed class FaceItem
         {
@@ -251,13 +253,17 @@ namespace HeatingMold.App
             {
                 List<Vec2> band = ribbon.OrderByDescending(r => Math.Abs(RegionOps.SignedArea(r))).First();
                 var uvFlat = new double[band.Count * 2];
+                var band3D = new List<Vec3>(band.Count);
                 bool mapped = true;
                 for (int i = 0; i < band.Count; i++)
                 {
                     if (!grid.TryMap(band[i], out double u, out double v)) { mapped = false; break; }
                     uvFlat[i * 2] = u;
                     uvFlat[i * 2 + 1] = v;
+                    var q3 = Bridge.SampleUvTo3D(fi.Index, u, v);
+                    if (q3 != null) band3D.Add(new Vec3(q3[0], q3[1], q3[2]));
                 }
+                _heatBand3D = mapped ? band3D : null;
                 // 다른 면의 오버레이는 브리지가 유지하므로 여기서 지우지 않는다.
                 if (mapped) Bridge.BuildWire3D(fi.Index, uvFlat, true);
             }
@@ -266,6 +272,7 @@ namespace HeatingMold.App
             _patternFaceIndex = fi.Index;
             _outlineRings = planar;
             _heatPath2D = result.Path.ToList();
+            _heatPath3D = MapPath3D(fi.Index, grid, result.Path);
 
             StatusText.Text = string.Format(
                 "패턴 — 면 #{0} ({1}) · 레인 {2} · 세그먼트 {3} · 총길이 {4:F1}mm · {5}ms",
@@ -302,6 +309,64 @@ namespace HeatingMold.App
             StatusText.Text = string.Format("면 선택 — #{0} ({1})", faceIndex, type);
         }
 
+        private List<DxfView> BuildViews()
+        {
+            var views = new List<DxfView>();
+            double[] n = Bridge.GetFaceNormal(_patternFaceIndex);
+            if (n != null)
+            {
+                var N = new Vec3(n[0], n[1], n[2]).Normalized();
+                Vec3 x = Math.Abs(N.Z) < 0.9 ? new Vec3(0, 0, 1) : new Vec3(1, 0, 0);
+                x = (x - N * Vec3.Dot(x, N)).Normalized();
+                views.Add(BuildHlrView("front", N.X, N.Y, N.Z, x.X, x.Y, x.Z));
+            }
+            views.Add(BuildHlrView("top", 0, 0, -1, 1, 0, 0));
+            views.Add(BuildHlrView("side", 0, 1, 0, 1, 0, 0));
+            return views;
+        }
+
+        private DxfView BuildHlrView(string label, double nx, double ny, double nz,
+                                     double xx, double xy, double xz)
+        {
+            var view = new DxfView { Label = label };
+            var N = new Vec3(nx, ny, nz).Normalized();
+            Vec3 xAxis = new Vec3(xx, xy, xz).Normalized();
+            Vec3 yAxis = Vec3.Cross(N, xAxis).Normalized();
+
+            foreach (var pl in Bridge.HlrEdges(nx, ny, nz, xAxis.X, xAxis.Y, xAxis.Z, true))
+            {
+                var pts = new List<Vec2>(pl.Points.Length / 2);
+                for (int k = 0; k + 1 < pl.Points.Length; k += 2)
+                    pts.Add(new Vec2(pl.Points[k], pl.Points[k + 1]));
+                var poly = new DxfPolyline { Points = pts };
+                if (pl.Visible) view.VisibleEdges.Add(poly);
+                else view.HiddenEdges.Add(poly);
+            }
+
+            if (_heatPath3D != null && _heatPath3D.Count >= 2)
+                view.HeatLines.Add(new DxfPolyline { Points = _heatPath3D.Select(p => Project(p, xAxis, yAxis)).ToList() });
+            if (_heatBand3D != null && _heatBand3D.Count >= 3)
+                view.HeatBands.Add(new DxfPolyline { Points = _heatBand3D.Select(p => Project(p, xAxis, yAxis)).ToList(), Closed = true });
+
+            return view;
+        }
+
+        private static Vec2 Project(Vec3 p, Vec3 xAxis, Vec3 yAxis)
+            => new Vec2(Vec3.Dot(p, xAxis), Vec3.Dot(p, yAxis));
+
+        private List<Vec3> MapPath3D(int faceIndex, UvProjectionGrid grid, IReadOnlyList<Vec2> path2D)
+        {
+            var list = new List<Vec3>(path2D.Count);
+            foreach (var p in path2D)
+            {
+                if (!grid.TryMap(p, out double u, out double v)) return null;
+                var q = Bridge.SampleUvTo3D(faceIndex, u, v);
+                if (q == null) return null;
+                list.Add(new Vec3(q[0], q[1], q[2]));
+            }
+            return list;
+        }
+
         private void Export_Click(object sender, RoutedEventArgs e)
         {
             if (_pattern == null)
@@ -318,7 +383,8 @@ namespace HeatingMold.App
 
             try
             {
-                DxfExporter.Export(file, _outlineRings, _heatPath2D, width);
+                var views = BuildViews();
+                DxfExporter.ExportViews(file, views);
                 StatusText.Text = "DXF 저장 — " + file;
             }
             catch (Exception ex)

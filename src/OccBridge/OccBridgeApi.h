@@ -32,6 +32,13 @@ public:
     property double Milliseconds;     // HLR 소요 시간 (E6 성능 측정)
 };
 
+public ref class HlrPolyline
+{
+public:
+    property bool Visible;
+    property array<double>^ Points;
+};
+
 /// <summary>
 /// OCCT 최소 브리지 (S1 스파이크, /clr:netcore net8.0).
 /// 상태는 프로세스 전역(단일 문서) — 본 개발에서 handle 기반으로 전환 예정.
@@ -103,6 +110,10 @@ public:
     // ---- HLR (S1 항목 5, S3 측면 뷰에서 본격 사용) ----
     /// <summary>현재 셰이프를 축측(1,1,1) 방향으로 HLR 투영 — 가시/은선 엣지 수 + 소요 ms</summary>
     static HlrResult^ HlrProject();
+
+    /// <summary>M4 - full-shape HLR projection along n (in-plane X axis) -> 2D polylines</summary>
+    static array<HlrPolyline^>^ HlrEdges(double nx, double ny, double nz,
+                                         double xx, double xy, double xz, bool hiddenToo);
 };
 
 }}

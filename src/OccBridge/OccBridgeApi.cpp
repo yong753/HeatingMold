@@ -60,6 +60,8 @@
 #include <HLRBRep_Algo.hxx>
 #include <HLRBRep_HLRToShape.hxx>
 #include <HLRAlgo_Projector.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <GCPnts_QuasiUniformDeflection.hxx>
 
 // 메싱 (W2 — shaded 렌더링 실패 원인 대응) — TKMesh
 #include <BRepMesh_IncrementalMesh.hxx>
@@ -563,6 +565,72 @@ namespace
         r.ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
         return r;
     }
+
+    // ================= HLR 기하 (M4 DXF 뷰) =================
+
+    struct NativeHlrLine { bool visible; std::vector<double> pts; };
+
+    void CollectHlrEdges(const TopoDS_Shape& shape, bool visible,
+                         std::vector<NativeHlrLine>& out, double deflection)
+    {
+        if (shape.IsNull()) return;
+        for (TopExp_Explorer ex(shape, TopAbs_EDGE); ex.More(); ex.Next())
+        {
+            const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+            if (BRep_Tool::Degenerated(edge)) continue;
+            try
+            {
+                BRepAdaptor_Curve curve(edge);
+                GCPnts_QuasiUniformDeflection sampler(curve, deflection);
+                if (!sampler.IsDone() || sampler.NbPoints() < 2) continue;
+                NativeHlrLine line;
+                line.visible = visible;
+                for (Standard_Integer i = 1; i <= sampler.NbPoints(); ++i)
+                {
+                    const gp_Pnt p = curve.Value(sampler.Parameter(i));
+                    line.pts.push_back(p.X());
+                    line.pts.push_back(p.Y());
+                }
+                out.push_back(line);
+            }
+            catch (const Standard_Failure&) { }
+        }
+    }
+
+    std::vector<NativeHlrLine> RunHlrGeometryNative(
+        double nx, double ny, double nz, double xx, double xy, double xz, bool hiddenToo)
+    {
+        std::vector<NativeHlrLine> out;
+        if (g_shape.IsNull()) return out;
+
+        const gp_Dir n(nx, ny, nz);
+        gp_Dir x(xx, xy, xz);
+        if (std::fabs(n.Dot(x)) > 0.99)
+        {
+            x = n.Crossed(gp_Dir(0.0, 0.0, 1.0));
+            if (x.X() * x.X() + x.Y() * x.Y() + x.Z() * x.Z() < 1e-12)
+                x = n.Crossed(gp_Dir(1.0, 0.0, 0.0));
+        }
+
+        Handle(HLRBRep_Algo) algo = new HLRBRep_Algo();
+        algo->Add(g_shape);
+        algo->Projector(HLRAlgo_Projector(gp_Ax2(gp_Pnt(0.0, 0.0, 0.0), n, x)));
+        algo->Update();
+        algo->Hide();
+
+        HLRBRep_HLRToShape hlr(algo);
+        const double defl = 1.0;
+        CollectHlrEdges(hlr.VCompound(), true, out, defl);
+        CollectHlrEdges(hlr.Rg1LineVCompound(), true, out, defl);
+        CollectHlrEdges(hlr.OutLineVCompound(), true, out, defl);
+        if (hiddenToo)
+        {
+            CollectHlrEdges(hlr.HCompound(), false, out, defl);
+            CollectHlrEdges(hlr.Rg1LineHCompound(), false, out, defl);
+            CollectHlrEdges(hlr.OutLineHCompound(), false, out, defl);
+        }
+        return out;
+    }
 }
 #pragma managed(pop)
 
@@ -720,6 +788,24 @@ HlrResult^ Bridge::HlrProject()
     r->HiddenEdges = c.hid;
     r->Milliseconds = c.ms;
     return r;
+}
+
+array<HlrPolyline^>^ Bridge::HlrEdges(double nx, double ny, double nz,
+                                     double xx, double xy, double xz, bool hiddenToo)
+{
+    const std::vector<NativeHlrLine> lines = RunHlrGeometryNative(nx, ny, nz, xx, xy, xz, hiddenToo);
+    List<HlrPolyline^>^ result = gcnew List<HlrPolyline^>();
+    for (size_t i = 0; i < lines.size(); ++i)
+    {
+        HlrPolyline^ poly = gcnew HlrPolyline();
+        poly->Visible = lines[i].visible;
+        array<double>^ pts = gcnew array<double>((int)lines[i].pts.size());
+        for (size_t k = 0; k < lines[i].pts.size(); ++k)
+            pts[(int)k] = lines[i].pts[k];
+        poly->Points = pts;
+        result->Add(poly);
+    }
+    return result->ToArray();
 }
 
 }}
