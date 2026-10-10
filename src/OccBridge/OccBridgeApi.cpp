@@ -46,10 +46,10 @@
 #include <V3d_Viewer.hxx>
 #include <V3d_View.hxx>
 #include <AIS_InteractiveContext.hxx>
+#include <AIS_SelectionScheme.hxx>
 #include <AIS_Shape.hxx>
 #include <WNT_Window.hxx>
 #include <Quantity_Color.hxx>
-#include <Graphic3d_Camera.hxx>
 #include <OpenGl_Context.hxx>
 #include <Message.hxx>
 #include <Message_PrinterOStream.hxx>
@@ -59,10 +59,20 @@
 #include <HLRBRep_HLRToShape.hxx>
 #include <HLRAlgo_Projector.hxx>
 
+// 메싱 (W2 — shaded 렌더링 실패 원인 대응) — TKMesh
+#include <BRepMesh_IncrementalMesh.hxx>
+#include <Prs3d_Drawer.hxx>
+
+// 면 픽킹 (W3) — 서브셰이프 선택
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <SelectMgr_EntityOwner.hxx>
+#include <StdSelect_BRepOwner.hxx>
+
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -74,6 +84,7 @@ namespace
 {
     TopoDS_Shape g_shape;
     std::vector<TopoDS_Face> g_faces;
+    TopTools_IndexedMapOfShape g_faceMap;   // W3 픽킹: g_faces와 같은 순회로 구축 (인덱스 1:1)
 
     // ---- AIS 뷰어 상태 (S1 항목 1·6) — 프로세스 전역, UI 스레드 전용 ----
     Handle(Aspect_DisplayConnection) g_disp;
@@ -83,23 +94,53 @@ namespace
     Handle(V3d_View) g_view;
     Handle(WNT_Window) g_window;
     Handle(AIS_Shape) g_aisShape;
-    Handle(AIS_Shape) g_overlay;   // S3 사행 오버레이 (별도 색상)
+    std::map<int, Handle(AIS_Shape)> g_overlays;   // S3 사행 오버레이 — 면별 유지 (다른 면 생성 시에도 보존)
+    int g_lastHoverFace = -1;      // W5 — 호버 하이라이트 중복 Redraw 억제
 
     void RebuildFaceCache()
     {
         g_faces.clear();
+        g_faceMap.Clear();
         if (g_shape.IsNull()) return;
         for (TopExp_Explorer ex(g_shape, TopAbs_FACE); ex.More(); ex.Next())
-            g_faces.push_back(TopoDS::Face(ex.Current()));
+        {
+            const TopoDS_Face f = TopoDS::Face(ex.Current());
+            g_faces.push_back(f);
+            g_faceMap.Add(f);   // g_faces와 동일 순회 → FindIndex == g_faces 인덱스 + 1
+        }
+    }
+
+    /// <summary>W2 — STEP 로드는 메시 미생성이므로 shaded 표시를 위해 삼각분할 1회 수행</summary>
+    void MeshShapeNative(double linearDeflection)
+    {
+        if (g_shape.IsNull()) return;
+        BRepMesh_IncrementalMesh mesher(g_shape, linearDeflection, Standard_False, 0.5, Standard_False);
+        (void)mesher;   // 생성자가 Perform까지 수행
+    }
+
+    /// <summary>W2/W3 — 표시 상태(모드/경계/색) 구성 + 면 선택 모드 활성화</summary>
+    void ConfigureDisplay()
+    {
+        if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
+        g_aisShape->Attributes()->SetFaceBoundaryDraw(Standard_True);
+        g_ctx->Display(g_aisShape, Standard_False);
+        g_ctx->SetDisplayMode(g_aisShape, AIS_Shaded, Standard_False);   // W2 — 기본 와이어프레임 무시, 음영 강제
+        g_ctx->Activate(g_aisShape, TopAbs_FACE, Standard_True);          // W3 — 면 서브셰이프 선택 활성화
     }
 
     void ClearDisplayedShape()
     {
+        if (!g_ctx.IsNull())
+        {
+            g_ctx->ClearSelected(Standard_False);   // 이전 선택 해제 (해당 프레젠테이션 제거 전)
+            g_ctx->ClearDetected(Standard_False);
+        }
         if (!g_ctx.IsNull() && !g_aisShape.IsNull())
         {
             g_ctx->Remove(g_aisShape, Standard_False);
             g_aisShape.Nullify();
         }
+        g_lastHoverFace = -1;
     }
 
     bool LoadStepFile(const char* path)
@@ -110,13 +151,14 @@ namespace
         g_shape = reader.OneShape();
         if (g_shape.IsNull()) return false;
         RebuildFaceCache();
+        MeshShapeNative(1.0);   // W2 — shaded 표시용 삼각분할 (선형 편향 1mm)
 
         // 뷰어가 이미 초기화된 경우 즉시 표시 (S1 항목 1)
         if (!g_ctx.IsNull())
         {
             ClearDisplayedShape();
             g_aisShape = new AIS_Shape(g_shape);
-            g_ctx->Display(g_aisShape, Standard_False);
+            ConfigureDisplay();
             g_view->FitAll(0.01, Standard_False);
             g_view->Redraw();
         }
@@ -290,7 +332,7 @@ namespace
             if (!g_shape.IsNull())
             {
                 g_aisShape = new AIS_Shape(g_shape);
-                g_ctx->Display(g_aisShape, Standard_False);
+                ConfigureDisplay();
             }
             g_view->MustBeResized();
             g_view->FitAll(0.01, Standard_False);
@@ -348,17 +390,6 @@ namespace
         g_view->Redraw();
     }
 
-    void GetViewStateNative(double* out)
-    {
-        out[0] = out[1] = out[2] = out[3] = 0.0;
-        if (g_view.IsNull()) return;
-        const Handle(Graphic3d_Camera)& cam = g_view->Camera();
-        if (cam.IsNull()) return;
-        const gp_Dir dir = cam->Direction();
-        out[0] = dir.X(); out[1] = dir.Y(); out[2] = dir.Z();
-        out[3] = cam->Scale();
-    }
-
     // ================= 오버레이 natives (S3) =================
 
     bool BuildWire3DNative(int faceIndex, const std::vector<double>& uv, bool closed)
@@ -383,25 +414,32 @@ namespace
         }
 
         if (g_ctx.IsNull()) return true;   // 헤드리스(테스트) — 기하 생성만
-        if (!g_overlay.IsNull())
+
+        // 같은 면을 다시 생성한 경우에만 그 면의 기존 오버레이를 교체하고,
+        // 다른 면의 오버레이는 그대로 유지한다 (누적 표시).
+        auto it = g_overlays.find(faceIndex);
+        if (it != g_overlays.end())
         {
-            g_ctx->Remove(g_overlay, Standard_False);
-            g_overlay.Nullify();
+            g_ctx->Remove(it->second, Standard_False);
+            g_overlays.erase(it);
         }
-        g_overlay = new AIS_Shape(displayShape);
-        g_ctx->SetColor(g_overlay, Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB), Standard_False);
-        g_ctx->Display(g_overlay, Standard_False);
+        Handle(AIS_Shape) overlay = new AIS_Shape(displayShape);
+        g_ctx->SetColor(overlay, Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB), Standard_False);
+        g_ctx->Display(overlay, Standard_False);
+        g_ctx->Deactivate(overlay, Standard_False);   // 오버레이가 면 픽킹/호버를 가로채지 않도록 선택 비활성
+        g_overlays[faceIndex] = overlay;
         if (!g_view.IsNull()) g_view->Redraw();
         return true;
     }
 
     void ClearOverlayNative()
     {
-        if (!g_ctx.IsNull() && !g_overlay.IsNull())
+        if (!g_ctx.IsNull())
         {
-            g_ctx->Remove(g_overlay, Standard_False);
-            g_overlay.Nullify();
+            for (const auto& kv : g_overlays)
+                g_ctx->Remove(kv.second, Standard_False);
         }
+        g_overlays.clear();
         if (!g_view.IsNull()) g_view->Redraw();
     }
 
@@ -430,6 +468,60 @@ namespace
         if (g_faces[faceIndex].Orientation() == TopAbs_REVERSED) n.Reverse();
         out[0] = n.X(); out[1] = n.Y(); out[2] = n.Z();
         return true;
+    }
+
+    // ================= 면 픽킹/선택 (W3·W5) =================
+
+    /// <summary>현재 DetectedOwner가 가리키는 면 인덱스 (g_faces와 1:1) — 없으면 -1</summary>
+    int DetectedFaceIndex()
+    {
+        if (g_ctx.IsNull()) return -1;
+        const Handle(SelectMgr_EntityOwner)& owner = g_ctx->DetectedOwner();
+        if (owner.IsNull()) return -1;
+        const Handle(StdSelect_BRepOwner) brep = Handle(StdSelect_BRepOwner)::DownCast(owner);
+        if (brep.IsNull() || !brep->HasShape()) return -1;
+        const TopoDS_Shape& sub = brep->Shape();
+        if (!g_faceMap.Contains(sub)) return -1;
+        return g_faceMap.FindIndex(sub) - 1;
+    }
+
+    /// <summary>W5 — 호버: 동적 하이라이트. 면이 바뀔 때만 Redraw (무효화 폭주 방지)</summary>
+    int HoverFaceNative(int x, int y)
+    {
+        if (g_ctx.IsNull() || g_view.IsNull() || g_aisShape.IsNull()) return -1;
+        g_ctx->MoveTo(x, y, g_view, Standard_False);
+
+        const int idx = DetectedFaceIndex();
+        if (idx != g_lastHoverFace)
+        {
+            g_lastHoverFace = idx;
+            g_view->Redraw();
+        }
+        return idx;
+    }
+
+    void ClearHoverNative()
+    {
+        if (g_ctx.IsNull() || g_view.IsNull()) return;
+        if (g_lastHoverFace == -1) return;
+        g_lastHoverFace = -1;
+        g_ctx->ClearDetected(Standard_False);
+        g_view->Redraw();
+    }
+
+    /// <summary>W5 — 클릭: 면 선택(선택 하이라이트 유지). 빈 곳이면 선택 해제 후 -1</summary>
+    int SelectFaceNative(int x, int y)
+    {
+        if (g_ctx.IsNull() || g_view.IsNull() || g_aisShape.IsNull()) return -1;
+        g_ctx->MoveTo(x, y, g_view, Standard_False);
+        const int idx = DetectedFaceIndex();
+        g_lastHoverFace = idx;
+        if (idx < 0)
+            g_ctx->ClearSelected(Standard_False);
+        else
+            g_ctx->SelectDetected(AIS_SelectionScheme_Replace);
+        g_view->Redraw();
+        return idx;
     }
 
     // ================= HLR natives (S1 항목 5) =================
@@ -473,6 +565,7 @@ bool Bridge::LoadStep(String^ path)
     ClearOverlayNative();
     g_shape.Nullify();
     g_faces.clear();
+    g_faceMap.Clear();
     if (String::IsNullOrWhiteSpace(path)) return false;
     const std::string native = msclr::interop::marshal_as<std::string>(path);
     return LoadStepFile(native.c_str());
@@ -569,15 +662,6 @@ void Bridge::SetShapeColor(double r, double g, double b)
     SetShapeColorNative(r, g, b);
 }
 
-array<double>^ Bridge::GetViewState()
-{
-    double s[4];
-    GetViewStateNative(s);
-    array<double>^ r = gcnew array<double>(4);
-    for (int i = 0; i < 4; ++i) r[i] = s[i];
-    return r;
-}
-
 // ================= 오버레이 managed (S3) =================
 
 bool Bridge::BuildWire3D(int faceIndex, array<double>^ uvFlat, bool closed)
@@ -586,11 +670,6 @@ bool Bridge::BuildWire3D(int faceIndex, array<double>^ uvFlat, bool closed)
     std::vector<double> uv(uvFlat->Length);
     for (int i = 0; i < uvFlat->Length; ++i) uv[i] = uvFlat[i];
     return BuildWire3DNative(faceIndex, uv, closed);
-}
-
-void Bridge::ClearOverlay()
-{
-    ClearOverlayNative();
 }
 
 void Bridge::SetViewDirection(double dx, double dy, double dz)
@@ -605,6 +684,21 @@ array<double>^ Bridge::GetFaceNormal(int faceIndex)
     array<double>^ r = gcnew array<double>(3);
     r[0] = n[0]; r[1] = n[1]; r[2] = n[2];
     return r;
+}
+
+int Bridge::HoverFace(int x, int y)
+{
+    return HoverFaceNative(x, y);
+}
+
+void Bridge::ClearHover()
+{
+    ClearHoverNative();
+}
+
+int Bridge::SelectFace(int x, int y)
+{
+    return SelectFaceNative(x, y);
 }
 
 // ================= HLR managed (S1 항목 5) =================

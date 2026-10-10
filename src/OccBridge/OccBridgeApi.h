@@ -80,15 +80,19 @@ public:
     /// <summary>표시 셰이프 색상 변경 (RGB 0~1) — SetColor API 스모크</summary>
     static void SetShapeColor(double r, double g, double b);
 
-    /// <summary>뷰 상태 [dirX, dirY, dirZ, cameraScale] — 자동 검증·로깅용</summary>
-    static array<double>^ GetViewState();
+    // ---- 면 하이라이트/선택 (W5 — 마우스 호버·클릭) ----
+    /// <summary>호버: 커서 아래 면을 동적 하이라이트하고 faceId 반환 (변경 시만 Redraw, 없으면 -1)</summary>
+    static int HoverFace(int x, int y);
+
+    /// <summary>호버 하이라이트 해제 + Redraw (마우스가 창을 벗어날 때)</summary>
+    static void ClearHover();
+
+    /// <summary>클릭: 커서 아래 면을 선택(하이라이트 유지)하고 faceId 반환 (빈 곳이면 선택 해제 후 -1)</summary>
+    static int SelectFace(int x, int y);
 
     // ---- 오버레이 (S3 통합 데모) ----
     /// <summary>UV 폴리라인을 면 위 3D 와이어(닫힘이면 리본 면)로 오버레이 표시</summary>
     static bool BuildWire3D(int faceIndex, array<double>^ uvFlat, bool closed);
-
-    /// <summary>오버레이 제거 + Redraw</summary>
-    static void ClearOverlay();
 
     /// <summary>지정 방향에서 바라보는 시점으로 설정 + FitAll (S3 평면 뷰)</summary>
     static void SetViewDirection(double dx, double dy, double dz);

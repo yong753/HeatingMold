@@ -43,8 +43,9 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(OcctRoot)\win64\vc14\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <!-- 심볼→툴킷 매핑(findstr)으로 확정: STEPControl_Reader=TKDESTEP, BRepTools/BRepAdaptor/TopExp=TKBRep, IFSelect=TKXSBase, Geom2d=TKG2d, WNT_Window/Aspect_DisplayConnection=TKService, OpenGl_GraphicDriver=TKOpenGl, V3d/AIS=TKV3d, HLR*=TKHLR -->
-      <AdditionalDependencies>TKernel.lib;TKMath.lib;TKG2d.lib;TKG3d.lib;TKGeomBase.lib;TKBRep.lib;TKTopAlgo.lib;TKDESTEP.lib;TKXSBase.lib;TKService.lib;TKV3d.lib;TKOpenGl.lib;TKHLR.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- 심볼→툴킷 매핑(findstr)으로 확정: STEPControl_Reader=TKDESTEP, BRepTools/BRepAdaptor/TopExp=TKBRep, IFSelect=TKXSBase, Geom2d=TKG2d, WNT_Window/Aspect_DisplayConnection=TKService, OpenGl_GraphicDriver=TKOpenGl, V3d/AIS/StdSelect(픽킹)=TKV3d, HLR*=TKHLR -->
+      <!-- W2: BRepMesh_IncrementalMesh(삼각분할)=TKMesh 추가 -->
+      <AdditionalDependencies>TKernel.lib;TKMath.lib;TKG2d.lib;TKG3d.lib;TKGeomBase.lib;TKBRep.lib;TKTopAlgo.lib;TKMesh.lib;TKDESTEP.lib;TKXSBase.lib;TKService.lib;TKV3d.lib;TKOpenGl.lib;TKHLR.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
