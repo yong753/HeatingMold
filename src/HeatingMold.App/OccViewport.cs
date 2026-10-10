@@ -36,6 +36,20 @@ namespace HeatingMold.App
         private static extern bool ValidateRect(IntPtr hWnd, IntPtr lpRect);
 
         [DllImport("user32.dll")]
+        private static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT lpEventTrack);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct TRACKMOUSEEVENT
+        {
+            public uint cbSize;
+            public uint dwFlags;
+            public IntPtr hwndTrack;
+            public uint dwHoverTime;
+        }
+
+        private const uint TME_LEAVE = 0x00000002;
+
+        [DllImport("user32.dll")]
         private static extern IntPtr LoadCursor(IntPtr hInstance, IntPtr lpCursorName);
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
@@ -95,6 +109,7 @@ namespace HeatingMold.App
         private const int WM_LBUTTONUP = 0x0202;
         private const int WM_MOUSEMOVE = 0x0200;
         private const int WM_MOUSEWHEEL = 0x020A;
+        private const int WM_MOUSELEAVE = 0x02A3;
         private const int WM_ERASEBKGND = 0x0014;
         private const int WM_PAINT = 0x000F;
         private const int WM_CAPTURECHANGED = 0x0215;
@@ -102,6 +117,18 @@ namespace HeatingMold.App
         private IntPtr _hwnd;
         private bool _ready;
         private bool _dragging;
+        private bool _dragStarted;
+        private bool _trackingMouse;
+        private int _downX, _downY;
+        private int _lastHover = -2;      // W5 — 호버 이벤트 중복 억제
+
+        private const int ClickDragThreshold = 4;   // px — 이하면 클릭(픽킹), 초과 시 회전
+
+        /// <summary>W3 — 면 클릭 선택 결과 (faceId, 없으면 -1)</summary>
+        public event Action<int> FacePicked;
+
+        /// <summary>W5 — 호버 중인 면 변경 (faceId, 없으면 -1)</summary>
+        public event Action<int> FaceHovered;
 
         public bool IsReady => _ready;
 
@@ -118,6 +145,7 @@ namespace HeatingMold.App
         {
             _ready = false;
             _dragging = false;
+            _dragStarted = false;
             DestroyWindow(hwnd.Handle);
         }
 
@@ -143,30 +171,90 @@ namespace HeatingMold.App
                 case WM_LBUTTONDOWN:
                     SetCapture(hwnd);
                     _dragging = true;
-                    Bridge.RotateStart(LoWord(lParam), HiWord(lParam));
+                    _dragStarted = false;
+                    _downX = LoWord(lParam);
+                    _downY = HiWord(lParam);
                     handled = true;
                     break;
 
                 case WM_MOUSEMOVE:
+                {
+                    if (!_trackingMouse)
+                    {
+                        var tme = new TRACKMOUSEEVENT
+                        {
+                            cbSize = (uint)Marshal.SizeOf(typeof(TRACKMOUSEEVENT)),
+                            dwFlags = TME_LEAVE,
+                            hwndTrack = hwnd
+                        };
+                        TrackMouseEvent(ref tme);
+                        _trackingMouse = true;
+                    }
+
+                    int x = LoWord(lParam), y = HiWord(lParam);
                     if (_dragging)
                     {
-                        Bridge.RotateMove(LoWord(lParam), HiWord(lParam));
-                        handled = true;
+                        if (!_dragStarted)
+                        {
+                            int dx = x - _downX, dy = y - _downY;
+                            if (dx * dx + dy * dy >= ClickDragThreshold * ClickDragThreshold)
+                            {
+                                _dragStarted = true;
+                                Bridge.ClearHover();          // 회전 중 잔상 방지
+                                Bridge.RotateStart(_downX, _downY);
+                            }
+                        }
+                        if (_dragStarted)
+                        {
+                            Bridge.RotateMove(x, y);
+                            handled = true;
+                        }
                     }
+                    else if (_ready)
+                    {
+                        int hover = Bridge.HoverFace(x, y);   // W5 — 호버 면 하이라이트
+                        if (hover != _lastHover)
+                        {
+                            _lastHover = hover;
+                            FaceHovered?.Invoke(hover);
+                        }
+                    }
+                    break;
+                }
+
+                case WM_MOUSELEAVE:
+                    _trackingMouse = false;
+                    Bridge.ClearHover();
+                    if (_lastHover != -1)
+                    {
+                        _lastHover = -1;
+                        FaceHovered?.Invoke(-1);
+                    }
+                    handled = true;
                     break;
 
                 case WM_LBUTTONUP:
                     if (_dragging)
                     {
                         _dragging = false;
+                        if (_dragStarted)
+                        {
+                            Bridge.RotateEnd();
+                        }
+                        else
+                        {
+                            // 이동 없는 클릭 = 면 선택 (W5 — 하이라이트 유지)
+                            int idx = Bridge.SelectFace(LoWord(lParam), HiWord(lParam));
+                            FacePicked?.Invoke(idx);
+                        }
                         ReleaseCapture();
-                        Bridge.RotateEnd();
                         handled = true;
                     }
                     break;
 
                 case WM_CAPTURECHANGED:
                     _dragging = false;
+                    _dragStarted = false;
                     break;
 
                 case WM_MOUSEWHEEL:

@@ -6,7 +6,7 @@ using netDxf.Tables;
 namespace HeatingMold.Export;
 
 /// <summary>
-/// S3 — UV 좌표(평면 전개 2D) 기반 DXF 내보내기.
+/// S3 — 투영 2D(면 중심 법선 정사영) 기반 DXF 내보내기.
 /// 레이어: MOLD_OUTLINE(면 경계) / HEAT_WIRE(사행, 선폭) / DIMENSION(치수).
 /// </summary>
 public static class DxfExporter

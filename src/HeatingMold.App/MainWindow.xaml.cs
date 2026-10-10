@@ -14,13 +14,11 @@ namespace HeatingMold.App
 {
     public partial class MainWindow : Window
     {
-        private bool _colorBlue = true;
-
-        // S3 — 마지막 패턴 상태 (DXF 내보내기용)
+        // 마지막 패턴 상태 (DXF 내보내기용). 좌표 = "투영 2D" (면 중심 법선 정사영).
         private SerpentineResult _pattern;
         private int _patternFaceIndex = -1;
         private List<List<Vec2>> _outlineRings;
-        private List<Vec2> _heatPathUv;
+        private List<Vec2> _heatPath2D;
 
         private sealed class FaceItem
         {
@@ -32,6 +30,8 @@ namespace HeatingMold.App
         public MainWindow()
         {
             InitializeComponent();
+            Viewport.FacePicked += OnFacePicked;
+            Viewport.FaceHovered += OnFaceHovered;
             Loaded += OnLoaded;
         }
 
@@ -58,8 +58,7 @@ namespace HeatingMold.App
             }
             sw.Stop();
 
-            Bridge.SetShapeColor(0.55, 0.65, 0.85);
-            _colorBlue = true;
+            Bridge.SetShapeColor(0.55, 0.65, 0.85);   // 고정 표시색 (스틸 블루)
             _pattern = null;
             _patternFaceIndex = -1;
 
@@ -75,36 +74,94 @@ namespace HeatingMold.App
             var candidates = new List<Tuple<int, string, double>>();
             for (int i = 0; i < faceCount; i++)
             {
-                if (Bridge.GetFaceType(i) != "Plane") continue;
+                string type = Bridge.GetFaceType(i);
+                if (type == null) continue;
                 var wires = Bridge.GetFaceUvBoundary(i);
                 if (wires == null || wires.Length == 0) continue;
 
-                double minU = double.MaxValue, maxU = double.MinValue, minV = double.MaxValue, maxV = double.MinValue;
+                // Normalized UV (BSpline etc.) is unrelated to real size -> measure the boundary in 3D (mm)
+                var pts = new List<Vec3>(64);
                 foreach (var w in wires)
-                {
                     for (int k = 0; k + 1 < w.Points.Length; k += 2)
                     {
-                        double u = w.Points[k], v = w.Points[k + 1];
-                        if (u < minU) minU = u;
-                        if (u > maxU) maxU = u;
-                        if (v < minV) minV = v;
-                        if (v > maxV) maxV = v;
+                        var pt = Bridge.SampleUvTo3D(i, w.Points[k], w.Points[k + 1]);
+                        if (pt != null) pts.Add(new Vec3(pt[0], pt[1], pt[2]));
                     }
+                if (pts.Count < 3) continue;
+
+                double[] nrm = Bridge.GetFaceNormal(i);
+                if (nrm == null) continue;
+
+                var origin = new Vec3(pts.Average(v => v.X), pts.Average(v => v.Y), pts.Average(v => v.Z));
+                var normal = new Vec3(nrm[0], nrm[1], nrm[2]);
+                Vec3 farthest = pts.OrderByDescending(v => (v - origin).Length).First();
+                var frame = new ProjectionFrame(origin, normal, farthest - origin);
+
+                double minX = double.MaxValue, maxX = double.MinValue, minY = double.MaxValue, maxY = double.MinValue;
+                foreach (var vtx in pts)
+                {
+                    Vec2 q = frame.Project(vtx);
+                    if (q.X < minX) minX = q.X;
+                    if (q.X > maxX) maxX = q.X;
+                    if (q.Y < minY) minY = q.Y;
+                    if (q.Y > maxY) maxY = q.Y;
                 }
-                double wd = maxU - minU, ht = maxV - minV;
-                if (wd < 1 || ht < 1) continue;
-                candidates.Add(Tuple.Create(i, string.Format("#{0} 평면 {1:F0}×{2:F0}", i, wd, ht), wd * ht));
+                double wd = maxX - minX, ht = maxY - minY;
+                if (wd < 2 || ht < 2) continue;
+                candidates.Add(Tuple.Create(i, string.Format("#{0} {1} {2:F0}×{3:F0}", i, type, wd, ht), wd * ht));
             }
             candidates.Sort((a, b) => b.Item3.CompareTo(a.Item3));   // 큰 면 우선
             foreach (var c in candidates) FaceCombo.Items.Add(new FaceItem { Index = c.Item1, Label = c.Item2 });
             if (FaceCombo.Items.Count > 0) FaceCombo.SelectedIndex = 0;
         }
 
-        private static List<Vec2> ToVec2List(double[] flat)
+        /// <summary>UV 경계 점들을 면 위 3D 점으로 샘플링.</summary>
+        private List<Vec3> SampleWire3D(int faceIndex, UvWire w)
         {
-            var list = new List<Vec2>(flat.Length / 2);
-            for (int i = 0; i + 1 < flat.Length; i += 2) list.Add(new Vec2(flat[i], flat[i + 1]));
+            var list = new List<Vec3>(w.Points.Length / 2);
+            for (int k = 0; k + 1 < w.Points.Length; k += 2)
+            {
+                var p = Bridge.SampleUvTo3D(faceIndex, w.Points[k], w.Points[k + 1]);
+                if (p != null) list.Add(new Vec3(p[0], p[1], p[2]));
+            }
             return list;
+        }
+
+        /// <summary>UV 격자를 투영 2D로 사영해 둔 역매핑 테이블 (투영 2D → UV).</summary>
+        private UvProjectionGrid BuildUvGrid(int faceIndex, UvWire[] wires, ProjectionFrame frame)
+        {
+            double minU = double.MaxValue, maxU = double.MinValue, minV = double.MaxValue, maxV = double.MinValue;
+            foreach (var w in wires)
+                for (int k = 0; k + 1 < w.Points.Length; k += 2)
+                {
+                    double u = w.Points[k], v = w.Points[k + 1];
+                    if (u < minU) minU = u;
+                    if (u > maxU) maxU = u;
+                    if (v < minV) minV = v;
+                    if (v > maxV) maxV = v;
+                }
+
+            const int n = 32;
+            double du = (maxU - minU) / n, dv = (maxV - minV) / n;
+            if (!(du > 0)) du = 1;
+            if (!(dv > 0)) dv = 1;
+
+            int count = (n + 1) * (n + 1);
+            var us = new double[count];
+            var vs = new double[count];
+            var xs = new double[count];
+            var ys = new double[count];
+            for (int i = 0; i <= n; i++)
+                for (int j = 0; j <= n; j++)
+                {
+                    int idx = i * (n + 1) + j;
+                    double u = minU + i * du, v = minV + j * dv;
+                    us[idx] = u; vs[idx] = v;
+                    var p = Bridge.SampleUvTo3D(faceIndex, u, v);
+                    if (p == null) { xs[idx] = double.NaN; ys[idx] = double.NaN; }
+                    else { Vec2 q = frame.Project(new Vec3(p[0], p[1], p[2])); xs[idx] = q.X; ys[idx] = q.Y; }
+                }
+            return new UvProjectionGrid(n, us, vs, xs, ys);
         }
 
         private void TryGetParams(out double margin, out double spacing, out double width)
@@ -119,9 +176,11 @@ namespace HeatingMold.App
         {
             if (!(FaceCombo.SelectedItem is FaceItem fi))
             {
-                StatusText.Text = "면을 선택하세요 (평면만 목록에 표시)";
+                StatusText.Text = "면을 선택하세요";
                 return;
             }
+
+            string type = Bridge.GetFaceType(fi.Index);
 
             var wires = Bridge.GetFaceUvBoundary(fi.Index);
             if (wires == null || wires.Length == 0)
@@ -130,18 +189,54 @@ namespace HeatingMold.App
                 return;
             }
 
-            UvWire outer = wires.FirstOrDefault(w => w.IsOuter) ?? wires[0];
-            List<Vec2> outerRing = ToVec2List(outer.Points);
-            var holes = wires.Where(w => !ReferenceEquals(w, outer))
-                             .Select(w => (IReadOnlyList<Vec2>)ToVec2List(w.Points))
-                             .Where(h => h.Count >= 3)
-                             .ToList();
+            double[] nrm = Bridge.GetFaceNormal(fi.Index);
+            if (nrm == null)
+            {
+                StatusText.Text = "면 법선 계산 실패 — #" + fi.Index;
+                return;
+            }
+
+            // 1) 경계 UV → 3D 샘플
+            var wire3D = new List<List<Vec3>>(wires.Length);
+            foreach (var w in wires) wire3D.Add(SampleWire3D(fi.Index, w));
+            var allPts = wire3D.Where(l => l.Count > 0).SelectMany(l => l).ToList();
+            if (allPts.Count < 3)
+            {
+                StatusText.Text = "경계 3D 샘플 실패 — #" + fi.Index;
+                return;
+            }
+
+            // 2) 투영 프레임 — 원점 = 경계 3D 중심, 방향 = 면 중심 법선 (정사영)
+            var origin = new Vec3(allPts.Average(p => p.X), allPts.Average(p => p.Y), allPts.Average(p => p.Z));
+            var normal = new Vec3(nrm[0], nrm[1], nrm[2]);
+            Vec3 farthest = allPts.OrderByDescending(p => (p - origin).Length).First();
+            var frame = new ProjectionFrame(origin, normal, farthest - origin);
+
+            // 3) 경계 → 투영 2D
+            var planar = wire3D.Select(l => l.Select(frame.Project).ToList()).ToList();
+            int outerIdx = 0;
+            for (int i = 0; i < wires.Length; i++) { if (wires[i].IsOuter) { outerIdx = i; break; } }
+            List<Vec2> outerRing = planar[outerIdx];
+            if (outerRing.Count < 3)
+            {
+                StatusText.Text = "외곽 투영 실패 — #" + fi.Index;
+                return;
+            }
+            var holes = new List<IReadOnlyList<Vec2>>();
+            for (int i = 0; i < planar.Count; i++)
+            {
+                if (i == outerIdx) continue;
+                if (planar[i].Count >= 3) holes.Add(planar[i]);
+            }
+
+            // 4) 투영 2D → UV 역매핑 격자
+            UvProjectionGrid grid = BuildUvGrid(fi.Index, wires, frame);
 
             TryGetParams(out double margin, out double spacing, out double width);
 
             var sw = Stopwatch.StartNew();
             SerpentineResult result = Serpentine.Generate(outerRing, holes,
-                new PatternParams { Margin = margin, Spacing = spacing, RibbonWidth = width });
+                new PatternParams { Margin = margin, Spacing = spacing });
             sw.Stop();
 
             if (result.Segments.Count == 0)
@@ -150,26 +245,61 @@ namespace HeatingMold.App
                 return;
             }
 
-            // 리본 밴드 외곽선(선폭) → 3D 오버레이 + 정면 시점
+            // 5) 리본 밴드(투영 2D) → 역매핑(UV) → 면 위 3D 오버레이 (시점 유지)
             List<List<Vec2>> ribbon = RegionOps.StrokePath(result.Path, width);
             if (ribbon.Count > 0)
             {
                 List<Vec2> band = ribbon.OrderByDescending(r => Math.Abs(RegionOps.SignedArea(r))).First();
-                var flat = new double[band.Count * 2];
-                for (int i = 0; i < band.Count; i++) { flat[i * 2] = band[i].X; flat[i * 2 + 1] = band[i].Y; }
-                Bridge.BuildWire3D(fi.Index, flat, true);
+                var uvFlat = new double[band.Count * 2];
+                bool mapped = true;
+                for (int i = 0; i < band.Count; i++)
+                {
+                    if (!grid.TryMap(band[i], out double u, out double v)) { mapped = false; break; }
+                    uvFlat[i * 2] = u;
+                    uvFlat[i * 2 + 1] = v;
+                }
+                // 다른 면의 오버레이는 브리지가 유지하므로 여기서 지우지 않는다.
+                if (mapped) Bridge.BuildWire3D(fi.Index, uvFlat, true);
             }
-            double[] n = Bridge.GetFaceNormal(fi.Index);
-            if (n != null) Bridge.SetViewDirection(n[0], n[1], n[2]);
 
             _pattern = result;
             _patternFaceIndex = fi.Index;
-            _outlineRings = wires.Select(w => ToVec2List(w.Points)).ToList();
-            _heatPathUv = result.Path.ToList();
+            _outlineRings = planar;
+            _heatPath2D = result.Path.ToList();
 
             StatusText.Text = string.Format(
-                "패턴 — 면 #{0} · 레인 {1} · 세그먼트 {2} · 총길이 {3:F1}mm · {4}ms",
-                fi.Index, result.LaneCount, result.Segments.Count, result.TotalLength, sw.ElapsedMilliseconds);
+                "패턴 — 면 #{0} ({1}) · 레인 {2} · 세그먼트 {3} · 총길이 {4:F1}mm · {5}ms",
+                fi.Index, type, result.LaneCount, result.Segments.Count, result.TotalLength, sw.ElapsedMilliseconds);
+        }
+
+        private void OnFaceHovered(int faceIndex)
+        {
+            if (faceIndex < 0)
+            {
+                HoverText.Text = "";
+                return;
+            }
+            string type = Bridge.GetFaceType(faceIndex);
+            HoverText.Text = string.Format("호버 #{0} ({1})", faceIndex, type);
+        }
+
+        private void OnFacePicked(int faceIndex)
+        {
+            if (faceIndex < 0)
+            {
+                StatusText.Text = "면을 찾지 못했습니다";
+                return;
+            }
+            string type = Bridge.GetFaceType(faceIndex);
+            FaceItem match = FaceCombo.Items.OfType<FaceItem>().FirstOrDefault(f => f.Index == faceIndex);
+            if (match == null)
+            {
+                // Face missing from combo (filtered by UV size) -> add it so the click selection is honored
+                match = new FaceItem { Index = faceIndex, Label = string.Format("#{0} {1} (picked)", faceIndex, type) };
+                FaceCombo.Items.Add(match);
+            }
+            FaceCombo.SelectedItem = match;
+            StatusText.Text = string.Format("면 선택 — #{0} ({1})", faceIndex, type);
         }
 
         private void Export_Click(object sender, RoutedEventArgs e)
@@ -188,7 +318,7 @@ namespace HeatingMold.App
 
             try
             {
-                DxfExporter.Export(file, _outlineRings, _heatPathUv, width);
+                DxfExporter.Export(file, _outlineRings, _heatPath2D, width);
                 StatusText.Text = "DXF 저장 — " + file;
             }
             catch (Exception ex)
@@ -226,14 +356,6 @@ namespace HeatingMold.App
         private void ZoomIn_Click(object sender, RoutedEventArgs e) => Bridge.ZoomView(1.25);
 
         private void ZoomOut_Click(object sender, RoutedEventArgs e) => Bridge.ZoomView(0.8);
-
-        private void Color_Click(object sender, RoutedEventArgs e)
-        {
-            _colorBlue = !_colorBlue;
-            if (_colorBlue) Bridge.SetShapeColor(0.55, 0.65, 0.85);
-            else Bridge.SetShapeColor(0.90, 0.45, 0.20);
-            StatusText.Text = _colorBlue ? "색상: 스틸 블루" : "색상: 오렌지";
-        }
 
         private void Hlr_Click(object sender, RoutedEventArgs e)
         {

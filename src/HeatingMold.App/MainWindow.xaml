@@ -13,7 +13,6 @@
                 <Button Content="줌 +" Click="ZoomIn_Click" Padding="8,2"/>
                 <Button Content="줌 −" Click="ZoomOut_Click" Padding="8,2"/>
                 <Separator/>
-                <Button Content="색상 전환" Click="Color_Click" Padding="8,2"/>
                 <Button Content="HLR 스모크" Click="Hlr_Click" Padding="8,2"/>
             </ToolBar>
             <ToolBar>
@@ -34,6 +33,8 @@
             </ToolBar>
         </ToolBarTray>
         <StatusBar DockPanel.Dock="Bottom">
+            <TextBlock x:Name="HoverText" Text="" MinWidth="170" Foreground="#0A6A2F"/>
+            <Separator/>
             <TextBlock x:Name="StatusText" Text="준비"/>
         </StatusBar>
         <local:OccViewport x:Name="Viewport"/>
