@@ -1,0 +1,54 @@
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepPrimAPI_MakeSphere.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopoDS_Wire.hxx>
+#include <STEPControl_Writer.hxx>
+#include <fstream>
+#include <iterator>
+#include <string>
+
+static TopoDS_Wire Rectangle(double x0,double y0,double x1,double y1,double z)
+{
+    BRepBuilderAPI_MakePolygon p;
+    p.Add(gp_Pnt(x0,y0,z)); p.Add(gp_Pnt(x1,y0,z));
+    p.Add(gp_Pnt(x1,y1,z)); p.Add(gp_Pnt(x0,y1,z)); p.Close();
+    return p.Wire();
+}
+static TopoDS_Face Sheet(double x0,double y0,double x1,double y1,double z)
+{ return BRepBuilderAPI_MakeFace(Rectangle(x0,y0,x1,y1,z)).Face(); }
+int main(int argc,char** argv)
+{
+    if (argc!=2) return 1;
+    auto write=[&](const char* name,const TopoDS_Shape& shape) {
+        STEPControl_Writer writer; writer.Transfer(shape,STEPControl_AsIs);
+        const std::string path=std::string(argv[1])+"/"+name+".stp";
+        if (writer.Write(path.c_str())!=IFSelect_RetDone) return false;
+        std::ifstream input(path);
+        std::string text((std::istreambuf_iterator<char>(input)),std::istreambuf_iterator<char>()); input.close();
+        const std::string key="REPRESENTATION('',(#11,";
+        auto at=text.find(key); if (at==std::string::npos) return false;
+        text.replace(at,key.size(),"REPRESENTATION('supplemental geometry',(#11,");
+        std::ofstream output(path); output<<text; return output.good();
+    };
+    BRep_Builder builder;
+    TopoDS_Compound layered; builder.MakeCompound(layered);
+    builder.Add(layered,Sheet(-50,-30,50,30,0)); // lower full sheet
+    builder.Add(layered,Sheet(-20,-10,20,10,20)); // upper partial occluder
+    TopoDS_Compound ring; builder.MakeCompound(ring);
+    builder.Add(ring,Sheet(0,0,100,20,0)); builder.Add(ring,Sheet(0,80,100,100,0));
+    builder.Add(ring,Sheet(0,20,20,80,0)); builder.Add(ring,Sheet(80,20,100,80,0));
+    TopoDS_Compound tangentBack; builder.MakeCompound(tangentBack);
+    builder.Add(tangentBack,BRepPrimAPI_MakeSphere(gp_Pnt(0,0,0),20).Shape());
+    builder.Add(tangentBack,Sheet(-40,-40,40,40,-30));
+    TopoDS_Compound trimmed; builder.MakeCompound(trimmed);
+    BRepBuilderAPI_MakeFace top(Rectangle(-50,-30,50,30,20));
+    auto hole=Rectangle(-10,-10,10,10,20); hole.Reverse(); top.Add(hole);
+    builder.Add(trimmed,top.Face()); builder.Add(trimmed,Sheet(-70,-50,70,50,0));
+    return write("layers",layered) && write("ring",ring) &&
+        write("trimmedVisibility",trimmed) &&
+        write("tangentBack",tangentBack) &&
+        write("sphere",BRepPrimAPI_MakeSphere(gp_Pnt(0,0,0),20).Shape()) ? 0 : 2;
+}

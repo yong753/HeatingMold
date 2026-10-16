@@ -2,6 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Threading;
 using HeatingMold.OccBridge;
 
 namespace HeatingMold.App
@@ -116,6 +117,8 @@ namespace HeatingMold.App
 
         private const int WM_LBUTTONDOWN = 0x0201;
         private const int WM_LBUTTONUP = 0x0202;
+        private const int WM_RBUTTONDOWN = 0x0204;
+        private const int WM_RBUTTONUP = 0x0205;
         private const int WM_MOUSEMOVE = 0x0200;
         private const int WM_MOUSEWHEEL = 0x020A;
         private const int WM_MOUSELEAVE = 0x02A3;
@@ -126,6 +129,7 @@ namespace HeatingMold.App
         private IntPtr _hwnd;
         private bool _ready;
         private bool _dragging;
+        private bool _panDragging;
         private bool _dragStarted;
         private bool _trackingMouse;
         private int _downX, _downY;
@@ -133,7 +137,31 @@ namespace HeatingMold.App
         private int _lastExclusionPreviewX, _lastExclusionPreviewY;
         private int _lastHover = -2;      // W5 — 호버 이벤트 중복 억제
         private int _activeDragMode; // 0=orbit, 1=rectangle selection, 2=exclusion sketch
-        public bool ConnectorEditMode { get; set; }
+        private bool _connectorEditMode;
+        private bool _circuitHoverMode;
+        public bool ConnectorEditMode
+        {
+            get => _connectorEditMode;
+            set { if (_connectorEditMode == value) return; _connectorEditMode = value; if (!value) ConnectorHovered?.Invoke(-1); }
+        }
+        public bool CircuitHoverMode
+        {
+            get => _circuitHoverMode;
+            set { if (_circuitHoverMode == value) return; _circuitHoverMode = value; if (!value) RoutePieceHovered?.Invoke(-1); }
+        }
+        private bool _powerLocationMode;
+        private DispatcherTimer _powerPreviewTimer;
+        private (int X, int Y)? _pendingPowerPreview, _lastPowerPreview;
+        public bool PowerLocationMode
+        {
+            get => _powerLocationMode;
+            set
+            {
+                CancelPowerLeadPreview();
+                if (_powerLocationMode == value) return;
+                _powerLocationMode = value;
+            }
+        }
 
         private const int ClickDragThreshold = 4;   // px — 이하면 클릭(픽킹), 초과 시 회전
 
@@ -147,12 +175,50 @@ namespace HeatingMold.App
         public event Action<int, int, int, int> ExclusionSketchCompleted;
         public event Action ExclusionSketchCancelled;
         public event Action<int> ConnectorHovered;
+        public event Action<int> RoutePieceHovered;
         public event Action<int> ConnectorPicked;
+        public event Action<int, int> PowerLocationPicked;
+        public event Action<int, int> PowerLocationMoved;
+        public bool WorkingBoundaryPickMode { get; set; }
+        public event Action<int, int> WorkingBoundaryPicked;
 
         public bool RectangleSelectionMode { get; set; }
         public bool ExclusionSketchMode { get; set; }
 
         public bool IsReady => _ready;
+
+        // Only the latest cursor is projected, at most once per 100 ms. Duplicate
+        // pixels do not rerun OCCT; all navigation/lifecycle exits invalidate it.
+        private void QueuePowerLocationPreview(int x, int y)
+        {
+            var point = (X: x, Y: y);
+            if (_pendingPowerPreview == point || (_pendingPowerPreview == null && _lastPowerPreview == point)) return;
+            _pendingPowerPreview = point;
+            if (_powerPreviewTimer == null)
+            {
+                _powerPreviewTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+                    { Interval = TimeSpan.FromMilliseconds(100) };
+                _powerPreviewTimer.Tick += FlushPowerLocationPreview;
+            }
+            if (!_powerPreviewTimer.IsEnabled) _powerPreviewTimer.Start();
+        }
+
+        private void FlushPowerLocationPreview(object sender, EventArgs e)
+        {
+            _powerPreviewTimer?.Stop();
+            var point = _pendingPowerPreview;
+            _pendingPowerPreview = null;
+            if (!_ready || !PowerLocationMode || _dragging || _panDragging || point == null || point == _lastPowerPreview) return;
+            _lastPowerPreview = point;
+            PowerLocationMoved?.Invoke(point.Value.X, point.Value.Y);
+        }
+
+        public void CancelPowerLeadPreview()
+        {
+            _powerPreviewTimer?.Stop();
+            _pendingPowerPreview = _lastPowerPreview = null;
+            Bridge.ClearPowerLeadPreview();
+        }
 
         protected override HandleRef BuildWindowCore(HandleRef hwndParent)
         {
@@ -165,6 +231,7 @@ namespace HeatingMold.App
 
         protected override void DestroyWindowCore(HandleRef hwnd)
         {
+            CancelPowerLeadPreview();
             _ready = false;
             _dragging = false;
             _dragStarted = false;
@@ -183,6 +250,7 @@ namespace HeatingMold.App
         protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
         {
             base.OnRenderSizeChanged(sizeInfo);
+            CancelPowerLeadPreview();
             if (_ready) Bridge.ResizeView((int)ActualWidth, (int)ActualHeight);
         }
 
@@ -191,6 +259,7 @@ namespace HeatingMold.App
             switch (msg)
             {
                 case WM_LBUTTONDOWN:
+                    CancelPowerLeadPreview();
                     SetCapture(hwnd);
                     _dragging = true;
                     _dragStarted = false;
@@ -200,8 +269,28 @@ namespace HeatingMold.App
                     _lastExclusionPreviewY = _downY;
                     _lastSelectionPreviewX = _downX;
                     _lastSelectionPreviewY = _downY;
-                    _activeDragMode = ExclusionSketchMode ? 2 : (RectangleSelectionMode ? 1 : 0);
+                    _activeDragMode = PowerLocationMode || WorkingBoundaryPickMode ? 0 : (ExclusionSketchMode ? 2 : (RectangleSelectionMode ? 1 : 0));
                     handled = true;
+                    break;
+
+                case WM_RBUTTONDOWN:
+                    CancelPowerLeadPreview();
+                    SetCapture(hwnd);
+                    _panDragging = true;
+                    _downX = LoWord(lParam);
+                    _downY = HiWord(lParam);
+                    if (_ready) Bridge.PanStart(_downX, _downY);
+                    handled = true;
+                    break;
+
+                case WM_RBUTTONUP:
+                    if (_panDragging)
+                    {
+                        if (_ready) Bridge.PanEnd();
+                        _panDragging = false;
+                        ReleaseCapture();
+                        handled = true;
+                    }
                     break;
 
                 case WM_MOUSEMOVE:
@@ -219,6 +308,12 @@ namespace HeatingMold.App
                     }
 
                     int x = LoWord(lParam), y = HiWord(lParam);
+                    if (_panDragging)
+                    {
+                        if (_ready) Bridge.PanMove(x, y);
+                        handled = true;
+                        break;
+                    }
                     if (_dragging)
                     {
                         if (!_dragStarted)
@@ -230,6 +325,7 @@ namespace HeatingMold.App
                                 if (_activeDragMode == 0)
                                 {
                                     Bridge.ClearHover();          // 회전 중 잔상 방지
+                                    CancelPowerLeadPreview();
                                     Bridge.RotateStart(_downX, _downY);
                                 }
                             }
@@ -254,9 +350,19 @@ namespace HeatingMold.App
                             handled = true;
                         }
                     }
+                    else if (_ready && WorkingBoundaryPickMode) { /* Diagnostic clicks do not select whole faces. */ }
+                    else if (_ready && PowerLocationMode)
+                    {
+                        // Do not highlight/select faces or connectors while choosing destinations.
+                        QueuePowerLocationPreview(x, y);
+                    }
                     else if (_ready && ConnectorEditMode)
                     {
                         ConnectorHovered?.Invoke(Bridge.PickConnector(x, y));
+                    }
+                    else if (_ready && CircuitHoverMode)
+                    {
+                        RoutePieceHovered?.Invoke(Bridge.PickRoutePiece(x, y));
                     }
                     else if (_ready)
                     {
@@ -271,8 +377,11 @@ namespace HeatingMold.App
                 }
 
                 case WM_MOUSELEAVE:
+                    CancelPowerLeadPreview();
                     _trackingMouse = false;
                     Bridge.ClearHover();
+                    ConnectorHovered?.Invoke(-1);
+                    RoutePieceHovered?.Invoke(-1);
                     if (_lastHover != -1)
                     {
                         _lastHover = -1;
@@ -299,6 +408,15 @@ namespace HeatingMold.App
                             else if (_activeDragMode == 2)
                                 ExclusionSketchCompleted?.Invoke(_downX, _downY, x, y);
                         }
+                        else if (_activeDragMode == 0 && WorkingBoundaryPickMode)
+                        {
+                            WorkingBoundaryPicked?.Invoke(LoWord(lParam), HiWord(lParam));
+                        }
+                        else if (_activeDragMode == 0 && PowerLocationMode)
+                        {
+                            CancelPowerLeadPreview();
+                            PowerLocationPicked?.Invoke(LoWord(lParam), HiWord(lParam));
+                        }
                         else if (_activeDragMode == 0 && ConnectorEditMode)
                         {
                             ConnectorPicked?.Invoke(Bridge.PickConnector(LoWord(lParam), HiWord(lParam)));
@@ -316,7 +434,10 @@ namespace HeatingMold.App
                     break;
 
                 case WM_CAPTURECHANGED:
+                    CancelPowerLeadPreview();
                     _dragging = false;
+                    if (_panDragging && _ready) Bridge.PanEnd();
+                    _panDragging = false;
                     if (_activeDragMode == 1) Bridge.ClearSelectionRectangle();
                     if (_activeDragMode == 2 && _dragStarted) ExclusionSketchCancelled?.Invoke();
                     _dragStarted = false;
@@ -331,9 +452,8 @@ namespace HeatingMold.App
                         Y = (short)(((long)lParam >> 16) & 0xFFFF)
                     };
                     ScreenToClient(hwnd, ref point);
-                    int steps = delta / 120;
-                    if (steps == 0) steps = delta > 0 ? 1 : -1;
-                    Bridge.ZoomViewAtPoint(point.X, point.Y, steps * 12);
+                    CancelPowerLeadPreview();
+                    Bridge.ZoomViewAtPoint(point.X, point.Y, WheelZoomAmount(delta));
                     handled = true;
                     break;
                 }
@@ -349,6 +469,13 @@ namespace HeatingMold.App
                     break;
             }
             return IntPtr.Zero;
+        }
+
+        private static int WheelZoomAmount(int delta)
+        {
+            int steps = delta / 120;
+            if (steps == 0) steps = delta > 0 ? 1 : -1;
+            return -steps * 12; // Invert only wheel input, not toolbar zoom commands.
         }
 
         private static int LoWord(IntPtr v) => (short)((long)v & 0xFFFF);

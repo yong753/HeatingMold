@@ -60,9 +60,54 @@ public:
 /// OCCT 최소 브리지 (S1 스파이크, /clr:netcore net8.0).
 /// 상태는 프로세스 전역(단일 문서) — 본 개발에서 handle 기반으로 전환 예정.
 /// </summary>
+public enum class WorkingQueryStatus { Hit, Miss, Tangent, InvalidInput, StaleContext, GeometryFailure };
+public ref class WorkingContext
+{
+public:
+    property long long Id;
+    property long long Revision;
+    property array<double>^ Frame; // origin, X, Y, N (12 doubles)
+    property array<double>^ Triangles; // world XYZ triples, 9 doubles per triangle
+    property double MeshDeflection;
+};
+public ref class WorkingHit
+{
+public:
+    property long long ContextId;
+    property long long Revision;
+    property array<double>^ DatumPoint;
+    property WorkingQueryStatus Status;
+    property array<double>^ Point;
+    property int FaceId;
+};
+/// <summary>Revision-owned presentation/camera savepoint. Release after restore or commit.</summary>
+public ref class WorkingPresentation
+{
+public:
+    property long long Id;
+    property long long Revision;
+    property int BoundaryCount;
+    property array<double>^ BoundaryBounds;
+    property array<double>^ DiagnosticPoint;
+};
+
 public ref class Bridge abstract sealed
 {
 public:
+    static long long GetModelRevision();
+    static WorkingContext^ CreateWorkingContext(double nx, double ny, double nz, double xx, double xy, double xz);
+    static void ReleaseWorkingContext(long long id);
+    static WorkingHit^ QueryWorkingSurface(long long id, long long revision, double u, double v);
+    static array<double>^ WorkingPointToScreen(long long id, long long revision, double x, double y, double z);
+    static bool IsWorkingPointVisible(long long id, long long revision, double x, double y, double z, double tolerance);
+    static void ShowWorkingDiagnostic(array<double>^ xyz, bool point);
+    static void ShowWorkingBoundary(array<array<double>^>^ loops);
+    static void ShowWorkingBoundary(array<array<double>^>^ loops, array<bool>^ holes);
+    static bool ReturnToWorkingFront(long long id, long long revision);
+    static void SetViewPerspective(bool perspective);
+    static WorkingPresentation^ CaptureWorkingPresentation();
+    static bool RestoreWorkingPresentation(long long id);
+    static void ReleaseWorkingPresentation(long long id);
     // ---- 로드/기하 (S1 항목 2·3·4) ----
     /// <summary>STEP 파일 로드 (성공 여부 반환). 뷰어 초기화 후면 즉시 표시+Fit</summary>
     static bool LoadStep(System::String^ path);
@@ -88,7 +133,9 @@ public:
     static array<double>^ ProjectPointToFace(int faceIndex, double x, double y, double z);
     /// <summary>Cast a directed world-space ray onto trimmed faces; nearest forward hit [x,y,z,faceId], or null.</summary>
     static array<double>^ IntersectSelectedFaces(array<int>^ faceIds, double x, double y, double z,
-                                                double nx, double ny, double nz);
+                                                 double nx, double ny, double nz);
+    /// <summary>Pick the nearest visible point on the selected faces only when it is on their trim boundary.</summary>
+    static array<double>^ PickSelectedBoundaryPoint(array<int>^ faceIds, int x, int y);
     /// <summary>Project source wire along a fixed axis, then shift result by insertionDepth along that axis; returns [success, length, edgeCount, wireCount, statusCode].</summary>
     static array<double>^ ProjectPathWireOntoSelectedFaces(array<int>^ faceIds, array<double>^ xyzFlat,
                                                            double dx, double dy, double dz, double insertionDepth);
@@ -98,8 +145,21 @@ public:
     /// <summary>Toggle connector presentation; disabled connectors are shown as dashed guides.</summary>
     static bool SetConnectorEnabled(int pieceId, bool enabled, double r, double g, double b);
     static void ClearRoutePieces();
+    /// <summary>Project datum start-to-destination onto heating faces, then continue externally.
+    /// Returns [status (1=success; negative=failure), total, surface, external] lengths in mm.</summary>
+    static array<double>^ ProjectPowerLead(int leadId, array<double>^ sourceAndDestination,
+        array<double>^ actualStart, array<int>^ faceIds, double dx, double dy, double dz, double depth);
+    /// <summary>previewOnly uses the same validation but replaces only transient cyan geometry.</summary>
+    static array<double>^ ProjectPowerLead(int leadId, array<double>^ sourceAndDestination,
+        array<double>^ actualStart, array<int>^ faceIds, double dx, double dy, double dz, double depth,
+        bool previewOnly);
+    /// <summary>Remove only the transient power destination/lead; committed leads are untouched.</summary>
+    static void ClearPowerLeadPreview();
+    static void ClearPowerLeads();
     /// <summary>Return connector piece ID under screen point, or -1.</summary>
     static int PickConnector(int x, int y);
+    static int PickRoutePiece(int x, int y);
+    static void HighlightCircuit(array<int>^ pieceIds);
 
     // ---- AIS 뷰어 (S1 항목 1·6) — WPF HwndHost 자식 HWND 임베드 ----
     /// <summary>자식 HWND에 OpenGl 뷰어 초기화 (1회). 이미 로드된 셰이프가 있으면 표시+Fit</summary>
@@ -119,6 +179,9 @@ public:
 
     /// <summary>회전 종료 (현재는 no-op — StartRotation/Rotation 쌍으로 충분)</summary>
     static void RotateEnd();
+    static void PanStart(int x, int y);
+    static void PanMove(int x, int y);
+    static void PanEnd();
 
     /// <summary>상대 줌 (factor &gt; 1 확대, &lt; 1 축소) — 내부적으로 Redraw</summary>
     static void ZoomView(double factor);

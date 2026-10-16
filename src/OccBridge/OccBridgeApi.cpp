@@ -32,6 +32,9 @@
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRep_Builder.hxx>
@@ -80,6 +83,8 @@
 #include <AIS_ColoredDrawer.hxx>
 #include <AIS_SelectionScheme.hxx>
 #include <AIS_Shape.hxx>
+#include <AIS_Point.hxx>
+#include <Geom_CartesianPoint.hxx>
 #include <AIS_InteractiveObject.hxx>
 #include <AIS_RubberBand.hxx>
 #include <WNT_Window.hxx>
@@ -101,8 +106,11 @@
 
 // 메싱 (W2 — shaded 렌더링 실패 원인 대응) — TKMesh
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <Poly_Triangulation.hxx>
+#include <Graphic3d_Camera.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_ShadingAspect.hxx>
+#include <Prs3d_PointAspect.hxx>
 
 // 면 픽킹 (W3) — 서브셰이프 선택
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -136,6 +144,8 @@ namespace
     std::map<int, double> g_surfaceTolerances;
     TopTools_IndexedMapOfShape g_faceMap;   // W3 픽킹: g_faces와 같은 순회로 구축 (인덱스 1:1)
     gp_Dir g_autoAxes[3] = { gp::DX(), gp::DY(), gp::DZ() };
+    long long g_modelRevision = 0;
+    void InvalidateWorkingContexts();
 
     bool TryGetSupplementalAxes(const Handle(StepData_StepModel)& model)
     {
@@ -260,8 +270,13 @@ namespace
     std::set<int> g_selectedFaceIds;
     std::map<int, Handle(AIS_Shape)> g_overlays;   // S3 사행 오버레이 — 면별 유지 (다른 면 생성 시에도 보존)
     std::vector<Handle(AIS_Shape)> g_worldOverlays;
-    struct RoutePieceOverlay { Handle(AIS_Shape) ais; bool connector; bool enabled; };
+    std::map<int, Handle(AIS_Shape)> g_powerLeads;
+    Handle(AIS_Shape) g_powerLeadPreview;
+    Handle(AIS_Point) g_powerDestinationPreview;
+    struct RoutePieceOverlay { Handle(AIS_Shape) ais; bool connector; bool enabled; Quantity_Color color; double width; };
     std::map<int, RoutePieceOverlay> g_routePieces;
+    std::set<int> g_hoveredCircuitPieces;
+    void HighlightCircuitNative(const std::vector<int>& ids);
     std::vector<Handle(AIS_Shape)> g_exclusionOverlays;
     Handle(AIS_Shape) g_exclusionPreview;
     Handle(AIS_RubberBand) g_selectionRubberBand;
@@ -902,8 +917,21 @@ namespace
                 if (first.IsNull()) first = a;
                 last = b;
             }
-            if (first.IsNull() || last.IsNull() || !std::isfinite(props.Mass())) return false;
-            const gp_Pnt a = BRep_Tool::Pnt(first), b = BRep_Tool::Pnt(last);
+            if (first.IsNull() || last.IsNull() || !std::isfinite(props.Mass()) || props.Mass() <= Precision::Confusion() ||
+                !BRepCheck_Analyzer(wires.front()).IsValid()) return false;
+            size_t orderedCount = 0, edgeCount = 0;
+            for (BRepTools_WireExplorer ex(wires.front()); ex.More(); ex.Next()) ++orderedCount;
+            for (TopExp_Explorer ex(wires.front(), TopAbs_EDGE); ex.More(); ex.Next()) ++edgeCount;
+            if (orderedCount != edgeCount) return false;
+            gp_Pnt a = BRep_Tool::Pnt(first), b = BRep_Tool::Pnt(last);
+            const gp_Pnt sourceA(xyz[0], xyz[1], xyz[2]);
+            const gp_Pnt sourceB(xyz[xyz.size()-3], xyz[xyz.size()-2], xyz[xyz.size()-1]);
+            auto transverseDistance = [&direction](const gp_Pnt& p, const gp_Pnt& q) {
+                gp_Vec v(p, q); return (v - gp_Vec(direction) * v.Dot(gp_Vec(direction))).Magnitude();
+            };
+            // OCCT may reverse the resulting wire. Results must follow the source route order.
+            if (transverseDistance(a, sourceA) > 0.01 || transverseDistance(b, sourceB) > 0.01) std::swap(a, b);
+            if (transverseDistance(a, sourceA) > 0.01 || transverseDistance(b, sourceB) > 0.01) return false;
             const gp_Vec offset = gp_Vec(direction) * depth;
             const gp_Pnt shownA = a.Translated(offset), shownB = b.Translated(offset);
             result[0] = props.Mass(); result[1] = shownA.X(); result[2] = shownA.Y(); result[3] = shownA.Z();
@@ -922,8 +950,9 @@ namespace
                 g_ctx->SetColor(ais, color, Standard_False);
                 if (connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
                 g_ctx->Display(ais, Standard_False); g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
-                if (connector) g_ctx->Activate(ais, Standard_False); else g_ctx->Deactivate(ais, Standard_False);
-                g_routePieces[pieceId] = { ais, connector, true };
+                // Every run and connector remains selectable for circuit hover.
+                g_ctx->Activate(ais, Standard_False);
+                g_routePieces[pieceId] = { ais, connector, true, color, 1.0 };
             }
             return true;
         } catch (const Standard_Failure&) { return false; }
@@ -934,7 +963,8 @@ namespace
         auto it = g_routePieces.find(id);
         if (it == g_routePieces.end() || !it->second.connector || g_ctx.IsNull()) return false;
         it->second.enabled = enabled;
-        g_ctx->SetColor(it->second.ais, Quantity_Color(r, g, b, Quantity_TOC_RGB), Standard_False);
+        it->second.color = Quantity_Color(r, g, b, Quantity_TOC_RGB);
+        g_ctx->SetColor(it->second.ais, it->second.color, Standard_False);
         it->second.ais->Attributes()->LineAspect()->SetTypeOfLine(enabled ? Aspect_TOL_SOLID : Aspect_TOL_DASH);
         g_ctx->Redisplay(it->second.ais, Standard_False);
         if (!g_view.IsNull()) g_view->Redraw();
@@ -943,8 +973,219 @@ namespace
 
     void ClearRoutePiecesNative()
     {
+        HighlightCircuitNative(std::vector<int>());
         if (!g_ctx.IsNull()) for (const auto& piece : g_routePieces) g_ctx->Remove(piece.second.ais, Standard_False);
         g_routePieces.clear();
+    }
+
+    void ClearPowerLeadPreviewNative()
+    {
+        if (!g_ctx.IsNull()) {
+            if (!g_powerLeadPreview.IsNull()) g_ctx->Remove(g_powerLeadPreview, Standard_False);
+            if (!g_powerDestinationPreview.IsNull()) g_ctx->Remove(g_powerDestinationPreview, Standard_False);
+        }
+        g_powerLeadPreview.Nullify();
+        g_powerDestinationPreview.Nullify();
+    }
+
+    void ClearPowerLeadsNative()
+    {
+        ClearPowerLeadPreviewNative();
+        if (!g_ctx.IsNull()) for (const auto& lead : g_powerLeads) g_ctx->Remove(lead.second, Standard_False);
+        g_powerLeads.clear();
+    }
+
+    // Validate the complete external segment, not just its destination. Projecting
+    // onto the WHOLE mold catches even elevated/unselected faces and concave re-entry.
+    bool ExternalLeadIsClear(const gp_Pnt& from, const gp_Pnt& to, const gp_Dir& direction)
+    {
+        const double tolerance = 1e-7;
+        const gp_Vec axis(direction);
+        gp_Vec along(from, to); along -= axis * along.Dot(axis);
+        const double span = along.Magnitude();
+        if (span <= tolerance) return false;
+        along /= span;
+        BRepBuilderAPI_MakePolygon source; source.Add(from); source.Add(to);
+        if (!source.IsDone()) return false;
+        // Keep faces independent: a tolerant imported neighbor must not merge
+        // away a narrow obstruction in a whole-shape projection operation.
+        for (const TopoDS_Face& face : g_faces) {
+            BRepProj_Projection footprint(source.Wire(), face, direction);
+            for (footprint.Init(); footprint.More(); footprint.Next()) {
+                for (TopExp_Explorer ex(footprint.Current(), TopAbs_EDGE); ex.More(); ex.Next()) {
+                    BRepAdaptor_Curve curve(TopoDS::Edge(ex.Current()));
+                    GCPnts_QuasiUniformDeflection sample(curve, 0.01);
+                    if (!sample.IsDone() || sample.NbPoints() < 2 || sample.NbPoints() > 100000) return false;
+                    for (int k = 1; k <= sample.NbPoints(); ++k) {
+                        const double t = gp_Vec(from, sample.Value(k)).Dot(along);
+                        // Only the exit point itself may touch the mold footprint.
+                        if (!std::isfinite(t) || t > tolerance) return false;
+                    }
+                }
+            }
+        }
+        // Also reject direct material intersections (including axis-parallel faces).
+        const gp_Vec segment(from, to);
+        IntCurvesFace_ShapeIntersector material;
+        material.Load(g_shape, tolerance);
+        material.Perform(gp_Lin(from, gp_Dir(segment)), tolerance, segment.Magnitude());
+        return material.IsDone() && material.NbPnt() == 0;
+    }
+
+    bool IsSelectedBoundaryPoint(const gp_Pnt& point, const std::vector<int>& faces, double& tolerance)
+    {
+        // Use model-space trim-edge distance, not a fixed UV classifier epsilon
+        // (UV units need not be mm). Imported edge/vertex tolerances may exceed
+        // the face tolerance; never exceed the route's 0.01 mm sewing budget.
+        const TopoDS_Vertex query = BRepBuilderAPI_MakeVertex(point).Vertex();
+        bool matched = false;
+        for (int id : faces) {
+            const TopoDS_Face& face = g_faces[id];
+            for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+                const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+                double cadTolerance = std::max(Precision::Confusion(),
+                    std::max(BRep_Tool::Tolerance(face), BRep_Tool::Tolerance(edge)));
+                for (TopExp_Explorer vertex(edge, TopAbs_VERTEX); vertex.More(); vertex.Next())
+                    cadTolerance = std::max(cadTolerance, BRep_Tool::Tolerance(TopoDS::Vertex(vertex.Current())));
+                const double acceptedTolerance = std::min(0.01, cadTolerance);
+                BRepExtrema_DistShapeShape distance(query, edge);
+                if (distance.IsDone() && distance.Value() <= acceptedTolerance) {
+                    tolerance = std::max(tolerance, acceptedTolerance);
+                    matched = true;
+                }
+            }
+        }
+        return matched;
+    }
+
+    // No sampled/floating fallback: retain the exact OCCT surface edges and add only
+    // the explicit external segment after the trimmed heating-face boundary.
+    void ProjectPowerLeadNative(int id, const std::vector<double>& xyz, const std::vector<double>& actual,
+        const std::vector<int>& faces, const gp_Dir& direction, double depth, double* result, bool previewOnly)
+    {
+        result[0] = -1;
+        if (g_shape.IsNull() || xyz.size() != 6 || actual.size() != 3 || faces.empty() ||
+            !std::isfinite(depth) || depth < 0) return;
+        for (double v : xyz) if (!std::isfinite(v)) return;
+        for (double v : actual) if (!std::isfinite(v)) return;
+        const gp_Pnt start(xyz[0], xyz[1], xyz[2]), destination(xyz[3], xyz[4], xyz[5]);
+        const gp_Pnt expected(actual[0], actual[1], actual[2]);
+        const gp_Vec axis(direction), offset = axis * depth;
+        gp_Vec along(start, destination); along -= axis * along.Dot(axis);
+        const double span = along.Magnitude();
+        if (span < 0.01) return;
+        along /= span;
+        BRepBuilderAPI_Sewing sewing(0.01, Standard_True, Standard_True, Standard_True, Standard_True);
+        std::set<int> unique;
+        for (int face : faces) {
+            if (face < 0 || face >= static_cast<int>(g_faces.size())) return;
+            if (unique.insert(face).second) sewing.Add(g_faces[face]);
+        }
+        sewing.Perform();
+        if (sewing.SewedShape().IsNull()) return;
+        const gp_Pnt end = destination.Translated(offset);
+        gp_Pnt b = expected;
+        TopoDS_Wire surfaceWire;
+        // A verified boundary endpoint directed immediately outside needs no
+        // projected edge. Inward directions fail this clearance test and still
+        // take the normal surface-projection path below.
+        const gp_Vec startDelta(start, expected);
+        double boundaryTolerance = Precision::Confusion();
+        const bool outwardBoundary = IsSelectedBoundaryPoint(expected.Translated(-offset), faces, boundaryTolerance) &&
+            (startDelta - axis * startDelta.Dot(axis)).Magnitude() <= boundaryTolerance &&
+            ExternalLeadIsClear(expected, end, direction);
+        if (!outwardBoundary) {
+            // Plane destinations must remain outside the entire mold. Boundary
+            // destinations are handled as surface endpoints, not axis-line hits.
+            IntCurvesFace_ShapeIntersector outside;
+            outside.Load(g_shape, 1e-7);
+            outside.Perform(gp_Lin(destination, direction), -1e100, 1e100);
+            result[0] = -2;
+            if (!outside.IsDone() || outside.NbPnt() != 0) return;
+            BRepBuilderAPI_MakePolygon source; source.Add(start); source.Add(destination);
+            if (!source.IsDone()) return;
+            BRepProj_Projection projection(source.Wire(), sewing.SewedShape(), direction);
+            std::vector<TopoDS_Wire> wires;
+            for (projection.Init(); projection.More(); projection.Next()) wires.push_back(projection.Current());
+            result[0] = -3;
+            // Multiple wires indicate a gap, re-entry or multiple surface layers.
+            if (wires.size() != 1 || !BRepCheck_Analyzer(wires[0]).IsValid()) return;
+            TopoDS_Vertex first, last;
+            size_t ordered = 0, edges = 0;
+            gp_Pnt previous;
+            for (BRepTools_WireExplorer ex(wires[0]); ex.More(); ex.Next()) {
+                TopoDS_Vertex a, b; TopExp::Vertices(ex.Current(), a, b, Standard_True);
+                if (a.IsNull() || b.IsNull()) return;
+                if (ordered && previous.Distance(BRep_Tool::Pnt(a)) > 0.01) return;
+                if (!ordered) first = a;
+                last = b; previous = BRep_Tool::Pnt(b); ++ordered;
+            }
+            for (TopExp_Explorer ex(wires[0], TopAbs_EDGE); ex.More(); ex.Next()) ++edges;
+            if (!ordered || ordered != edges) return;
+            gp_Pnt a = BRep_Tool::Pnt(first).Translated(offset); b = BRep_Tool::Pnt(last).Translated(offset);
+            if (b.Distance(expected) < a.Distance(expected)) { std::swap(a, b); wires[0].Reverse(); }
+            result[0] = -4;
+            if (a.Distance(expected) > 0.01) return;
+            const double exitParameter = gp_Vec(start, b).Dot(along);
+            if (exitParameter <= 1e-7 || exitParameter >= span - 1e-7) return;
+            // Check every curve sample stays on the projected source segment. This
+            // also rejects reversed/branching excursions instead of bridging them.
+            double previousParameter = -0.01;
+            for (BRepTools_WireExplorer ex(wires[0]); ex.More(); ex.Next()) {
+                BRepAdaptor_Curve curve(ex.Current());
+                GCPnts_QuasiUniformDeflection sample(curve, 0.01);
+                if (!sample.IsDone() || sample.NbPoints() > 100000) return;
+                for (int k = 1; k <= sample.NbPoints(); ++k) {
+                    gp_Pnt p = sample.Value(ex.Current().Orientation() == TopAbs_REVERSED ? sample.NbPoints()-k+1 : k);
+                    gp_Vec v(start, p); const double t = v.Dot(along);
+                    const gp_Vec residual = v - along*t - axis*v.Dot(axis);
+                    if (residual.Magnitude() > 0.01 || t < previousParameter-0.01 || t > span+0.01) return;
+                    previousParameter = t;
+                }
+            }
+            gp_Trsf tr; tr.SetTranslation(offset);
+            BRepBuilderAPI_Transform shifted(wires[0], tr, Standard_True);
+            if (!shifted.IsDone()) return;
+            surfaceWire = TopoDS::Wire(shifted.Shape());
+        }
+        result[0] = -5;
+        if (!ExternalLeadIsClear(b, end, direction)) return;
+        BRepBuilderAPI_MakeEdge external(b, end);
+        if (!external.IsDone()) return;
+        BRepBuilderAPI_MakeWire joined;
+        if (!surfaceWire.IsNull()) joined.Add(surfaceWire);
+        joined.Add(external.Edge());
+        if (!joined.IsDone() || !BRepCheck_Analyzer(joined.Wire()).IsValid()) return;
+        GProp_GProps surfaceProps, props;
+        if (!surfaceWire.IsNull()) BRepGProp::LinearProperties(surfaceWire, surfaceProps);
+        BRepGProp::LinearProperties(joined.Wire(), props);
+        if (!std::isfinite(props.Mass()) || props.Mass() <= 0) return;
+        if (!g_ctx.IsNull()) {
+            Handle(AIS_Shape) overlay = new AIS_Shape(joined.Wire());
+            // Own transient objects before any context operation can throw.
+            if (previewOnly) g_powerLeadPreview = overlay;
+            g_ctx->SetColor(overlay, previewOnly ? Quantity_Color(0.1, 0.9, 1.0, Quantity_TOC_RGB) :
+                Quantity_Color(1.0, 0.65, 0.05, Quantity_TOC_RGB), Standard_False);
+            if (previewOnly) {
+                overlay->SetWidth(3.0);
+                overlay->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
+            }
+            g_ctx->Display(overlay, Standard_False);
+            g_ctx->SetZLayer(overlay, Graphic3d_ZLayerId_Topmost); g_ctx->Deactivate(overlay, Standard_False);
+            if (previewOnly) {
+                g_powerDestinationPreview = new AIS_Point(new Geom_CartesianPoint(end));
+                g_powerDestinationPreview->SetMarker(Aspect_TOM_O_POINT);
+                g_ctx->SetColor(g_powerDestinationPreview, Quantity_Color(0.1, 0.9, 1.0, Quantity_TOC_RGB), Standard_False);
+                g_ctx->Display(g_powerDestinationPreview, Standard_False);
+                g_ctx->SetZLayer(g_powerDestinationPreview, Graphic3d_ZLayerId_Topmost);
+                g_ctx->Deactivate(g_powerDestinationPreview, Standard_False);
+            } else {
+                auto old = g_powerLeads.find(id);
+                if (old != g_powerLeads.end()) g_ctx->Remove(old->second, Standard_False);
+                g_powerLeads[id] = overlay;
+            }
+        }
+        result[0] = 1; result[1] = props.Mass(); result[2] = surfaceProps.Mass(); result[3] = b.Distance(end);
     }
 
     int PickConnectorNative(int x, int y)
@@ -957,6 +1198,27 @@ namespace
         for (const auto& piece : g_routePieces)
             if (piece.second.connector && piece.second.ais == selectable) return piece.first;
         return -1;
+    }
+
+    void HighlightCircuitNative(const std::vector<int>& ids)
+    {
+        if (g_ctx.IsNull()) return;
+        for (int id : g_hoveredCircuitPieces) {
+            auto it = g_routePieces.find(id);
+            if (it != g_routePieces.end()) {
+                g_ctx->SetColor(it->second.ais, it->second.color, Standard_False);
+                g_ctx->SetWidth(it->second.ais, it->second.width, Standard_False);
+            }
+        }
+        g_hoveredCircuitPieces.clear();
+        for (int id : ids) {
+            auto it = g_routePieces.find(id);
+            if (it == g_routePieces.end()) continue;
+            g_hoveredCircuitPieces.insert(id);
+            g_ctx->SetColor(it->second.ais, Quantity_Color(1.0, 0.85, 0.0, Quantity_TOC_RGB), Standard_False);
+            g_ctx->SetWidth(it->second.ais, 4.0, Standard_False);
+        }
+        g_view->Redraw();
     }
 
     Handle(AIS_Shape) MakeExclusionOverlay(const std::vector<double>& xyz, const Quantity_Color& color)
@@ -1012,6 +1274,7 @@ namespace
 
     void ClearOverlayNative()
     {
+        ClearPowerLeadsNative();
         ClearRoutePiecesNative();
         if (!g_ctx.IsNull())
         {
@@ -1571,6 +1834,100 @@ namespace
         return true;
     }
 
+    bool PickSelectedBoundaryPointNative(const std::vector<int>& faces, int x, int y, double* out)
+    {
+        if (g_view.IsNull() || g_shape.IsNull() || faces.empty() || out == nullptr) return false;
+        try {
+            std::set<int> unique;
+            BRepBuilderAPI_Sewing sewing(0.01, Standard_True, Standard_True, Standard_True, Standard_True);
+            for (int id : faces) {
+                if (id < 0 || id >= static_cast<int>(g_faces.size())) return false;
+                if (unique.insert(id).second) sewing.Add(g_faces[id]);
+            }
+            sewing.Perform();
+            const TopoDS_Shape united = sewing.SewedShape();
+            if (united.IsNull()) return false;
+
+            // Classify the boundary on the sewn working faces, not source faces:
+            // separately represented coincident seams otherwise appear twice.
+            TopTools_IndexedMapOfShape edgeMap;
+            std::vector<int> uses;
+            for (TopExp_Explorer fx(united, TopAbs_FACE); fx.More(); fx.Next())
+                for (TopExp_Explorer ex(fx.Current(), TopAbs_EDGE); ex.More(); ex.Next()) {
+                    const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+                    int index = edgeMap.FindIndex(edge);
+                    if (!index) { edgeMap.Add(edge); uses.push_back(0); index = edgeMap.Extent(); }
+                    ++uses[index - 1];
+                }
+            std::vector<TopoDS_Edge> edges;
+            for (int i = 1; i <= edgeMap.Extent(); ++i) {
+                if (uses[i - 1] > 2) return false;
+                if (uses[i - 1] == 1) edges.push_back(TopoDS::Edge(edgeMap(i)));
+            }
+            if (edges.empty()) return false;
+
+            double best2 = 100.0; // practical 10 px aperture
+            gp_Pnt bestPoint;
+            for (const TopoDS_Edge& edge : edges) {
+                BRepAdaptor_Curve curve(edge);
+                GCPnts_QuasiUniformDeflection samples(curve, 0.05);
+                if (!samples.IsDone() || samples.NbPoints() < 2 || samples.NbPoints() > 20000) continue;
+                for (int i = 1; i < samples.NbPoints(); ++i) {
+                    gp_Pnt a = samples.Value(i), b = samples.Value(i + 1);
+                    Standard_Integer ax, ay, bx, by;
+                    g_view->Convert(a.X(), a.Y(), a.Z(), ax, ay);
+                    g_view->Convert(b.X(), b.Y(), b.Z(), bx, by);
+                    const double dx = static_cast<double>(bx - ax), dy = static_cast<double>(by - ay);
+                    const double len2 = dx * dx + dy * dy;
+                    const double rawT = len2 > 1e-12 ? ((x-ax)*dx + (y-ay)*dy)/len2 : 0.0;
+                    const double t = std::max(0.0, std::min(1.0, rawT));
+                    const double px = ax + t*dx, py = ay + t*dy;
+                    const double d2 = (x-px)*(x-px) + (y-py)*(y-py);
+                    if (d2 >= best2) continue;
+                    best2 = d2;
+                    // Interpolation is only a screen-space coarse estimate; refine
+                    // on the actual OCCT curve with a 1-D bounded minimization.
+                    const double u0 = samples.Parameter(i), u1 = samples.Parameter(i + 1);
+                    double lo = std::min(u0, u1), hi = std::max(u0, u1);
+                    for (int k = 0; k < 24; ++k) {
+                        const double m1 = lo + (hi-lo)/3.0, m2 = hi - (hi-lo)/3.0;
+                        gp_Pnt p1, p2; curve.D0(m1, p1); curve.D0(m2, p2);
+                        Standard_Integer sx1, sy1, sx2, sy2;
+                        g_view->Convert(p1.X(), p1.Y(), p1.Z(), sx1, sy1);
+                        g_view->Convert(p2.X(), p2.Y(), p2.Z(), sx2, sy2);
+                        const double d1=(x-sx1)*(x-sx1)+(y-sy1)*(y-sy1), d2=(x-sx2)*(x-sx2)+(y-sy2)*(y-sy2);
+                        if (d1 < d2) hi=m2; else lo=m1;
+                    }
+                    curve.D0((lo+hi)*0.5, bestPoint);
+                }
+            }
+            if (best2 >= 100.0) return false;
+
+            // Test visibility at the candidate itself, not at the cursor: the
+            // 10px aperture intentionally permits the cursor to miss the edge.
+            Standard_Integer candidateX, candidateY;
+            g_view->Convert(bestPoint.X(), bestPoint.Y(), bestPoint.Z(), candidateX, candidateY);
+            Standard_Real rx, ry, rz, vx, vy, vz;
+            g_view->ConvertWithProj(candidateX, candidateY, rx, ry, rz, vx, vy, vz);
+            gp_Vec direction(vx, vy, vz);
+            if (direction.SquareMagnitude() < 1e-18) return false;
+            direction.Normalize();
+            IntCurvesFace_ShapeIntersector visibility;
+            visibility.Load(g_shape, 1e-7);
+            visibility.Perform(gp_Lin(gp_Pnt(rx, ry, rz), gp_Dir(direction)), 0.0, 1e100);
+            if (!visibility.IsDone() || visibility.NbPnt() == 0) return false;
+            const gp_Pnt front = visibility.Pnt(1);
+            Standard_Integer frontX, frontY;
+            g_view->Convert(front.X(), front.Y(), front.Z(), frontX, frontY);
+            if (front.Distance(bestPoint) > 0.05 &&
+                (frontX-candidateX)*(frontX-candidateX)+(frontY-candidateY)*(frontY-candidateY) > 1) return false;
+            out[0] = bestPoint.X(); out[1] = bestPoint.Y(); out[2] = bestPoint.Z();
+            out[3] = front.Distance(gp_Pnt(rx, ry, rz));
+            return true;
+        }
+        catch (const Standard_Failure&) { return false; }
+    }
+
     // ================= HLR natives (S1 항목 5) =================
 
     struct HlrCounts { int vis; int hid; double ms; };
@@ -1667,13 +2024,99 @@ namespace
         }
         return out;
     }
+#include "WorkingSideNative.inc"
 }
 #pragma managed(pop)
 
 namespace HeatingMold { namespace OccBridge {
 
+long long Bridge::GetModelRevision() { return g_modelRevision; }
+void Bridge::ReleaseWorkingContext(long long id) { g_working.erase(id); }
+WorkingContext^ Bridge::CreateWorkingContext(double nx,double ny,double nz,double xx,double xy,double xz)
+{
+    const long long id = CreateWorkingNative(nx,ny,nz,xx,xy,xz);
+    if (!id) return nullptr;
+    auto* c = FindWorking(id,g_modelRevision);
+    auto result = gcnew WorkingContext();
+    result->Id=id; result->Revision=c->revision; result->MeshDeflection=c->deflection;
+    result->Frame=gcnew array<double>{c->origin.X(),c->origin.Y(),c->origin.Z(),
+        c->x.X(),c->x.Y(),c->x.Z(),c->y.X(),c->y.Y(),c->y.Z(),c->n.X(),c->n.Y(),c->n.Z()};
+    result->Triangles=gcnew array<double>(static_cast<int>(c->triangles.size()));
+    for (int i=0;i<result->Triangles->Length;++i) result->Triangles[i]=c->triangles[i];
+    return result;
+}
+WorkingHit^ Bridge::QueryWorkingSurface(long long id,long long revision,double u,double v)
+{
+    double p[3]={}; int face=-1;
+    const auto status=QueryWorkingNative(id,revision,u,v,p,face);
+    auto result=gcnew WorkingHit();
+    result->ContextId=id; result->Revision=revision; result->DatumPoint=gcnew array<double>{u,v};
+    result->Status=static_cast<WorkingQueryStatus>(static_cast<int>(status)); result->FaceId=face;
+    if (status==WorkingStatusNative::Hit || status==WorkingStatusNative::Tangent)
+        result->Point=gcnew array<double>{p[0],p[1],p[2]};
+    return result;
+}
+array<double>^ Bridge::WorkingPointToScreen(long long id,long long revision,double x,double y,double z)
+{
+    double screen[2];
+    if (!WorkingScreenNative(id,revision,x,y,z,screen)) return nullptr;
+    return gcnew array<double>{screen[0],screen[1]};
+}
+bool Bridge::IsWorkingPointVisible(long long id,long long revision,double x,double y,double z,double tolerance)
+{ return WorkingVisibleNative(id,revision,x,y,z,tolerance); }
+void Bridge::ShowWorkingDiagnostic(array<double>^ xyz,bool point)
+{
+    std::vector<double> values;
+    if (xyz!=nullptr) for each(double v in xyz) values.push_back(v);
+    ShowWorkingDiagnosticNative(values,point);
+}
+void Bridge::ShowWorkingBoundary(array<array<double>^>^ loops)
+{ ShowWorkingBoundary(loops,nullptr); }
+void Bridge::ShowWorkingBoundary(array<array<double>^>^ loops,array<bool>^ holes)
+{
+    std::vector<std::vector<double>> values;
+    std::vector<bool> flags;
+    if (holes!=nullptr) for each(bool hole in holes) flags.push_back(hole);
+    if (loops!=nullptr) for each(array<double>^ loop in loops) {
+        std::vector<double> points;
+        if (loop!=nullptr) for each(double v in loop) points.push_back(v);
+        values.push_back(points);
+    }
+    ShowWorkingBoundaryNative(values,flags);
+}
+bool Bridge::ReturnToWorkingFront(long long id,long long revision)
+{
+    auto* ctx=FindWorking(id,revision);
+    if (!ctx || g_view.IsNull()) return false;
+    g_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+    SetViewFrameNative(ctx->n.X(),ctx->n.Y(),ctx->n.Z(),ctx->y.X(),ctx->y.Y(),ctx->y.Z());
+    return true;
+}
+void Bridge::SetViewPerspective(bool perspective)
+{
+    if (g_view.IsNull()) return;
+    g_view->Camera()->SetProjectionType(perspective ? Graphic3d_Camera::Projection_Perspective : Graphic3d_Camera::Projection_Orthographic);
+    g_view->Redraw();
+}
+WorkingPresentation^ Bridge::CaptureWorkingPresentation()
+{
+    double bounds[6]={},point[3]={}; bool hasBounds=false,hasPoint=false;
+    const long long id=CaptureWorkingPresentationNative(bounds,point,hasBounds,hasPoint);
+    if (!id) return nullptr;
+    auto result=gcnew WorkingPresentation();
+    result->Id=id; result->Revision=g_modelRevision;
+    result->BoundaryCount=static_cast<int>(g_workingPresentations.at(id).boundaries.size());
+    if (hasBounds) result->BoundaryBounds=gcnew array<double>{bounds[0],bounds[1],bounds[2],bounds[3],bounds[4],bounds[5]};
+    if (hasPoint) result->DiagnosticPoint=gcnew array<double>{point[0],point[1],point[2]};
+    return result;
+}
+bool Bridge::RestoreWorkingPresentation(long long id) { return RestoreWorkingPresentationNative(id); }
+void Bridge::ReleaseWorkingPresentation(long long id) { g_workingPresentations.erase(id); }
+
 bool Bridge::LoadStep(String^ path)
 {
+    ++g_modelRevision;
+    InvalidateWorkingContexts();
     g_surfaceIntersectors.clear();
     g_surfaceBounds.clear();
     g_surfaceTolerances.clear();
@@ -1801,6 +2244,18 @@ array<double>^ Bridge::IntersectSelectedFaces(array<int>^ faceIds, double x, dou
     return result;
 }
 
+array<double>^ Bridge::PickSelectedBoundaryPoint(array<int>^ faceIds, int x, int y)
+{
+    if (faceIds == nullptr || faceIds->Length == 0) return nullptr;
+    std::vector<int> ids(faceIds->Length);
+    for (int i = 0; i < faceIds->Length; ++i) ids[(size_t)i] = faceIds[i];
+    double p[4];
+    if (!PickSelectedBoundaryPointNative(ids, x, y, p)) return nullptr;
+    array<double>^ result = gcnew array<double>(4);
+    for (int i = 0; i < 4; ++i) result[i] = p[i];
+    return result;
+}
+
 array<double>^ Bridge::ProjectPathWireOntoSelectedFaces(array<int>^ faceIds, array<double>^ xyzFlat,
                                                         double dx, double dy, double dz, double insertionDepth)
 {
@@ -1851,7 +2306,66 @@ bool Bridge::SetConnectorEnabled(int pieceId, bool enabled, double r, double g, 
 }
 
 void Bridge::ClearRoutePieces() { ClearRoutePiecesNative(); if (!g_view.IsNull()) g_view->Redraw(); }
+
+array<double>^ Bridge::ProjectPowerLead(int leadId, array<double>^ sourceAndDestination,
+    array<double>^ actualStart, array<int>^ faceIds, double dx, double dy, double dz, double depth)
+{
+    return ProjectPowerLead(leadId, sourceAndDestination, actualStart, faceIds, dx, dy, dz, depth, false);
+}
+
+array<double>^ Bridge::ProjectPowerLead(int leadId, array<double>^ sourceAndDestination,
+    array<double>^ actualStart, array<int>^ faceIds, double dx, double dy, double dz, double depth, bool previewOnly)
+{
+    // Remove the old preview without painting a blank frame. Redraw once after
+    // replacement/validation, including failure so invalid positions clear it.
+    const bool hadPreview = !g_powerLeadPreview.IsNull() || !g_powerDestinationPreview.IsNull();
+    ClearPowerLeadPreviewNative();
+    auto result = gcnew array<double>(4);
+    result[0] = -1;
+    if (sourceAndDestination == nullptr || actualStart == nullptr || faceIds == nullptr) {
+        if (hadPreview && !g_view.IsNull()) g_view->Redraw();
+        return result;
+    }
+    std::vector<double> xyz(sourceAndDestination->Length), actual(actualStart->Length);
+    std::vector<int> ids(faceIds->Length);
+    for (int i = 0; i < sourceAndDestination->Length; ++i) xyz[i] = sourceAndDestination[i];
+    for (int i = 0; i < actualStart->Length; ++i) actual[i] = actualStart[i];
+    for (int i = 0; i < faceIds->Length; ++i) ids[i] = faceIds[i];
+    double data[4] = { -9, 0, 0, 0 };
+    try { ProjectPowerLeadNative(leadId, xyz, actual, ids, gp_Dir(dx, dy, dz), depth, data, previewOnly); }
+    catch (const Standard_Failure&) {
+        if (previewOnly) ClearPowerLeadPreviewNative();
+        data[0] = -9;
+    }
+    if (!g_view.IsNull()) g_view->Redraw();
+    for (int i = 0; i < 4; ++i) result[i] = data[i];
+    return result;
+}
+
+void Bridge::ClearPowerLeads() { ClearPowerLeadsNative(); if (!g_view.IsNull()) g_view->Redraw(); }
+void Bridge::ClearPowerLeadPreview()
+{
+    const bool hadPreview = !g_powerLeadPreview.IsNull() || !g_powerDestinationPreview.IsNull();
+    ClearPowerLeadPreviewNative();
+    if (hadPreview && !g_view.IsNull()) g_view->Redraw();
+}
 int Bridge::PickConnector(int x, int y) { return PickConnectorNative(x, y); }
+int Bridge::PickRoutePiece(int x, int y)
+{
+    if (g_ctx.IsNull() || g_view.IsNull()) return -1;
+    g_ctx->MoveTo(x, y, g_view, Standard_False);
+    Handle(SelectMgr_EntityOwner) owner = g_ctx->DetectedOwner();
+    if (owner.IsNull()) return -1;
+    Handle(AIS_InteractiveObject) selectable = Handle(AIS_InteractiveObject)::DownCast(owner->Selectable());
+    for (const auto& piece : g_routePieces) if (piece.second.ais == selectable) return piece.first;
+    return -1;
+}
+void Bridge::HighlightCircuit(array<int>^ pieceIds)
+{
+    std::vector<int> ids;
+    if (pieceIds != nullptr) for each (int id in pieceIds) ids.push_back(id);
+    HighlightCircuitNative(ids);
+}
 
 // ================= 뷰어 managed (S1 항목 1·6) =================
 
@@ -1885,6 +2399,27 @@ void Bridge::RotateMove(int x, int y)
 void Bridge::RotateEnd()
 {
     // StartRotation/Rotation 쌍으로 충분 — 종료 시 별도 처리 없음
+}
+
+namespace { int g_panStartX = 0, g_panStartY = 0; }
+
+void Bridge::PanStart(int x, int y)
+{
+    g_panStartX = x;
+    g_panStartY = y;
+    if (!g_view.IsNull()) g_view->Pan(0, 0, 1.0, Standard_True);
+}
+
+void Bridge::PanMove(int x, int y)
+{
+    if (g_view.IsNull()) return;
+    g_view->Pan(x - g_panStartX, g_panStartY - y, 1.0, Standard_False);
+    g_view->Redraw();
+}
+
+void Bridge::PanEnd()
+{
+    // Pan remembers the starting camera state; no explicit end call is needed.
 }
 
 void Bridge::ZoomView(double factor)

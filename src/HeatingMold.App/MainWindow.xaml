@@ -7,6 +7,20 @@
     <DockPanel>
         <ToolBarTray DockPanel.Dock="Top">
             <ToolBar>
+                <TextBlock Text="작업 방향 N:" VerticalAlignment="Center"/>
+                <ComboBox x:Name="WorkingAxisBox" Width="65" SelectedIndex="4">
+                    <ComboBoxItem Content="+X"/><ComboBoxItem Content="−X"/>
+                    <ComboBoxItem Content="+Y"/><ComboBoxItem Content="−Y"/>
+                    <ComboBoxItem Content="+Z"/><ComboBoxItem Content="−Z"/>
+                </ComboBox>
+                <Button Content="미리보기" Click="WorkingPreview_Click"/>
+                <Button Content="반전" Click="WorkingFlip_Click"/>
+                <Button Content="확정" Click="WorkingConfirm_Click"/>
+                <Button Content="미리보기 취소" Click="WorkingCancel_Click"/>
+                <Button Content="작업 정면" Click="WorkingFront_Click"/>
+                <CheckBox x:Name="WorkingPickBox" Content="전체 외곽 진단 선택" Checked="WorkingPick_Changed" Unchecked="WorkingPick_Changed"/>
+            </ToolBar>
+            <ToolBar>
                 <Button Content="열기..." Click="Open_Click" Padding="8,2"/>
                 <Separator/>
                 <Button Content="Fit" Click="Fit_Click" Padding="8,2"/>
@@ -25,14 +39,16 @@
                 <TextBox x:Name="SpacingBox" Text="10" Width="44"/>
                 <TextBlock Text="선폭:" VerticalAlignment="Center" Margin="4,0,2,0"/>
                 <TextBox x:Name="WidthBox" Text="1" Width="44"/>
-                <TextBlock Text="삽입 깊이(-Z):" VerticalAlignment="Center" Margin="4,0,2,0"/>
-                <TextBox x:Name="InsertionDepthBox" Text="0" Width="48" ToolTip="투영된 경로를 전체 모델 고정 -Z 축 방향으로 평행 이동할 거리(mm). Face 법선은 사용하지 않습니다."/>
+                <TextBlock Text="삽입 깊이 (보류):" VerticalAlignment="Center" Margin="4,0,2,0"/>
+                <TextBox x:Name="InsertionDepthBox" Text="0" Width="48" ToolTip="현재 작업 방향 기하 검증은 깊이 0만 지원. 기존 깊이 이동 알고리즘은 마이그레이션 대기 중입니다."/>
                 <Separator/>
                 <Button Content="패턴 생성" Click="Generate_Click" Padding="8,2"/>
                 <CheckBox x:Name="ConnectorEditModeBox" Content="커넥터 편집" Margin="8,0" VerticalAlignment="Center"
                           Checked="ConnectorEditMode_Changed" Unchecked="ConnectorEditMode_Changed"/>
                 <Button Content="Undo" Click="ConnectorUndo_Click" Padding="6,2"/>
                 <Button Content="Redo" Click="ConnectorRedo_Click" Padding="6,2"/>
+                <Button Content="전원 연결 위치 지정" Click="PowerSetup_Click" Padding="6,2"/>
+                <Button Content="전원 설정 취소" Click="PowerCancel_Click" Padding="6,2"/>
                 <Button Content="DXF 내보내기" Click="Export_Click" Padding="8,2"/>
                 <Separator/>
                 <Button Content="정면 (−Z)" Click="StandardView_Click" Tag="Front" Padding="6,2"/>
@@ -55,7 +71,12 @@
             </Grid.ColumnDefinitions>
             <local:OccViewport x:Name="Viewport" Grid.Column="0"/>
             <Border Grid.Column="1" BorderBrush="#808080" BorderThickness="1,0,0,0" Padding="10">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
+                    <TextBlock x:Name="WorkingSideText" Text="작업 방향 미확정 · 패턴 생성 보류" TextWrapping="Wrap"/>
+                    <TextBlock Text="전체 모델 투영 후보: 주황=외곽, 파랑=홀 (정확 CAD 곡선 아님)" TextWrapping="Wrap" FontSize="11"/>
+                    <TextBlock Text="3D 경계선은 모델 외부 기준면의 투영선입니다. 빨간 점은 BRep 진단 참조점입니다." TextWrapping="Wrap" FontSize="11"/>
+                    <Canvas x:Name="WorkingBoundaryCanvas" Height="130" Background="#FFF5F5F5" SizeChanged="WorkingBoundaryCanvas_SizeChanged"/>
                     <TextBlock Text="적용 Face" FontWeight="Bold" Margin="0,0,0,6"/>
                     <TextBlock Text="뷰포트 클릭으로 선택, Ctrl+클릭으로 토글" TextWrapping="Wrap" Margin="0,0,0,6"/>
                     <CheckBox x:Name="FaceDragSelectModeBox" Content="드래그로 Face 선택 모드" Margin="0,4,0,4"
@@ -71,7 +92,17 @@
                         <Canvas x:Name="RegionCanvas" Background="Transparent" SizeChanged="RegionCanvas_SizeChanged"/>
                     </Border>
                     <Button Content="제외 사각형 초기화" Click="ClearExclusions_Click" Margin="0,5,0,0" Padding="6,3"/>
+                    <TextBlock Text="회로별 길이 (mm)" FontWeight="Bold" Margin="0,10,0,4"/>
+                    <DataGrid x:Name="CircuitLengthGrid" AutoGenerateColumns="False" IsReadOnly="True" Height="140">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="회로" Binding="{Binding Circuit}" Width="*"/>
+                            <DataGridTextColumn Header="발열사" Binding="{Binding HeatingLength, StringFormat=F1}" Width="*"/>
+                            <DataGridTextColumn Header="접속" Binding="{Binding LeadLength, StringFormat=F1}" Width="*"/>
+                            <DataGridTextColumn Header="합계" Binding="{Binding TotalLength, StringFormat=F1}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
                 </StackPanel>
+                </ScrollViewer>
             </Border>
         </Grid>
     </DockPanel>

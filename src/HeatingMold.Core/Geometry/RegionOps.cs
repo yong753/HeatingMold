@@ -6,7 +6,7 @@ namespace HeatingMold.Core.Geometry;
 public static class RegionOps
 {
     /// <summary>Union overlapping or adjacent planar face polygons into non-overlapping region rings.</summary>
-    public static List<List<Vec2>> UnionPolygons(IEnumerable<IReadOnlyList<Vec2>> polygons)
+    public static List<List<Vec2>> UnionPolygons(IEnumerable<IReadOnlyList<Vec2>> polygons, int precision = 2)
     {
         ArgumentNullException.ThrowIfNull(polygons);
         PathsD paths = new();
@@ -15,7 +15,7 @@ public static class RegionOps
             if (polygon.Count < 3) continue;
             paths.Add(ToPath(EnsureOrientation(polygon, ccw: true)));
         }
-        return FromPaths(Clipper.Union(paths, FillRule.NonZero));
+        return FromPaths(Clipper.Union(paths, new PathsD(), FillRule.NonZero, precision));
     }
 
     /// <summary>Subtract rectangular exclusion regions from a polygonal region.</summary>

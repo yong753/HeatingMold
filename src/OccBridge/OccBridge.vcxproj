@@ -51,6 +51,7 @@
   <ItemGroup>
     <ClCompile Include="OccBridgeApi.cpp" />
     <ClInclude Include="OccBridgeApi.h" />
+    <ClInclude Include="WorkingSideNative.inc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
