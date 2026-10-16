@@ -5,6 +5,40 @@ namespace HeatingMold.Core.Geometry;
 /// <summary>Clipper2 래퍼 — 마진 오프셋·홀 차집합.</summary>
 public static class RegionOps
 {
+    /// <summary>Union overlapping or adjacent planar face polygons into non-overlapping region rings.</summary>
+    public static List<List<Vec2>> UnionPolygons(IEnumerable<IReadOnlyList<Vec2>> polygons)
+    {
+        ArgumentNullException.ThrowIfNull(polygons);
+        PathsD paths = new();
+        foreach (IReadOnlyList<Vec2> polygon in polygons)
+        {
+            if (polygon.Count < 3) continue;
+            paths.Add(ToPath(EnsureOrientation(polygon, ccw: true)));
+        }
+        return FromPaths(Clipper.Union(paths, FillRule.NonZero));
+    }
+
+    /// <summary>Subtract rectangular exclusion regions from a polygonal region.</summary>
+    public static List<List<Vec2>> SubtractRectangles(
+        IEnumerable<IReadOnlyList<Vec2>> region,
+        IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions)
+    {
+        ArgumentNullException.ThrowIfNull(region);
+        ArgumentNullException.ThrowIfNull(exclusions);
+        PathsD subject = new();
+        foreach (IReadOnlyList<Vec2> ring in region)
+            if (ring.Count >= 3) subject.Add(ToPath(ring));
+        PathsD clips = new();
+        foreach (var r in exclusions)
+        {
+            if (!(r.MaxX > r.MinX && r.MaxY > r.MinY)) continue;
+            clips.Add(ToPath(new[] { new Vec2(r.MinX, r.MinY), new Vec2(r.MaxX, r.MinY),
+                new Vec2(r.MaxX, r.MaxY), new Vec2(r.MinX, r.MaxY) }));
+        }
+        if (subject.Count == 0) return new();
+        return clips.Count == 0 ? FromPaths(subject) : FromPaths(Clipper.Difference(subject, clips, FillRule.NonZero));
+    }
+
     /// <summary>링의 부호 있는 면적 (CCW 양수).</summary>
     public static double SignedArea(IReadOnlyList<Vec2> ring)
     {

@@ -25,11 +25,22 @@
                 <TextBox x:Name="SpacingBox" Text="10" Width="44"/>
                 <TextBlock Text="선폭:" VerticalAlignment="Center" Margin="4,0,2,0"/>
                 <TextBox x:Name="WidthBox" Text="1" Width="44"/>
+                <TextBlock Text="삽입 깊이(-Z):" VerticalAlignment="Center" Margin="4,0,2,0"/>
+                <TextBox x:Name="InsertionDepthBox" Text="0" Width="48" ToolTip="투영된 경로를 전체 모델 고정 -Z 축 방향으로 평행 이동할 거리(mm). Face 법선은 사용하지 않습니다."/>
                 <Separator/>
                 <Button Content="패턴 생성" Click="Generate_Click" Padding="8,2"/>
+                <CheckBox x:Name="ConnectorEditModeBox" Content="커넥터 편집" Margin="8,0" VerticalAlignment="Center"
+                          Checked="ConnectorEditMode_Changed" Unchecked="ConnectorEditMode_Changed"/>
+                <Button Content="Undo" Click="ConnectorUndo_Click" Padding="6,2"/>
+                <Button Content="Redo" Click="ConnectorRedo_Click" Padding="6,2"/>
                 <Button Content="DXF 내보내기" Click="Export_Click" Padding="8,2"/>
                 <Separator/>
-                <Button Content="정면 뷰" Click="FrontView_Click" Padding="8,2"/>
+                <Button Content="정면 (−Z)" Click="StandardView_Click" Tag="Front" Padding="6,2"/>
+                <Button Content="후면 (+Z)" Click="StandardView_Click" Tag="Back" Padding="6,2"/>
+                <Button Content="위쪽 (−Y)" Click="StandardView_Click" Tag="Top" Padding="6,2"/>
+                <Button Content="아래쪽 (+Y)" Click="StandardView_Click" Tag="Bottom" Padding="6,2"/>
+                <Button Content="좌측 (−X)" Click="StandardView_Click" Tag="Left" Padding="6,2"/>
+                <Button Content="우측 (+X)" Click="StandardView_Click" Tag="Right" Padding="6,2"/>
             </ToolBar>
         </ToolBarTray>
         <StatusBar DockPanel.Dock="Bottom">
@@ -37,6 +48,31 @@
             <Separator/>
             <TextBlock x:Name="StatusText" Text="준비"/>
         </StatusBar>
-        <local:OccViewport x:Name="Viewport"/>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="250"/>
+            </Grid.ColumnDefinitions>
+            <local:OccViewport x:Name="Viewport" Grid.Column="0"/>
+            <Border Grid.Column="1" BorderBrush="#808080" BorderThickness="1,0,0,0" Padding="10">
+                <StackPanel>
+                    <TextBlock Text="적용 Face" FontWeight="Bold" Margin="0,0,0,6"/>
+                    <TextBlock Text="뷰포트 클릭으로 선택, Ctrl+클릭으로 토글" TextWrapping="Wrap" Margin="0,0,0,6"/>
+                    <CheckBox x:Name="FaceDragSelectModeBox" Content="드래그로 Face 선택 모드" Margin="0,4,0,4"
+                              Checked="FaceDragSelectMode_Changed" Unchecked="FaceDragSelectMode_Changed"/>
+                    <ListBox x:Name="SelectedFacesList" MinHeight="120" MaxHeight="260"/>
+                    <Separator Margin="0,10,0,8"/>
+                    <TextBlock Text="제외 영역" FontWeight="Bold"/>
+                    <CheckBox x:Name="ExcludeModeBox" Content="뷰포트에서 사각형 제외영역 그리기" Margin="0,5,0,5"
+                              Checked="ExcludeMode_Changed" Unchecked="ExcludeMode_Changed"/>
+                    <TextBlock Text="선택된 동일 평면 Face 위에서 드래그하세요. 아래는 2D 확인용입니다."
+                               TextWrapping="Wrap" FontSize="11" Margin="0,0,0,4"/>
+                    <Border BorderBrush="#808080" BorderThickness="1" Background="White" HorizontalAlignment="Stretch" Height="200">
+                        <Canvas x:Name="RegionCanvas" Background="Transparent" SizeChanged="RegionCanvas_SizeChanged"/>
+                    </Border>
+                    <Button Content="제외 사각형 초기화" Click="ClearExclusions_Click" Margin="0,5,0,0" Padding="6,3"/>
+                </StackPanel>
+            </Border>
+        </Grid>
     </DockPanel>
 </Window>

@@ -8,6 +8,17 @@ public sealed record SerpentineSegment(int LaneIndex, Vec2 Start, Vec2 End)
     public double Length => Start.DistanceTo(End);
 }
 
+public enum SerpentineRoutePieceKind { HeatingRun, TurnConnector, FixedConnector }
+
+/// <summary>An ordered, world-frame portion of a generated serpentine route.</summary>
+public sealed record SerpentineRoutePiece(SerpentineRoutePieceKind Kind, int LaneIndex, IReadOnlyList<Vec2> Points)
+{
+    public double Length
+    {
+        get { double length = 0; for (int i = 1; i < Points.Count; i++) length += Points[i - 1].DistanceTo(Points[i]); return length; }
+    }
+}
+
 /// <summary>사행 생성 결과 — 단일 연속 폴리라인.</summary>
 public sealed class SerpentineResult
 {
@@ -16,6 +27,36 @@ public sealed class SerpentineResult
     public required int LaneCount { get; init; }
     public required double AngleDeg { get; init; }
     public required double TotalLength { get; init; }
+    public IReadOnlyList<SerpentineRoutePiece> RoutePieces { get; init; } = Array.Empty<SerpentineRoutePiece>();
+}
+
+/// <summary>Pure topology projection of route pieces. Disabling a turn separates the route;</summary>
+/// <summary>fixed same-lane connectors are never editable and remain in their component.</summary>
+public static class SerpentineTopology
+{
+    public static IReadOnlyList<IReadOnlyList<Vec2>> Compute(
+        IReadOnlyList<SerpentineRoutePiece> pieces, IReadOnlyList<bool>? turnEnabled = null)
+    {
+        if (turnEnabled != null && turnEnabled.Count != pieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector))
+            throw new ArgumentException("One enabled state is required per turn connector", nameof(turnEnabled));
+        var components = new List<IReadOnlyList<Vec2>>();
+        var current = new List<Vec2>();
+        int turn = 0;
+        foreach (var piece in pieces)
+        {
+            bool enabled = piece.Kind != SerpentineRoutePieceKind.TurnConnector || turnEnabled == null || turnEnabled[turn++];
+            if (!enabled)
+            {
+                if (current.Count > 0) { components.Add(current); current = new List<Vec2>(); }
+                continue;
+            }
+            if (piece.Points.Count == 0) continue;
+            if (current.Count == 0) current.AddRange(piece.Points);
+            else current.AddRange(piece.Points.Skip(current[^1] == piece.Points[0] ? 1 : 0));
+        }
+        if (current.Count > 0) components.Add(current);
+        return components;
+    }
 }
 
 /// <summary>스캔라인 기반 사행(serpentine) 발열 패턴 생성기.
@@ -23,11 +64,48 @@ public sealed class SerpentineResult
 /// → 지그재그 연결(U턴 호) → 단일 연속 폴리라인.</summary>
 public static class Serpentine
 {
+    /// <summary>Generate independent lane components for a face with rectangular exclusions.
+    /// Each scanline interval is emitted separately, so no path bridges an excluded gap.</summary>
+    public static IReadOnlyList<IReadOnlyList<Vec2>> GenerateComponents(
+        IReadOnlyList<Vec2> outer,
+        IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
+        PatternParams p)
+    {
+        if (outer.Count < 3) throw new ArgumentException("외곽 링은 점 3개 이상 필요", nameof(outer));
+        if (p.Spacing <= 0) throw new ArgumentOutOfRangeException(nameof(p), "Spacing > 0 필요");
+        double angle = AutoAngleDeg(outer), rad = angle * Math.PI / 180.0;
+        List<Vec2> local = Rotate(outer, -rad);
+        var rotatedExclusions = exclusions.Select(r =>
+        {
+            // Rectangles are axis-aligned in the supplied face coordinates; rotate their corners
+            // and use the enclosing local rectangle for robust scanline clipping.
+            Vec2[] corners = { new(r.MinX,r.MinY), new(r.MaxX,r.MinY), new(r.MaxX,r.MaxY), new(r.MinX,r.MaxY) };
+            Vec2[] q = corners.Select(v => v.Rotate(-rad)).ToArray();
+            return (q.Min(v => v.X), q.Min(v => v.Y), q.Max(v => v.X), q.Max(v => v.Y));
+        }).ToList();
+        List<List<Vec2>> region = RegionOps.SubtractRectangles(
+            RegionOps.BuildPatternRegion(local, null, p.Margin), rotatedExclusions);
+        if (region.Count == 0) return Array.Empty<IReadOnlyList<Vec2>>();
+        double minY = region.Min(r => r.Min(v => v.Y)), maxY = region.Max(r => r.Max(v => v.Y));
+        double height = maxY - minY;
+        int lanes = Math.Max(1, (int)Math.Floor((height + 1e-9) / p.Spacing));
+        double y0 = minY + (height - (lanes - 1) * p.Spacing) / 2.0;
+        var result = new List<IReadOnlyList<Vec2>>();
+        for (int k = 0; k < lanes; k++)
+        {
+            double y = y0 + k * p.Spacing;
+            foreach (var interval in ScanlineIntervals(region, y))
+                result.Add(new[] { new Vec2(interval.X0, y).Rotate(rad), new Vec2(interval.X1, y).Rotate(rad) });
+        }
+        return result;
+    }
+
     public static SerpentineResult Generate(
         IReadOnlyList<Vec2> outer,
         IReadOnlyList<IReadOnlyList<Vec2>>? holes,
         PatternParams p,
-        int arcPoints = 12)
+        int arcPoints = 12,
+        bool constrainConnectors = false)
     {
         if (outer.Count < 3) throw new ArgumentException("외곽 링은 점 3개 이상 필요", nameof(outer));
         if (p.Spacing <= 0) throw new ArgumentOutOfRangeException(nameof(p), "Spacing > 0 필요");
@@ -52,6 +130,8 @@ public static class Serpentine
                 TotalLength = 0,
             };
         }
+        if (constrainConnectors && region.Count != 1)
+            throw new InvalidOperationException("마진 적용 후 영역이 분리되어 단일 연속 경로를 구성할 수 없습니다");
 
         // 레인 배치: 로컬 Y 범위에 Spacing 간격으로 균등 배치
         double minY = region.Min(r => r.Min(v => v.Y));
@@ -61,6 +141,7 @@ public static class Serpentine
         double y0 = minY + (height - (laneCount - 1) * p.Spacing) / 2.0;
 
         var segments = new List<SerpentineSegment>();
+        var routePieces = new List<SerpentineRoutePiece>();
         var pts = new List<Vec2>();
         int traversed = 0;
         Vec2? prevEnd = null;
@@ -88,16 +169,31 @@ public static class Serpentine
                     // 레인 간 연결: 반원 U턴이 원본 면(외곽−홀) 안에 머물면 그대로 사용하고,
                     // 면 밖으로 튀어나오면(모서리·끝단의 완만한 경계) 영역 경계를 따라 라우팅한다.
                     List<Vec2> arc = ArcInterior(prevEnd.Value, a, prevLtr ? +1 : -1, arcPoints).ToList();
-                    if (ArcStaysInsideFace(outerLocal, holesLocal, arc, 1e-6))
-                        pts.AddRange(arc);
+                    List<Vec2> connector;
+                    if (constrainConnectors
+                        ? ArcStaysInsideFace(region[0], null, arc, 1e-6)
+                        : ArcStaysInsideFace(outerLocal, holesLocal, arc, 1e-6))
+                        connector = arc;
                     else
-                        pts.AddRange(RouteAlongBoundary(region, prevEnd.Value, a));
+                        connector = RouteAlongBoundary(region, prevEnd.Value, a);
+                    pts.AddRange(connector);
+                    routePieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.TurnConnector, traversed, new[] { prevEnd.Value }.Concat(connector).Append(a).ToList()));
+                }
+                else if (pts.Count > 0 && prevEnd.HasValue)
+                {
+                    // A concave connected outline can have multiple intervals on
+                    // one lane. Follow its inset boundary, never cut across the
+                    // unselected notch between those intervals.
+                    List<Vec2> connector = RouteAlongBoundary(region, prevEnd.Value, a);
+                    pts.AddRange(connector);
+                    routePieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.FixedConnector, traversed, new[] { prevEnd.Value }.Concat(connector).Append(a).ToList()));
                 }
                 // 같은 레인 내부 분절(홀)은 직선 연결 — MVP 허용 (홀 자동회피 제외 항목)
 
                 pts.Add(a);
                 pts.Add(b);
                 segments.Add(new SerpentineSegment(traversed, a, b));
+                routePieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, traversed, new[] { a, b }));
                 prevEnd = b;
                 firstOnLane = false;
             }
@@ -111,6 +207,8 @@ public static class Serpentine
         List<SerpentineSegment> segmentsWorld = segments
             .Select(s => new SerpentineSegment(s.LaneIndex, s.Start.Rotate(rad), s.End.Rotate(rad)))
             .ToList();
+        List<SerpentineRoutePiece> piecesWorld = routePieces.Select(piece => piece with
+        { Points = piece.Points.Select(point => point.Rotate(rad)).ToList() }).ToList();
 
         double total = 0;
         for (int i = 1; i < pathWorld.Count; i++) total += pathWorld[i].DistanceTo(pathWorld[i - 1]);
@@ -122,6 +220,7 @@ public static class Serpentine
             LaneCount = traversed,
             AngleDeg = angleDeg,
             TotalLength = total,
+            RoutePieces = piecesWorld,
         };
     }
 

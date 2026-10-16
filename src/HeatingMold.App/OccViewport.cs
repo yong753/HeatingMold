@@ -26,6 +26,9 @@ namespace HeatingMold.App
         [DllImport("user32.dll")]
         private static extern bool ReleaseCapture();
 
+        [DllImport("user32.dll")]
+        private static extern short GetKeyState(int nVirtKey);
+
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         private static extern ushort RegisterClassEx(ref WNDCLASSEX lpwcx);
 
@@ -34,6 +37,9 @@ namespace HeatingMold.App
 
         [DllImport("user32.dll")]
         private static extern bool ValidateRect(IntPtr hWnd, IntPtr lpRect);
+
+        [DllImport("user32.dll")]
+        private static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
 
         [DllImport("user32.dll")]
         private static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT lpEventTrack);
@@ -46,6 +52,9 @@ namespace HeatingMold.App
             public IntPtr hwndTrack;
             public uint dwHoverTime;
         }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT { public int X; public int Y; }
 
         private const uint TME_LEAVE = 0x00000002;
 
@@ -120,15 +129,28 @@ namespace HeatingMold.App
         private bool _dragStarted;
         private bool _trackingMouse;
         private int _downX, _downY;
+        private int _lastSelectionPreviewX, _lastSelectionPreviewY;
+        private int _lastExclusionPreviewX, _lastExclusionPreviewY;
         private int _lastHover = -2;      // W5 — 호버 이벤트 중복 억제
+        private int _activeDragMode; // 0=orbit, 1=rectangle selection, 2=exclusion sketch
+        public bool ConnectorEditMode { get; set; }
 
         private const int ClickDragThreshold = 4;   // px — 이하면 클릭(픽킹), 초과 시 회전
 
         /// <summary>W3 — 면 클릭 선택 결과 (faceId, 없으면 -1)</summary>
-        public event Action<int> FacePicked;
+        public event Action<int, bool> FacePicked;
 
         /// <summary>W5 — 호버 중인 면 변경 (faceId, 없으면 -1)</summary>
         public event Action<int> FaceHovered;
+        public event Action<int[], bool> FacesRectanglePicked;
+        public event Action<int, int, int, int> ExclusionSketchMoved;
+        public event Action<int, int, int, int> ExclusionSketchCompleted;
+        public event Action ExclusionSketchCancelled;
+        public event Action<int> ConnectorHovered;
+        public event Action<int> ConnectorPicked;
+
+        public bool RectangleSelectionMode { get; set; }
+        public bool ExclusionSketchMode { get; set; }
 
         public bool IsReady => _ready;
 
@@ -174,6 +196,11 @@ namespace HeatingMold.App
                     _dragStarted = false;
                     _downX = LoWord(lParam);
                     _downY = HiWord(lParam);
+                    _lastExclusionPreviewX = _downX;
+                    _lastExclusionPreviewY = _downY;
+                    _lastSelectionPreviewX = _downX;
+                    _lastSelectionPreviewY = _downY;
+                    _activeDragMode = ExclusionSketchMode ? 2 : (RectangleSelectionMode ? 1 : 0);
                     handled = true;
                     break;
 
@@ -200,15 +227,36 @@ namespace HeatingMold.App
                             if (dx * dx + dy * dy >= ClickDragThreshold * ClickDragThreshold)
                             {
                                 _dragStarted = true;
-                                Bridge.ClearHover();          // 회전 중 잔상 방지
-                                Bridge.RotateStart(_downX, _downY);
+                                if (_activeDragMode == 0)
+                                {
+                                    Bridge.ClearHover();          // 회전 중 잔상 방지
+                                    Bridge.RotateStart(_downX, _downY);
+                                }
                             }
                         }
                         if (_dragStarted)
                         {
-                            Bridge.RotateMove(x, y);
+                            if (_activeDragMode == 0) Bridge.RotateMove(x, y);
+                            else if (_activeDragMode == 1 &&
+                                     (Math.Abs(x - _lastSelectionPreviewX) >= 4 || Math.Abs(y - _lastSelectionPreviewY) >= 4))
+                            {
+                                _lastSelectionPreviewX = x;
+                                _lastSelectionPreviewY = y;
+                                Bridge.SetSelectionRectangle(_downX, _downY, x, y);
+                            }
+                            else if (_activeDragMode == 2 &&
+                                     (Math.Abs(x - _lastExclusionPreviewX) >= 4 || Math.Abs(y - _lastExclusionPreviewY) >= 4))
+                            {
+                                _lastExclusionPreviewX = x;
+                                _lastExclusionPreviewY = y;
+                                ExclusionSketchMoved?.Invoke(_downX, _downY, x, y);
+                            }
                             handled = true;
                         }
+                    }
+                    else if (_ready && ConnectorEditMode)
+                    {
+                        ConnectorHovered?.Invoke(Bridge.PickConnector(x, y));
                     }
                     else if (_ready)
                     {
@@ -239,13 +287,28 @@ namespace HeatingMold.App
                         _dragging = false;
                         if (_dragStarted)
                         {
-                            Bridge.RotateEnd();
+                            int x = LoWord(lParam), y = HiWord(lParam);
+                            if (_activeDragMode == 0) Bridge.RotateEnd();
+                            else if (_activeDragMode == 1)
+                            {
+                                Bridge.ClearSelectionRectangle();
+                                bool toggle = (GetKeyState(0x11) & 0x8000) != 0;
+                                int[] ids = Bridge.SelectFacesInRectangle(_downX, _downY, x, y, toggle);
+                                FacesRectanglePicked?.Invoke(ids, toggle);
+                            }
+                            else if (_activeDragMode == 2)
+                                ExclusionSketchCompleted?.Invoke(_downX, _downY, x, y);
                         }
-                        else
+                        else if (_activeDragMode == 0 && ConnectorEditMode)
+                        {
+                            ConnectorPicked?.Invoke(Bridge.PickConnector(LoWord(lParam), HiWord(lParam)));
+                        }
+                        else if (_activeDragMode == 0)
                         {
                             // 이동 없는 클릭 = 면 선택 (W5 — 하이라이트 유지)
-                            int idx = Bridge.SelectFace(LoWord(lParam), HiWord(lParam));
-                            FacePicked?.Invoke(idx);
+                            bool toggle = (GetKeyState(0x11) & 0x8000) != 0; // VK_CONTROL
+                            int idx = Bridge.SelectFace(LoWord(lParam), HiWord(lParam), toggle);
+                            FacePicked?.Invoke(idx, toggle);
                         }
                         ReleaseCapture();
                         handled = true;
@@ -254,13 +317,23 @@ namespace HeatingMold.App
 
                 case WM_CAPTURECHANGED:
                     _dragging = false;
+                    if (_activeDragMode == 1) Bridge.ClearSelectionRectangle();
+                    if (_activeDragMode == 2 && _dragStarted) ExclusionSketchCancelled?.Invoke();
                     _dragStarted = false;
                     break;
 
                 case WM_MOUSEWHEEL:
                 {
                     int delta = (short)(((long)wParam >> 16) & 0xFFFF);
-                    Bridge.ZoomView(delta > 0 ? 1.15 : 1.0 / 1.15);
+                    var point = new POINT
+                    {
+                        X = (short)((long)lParam & 0xFFFF),
+                        Y = (short)(((long)lParam >> 16) & 0xFFFF)
+                    };
+                    ScreenToClient(hwnd, ref point);
+                    int steps = delta / 120;
+                    if (steps == 0) steps = delta > 0 ? 1 : -1;
+                    Bridge.ZoomViewAtPoint(point.X, point.Y, steps * 12);
                     handled = true;
                     break;
                 }

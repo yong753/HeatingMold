@@ -38,4 +38,7 @@ public sealed class ProjectionFrame
         Vec3 d = p - Origin;
         return new Vec2(Vec3.Dot(d, AxisX), Vec3.Dot(d, AxisY));
     }
+
+    /// <summary>Map a point in the projection plane back to 3D.</summary>
+    public Vec3 Unproject(Vec2 p) => Origin + AxisX * p.X + AxisY * p.Y;
 }

@@ -23,6 +23,14 @@ public:
     property array<double>^ Points;
 };
 
+/// <summary>원본 CAD 위상에서 추출한 선택 Face 통합 경계의 3D polyline.</summary>
+public ref class RegionBoundaryLoop
+{
+public:
+    property array<double>^ Points; // flat: x0,y0,z0,...
+    property bool Closed;
+};
+
 /// <summary>HLR 투영 스모크 결과 (S1 검증 항목 5)</summary>
 public ref class HlrResult
 {
@@ -37,6 +45,15 @@ public ref class HlrPolyline
 public:
     property bool Visible;
     property array<double>^ Points;
+};
+
+/// <summary>Projected route piece result [length,start xyz,end xyz].</summary>
+public ref class RoutePieceResult
+{
+public:
+    property double Length;
+    property array<double>^ Start;
+    property array<double>^ End;
 };
 
 /// <summary>
@@ -58,9 +75,31 @@ public:
 
     /// <summary>면의 UV 경계 폴리곤 — 외곽 먼저, 이후 홀 (V3)</summary>
     static array<UvWire^>^ GetFaceUvBoundary(int faceIndex);
+    /// <summary>임시 0.01mm Sewing 후 공유 내부 Edge를 제거하고 외곽 루프를 3D 적응 샘플링해 반환.</summary>
+    static array<RegionBoundaryLoop^>^ GetSelectedRegionBoundary(array<int>^ faceIds, double deflection);
+    /// <summary>전체 모델 AABB의 좌표 범위 [minX,maxX,minY,maxY,minZ,maxZ] in supplied fixed model axes.</summary>
+    static array<double>^ GetModelBoundsInFrame(double xx, double xy, double xz,
+                                                 double yx, double yy, double yz,
+                                                 double zx, double zy, double zz);
 
     /// <summary>UV → 3D 매핑 (V5)</summary>
     static array<double>^ SampleUvTo3D(int faceIndex, double u, double v);
+    /// <summary>Project a world point onto a trimmed face; returns null outside the face.</summary>
+    static array<double>^ ProjectPointToFace(int faceIndex, double x, double y, double z);
+    /// <summary>Cast a directed world-space ray onto trimmed faces; nearest forward hit [x,y,z,faceId], or null.</summary>
+    static array<double>^ IntersectSelectedFaces(array<int>^ faceIds, double x, double y, double z,
+                                                double nx, double ny, double nz);
+    /// <summary>Project source wire along a fixed axis, then shift result by insertionDepth along that axis; returns [success, length, edgeCount, wireCount, statusCode].</summary>
+    static array<double>^ ProjectPathWireOntoSelectedFaces(array<int>^ faceIds, array<double>^ xyzFlat,
+                                                           double dx, double dy, double dz, double insertionDepth);
+    /// <summary>Project and display one route piece, replacing the cached piece with the same stable ID.</summary>
+    static RoutePieceResult^ ProjectRoutePiece(int pieceId, System::String^ kind, array<double>^ xyzFlat,
+                                               array<int>^ faceIds, double dx, double dy, double dz, double depth);
+    /// <summary>Toggle connector presentation; disabled connectors are shown as dashed guides.</summary>
+    static bool SetConnectorEnabled(int pieceId, bool enabled, double r, double g, double b);
+    static void ClearRoutePieces();
+    /// <summary>Return connector piece ID under screen point, or -1.</summary>
+    static int PickConnector(int x, int y);
 
     // ---- AIS 뷰어 (S1 항목 1·6) — WPF HwndHost 자식 HWND 임베드 ----
     /// <summary>자식 HWND에 OpenGl 뷰어 초기화 (1회). 이미 로드된 셰이프가 있으면 표시+Fit</summary>
@@ -83,6 +122,8 @@ public:
 
     /// <summary>상대 줌 (factor &gt; 1 확대, &lt; 1 축소) — 내부적으로 Redraw</summary>
     static void ZoomView(double factor);
+    /// <summary>커서 위치를 기준으로 휠 줌 (deltaY는 화면 픽셀 단위)</summary>
+    static void ZoomViewAtPoint(int x, int y, int deltaY);
 
     /// <summary>표시 셰이프 색상 변경 (RGB 0~1) — SetColor API 스모크</summary>
     static void SetShapeColor(double r, double g, double b);
@@ -90,22 +131,41 @@ public:
     // ---- 면 하이라이트/선택 (W5 — 마우스 호버·클릭) ----
     /// <summary>호버: 커서 아래 면을 동적 하이라이트하고 faceId 반환 (변경 시만 Redraw, 없으면 -1)</summary>
     static int HoverFace(int x, int y);
+    /// <summary>선택 정보는 보존하고 선택/호버 하이라이트 숨김. 다음 면 선택 시 복원.</summary>
+    static void HideFaceHighlights();
 
     /// <summary>호버 하이라이트 해제 + Redraw (마우스가 창을 벗어날 때)</summary>
     static void ClearHover();
 
     /// <summary>클릭: 커서 아래 면을 선택(하이라이트 유지)하고 faceId 반환 (빈 곳이면 선택 해제 후 -1)</summary>
-    static int SelectFace(int x, int y);
+    static int SelectFace(int x, int y, bool toggle);
 
     // ---- 오버레이 (S3 통합 데모) ----
     /// <summary>UV 폴리라인을 면 위 3D 와이어(닫힘이면 리본 면)로 오버레이 표시</summary>
     static bool BuildWire3D(int faceIndex, array<double>^ uvFlat, bool closed);
 
+    /// <summary>Display a world-coordinate 3D polyline overlay.</summary>
+    static bool BuildPolyline3D(array<double>^ xyzFlat, bool closed, bool redraw);
+    static void RedrawView();
+    static void ClearOverlays();
+
     /// <summary>지정 방향에서 바라보는 시점으로 설정 + FitAll (S3 평면 뷰)</summary>
     static void SetViewDirection(double dx, double dy, double dz);
+    /// <summary>방향과 화면 위쪽 벡터로 카메라를 설정</summary>
+    static void SetViewFrame(double dx, double dy, double dz, double ux, double uy, double uz);
+    /// <summary>로드된 형상에서 자동 추정한 주축(0=X, 1=Y, 2=Z)</summary>
+    static array<double>^ GetAutoAxis(int axis);
+    static array<int>^ SelectFacesInRectangle(int x0, int y0, int x1, int y1, bool toggle);
+    static void SetSelectionRectangle(int x0, int y0, int x1, int y1);
+    static void ClearSelectionRectangle();
+    static array<double>^ ScreenPointOnPlane(int x, int y, double ox, double oy, double oz, double nx, double ny, double nz);
+    static bool AddExclusionOverlay(array<double>^ xyzFlat);
+    static void SetExclusionPreview(array<double>^ xyzFlat);
+    static void ClearExclusionOverlays();
 
     /// <summary>면 중앙 UV의 단위 법선 [nx,ny,nz] (S3 정면 뷰)</summary>
     static array<double>^ GetFaceNormal(int faceIndex);
+    static bool IsFaceSurfacePlanar(int faceIndex, double tolerance);
 
     // ---- HLR (S1 항목 5, S3 측면 뷰에서 본격 사용) ----
     /// <summary>현재 셰이프를 축측(1,1,1) 방향으로 HLR 투영 — 가시/은선 엣지 수 + 소요 ms</summary>

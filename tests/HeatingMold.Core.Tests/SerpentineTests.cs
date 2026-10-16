@@ -150,6 +150,37 @@ public class SerpentineTests
             Assert.True(InsideOrOn(outer, p), $"면 밖 경로점 {p}");
     }
 
+    [Fact]
+    public void RoutePieces_ReconstructPathAndClassifyConnectors()
+    {
+        var result = Serpentine.Generate(Rect(0, 0, 100, 60),
+            new List<IReadOnlyList<Vec2>> { Rect(40, 18, 60, 22) },
+            new PatternParams { Margin = 5, Spacing = 10 });
+        Assert.Equal(result.LaneCount - 1, result.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector));
+        Assert.Single(result.RoutePieces.Where(p => p.Kind == SerpentineRoutePieceKind.FixedConnector));
+        var rebuilt = result.RoutePieces.SelectMany((p, i) => i == 0 ? p.Points : p.Points.Skip(1)).ToList();
+        Assert.Equal(result.Path, rebuilt);
+        Assert.Equal(result.TotalLength, result.RoutePieces.Sum(p => p.Length), 8);
+    }
+
+    [Fact]
+    public void DisabledTurnSplitsTopologyButFixedConnectorIsRetained()
+    {
+        var pieces = new[]
+        {
+            new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, 0, new[] { new Vec2(0,0), new Vec2(1,0) }),
+            new SerpentineRoutePiece(SerpentineRoutePieceKind.TurnConnector, 1, new[] { new Vec2(1,0), new Vec2(1,1) }),
+            new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, 1, new[] { new Vec2(1,1), new Vec2(2,1) }),
+            new SerpentineRoutePiece(SerpentineRoutePieceKind.FixedConnector, 1, new[] { new Vec2(2,1), new Vec2(3,1) }),
+            new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, 1, new[] { new Vec2(3,1), new Vec2(4,1) }),
+        };
+        var components = SerpentineTopology.Compute(pieces, new[] { false });
+        Assert.True(components.Count == 2);
+        Assert.Equal(new[] { new Vec2(0,0), new Vec2(1,0) }, components[0]);
+        Assert.Equal(new[] { new Vec2(1,1), new Vec2(2,1), new Vec2(3,1), new Vec2(4,1) }, components[1]);
+        Assert.Equal(1, SerpentineTopology.Compute(pieces).Count);
+    }
+
     private static bool InsideOrOn(IReadOnlyList<Vec2> ring, Vec2 p)
     {
         for (int i = 0; i < ring.Count; i++)
