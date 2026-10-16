@@ -179,8 +179,6 @@ namespace HeatingMold.App
         public event Action<int> ConnectorPicked;
         public event Action<int, int> PowerLocationPicked;
         public event Action<int, int> PowerLocationMoved;
-        public bool WorkingBoundaryPickMode { get; set; }
-        public event Action<int, int> WorkingBoundaryPicked;
 
         public bool RectangleSelectionMode { get; set; }
         public bool ExclusionSketchMode { get; set; }
@@ -269,7 +267,7 @@ namespace HeatingMold.App
                     _lastExclusionPreviewY = _downY;
                     _lastSelectionPreviewX = _downX;
                     _lastSelectionPreviewY = _downY;
-                    _activeDragMode = PowerLocationMode || WorkingBoundaryPickMode ? 0 : (ExclusionSketchMode ? 2 : (RectangleSelectionMode ? 1 : 0));
+                    _activeDragMode = PowerLocationMode ? 0 : (ExclusionSketchMode ? 2 : (RectangleSelectionMode ? 1 : 0));
                     handled = true;
                     break;
 
@@ -350,7 +348,6 @@ namespace HeatingMold.App
                             handled = true;
                         }
                     }
-                    else if (_ready && WorkingBoundaryPickMode) { /* Diagnostic clicks do not select whole faces. */ }
                     else if (_ready && PowerLocationMode)
                     {
                         // Do not highlight/select faces or connectors while choosing destinations.
@@ -407,10 +404,6 @@ namespace HeatingMold.App
                             }
                             else if (_activeDragMode == 2)
                                 ExclusionSketchCompleted?.Invoke(_downX, _downY, x, y);
-                        }
-                        else if (_activeDragMode == 0 && WorkingBoundaryPickMode)
-                        {
-                            WorkingBoundaryPicked?.Invoke(LoWord(lParam), HiWord(lParam));
                         }
                         else if (_activeDragMode == 0 && PowerLocationMode)
                         {

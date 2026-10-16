@@ -140,7 +140,7 @@ static class Program
         var pending=(IList)Field("_pendingLeads");
         var viewport=(OccViewport)window.FindName("Viewport");
         var status=(TextBlock)window.FindName("StatusText");
-        Check(pending.Count==0 && !viewport.PowerLocationMode && status.Text.Contains("먼저"),
+        Check(pending.Count==0 && !viewport.PowerLocationMode && status.Text=="유효한 작업 방향이 없습니다",
             "power setup is gated before working-side confirmation despite restored legacy topology");
         // The old automatic endpoint-queue entry is intentionally unavailable at this checkpoint.
         // A future first-hit-safe route migration must add its own entry/endpoint tests before enabling it.
@@ -151,7 +151,7 @@ static class Program
         viewport.RectangleSelectionMode=true; viewport.ConnectorEditMode=true;
         Invoke("PowerSetup_Click");
         Check(pending.Count==0 && !viewport.PowerLocationMode && viewport.RectangleSelectionMode && viewport.ConnectorEditMode &&
-            status.Text.StartsWith("생성 보류"),"confirmed side alone cannot enter incompatible legacy power flow or disable other modes");
+            status.Text.StartsWith("생성 보류: 전원 경로"),"confirmed side alone cannot enter incompatible legacy power flow or disable other modes");
         viewport.RectangleSelectionMode=false; viewport.ConnectorEditMode=false;
 
         // Seed restored pending state, rather than bypassing/re-enabling the gate. Keep cancellation,
@@ -186,7 +186,7 @@ static class Program
         var restoredLengths=new[]{123.0,456.0};
         Set("_leadLengths",restoredLengths);
         Invoke("PowerSetup_Click");
-        Check(pending.Count==4 && ReferenceEquals(restoredLengths,Field("_leadLengths")) && status.Text.StartsWith("생성 보류"),
+        Check(pending.Count==4 && ReferenceEquals(restoredLengths,Field("_leadLengths")) && status.Text.StartsWith("생성 보류: 전원 경로"),
             "gated setup cannot silently restart legacy projection, replace restored endpoints or rewrite lead lengths");
         Invoke("PowerCancel_Click");
         Check(((IList)Field("_pendingLeads")).Count==0 && !viewport.PowerLocationMode,"explicit cancellation clears pending setup");

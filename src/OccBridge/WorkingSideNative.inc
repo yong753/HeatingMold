@@ -11,13 +11,11 @@ struct WorkingNative
 };
 std::map<long long, std::unique_ptr<WorkingNative>> g_working;
 long long g_nextWorkingId = 1;
-Handle(AIS_InteractiveObject) g_workingDiagnostic;
 std::vector<Handle(AIS_Shape)> g_workingBoundaries;
 struct WorkingPresentationNative
 {
     long long revision;
     std::vector<Handle(AIS_Shape)> boundaries;
-    Handle(AIS_InteractiveObject) diagnostic;
     Handle(Graphic3d_Camera) camera;
 };
 std::map<long long, WorkingPresentationNative> g_workingPresentations;
@@ -31,11 +29,38 @@ void ClearWorkingBoundaryNative()
 
 void InvalidateWorkingContexts()
 {
+    for (const auto& staged : g_stagedWorkingPolylines)
+        if (!g_ctx.IsNull()) g_ctx->Remove(staged.second.ais,Standard_False);
+    g_stagedWorkingPolylines.clear();
+    g_stagedWorkingRouteOwners.clear();
     g_working.clear();
     g_workingPresentations.clear();
     ClearWorkingBoundaryNative();
-    if (!g_ctx.IsNull() && !g_workingDiagnostic.IsNull()) g_ctx->Remove(g_workingDiagnostic, Standard_False);
-    g_workingDiagnostic.Nullify();
+}
+
+void ReleaseWorkingNative(long long id)
+{
+    const auto context=g_working.find(id);
+    if (context==g_working.end()) return;
+    const long long revision=context->second->revision;
+    bool removedRoute=false;
+    for (auto it=g_stagedWorkingPolylines.begin();it!=g_stagedWorkingPolylines.end();) {
+        if (it->second.contextId!=id || it->second.revision!=revision) { ++it; continue; }
+        if (!g_ctx.IsNull()) { try { g_ctx->Remove(it->second.ais,Standard_False); } catch (...) {} }
+        it=g_stagedWorkingPolylines.erase(it);
+    }
+    for (auto owner=g_stagedWorkingRouteOwners.begin();owner!=g_stagedWorkingRouteOwners.end();) {
+        if (owner->second.first!=id || owner->second.second!=revision) { ++owner; continue; }
+        auto route=g_routePieces.find(owner->first);
+        if (route!=g_routePieces.end()) {
+            if (!g_ctx.IsNull()) { try { g_ctx->Remove(route->second.ais,Standard_False); } catch (...) {} }
+            g_routePieces.erase(route); removedRoute=true;
+        }
+        owner=g_stagedWorkingRouteOwners.erase(owner);
+    }
+    g_working.erase(context);
+    if (removedRoute) HighlightCircuitNative(std::vector<int>());
+    if (!g_view.IsNull()) { try { g_view->Redraw(); } catch (...) {} }
 }
 
 WorkingNative* FindWorking(long long id, long long revision)
@@ -92,7 +117,7 @@ long long CreateWorkingNative(double nx, double ny, double nz, double xx, double
 // Matches the managed enum without exposing flat numeric result arrays.
 enum class WorkingStatusNative { Hit, Miss, Tangent, InvalidInput, StaleContext, GeometryFailure };
 // Never discard a nearer tangent to use a back hit.
-WorkingStatusNative QueryWorkingNative(long long id, long long revision, double u, double v, double* out, int& faceId)
+WorkingStatusNative QueryWorkingNative(long long id, long long revision, double u, double v, double* out, int& faceId, double* outNormal = nullptr)
 {
     WorkingNative* ctx = FindWorking(id, revision);
     if (!ctx) return WorkingStatusNative::StaleContext;
@@ -128,6 +153,7 @@ WorkingStatusNative QueryWorkingNative(long long id, long long revision, double 
         if (!std::isfinite(normal.SquareMagnitude()) || normal.SquareMagnitude()<1e-24)
             return WorkingStatusNative::GeometryFailure;
         normal.Normalize();
+        if (outNormal) { outNormal[0]=normal.X(); outNormal[1]=normal.Y(); outNormal[2]=normal.Z(); }
         return std::fabs(normal.Dot(gp_Vec(d))) < 1e-7 ? WorkingStatusNative::Tangent : WorkingStatusNative::Hit;
     } catch (const Standard_Failure&) { return WorkingStatusNative::GeometryFailure; }
 }
@@ -164,6 +190,266 @@ bool WorkingVisibleNative(long long id, long long revision, double x,double y,do
     } catch (const Standard_Failure&) { return false; }
 }
 
+bool WorkingFacesAdjacentNative(long long id, long long revision, int a, int b)
+{
+    if (!FindWorking(id,revision) || a<0 || b<0 || a>=static_cast<int>(g_faces.size()) || b>=static_cast<int>(g_faces.size())) return false;
+    if (a==b) return true;
+    if (g_faceAdjacencyRevision!=revision) {
+        g_faceAdjacency.clear();
+        TopTools_IndexedMapOfShape edgeMap;
+        std::vector<std::set<int>> owners;
+        for (int i=0;i<static_cast<int>(g_faces.size());++i)
+            for (TopExp_Explorer ex(g_faces[i],TopAbs_EDGE);ex.More();ex.Next()) {
+                const int index=edgeMap.Add(ex.Current());
+                if (static_cast<int>(owners.size())<edgeMap.Extent()) owners.resize(edgeMap.Extent());
+                owners[index-1].insert(i);
+            }
+        for (const auto& faces : owners) for (auto i=faces.begin();i!=faces.end();++i)
+            for (auto j=std::next(i);j!=faces.end();++j) g_faceAdjacency.emplace(*i,*j);
+        g_faceAdjacencyRevision=revision;
+    }
+    return g_faceAdjacency.count({std::min(a,b),std::max(a,b)})!=0;
+}
+
+bool DisplayWorkingRoutePieceNative(long long id,long long revision,int pieceId,const std::string& kind,
+    const std::vector<double>& xyz,double* result)
+{
+    if (!FindWorking(id,revision) || g_ctx.IsNull() || xyz.size()<6 || xyz.size()%3 || !result) return false;
+    // Negative IDs are private staging handles: collisions must never replace another candidate.
+    if (pieceId<0 && (g_routePieces.count(pieceId) || g_stagedWorkingRouteOwners.count(pieceId))) return false;
+    Handle(AIS_Shape) ais;
+    try {
+        BRepBuilderAPI_MakePolygon poly;
+        for (size_t i=0;i<xyz.size();i+=3) {
+            if (!std::isfinite(xyz[i]) || !std::isfinite(xyz[i+1]) || !std::isfinite(xyz[i+2])) return false;
+            poly.Add(gp_Pnt(xyz[i],xyz[i+1],xyz[i+2]));
+        }
+        if (!poly.IsDone()) return false;
+        GProp_GProps props; BRepGProp::LinearProperties(poly.Wire(),props);
+        if (!std::isfinite(props.Mass()) || props.Mass()<=Precision::Confusion()) return false;
+        result[0]=props.Mass(); result[1]=xyz[0]; result[2]=xyz[1]; result[3]=xyz[2];
+        result[4]=xyz[xyz.size()-3]; result[5]=xyz[xyz.size()-2]; result[6]=xyz[xyz.size()-1];
+        if (!g_ctx.IsNull()) {
+            std::string k=kind; std::transform(k.begin(),k.end(),k.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
+            const bool connector=k=="turnconnector" || k=="turn";
+            auto old=g_routePieces.find(pieceId);
+            if (old!=g_routePieces.end()) { g_ctx->Remove(old->second.ais,Standard_False); g_routePieces.erase(old); }
+            ais=new AIS_Shape(poly.Wire());
+            Quantity_Color color=connector ? Quantity_Color(0.1,0.65,1.0,Quantity_TOC_RGB) : Quantity_Color(0.95,0.15,0.10,Quantity_TOC_RGB);
+            g_ctx->SetColor(ais,color,Standard_False);
+            if (connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
+            g_ctx->Display(ais,Standard_False); g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost); g_ctx->Activate(ais,Standard_False);
+            if(pieceId<0) {
+                auto route=g_routePieces.emplace(pieceId,RoutePieceOverlay{ais,connector,true,color,1.0});
+                if(!route.second) { g_ctx->Remove(ais,Standard_False); return false; }
+                try {
+                    auto owner=g_stagedWorkingRouteOwners.emplace(pieceId,std::make_pair(id,revision));
+                    if(!owner.second) { g_routePieces.erase(route.first); g_ctx->Remove(ais,Standard_False); return false; }
+                } catch(...) { g_routePieces.erase(pieceId); g_ctx->Remove(ais,Standard_False); throw; }
+            } else g_routePieces[pieceId]={ais,connector,true,color,1.0};
+        }
+        return true;
+    } catch (...) { if (!ais.IsNull() && !g_ctx.IsNull()) g_ctx->Remove(ais,Standard_False); return false; }
+}
+
+bool StageWorkingPolylineNative(long long id,long long revision,int stageId,const std::vector<double>& xyz)
+{
+    if (!FindWorking(id,revision) || stageId>=0 || xyz.size()<6 || xyz.size()%3 || g_ctx.IsNull() ||
+        g_stagedWorkingPolylines.count(stageId) || g_stagedWorkingRouteOwners.count(stageId) || g_routePieces.count(stageId)) return false;
+    Handle(AIS_Shape) ais;
+    try {
+        BRepBuilderAPI_MakePolygon poly;
+        for (size_t i=0;i<xyz.size();i+=3) {
+            if (!std::isfinite(xyz[i]) || !std::isfinite(xyz[i+1]) || !std::isfinite(xyz[i+2])) return false;
+            poly.Add(gp_Pnt(xyz[i],xyz[i+1],xyz[i+2]));
+        }
+        if (!poly.IsDone()) return false;
+        ais=new AIS_Shape(poly.Wire());
+        g_ctx->SetColor(ais,Quantity_Color(0.95,0.15,0.10,Quantity_TOC_RGB),Standard_False);
+        g_ctx->Display(ais,Standard_False); g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost); g_ctx->Deactivate(ais,Standard_False);
+        if(!g_stagedWorkingPolylines.emplace(stageId,StagedWorkingPolyline{ais,id,revision}).second) { g_ctx->Remove(ais,Standard_False); return false; }
+        return true;
+    } catch (...) { if (!ais.IsNull() && !g_ctx.IsNull()) { try { g_ctx->Remove(ais,Standard_False); } catch (...) {} } g_stagedWorkingPolylines.erase(stageId); return false; }
+}
+
+bool BuildProjectedWorkingWire(long long id,long long revision,const std::vector<double>& xyz,
+    const std::vector<int>& faceIds,const gp_Dir& direction,TopoDS_Wire& wire,double* result)
+{
+    if (!FindWorking(id,revision) || xyz.size()<6 || xyz.size()%3 || faceIds.empty() || !result) return false;
+    try {
+        BRepBuilderAPI_MakePolygon source;
+        for(size_t i=0;i<xyz.size();i+=3) {
+            if(!std::isfinite(xyz[i])||!std::isfinite(xyz[i+1])||!std::isfinite(xyz[i+2])) return false;
+            source.Add(gp_Pnt(xyz[i],xyz[i+1],xyz[i+2]));
+        }
+        if(!source.IsDone()) return false;
+        BRepBuilderAPI_Sewing sewing(0.01,Standard_True,Standard_True,Standard_True,Standard_True);
+        std::set<int> unique;
+        for(int face:faceIds) { if(face<0||face>=static_cast<int>(g_faces.size())) return false; if(unique.insert(face).second) sewing.Add(g_faces[face]); }
+        sewing.Perform(); TopoDS_Shape target=sewing.SewedShape(); if(target.IsNull()) return false;
+        // Check coverage independently per source segment. A disconnected or
+        // partially out-of-domain polyline must not pass on its global endpoints.
+        IntCurvesFace_ShapeIntersector coverage; coverage.Load(target,0.01);
+        size_t sourceEdges=0;
+        for(BRepTools_WireExplorer ex(source.Wire());ex.More();ex.Next()) {
+            BRepBuilderAPI_MakeWire oneEdge;
+            oneEdge.Add(ex.Current());
+            if(!oneEdge.IsDone()) return false;
+            BRepProj_Projection edgeProjection(oneEdge.Wire(),target,direction);
+            if(!edgeProjection.IsDone()||!edgeProjection.More()) return false;
+            BRepAdaptor_Curve curve(ex.Current());
+            const double first=curve.FirstParameter(),last=curve.LastParameter();
+            if(!std::isfinite(first)||!std::isfinite(last)||last<=first) return false;
+            for(double fraction:{0.0,0.5,1.0}) {
+                const gp_Pnt p=curve.Value(first+(last-first)*fraction);
+                coverage.Perform(gp_Lin(p,direction),0.0,1.0e12);
+                bool hit=false;
+                if(coverage.IsDone()) for(Standard_Integer h=1;h<=coverage.NbPnt();++h)
+                    if(coverage.State(h)==TopAbs_IN||coverage.State(h)==TopAbs_ON) { hit=true; break; }
+                if(!hit) return false;
+            }
+            ++sourceEdges;
+        }
+        if(sourceEdges==0) return false;
+        BRepProj_Projection projection(source.Wire(),target,direction);
+        std::vector<TopoDS_Wire> wires;
+        for(projection.Init();projection.More();projection.Next()) wires.push_back(projection.Current());
+        if(wires.empty()) return false;
+        Handle(TopTools_HSequenceOfShape) projectedEdges=new TopTools_HSequenceOfShape();
+        for(const auto& projectedWire:wires)
+            for(BRepTools_WireExplorer ex(projectedWire);ex.More();ex.Next()) projectedEdges->Append(ex.Current());
+        Handle(TopTools_HSequenceOfShape) connectedWires=new TopTools_HSequenceOfShape();
+        ShapeAnalysis_FreeBounds::ConnectEdgesToWires(projectedEdges,0.01,Standard_False,connectedWires);
+        if(connectedWires->Length()!=1) return false;
+        wire=TopoDS::Wire(connectedWires->Value(1));
+        if(!BRepCheck_Analyzer(wire).IsValid()) return false;
+        size_t ordered=0,edges=0; for(BRepTools_WireExplorer ex(wire);ex.More();ex.Next()) ++ordered;
+        for(TopExp_Explorer ex(wire,TopAbs_EDGE);ex.More();ex.Next()) ++edges;
+        if(ordered==0||ordered!=edges) return false;
+        GProp_GProps props; BRepGProp::LinearProperties(wire,props);
+        if(!std::isfinite(props.Mass())||props.Mass()<=Precision::Confusion()) return false;
+        TopoDS_Vertex first,last;
+        for(BRepTools_WireExplorer ex(wire);ex.More();ex.Next()) { TopoDS_Vertex a,b; TopExp::Vertices(ex.Current(),a,b,Standard_True); if(first.IsNull()) first=a; last=b; }
+        if(first.IsNull()||last.IsNull()) return false;
+        gp_Pnt a=BRep_Tool::Pnt(first),b=BRep_Tool::Pnt(last),sa(xyz[0],xyz[1],xyz[2]),sb(xyz[xyz.size()-3],xyz[xyz.size()-2],xyz[xyz.size()-1]);
+        auto transverse=[&](const gp_Pnt& p,const gp_Pnt& q){gp_Vec v(p,q),d(direction);return (v-d*v.Dot(d)).Magnitude();};
+        if(transverse(a,sa)>0.01||transverse(b,sb)>0.01) std::swap(a,b);
+        if(transverse(a,sa)>0.01||transverse(b,sb)>0.01) return false;
+        result[0]=props.Mass(); result[1]=a.X();result[2]=a.Y();result[3]=a.Z();result[4]=b.X();result[5]=b.Y();result[6]=b.Z(); return true;
+    } catch(...) { return false; }
+}
+
+bool StageProjectedWorkingRouteNative(long long id,long long revision,int stageId,const std::string& kind,
+    const std::vector<double>& xyz,const std::vector<int>& faces,const gp_Dir& direction,double* result)
+{
+    if(stageId>=0||g_ctx.IsNull()||g_routePieces.count(stageId)||g_stagedWorkingRouteOwners.count(stageId)||g_stagedWorkingPolylines.count(stageId)) return false;
+    TopoDS_Wire wire; if(!BuildProjectedWorkingWire(id,revision,xyz,faces,direction,wire,result)) return false;
+    Handle(AIS_Shape) ais;
+    try {
+        ais=new AIS_Shape(wire); std::string k=kind;
+        std::transform(k.begin(),k.end(),k.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
+        bool connector=k=="turnconnector"||k=="turn"; Quantity_Color color=connector?Quantity_Color(0.1,0.65,1.0,Quantity_TOC_RGB):Quantity_Color(0.95,0.15,0.10,Quantity_TOC_RGB);
+        g_ctx->SetColor(ais,color,Standard_False); if(connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
+        g_ctx->Display(ais,Standard_False);g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost);g_ctx->Activate(ais,Standard_False);
+        auto inserted=g_routePieces.emplace(stageId,RoutePieceOverlay{ais,connector,true,color,1.0});
+        if(!inserted.second) { g_ctx->Remove(ais,Standard_False); return false; }
+        try { if(!g_stagedWorkingRouteOwners.emplace(stageId,std::make_pair(id,revision)).second)
+                throw std::runtime_error("staged route owner collision"); }
+        catch(...) { g_ctx->Remove(ais,Standard_False); g_routePieces.erase(stageId); throw; }
+        return true;
+    } catch(...) {
+        if(!ais.IsNull()&&!g_ctx.IsNull()) { try { g_ctx->Remove(ais,Standard_False); } catch(...) {} }
+        auto owner=g_stagedWorkingRouteOwners.find(stageId);
+        if(owner!=g_stagedWorkingRouteOwners.end()&&owner->second==std::make_pair(id,revision)) g_stagedWorkingRouteOwners.erase(owner);
+        auto route=g_routePieces.find(stageId);
+        if(route!=g_routePieces.end()&&route->second.ais==ais) g_routePieces.erase(route);
+        return false;
+    }
+}
+
+bool StageProjectedWorkingPolylineNative(long long id,long long revision,int stageId,const std::vector<double>& xyz,
+    const std::vector<int>& faces,const gp_Dir& direction,double* result)
+{
+    if(stageId>=0||g_ctx.IsNull()||g_stagedWorkingPolylines.count(stageId)||g_stagedWorkingRouteOwners.count(stageId)||g_routePieces.count(stageId)) return false;
+    TopoDS_Wire wire; if(!BuildProjectedWorkingWire(id,revision,xyz,faces,direction,wire,result)) return false;
+    Handle(AIS_Shape) ais;
+    try { ais=new AIS_Shape(wire);g_ctx->SetColor(ais,Quantity_Color(0.95,0.15,0.10,Quantity_TOC_RGB),Standard_False);
+        g_ctx->Display(ais,Standard_False);g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost);g_ctx->Deactivate(ais,Standard_False);
+        if(!g_stagedWorkingPolylines.emplace(stageId,StagedWorkingPolyline{ais,id,revision}).second) { g_ctx->Remove(ais,Standard_False); return false; }
+        return true;
+    } catch(...) { if(!ais.IsNull()) { try { g_ctx->Remove(ais,Standard_False); } catch(...) {} } g_stagedWorkingPolylines.erase(stageId); return false; }
+}
+
+void DiscardWorkingGeometryNative(long long contextId,long long revision,const std::vector<int>& routes,const std::vector<int>& lines)
+{
+    for (int id : routes) {
+        auto owner=g_stagedWorkingRouteOwners.find(id);
+        if (id>=0 || owner==g_stagedWorkingRouteOwners.end() || owner->second!=std::make_pair(contextId,revision)) continue;
+        auto it=g_routePieces.find(id);
+        if (it!=g_routePieces.end()) { if (!g_ctx.IsNull()) g_ctx->Remove(it->second.ais,Standard_False); g_routePieces.erase(it); }
+        g_stagedWorkingRouteOwners.erase(owner);
+    }
+    for (int id : lines) {
+        auto it=g_stagedWorkingPolylines.find(id);
+        if (it==g_stagedWorkingPolylines.end() || it->second.contextId!=contextId || it->second.revision!=revision) continue;
+        if (!g_ctx.IsNull()) g_ctx->Remove(it->second.ais,Standard_False);
+        g_stagedWorkingPolylines.erase(it);
+    }
+}
+
+bool CommitWorkingGeometryNative(long long contextId,long long revision,const std::vector<int>& stagedRoutes,const std::vector<int>& finalRoutes,
+    const std::vector<int>& stagedLines)
+{
+    if (!FindWorking(contextId,revision)) return false;
+    if (stagedRoutes.size()!=finalRoutes.size()) return false;
+    std::set<int> finalSet, stagedRouteSet, stagedLineSet;
+    for (size_t i=0;i<stagedRoutes.size();++i)
+        if (stagedRoutes[i]>=0 || !stagedRouteSet.insert(stagedRoutes[i]).second || !g_routePieces.count(stagedRoutes[i]) || !g_stagedWorkingRouteOwners.count(stagedRoutes[i]) ||
+            g_stagedWorkingRouteOwners.at(stagedRoutes[i])!=std::make_pair(contextId,revision) || finalRoutes[i]<0 || !finalSet.insert(finalRoutes[i]).second) return false;
+    for (int id : stagedLines) if (!stagedLineSet.insert(id).second || !g_stagedWorkingPolylines.count(id) ||
+        g_stagedWorkingPolylines.at(id).contextId!=contextId || g_stagedWorkingPolylines.at(id).revision!=revision) return false;
+    std::map<int,RoutePieceOverlay> nextRoutes;
+    std::vector<Handle(AIS_Shape)> nextWorld;
+    std::vector<Handle(AIS_Shape)> removed;
+    std::set<int> stagedSet;
+    try {
+        for (size_t i=0;i<stagedRoutes.size();++i) nextRoutes.emplace(finalRoutes[i],g_routePieces.at(stagedRoutes[i]));
+        for (const auto& route:g_routePieces) {
+            if(route.first>=0||stagedRouteSet.count(route.first)) continue;
+            auto owner=g_stagedWorkingRouteOwners.find(route.first);
+            if(owner!=g_stagedWorkingRouteOwners.end()&&owner->second!=std::make_pair(contextId,revision))
+                nextRoutes.emplace(route.first,route.second);
+        }
+        nextWorld.reserve(stagedLines.size());
+        for (int id : stagedLines) nextWorld.push_back(g_stagedWorkingPolylines.at(id).ais);
+        removed.reserve(g_routePieces.size()+g_worldOverlays.size());
+        stagedSet.insert(stagedRoutes.begin(),stagedRoutes.end());
+    } catch (...) { return false; }
+    try {
+        // Candidate geometry is already displayed and selectable. All validation precedes destructive swap.
+        HighlightCircuitNative(std::vector<int>());
+        for (const auto& old : g_routePieces) {
+            // Keep private candidates belonging to other live contexts. Replace committed
+            // positive routes and only this transaction's staged candidates.
+            if (old.first<0 && !stagedSet.count(old.first)) continue;
+            removed.push_back(old.second.ais);
+            if (!g_ctx.IsNull()) g_ctx->Remove(old.second.ais,Standard_False);
+        }
+        for (const auto& old : g_worldOverlays) {
+            removed.push_back(old);
+            if (!g_ctx.IsNull()) g_ctx->Remove(old,Standard_False);
+        }
+        g_routePieces.swap(nextRoutes); g_worldOverlays.swap(nextWorld);
+        for (int id : stagedRoutes) g_stagedWorkingRouteOwners.erase(id);
+        for (int id : stagedLines) g_stagedWorkingPolylines.erase(id);
+        if (!g_view.IsNull()) { try { g_view->Redraw(); } catch (...) {} }
+        return true;
+    } catch (...) {
+        if (!g_ctx.IsNull()) for (const auto& old : removed) { try { g_ctx->Display(old,Standard_False); } catch (...) {} }
+        return false;
+    }
+}
+
 bool WorkingScreenNative(long long id,long long revision,double x,double y,double z,double* out)
 {
     if (!FindWorking(id,revision) || g_view.IsNull() || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return false;
@@ -177,26 +463,6 @@ bool WorkingScreenNative(long long id,long long revision,double x,double y,doubl
         out[1]=(1-projected.Y())*height/2;
         return std::isfinite(out[0]) && std::isfinite(out[1]);
     } catch (const Standard_Failure&) { return false; }
-}
-
-void ShowWorkingDiagnosticNative(const std::vector<double>& xyz, bool point)
-{
-    if (g_ctx.IsNull()) return;
-    if (!g_workingDiagnostic.IsNull()) g_ctx->Remove(g_workingDiagnostic,Standard_False);
-    g_workingDiagnostic.Nullify();
-    if (point && xyz.size()==3) {
-        Handle(AIS_Point) marker = new AIS_Point(new Geom_CartesianPoint(gp_Pnt(xyz[0],xyz[1],xyz[2])));
-        marker->SetColor(Quantity_Color(1,0.2,0,Quantity_TOC_RGB));
-        marker->SetMarker(Aspect_TOM_O_PLUS);
-        marker->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_PLUS,
-            Quantity_Color(1,0.2,0,Quantity_TOC_RGB),3));
-        g_workingDiagnostic=marker;
-    }
-    if (!g_workingDiagnostic.IsNull()) {
-        g_ctx->Display(g_workingDiagnostic,Standard_False);
-        g_ctx->Deactivate(g_workingDiagnostic);
-    }
-    g_view->Redraw();
 }
 
 void ShowWorkingBoundaryNative(const std::vector<std::vector<double>>& loops, const std::vector<bool>& holes)
@@ -220,24 +486,17 @@ void ShowWorkingBoundaryNative(const std::vector<std::vector<double>>& loops, co
     g_view->Redraw();
 }
 
-long long CaptureWorkingPresentationNative(double* bounds, double* point, bool& hasBounds, bool& hasPoint)
+long long CaptureWorkingPresentationNative(double* bounds, bool& hasBounds)
 {
     try {
         WorkingPresentationNative snapshot;
         snapshot.revision=g_modelRevision;
         snapshot.boundaries=g_workingBoundaries;
-        snapshot.diagnostic=g_workingDiagnostic;
         if (!g_view.IsNull()) snapshot.camera=new Graphic3d_Camera(g_view->Camera());
         Bnd_Box box;
         for (const auto& boundary : snapshot.boundaries) BRepBndLib::Add(boundary->Shape(),box);
         hasBounds=!box.IsVoid();
         if (hasBounds) box.Get(bounds[0],bounds[1],bounds[2],bounds[3],bounds[4],bounds[5]);
-        Handle(AIS_Point) marker=Handle(AIS_Point)::DownCast(snapshot.diagnostic);
-        hasPoint=!marker.IsNull();
-        if (hasPoint) {
-            const gp_Pnt p=marker->Component()->Pnt();
-            point[0]=p.X(); point[1]=p.Y(); point[2]=p.Z();
-        }
         const long long id=g_nextWorkingPresentation++;
         g_workingPresentations.emplace(id,std::move(snapshot));
         return id;
@@ -249,17 +508,12 @@ bool RestoreWorkingPresentationNative(long long id)
     const auto it=g_workingPresentations.find(id);
     if (it==g_workingPresentations.end() || it->second.revision!=g_modelRevision) return false;
     const auto& snapshot=it->second;
-    if (g_ctx.IsNull()) return snapshot.boundaries.empty() && snapshot.diagnostic.IsNull() && snapshot.camera.IsNull();
+    if (g_ctx.IsNull()) return snapshot.boundaries.empty() && snapshot.camera.IsNull();
     try {
         ClearWorkingBoundaryNative();
-        if (!g_workingDiagnostic.IsNull()) g_ctx->Remove(g_workingDiagnostic,Standard_False);
         g_workingBoundaries=snapshot.boundaries;
-        g_workingDiagnostic=snapshot.diagnostic;
         for (const auto& boundary : g_workingBoundaries) {
             g_ctx->Display(boundary,Standard_False); g_ctx->Deactivate(boundary);
-        }
-        if (!g_workingDiagnostic.IsNull()) {
-            g_ctx->Display(g_workingDiagnostic,Standard_False); g_ctx->Deactivate(g_workingDiagnostic);
         }
         if (!snapshot.camera.IsNull() && !g_view.IsNull()) g_view->Camera()->Copy(snapshot.camera);
         if (!g_view.IsNull()) g_view->Redraw();

@@ -139,6 +139,8 @@ namespace
 {
     TopoDS_Shape g_shape;
     std::vector<TopoDS_Face> g_faces;
+    std::set<std::pair<int,int>> g_faceAdjacency;
+    long long g_faceAdjacencyRevision = -1;
     std::map<int, std::unique_ptr<IntCurvesFace_ShapeIntersector>> g_surfaceIntersectors;
     std::map<int, Bnd_Box> g_surfaceBounds;
     std::map<int, double> g_surfaceTolerances;
@@ -275,6 +277,9 @@ namespace
     Handle(AIS_Point) g_powerDestinationPreview;
     struct RoutePieceOverlay { Handle(AIS_Shape) ais; bool connector; bool enabled; Quantity_Color color; double width; };
     std::map<int, RoutePieceOverlay> g_routePieces;
+    struct StagedWorkingPolyline { Handle(AIS_Shape) ais; long long contextId, revision; };
+    std::map<int, StagedWorkingPolyline> g_stagedWorkingPolylines;
+    std::map<int, std::pair<long long,long long>> g_stagedWorkingRouteOwners;
     std::set<int> g_hoveredCircuitPieces;
     void HighlightCircuitNative(const std::vector<int>& ids);
     std::vector<Handle(AIS_Shape)> g_exclusionOverlays;
@@ -976,6 +981,7 @@ namespace
         HighlightCircuitNative(std::vector<int>());
         if (!g_ctx.IsNull()) for (const auto& piece : g_routePieces) g_ctx->Remove(piece.second.ais, Standard_False);
         g_routePieces.clear();
+        g_stagedWorkingRouteOwners.clear();
     }
 
     void ClearPowerLeadPreviewNative()
@@ -1285,6 +1291,9 @@ namespace
         }
         g_overlays.clear();
         g_worldOverlays.clear();
+        for (const auto& staged : g_stagedWorkingPolylines)
+            if (!g_ctx.IsNull()) g_ctx->Remove(staged.second.ais,Standard_False);
+        g_stagedWorkingPolylines.clear();
         if (!g_view.IsNull()) g_view->Redraw();
     }
 
@@ -1928,37 +1937,6 @@ namespace
         catch (const Standard_Failure&) { return false; }
     }
 
-    // ================= HLR natives (S1 항목 5) =================
-
-    struct HlrCounts { int vis; int hid; double ms; };
-
-    int CountEdges(const TopoDS_Shape& s)
-    {
-        int n = 0;
-        for (TopExp_Explorer ex(s, TopAbs_EDGE); ex.More(); ex.Next()) ++n;
-        return n;
-    }
-
-    HlrCounts RunHlrNative()
-    {
-        HlrCounts r = { 0, 0, 0.0 };
-        if (g_shape.IsNull()) return r;
-
-        const auto t0 = std::chrono::steady_clock::now();
-        Handle(HLRBRep_Algo) algo = new HLRBRep_Algo();
-        algo->Add(g_shape);
-        algo->Projector(HLRAlgo_Projector(gp_Ax2(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(1.0, 1.0, 1.0))));
-        algo->Update();
-        algo->Hide();
-
-        HLRBRep_HLRToShape hlr(algo);
-        r.vis = CountEdges(hlr.VCompound()) + CountEdges(hlr.Rg1LineVCompound()) + CountEdges(hlr.OutLineVCompound());
-        r.hid = CountEdges(hlr.HCompound()) + CountEdges(hlr.Rg1LineHCompound()) + CountEdges(hlr.OutLineHCompound());
-        const auto t1 = std::chrono::steady_clock::now();
-        r.ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        return r;
-    }
-
     // ================= HLR 기하 (M4 DXF 뷰) =================
 
     struct NativeHlrLine { bool visible; std::vector<double> pts; };
@@ -2031,7 +2009,7 @@ namespace
 namespace HeatingMold { namespace OccBridge {
 
 long long Bridge::GetModelRevision() { return g_modelRevision; }
-void Bridge::ReleaseWorkingContext(long long id) { g_working.erase(id); }
+void Bridge::ReleaseWorkingContext(long long id) { ReleaseWorkingNative(id); }
 WorkingContext^ Bridge::CreateWorkingContext(double nx,double ny,double nz,double xx,double xy,double xz)
 {
     const long long id = CreateWorkingNative(nx,ny,nz,xx,xy,xz);
@@ -2047,14 +2025,100 @@ WorkingContext^ Bridge::CreateWorkingContext(double nx,double ny,double nz,doubl
 }
 WorkingHit^ Bridge::QueryWorkingSurface(long long id,long long revision,double u,double v)
 {
-    double p[3]={}; int face=-1;
-    const auto status=QueryWorkingNative(id,revision,u,v,p,face);
+    double p[3]={}, n[3]={}; int face=-1;
+    const auto status=QueryWorkingNative(id,revision,u,v,p,face,n);
     auto result=gcnew WorkingHit();
     result->ContextId=id; result->Revision=revision; result->DatumPoint=gcnew array<double>{u,v};
     result->Status=static_cast<WorkingQueryStatus>(static_cast<int>(status)); result->FaceId=face;
-    if (status==WorkingStatusNative::Hit || status==WorkingStatusNative::Tangent)
+    if (status==WorkingStatusNative::Hit || status==WorkingStatusNative::Tangent) {
         result->Point=gcnew array<double>{p[0],p[1],p[2]};
+        result->Normal=gcnew array<double>{n[0],n[1],n[2]};
+    }
     return result;
+}
+WorkingHit^ Bridge::QueryWorkingSurfaceForFaces(long long id,long long revision,array<int>^ faceIds,double u,double v)
+{
+    if (faceIds==nullptr) {
+        auto invalid=gcnew WorkingHit(); invalid->ContextId=id; invalid->Revision=revision;
+        invalid->DatumPoint=gcnew array<double>{u,v}; invalid->Status=WorkingQueryStatus::InvalidInput; invalid->FaceId=-1; return invalid;
+    }
+    for each (int candidate in faceIds) if (candidate<0 || candidate>=static_cast<int>(g_faces.size())) {
+        auto invalid=gcnew WorkingHit(); invalid->ContextId=id; invalid->Revision=revision;
+        invalid->DatumPoint=gcnew array<double>{u,v}; invalid->Status=WorkingQueryStatus::InvalidInput; invalid->FaceId=-1; return invalid;
+    }
+    double p[3]={}, n[3]={}; int face=-1;
+    const auto status=QueryWorkingNative(id,revision,u,v,p,face,n);
+    auto result=gcnew WorkingHit();
+    result->ContextId=id; result->Revision=revision; result->DatumPoint=gcnew array<double>{u,v};
+    result->Status=static_cast<WorkingQueryStatus>(static_cast<int>(status)); result->FaceId=face;
+    if (status==WorkingStatusNative::Hit || status==WorkingStatusNative::Tangent) {
+        result->Point=gcnew array<double>{p[0],p[1],p[2]};
+        result->Normal=gcnew array<double>{n[0],n[1],n[2]};
+        bool selected=false;
+        if (faceIds!=nullptr) for each (int candidate in faceIds) {
+            if (candidate<0 || candidate>=static_cast<int>(g_faces.size())) {
+                result->Status=WorkingQueryStatus::InvalidInput; result->Point=nullptr; result->Normal=nullptr; return result;
+            }
+            selected |= candidate==face;
+        }
+        result->IsSelectedFace=selected;
+        if (!selected) { result->Status=WorkingQueryStatus::Miss; result->Point=nullptr; result->Normal=nullptr; }
+    }
+    return result;
+}
+bool Bridge::AreWorkingFacesAdjacent(long long id,long long revision,int faceA,int faceB)
+{ return WorkingFacesAdjacentNative(id,revision,faceA,faceB); }
+RoutePieceResult^ Bridge::DisplayWorkingRoutePiece(long long id,long long revision,int pieceId,String^ kind,array<double>^ flat)
+{
+    if (kind==nullptr || flat==nullptr) return nullptr;
+    try {
+        std::vector<double> xyz; for each(double v in flat) xyz.push_back(v);
+        double data[7]={};
+        if (!DisplayWorkingRoutePieceNative(id,revision,pieceId,msclr::interop::marshal_as<std::string>(kind),xyz,data)) return nullptr;
+        auto result=gcnew RoutePieceResult(); result->Length=data[0];
+        result->Start=gcnew array<double>{data[1],data[2],data[3]}; result->End=gcnew array<double>{data[4],data[5],data[6]};
+        return result;
+    } catch (...) { return nullptr; }
+}
+bool Bridge::StageWorkingPolyline(long long id,long long revision,int stageId,array<double>^ flat)
+{
+    if (flat==nullptr) return false;
+    try { std::vector<double> xyz; for each(double v in flat) xyz.push_back(v); return StageWorkingPolylineNative(id,revision,stageId,xyz); }
+    catch (...) { return false; }
+}
+RoutePieceResult^ Bridge::StageProjectedWorkingRoutePiece(long long id,long long revision,int stageId,String^ kind,
+    array<double>^ flat,array<int>^ faceIds,double dx,double dy,double dz)
+{
+    if(kind==nullptr||flat==nullptr||faceIds==nullptr) return nullptr;
+    try { std::vector<double> xyz;std::vector<int> faces;for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
+        double data[7]={};if(!StageProjectedWorkingRouteNative(id,revision,stageId,msclr::interop::marshal_as<std::string>(kind),xyz,faces,gp_Dir(dx,dy,dz),data))return nullptr;
+        auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;
+    } catch(...) { return nullptr; }
+}
+RoutePieceResult^ Bridge::StageProjectedWorkingPolyline(long long id,long long revision,int stageId,array<double>^ flat,array<int>^ faceIds,double dx,double dy,double dz)
+{
+    if(flat==nullptr||faceIds==nullptr)return nullptr;
+    try {std::vector<double> xyz;std::vector<int> faces;for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
+        double data[7]={};if(!StageProjectedWorkingPolylineNative(id,revision,stageId,xyz,faces,gp_Dir(dx,dy,dz),data))return nullptr;
+        auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;}catch(...){return nullptr;}
+}
+bool Bridge::CommitWorkingRouteGeometry(long long id,long long revision,array<int>^ stagedRouteIds,array<int>^ finalRouteIds,array<int>^ stagedPolylineIds)
+{
+    if (stagedRouteIds==nullptr || finalRouteIds==nullptr || stagedPolylineIds==nullptr) return false;
+    try {
+        std::vector<int> sr,fr,sp; for each(int v in stagedRouteIds) sr.push_back(v);
+        for each(int v in finalRouteIds) fr.push_back(v); for each(int v in stagedPolylineIds) sp.push_back(v);
+        return CommitWorkingGeometryNative(id,revision,sr,fr,sp);
+    } catch (...) { return false; }
+}
+void Bridge::DiscardWorkingRouteGeometry(long long id,long long revision,array<int>^ stagedRouteIds,array<int>^ stagedPolylineIds)
+{
+    try {
+        std::vector<int> sr,sp;
+        if (stagedRouteIds!=nullptr) for each(int v in stagedRouteIds) sr.push_back(v);
+        if (stagedPolylineIds!=nullptr) for each(int v in stagedPolylineIds) sp.push_back(v);
+        DiscardWorkingGeometryNative(id,revision,sr,sp);
+    } catch (...) { }
 }
 array<double>^ Bridge::WorkingPointToScreen(long long id,long long revision,double x,double y,double z)
 {
@@ -2064,12 +2128,6 @@ array<double>^ Bridge::WorkingPointToScreen(long long id,long long revision,doub
 }
 bool Bridge::IsWorkingPointVisible(long long id,long long revision,double x,double y,double z,double tolerance)
 { return WorkingVisibleNative(id,revision,x,y,z,tolerance); }
-void Bridge::ShowWorkingDiagnostic(array<double>^ xyz,bool point)
-{
-    std::vector<double> values;
-    if (xyz!=nullptr) for each(double v in xyz) values.push_back(v);
-    ShowWorkingDiagnosticNative(values,point);
-}
 void Bridge::ShowWorkingBoundary(array<array<double>^>^ loops)
 { ShowWorkingBoundary(loops,nullptr); }
 void Bridge::ShowWorkingBoundary(array<array<double>^>^ loops,array<bool>^ holes)
@@ -2100,14 +2158,13 @@ void Bridge::SetViewPerspective(bool perspective)
 }
 WorkingPresentation^ Bridge::CaptureWorkingPresentation()
 {
-    double bounds[6]={},point[3]={}; bool hasBounds=false,hasPoint=false;
-    const long long id=CaptureWorkingPresentationNative(bounds,point,hasBounds,hasPoint);
+    double bounds[6]={}; bool hasBounds=false;
+    const long long id=CaptureWorkingPresentationNative(bounds,hasBounds);
     if (!id) return nullptr;
     auto result=gcnew WorkingPresentation();
     result->Id=id; result->Revision=g_modelRevision;
     result->BoundaryCount=static_cast<int>(g_workingPresentations.at(id).boundaries.size());
     if (hasBounds) result->BoundaryBounds=gcnew array<double>{bounds[0],bounds[1],bounds[2],bounds[3],bounds[4],bounds[5]};
-    if (hasPoint) result->DiagnosticPoint=gcnew array<double>{point[0],point[1],point[2]};
     return result;
 }
 bool Bridge::RestoreWorkingPresentation(long long id) { return RestoreWorkingPresentationNative(id); }
@@ -2570,18 +2627,6 @@ void Bridge::ClearHover()
 int Bridge::SelectFace(int x, int y, bool toggle)
 {
     return SelectFaceNative(x, y, toggle);
-}
-
-// ================= HLR managed (S1 항목 5) =================
-
-HlrResult^ Bridge::HlrProject()
-{
-    const HlrCounts c = RunHlrNative();
-    HlrResult^ r = gcnew HlrResult();
-    r->VisibleEdges = c.vis;
-    r->HiddenEdges = c.hid;
-    r->Milliseconds = c.ms;
-    return r;
 }
 
 array<HlrPolyline^>^ Bridge::HlrEdges(double nx, double ny, double nz,

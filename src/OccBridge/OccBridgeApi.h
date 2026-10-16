@@ -31,15 +31,6 @@ public:
     property bool Closed;
 };
 
-/// <summary>HLR 투영 스모크 결과 (S1 검증 항목 5)</summary>
-public ref class HlrResult
-{
-public:
-    property int VisibleEdges;
-    property int HiddenEdges;
-    property double Milliseconds;     // HLR 소요 시간 (E6 성능 측정)
-};
-
 public ref class HlrPolyline
 {
 public:
@@ -78,7 +69,9 @@ public:
     property array<double>^ DatumPoint;
     property WorkingQueryStatus Status;
     property array<double>^ Point;
+    property array<double>^ Normal;
     property int FaceId;
+    property bool IsSelectedFace;
 };
 /// <summary>Revision-owned presentation/camera savepoint. Release after restore or commit.</summary>
 public ref class WorkingPresentation
@@ -88,7 +81,6 @@ public:
     property long long Revision;
     property int BoundaryCount;
     property array<double>^ BoundaryBounds;
-    property array<double>^ DiagnosticPoint;
 };
 
 public ref class Bridge abstract sealed
@@ -98,9 +90,22 @@ public:
     static WorkingContext^ CreateWorkingContext(double nx, double ny, double nz, double xx, double xy, double xz);
     static void ReleaseWorkingContext(long long id);
     static WorkingHit^ QueryWorkingSurface(long long id, long long revision, double u, double v);
+    /// <summary>Cast against the complete model; succeeds only when its nearest trimmed hit belongs to faceIds.</summary>
+    static WorkingHit^ QueryWorkingSurfaceForFaces(long long id, long long revision, array<int>^ faceIds, double u, double v);
+    static bool AreWorkingFacesAdjacent(long long id, long long revision, int faceA, int faceB);
+    static RoutePieceResult^ DisplayWorkingRoutePiece(long long id, long long revision, int pieceId,
+        System::String^ kind, array<double>^ xyzFlat);
+    static bool StageWorkingPolyline(long long id, long long revision, int stageId, array<double>^ xyzFlat);
+    static RoutePieceResult^ StageProjectedWorkingRoutePiece(long long id, long long revision, int stageId,
+        System::String^ kind, array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);
+    static RoutePieceResult^ StageProjectedWorkingPolyline(long long id, long long revision, int stageId,
+        array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);
+    static bool CommitWorkingRouteGeometry(long long id, long long revision, array<int>^ stagedRouteIds,
+        array<int>^ finalRouteIds, array<int>^ stagedPolylineIds);
+    static void DiscardWorkingRouteGeometry(long long id, long long revision,
+        array<int>^ stagedRouteIds, array<int>^ stagedPolylineIds);
     static array<double>^ WorkingPointToScreen(long long id, long long revision, double x, double y, double z);
     static bool IsWorkingPointVisible(long long id, long long revision, double x, double y, double z, double tolerance);
-    static void ShowWorkingDiagnostic(array<double>^ xyz, bool point);
     static void ShowWorkingBoundary(array<array<double>^>^ loops);
     static void ShowWorkingBoundary(array<array<double>^>^ loops, array<bool>^ holes);
     static bool ReturnToWorkingFront(long long id, long long revision);
@@ -232,8 +237,6 @@ public:
 
     // ---- HLR (S1 항목 5, S3 측면 뷰에서 본격 사용) ----
     /// <summary>현재 셰이프를 축측(1,1,1) 방향으로 HLR 투영 — 가시/은선 엣지 수 + 소요 ms</summary>
-    static HlrResult^ HlrProject();
-
     /// <summary>M4 - full-shape HLR projection along n (in-plane X axis) -> 2D polylines</summary>
     static array<HlrPolyline^>^ HlrEdges(double nx, double ny, double nz,
                                          double xx, double xy, double xz, bool hiddenToo);

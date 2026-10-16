@@ -94,8 +94,42 @@ public class SurfacePathMapperTests
         Assert.True(SurfacePathMapper.TryMap(path, Hit, out var first, out var failure), failure);
         Assert.True(SurfacePathMapper.TryMap(path, Hit, out var second, out failure), failure);
 
-        Assert.Equal(Enumerable.Range(0, 9).Select(i => new Vec3(i * 0.5, 0, 7)), first);
-        Assert.Equal(first, second);
+        Assert.Equal(257,first.Count);
+        Assert.Equal(first,second);
+        for(int i=0;i<first.Count;i++) Assert.InRange(Math.Abs(first[i].X-i*0.015625),0,1e-12);
+    }
+
+    [Fact]
+    public void MetadataSamplesValidateOrderedAtoBtoCTransitionsNotProbeOrder()
+    {
+        var path=new[]{new Vec2(-1,0),new Vec2(1,0)};
+        SurfaceMappedSample? Hit(Vec2 p) => new(p,new Vec3(p.X,p.Y,0),p.X < -0.2 ? 10 : p.X > 0.2 ? 30 : 20);
+        Assert.True(SurfacePathMapper.TryMapWithMetadata(path,Hit,out var mapped,out var failure),failure);
+        Assert.Equal(10,mapped[0].FaceId); Assert.Equal(30,mapped[^1].FaceId);
+        var transitions=Enumerable.Range(1,mapped.Count-1)
+            .Where(i=>mapped[i-1].FaceId!=mapped[i].FaceId)
+            .Select(i=>(mapped[i-1].FaceId,mapped[i].FaceId)).Distinct().ToArray();
+        Assert.Contains((10,20),transitions); Assert.Contains((20,30),transitions);
+        Assert.DoesNotContain((10,30),transitions);
+        bool Adjacent(int a,int b) => (a==10&&b==20)||(a==20&&b==10)||(a==20&&b==30)||(a==30&&b==20);
+        Assert.True(SurfacePathMapper.AreSamplesContinuous(mapped,Adjacent));
+        Assert.False(SurfacePathMapper.AreSamplesContinuous(new[]{mapped[0],mapped[^1]},Adjacent));
+    }
+
+    [Fact]
+    public void AcceptedLeafRetainsNarrowDisconnectedFaceBetweenSameFaceEndpoints()
+    {
+        Vec2[] path={new(0,0),new(0.5,0)};
+        SurfaceMappedSample? Hit(Vec2 p)
+        {
+            // This narrow island is not at the former 0.5-mm leaf's quarter probe (0.125).
+            int face=p.X>=0.145 && p.X<=0.16 ? 2 : 1;
+            return new SurfaceMappedSample(p,new Vec3(p.X,p.Y,0),face);
+        }
+        Assert.True(SurfacePathMapper.TryMapWithMetadata(path,Hit,out var mapped,out var failure),failure);
+        Assert.Equal(1,mapped[0].FaceId); Assert.Equal(1,mapped[^1].FaceId);
+        Assert.Contains(mapped,s=>s.FaceId==2);
+        Assert.False(SurfacePathMapper.AreSamplesContinuous(mapped,(a,b)=>false));
     }
 
     [Theory]
@@ -119,8 +153,8 @@ public class SurfacePathMapperTests
     {
         int probes = 0;
         Assert.False(SurfacePathMapper.TryMap(new[] { new Vec2(0, 0), new Vec2(100_000, 0) },
-            p => { probes++; return new Vec3(p.X, p.Y, 0); }, out var mapped, out var failure));
-        Assert.Equal(100_000, probes);
+            p => { probes++; return new Vec3(p.X, p.Y, 0); }, out var mapped, out var failure, maxProbes:40));
+        Assert.Equal(40, probes);
         Assert.Empty(mapped);
         Assert.Contains("probe limit", failure);
     }

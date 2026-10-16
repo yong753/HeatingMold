@@ -8,17 +8,12 @@
         <ToolBarTray DockPanel.Dock="Top">
             <ToolBar>
                 <TextBlock Text="작업 방향 N:" VerticalAlignment="Center"/>
-                <ComboBox x:Name="WorkingAxisBox" Width="65" SelectedIndex="4">
+                <ComboBox x:Name="WorkingAxisBox" Width="65" SelectedIndex="4" SelectionChanged="WorkingAxis_Changed">
                     <ComboBoxItem Content="+X"/><ComboBoxItem Content="−X"/>
                     <ComboBoxItem Content="+Y"/><ComboBoxItem Content="−Y"/>
                     <ComboBoxItem Content="+Z"/><ComboBoxItem Content="−Z"/>
                 </ComboBox>
-                <Button Content="미리보기" Click="WorkingPreview_Click"/>
-                <Button Content="반전" Click="WorkingFlip_Click"/>
-                <Button Content="확정" Click="WorkingConfirm_Click"/>
-                <Button Content="미리보기 취소" Click="WorkingCancel_Click"/>
                 <Button Content="작업 정면" Click="WorkingFront_Click"/>
-                <CheckBox x:Name="WorkingPickBox" Content="전체 외곽 진단 선택" Checked="WorkingPick_Changed" Unchecked="WorkingPick_Changed"/>
             </ToolBar>
             <ToolBar>
                 <Button Content="열기..." Click="Open_Click" Padding="8,2"/>
@@ -27,7 +22,6 @@
                 <Button Content="줌 +" Click="ZoomIn_Click" Padding="8,2"/>
                 <Button Content="줌 −" Click="ZoomOut_Click" Padding="8,2"/>
                 <Separator/>
-                <Button Content="HLR 스모크" Click="Hlr_Click" Padding="8,2"/>
             </ToolBar>
             <ToolBar>
                 <TextBlock Text="면:" VerticalAlignment="Center" Margin="4,0,2,0"/>
@@ -74,9 +68,6 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
                     <TextBlock x:Name="WorkingSideText" Text="작업 방향 미확정 · 패턴 생성 보류" TextWrapping="Wrap"/>
-                    <TextBlock Text="전체 모델 투영 후보: 주황=외곽, 파랑=홀 (정확 CAD 곡선 아님)" TextWrapping="Wrap" FontSize="11"/>
-                    <TextBlock Text="3D 경계선은 모델 외부 기준면의 투영선입니다. 빨간 점은 BRep 진단 참조점입니다." TextWrapping="Wrap" FontSize="11"/>
-                    <Canvas x:Name="WorkingBoundaryCanvas" Height="130" Background="#FFF5F5F5" SizeChanged="WorkingBoundaryCanvas_SizeChanged"/>
                     <TextBlock Text="적용 Face" FontWeight="Bold" Margin="0,0,0,6"/>
                     <TextBlock Text="뷰포트 클릭으로 선택, Ctrl+클릭으로 토글" TextWrapping="Wrap" Margin="0,0,0,6"/>
                     <CheckBox x:Name="FaceDragSelectModeBox" Content="드래그로 Face 선택 모드" Margin="0,4,0,4"

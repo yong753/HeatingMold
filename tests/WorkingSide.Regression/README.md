@@ -14,8 +14,9 @@ DLL locks from a running viewer. It does not terminate any process.
 Fixtures cover layered occlusion, a through-hole formed by adjoining sheets, and a sphere
 whose projected silhouette is not its trim-wire boundary. The harness initializes an
 offscreen native viewer and exercises WPF handlers without showing the application window.
-It covers screen picking, visibility at the candidate point, zoom/pan, perspective,
-revision ownership, preview/confirmation separation, and the intentional route-generation gate.
+It covers visibility at the candidate point, revision ownership, immediate axis application
+(including default +Z), same-axis no-op, and precommit rollback. It does not test pan/zoom
+behavior or the route-generation gate.
 
 An OCCT `wglMakeCurrent()` diagnostic may be emitted at process teardown when the offscreen
 HWND is destroyed before global viewer handles. The checks pass before teardown; this is not
@@ -26,8 +27,8 @@ regressions now verify the deliberate gate before/after working-side confirmatio
 state is seeded explicitly to keep cleanup/late-hover tests non-vacuous; it does not enable the old
 UI route. Its README identifies automatic power entry/queueing as future migration work.
 
-Preview regressions inject both false-return and exception failures after candidate geometry and
-camera preparation, from empty, confirmed, and existing-preview states. They compare native
-boundary bounds/marker, screen projection, logical references and pick mode before/after rollback.
-Cancel/replacement/confirmation and rejected checkbox entry are covered, as are IN/ON visibility
-through a holed trimmed face and outside its supporting-surface extension.
+Candidate-application regressions inject camera-preparation and post-preparation/precommit failures.
+They verify that the old context and dependent selection state survive rollback, and that successful
+axis changes invalidate dependent state. No preview/confirmation or diagnostic-picking UI state is
+tested or claimed. IN/ON visibility through a holed trimmed face and outside its supporting-surface
+extension remains covered.

@@ -103,7 +103,6 @@ namespace HeatingMold.App
             Viewport.PowerLocationMoved += OnPowerLocationMoved;
             Viewport.ConnectorHovered += OnConnectorHovered;
             Viewport.RoutePieceHovered += OnRoutePieceHovered;
-            Viewport.WorkingBoundaryPicked += OnWorkingBoundaryPicked;
             Loaded += OnLoaded;
         }
 
@@ -174,6 +173,10 @@ namespace HeatingMold.App
             PopulateFaceCombo(info.Faces);
             StatusText.Text = string.Format("{0} — 솔리드 {1} · 셸 {2} · 면 {3} · 평면 {4} · 로드 {5}ms",
                 Path.GetFileName(path), info.Solids, info.Shells, info.Faces, info.Planes, sw.ElapsedMilliseconds);
+            _changingWorkingAxis = true;
+            WorkingAxisBox.SelectedIndex = 4;
+            _changingWorkingAxis = false;
+            ApplyWorkingSide(new Vec3(0,0,1));
         }
 
         private void PopulateFaceCombo(int faceCount)
@@ -508,6 +511,11 @@ namespace HeatingMold.App
                 return;
             }
             _insertionDepth = insertionDepth;
+            if (insertionDepth != 0)
+            {
+                StatusText.Text = "작업면 첫 충돌 경로는 현재 깊이 0만 지원합니다. 삽입 깊이 적용은 아직 지원되지 않습니다";
+                return;
+            }
             if (_selectedRegion.Count != 1)
             {
                 StatusText.Text = "선택영역이 서로 떨어져 있습니다. 하나로 연결된 적용영역을 선택하세요";
@@ -538,86 +546,75 @@ namespace HeatingMold.App
                 StatusText.Text = "경로 계산 실패: " + ex.Message;
                 return;
             }
-            double total = 0;
-            int projectedCount = 0;
             int[] selectedFaces = _selectedFaceIds.OrderBy(id => id).ToArray();
-            Vec3 projectDirection = _multiFaceFrame.Normal * -1.0;
-            var newLengths = new List<double>();
+            if (paths.Count == 0 && (editablePattern == null || editablePattern.RoutePieces.Count == 0))
+            {
+                StatusText.Text = "생성 가능한 경로가 없습니다. 마진/간격 또는 선택 영역을 확인하세요";
+                return;
+            }
             bool routePiecesMode = editablePattern != null && _exclusions.Count == 0 && editablePattern.RoutePieces.Count > 0;
-            // A newly calculated result replaces the prior result, including when
-            // the new settings produce no route or use exclusion components.
-            ResetCircuitEditState(clearNative: false);
-            _pattern = null;
-            _multiFacePatternDisplayed = false;
+            var side = _workingSide.Confirmed;
+            double total = 0;
+            // Stage every new AIS object under private negative IDs. Existing geometry and managed state stay intact on failure.
+            int projectedCount = 0;
+            var stagedRoutes=new List<int>(); var stagedLines=new List<int>();
+            var stagedPieceResults=new List<RoutePieceResult>();
+            var stagedLengths=new List<double>();
+            var finalIds=routePiecesMode ? Enumerable.Range(0,editablePattern.RoutePieces.Count).ToArray() : Array.Empty<int>();
+            double[] Flatten(IReadOnlyList<Vec2> points) => points.SelectMany(p => { var w=_multiFaceFrame.Unproject(p); return new[]{w.X,w.Y,w.Z}; }).ToArray();
+            try
+            {
             if (routePiecesMode)
             {
-                Viewport.CircuitHoverMode = true;
-                Bridge.ClearOverlays();
-                int id = 0;
-                foreach (var piece in editablePattern.RoutePieces)
+                for (int i=0;i<editablePattern.RoutePieces.Count;i++)
                 {
-                    double[] xyz = piece.Points.SelectMany(point => { Vec3 p = _multiFaceFrame.Unproject(point); return new[] { p.X, p.Y, p.Z }; }).ToArray();
-                    var result = Bridge.ProjectRoutePiece(id, piece.Kind.ToString(), xyz, selectedFaces,
-                        projectDirection.X, projectDirection.Y, projectDirection.Z, insertionDepth);
-                    if (result == null || (_projectedPieces.Count > 0 &&
-                        Distance3D(_projectedPieces[^1].End, result.Start) > 0.01))
-                    {
-                        _projectedPieces.Clear();
-                        Bridge.ClearRoutePieces();
-                        _pattern = null;
-                        _turnEnabled.Clear();
-                        _routePieceLengths = Array.Empty<double>();
-                        _multiFacePatternDisplayed = false;
-                        StatusText.Text = "경로 구간 투영 실패 — 불완전한 결과를 제거했습니다";
-                        return;
-                    }
-                    newLengths.Add(result.Length); total += result.Length; id++;
-                    _projectedPieces.Add(result);
+                    int stageId=int.MinValue+i; var piece=editablePattern.RoutePieces[i];
+                    var shown=Bridge.StageProjectedWorkingRoutePiece(side.Id.Value,side.Revision.Value,stageId,piece.Kind.ToString(),
+                        Flatten(piece.Points),selectedFaces,-_multiFaceFrame.Normal.X,-_multiFaceFrame.Normal.Y,-_multiFaceFrame.Normal.Z);
+                    if (shown==null) throw new InvalidOperationException("OCCT projected route-piece validation/staging failed at piece "+i);
+                    stagedRoutes.Add(stageId); stagedPieceResults.Add(shown); stagedLengths.Add(shown.Length); total+=shown.Length;
                 }
-                _turnEnabled.Clear();
-                _turnEnabled.AddRange(editablePattern.RoutePieces.Where(p => p.Kind == SerpentineRoutePieceKind.TurnConnector).Select(_ => true));
-                _pattern = editablePattern;
-                projectedCount = editablePattern.RoutePieces.Count;
+                projectedCount=editablePattern.RoutePieces.Count;
+                for(int i=1;i<stagedPieceResults.Count;i++)
+                    if(Distance3D(stagedPieceResults[i-1].End,stagedPieceResults[i].Start)>0.01)
+                        throw new InvalidOperationException("Projected neighboring route pieces do not share an endpoint.");
             }
-            else Bridge.ClearOverlays();
-            foreach (IReadOnlyList<Vec2> path in paths)
+            else for(int i=0;i<paths.Count;i++)
             {
-                if (routePiecesMode) break;
-                if (path.Count < 2) continue;
-                // Keep the source as one OCCT wire on the fixed model datum;
-                // OCCT projects its edges and handles display tessellation.
-                double[] sourceXyz = path.SelectMany(point =>
-                {
-                    Vec3 p = _multiFaceFrame.Unproject(point);
-                    return new[] { p.X, p.Y, p.Z };
-                }).ToArray();
-                double[] projection = Bridge.ProjectPathWireOntoSelectedFaces(
-                    selectedFaces, sourceXyz, projectDirection.X, projectDirection.Y, projectDirection.Z,
-                    insertionDepth);
-                if (projection == null || projection.Length < 5 || projection[0] < 0.5)
-                {
-                    Bridge.ClearOverlays();
-                    string diagnostic = projection == null || projection.Length < 5
-                        ? "native projection error"
-                        : string.Format("code {0:F0}, result wires {1:F0}", projection[4], projection[3]);
-                    StatusText.Text = "OCCT 투영/연결 검증 실패(" + diagnostic + ") — 부분 결과를 제거했습니다";
-                    return;
-                }
-                total += projection[1];
-                projectedCount++;
+                if(paths[i].Count<2) continue;
+                int stageId=int.MinValue/2+i;
+                var projected=Bridge.StageProjectedWorkingPolyline(side.Id.Value,side.Revision.Value,stageId,Flatten(paths[i]),selectedFaces,
+                    -_multiFaceFrame.Normal.X,-_multiFaceFrame.Normal.Y,-_multiFaceFrame.Normal.Z);
+                if(projected==null) throw new InvalidOperationException("OCCT projected exclusion-path validation/staging failed at path "+i);
+                total+=projected.Length;
+                stagedLines.Add(stageId); projectedCount++;
             }
+            if(projectedCount==0) throw new InvalidOperationException("No non-empty projected paths were generated.");
+            if(!Bridge.CommitWorkingRouteGeometry(side.Id.Value,side.Revision.Value,stagedRoutes.ToArray(),finalIds,stagedLines.ToArray()))
+                throw new InvalidOperationException("native route geometry commit failed");
+            }
+            catch(Exception ex)
+            {
+                Bridge.DiscardWorkingRouteGeometry(side.Id.Value,side.Revision.Value,stagedRoutes.ToArray(),stagedLines.ToArray());
+                StatusText.Text="표시 생성 실패 — 기존 경로/회로 상태를 유지했습니다: "+ex.Message; return;
+            }
+            ResetCircuitEditState(clearNative:false);
+            _pattern=null; _multiFacePatternDisplayed=false; _projectedPieces.Clear();
+            if(routePiecesMode)
+            {
+                _projectedPieces.AddRange(stagedPieceResults);
+                _turnEnabled.Clear(); _turnEnabled.AddRange(editablePattern.RoutePieces.Where(p=>p.Kind==SerpentineRoutePieceKind.TurnConnector).Select(_=>true));
+                _routePieceLengths=stagedLengths.ToArray();
+                _pattern=editablePattern; _connectorUndo.Clear(); _connectorRedo.Clear(); ApplyConnectorStates();
+            }
+            Viewport.CircuitHoverMode = routePiecesMode;
             Bridge.RedrawView();
-            if (routePiecesMode)
-            {
-                _routePieceLengths = newLengths.ToArray();
-                _connectorUndo.Clear(); _connectorRedo.Clear();
-                ApplyConnectorStates();
-            }
+            if (routePiecesMode) { _connectorUndo.Clear(); _connectorRedo.Clear(); }
             StatusText.Text = projectedCount == 0
-                ? "생성 가능한 경로가 없습니다. 마진/간격을 확인하세요"
+                ? "생성 가능한 경로가 없습니다. 마진/간격 또는 선택 영역을 확인하세요"
                 : string.Format(_exclusions.Count == 0
-                    ? "전체 모델 +Z 기준 OCCT 연속 투영 — {0}개 Wire · 길이 {1:F1}mm · 삽입 깊이 {2:F2}mm"
-                    : "제외영역 적용 — {0}개 독립 OCCT Wire(제외영역 건너 연결 없음) · 길이 {1:F1}mm · 삽입 깊이 {2:F2}mm",
+                    ? "선택면 OCCT 투영 — {0}개 경로 · 길이 {1:F1}mm · 깊이 0"
+                    : "제외영역 선택면 OCCT 투영 — {0}개 독립 경로 · 길이 {1:F1}mm · 깊이 0",
                     projectedCount, total, insertionDepth);
             _multiFacePatternDisplayed = projectedCount > 0;
             if (_multiFacePatternDisplayed)
@@ -707,6 +704,8 @@ namespace HeatingMold.App
         }
         private void PowerSetup_Click(object sender, RoutedEventArgs e)
         {
+            if (_workingSide.Confirmed == null) { WorkingGenerationReady(); return; }
+            if (!WorkingRouteMigrationComplete) { StatusText.Text = "생성 보류: 전원 경로는 아직 작업 방향 첫 충돌 경로로 마이그레이션되지 않았습니다"; return; }
             if (!WorkingGenerationReady()) return;
             if (_pattern == null || _multiFaceFrame == null) { StatusText.Text = "먼저 커넥터 편집 가능한 패턴을 생성하세요"; return; }
             CancelPowerSetup();
@@ -944,11 +943,5 @@ namespace HeatingMold.App
 
         private void ZoomOut_Click(object sender, RoutedEventArgs e) { Viewport.CancelPowerLeadPreview(); Bridge.ZoomView(0.8); }
 
-        private void Hlr_Click(object sender, RoutedEventArgs e)
-        {
-            var hlr = Bridge.HlrProject();
-            StatusText.Text = string.Format("HLR — 가시 {0} · 은선 {1} · {2:F0}ms",
-                hlr.VisibleEdges, hlr.HiddenEdges, hlr.Milliseconds);
-        }
     }
 }

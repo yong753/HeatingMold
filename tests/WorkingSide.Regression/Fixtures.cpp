@@ -1,8 +1,13 @@
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
+#include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Wire.hxx>
 #include <STEPControl_Writer.hxx>
@@ -19,6 +24,19 @@ static TopoDS_Wire Rectangle(double x0,double y0,double x1,double y1,double z)
 }
 static TopoDS_Face Sheet(double x0,double y0,double x1,double y1,double z)
 { return BRepBuilderAPI_MakeFace(Rectangle(x0,y0,x1,y1,z)).Face(); }
+static TopoDS_Compound ThreePanels()
+{
+    BRepBuilderAPI_Sewing sewing(1e-6);
+    auto panel=[](double x0,double z0,double x1,double z1) {
+        BRepBuilderAPI_MakePolygon p;
+        p.Add(gp_Pnt(x0,0,z0)); p.Add(gp_Pnt(x1,0,z1)); p.Add(gp_Pnt(x1,1,z1)); p.Add(gp_Pnt(x0,1,z0)); p.Close();
+        return BRepBuilderAPI_MakeFace(p.Wire()).Face();
+    };
+    sewing.Add(panel(0,0,1,.5)); sewing.Add(panel(1,.5,2,0)); sewing.Add(panel(2,0,3,.5));
+    sewing.Perform();
+    TopoDS_Compound shape; BRep_Builder builder; builder.MakeCompound(shape); builder.Add(shape,sewing.SewedShape());
+    return shape;
+}
 int main(int argc,char** argv)
 {
     if (argc!=2) return 1;
@@ -49,6 +67,6 @@ int main(int argc,char** argv)
     builder.Add(trimmed,top.Face()); builder.Add(trimmed,Sheet(-70,-50,70,50,0));
     return write("layers",layered) && write("ring",ring) &&
         write("trimmedVisibility",trimmed) &&
-        write("tangentBack",tangentBack) &&
+        write("tangentBack",tangentBack) && write("threePanels",ThreePanels()) &&
         write("sphere",BRepPrimAPI_MakeSphere(gp_Pnt(0,0,0),20).Shape()) ? 0 : 2;
 }

@@ -31,61 +31,6 @@ static class Program
         (T)target.GetType().GetField(name,BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(target)!;
     static void SetField(object target,string name,object value) =>
         target.GetType().GetField(name,BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(target,value);
-    static bool Same(double[] a,double[] b) => a==null || b==null ? a==b :
-        a.Length==b.Length && a.Zip(b).All(p=>Math.Abs(p.First-p.Second)<1e-8);
-    static bool SamePresentation(WorkingPresentation a,WorkingPresentation b) =>
-        a.BoundaryCount==b.BoundaryCount && Same(a.BoundaryBounds,b.BoundaryBounds) && Same(a.DiagnosticPoint,b.DiagnosticPoint);
-
-    static void CheckPreviewRollback(MainWindow window,WorkingContext projectionContext,bool throwAfterCamera)
-    {
-        var state=Field<WorkingSideSession>(window,"_workingSide");
-        var oldPreview=state.Preview; var oldConfirmed=state.Confirmed;
-        var oldRings=Field<IReadOnlyList<WorkingBoundaryRing>>(window,"_workingRings");
-        var oldSample=Field<WorkingBoundarySample>(window,"_workingBoundarySample");
-        var oldBaseline=Field<object>(window,"_workingPreviewBaseline");
-        var box=(CheckBox)window.FindName("WorkingPickBox");
-        var viewport=(OccViewport)window.FindName("Viewport");
-        bool oldChecked=box.IsChecked==true,oldMode=viewport.WorkingBoundaryPickMode;
-        var text=((TextBlock)window.FindName("WorkingSideText")).Text;
-        var before=Bridge.CaptureWorkingPresentation();
-        var beforeScreen=Bridge.WorkingPointToScreen(projectionContext.Id,projectionContext.Revision,15,5,0);
-        long candidate=0,revision=0;
-        var prepare=Field<Func<long,long,bool>>(window,"_prepareWorkingFront");
-        SetField(window,"_prepareWorkingFront",new Func<long,long,bool>((id,rev)=>
-        {
-            candidate=id; revision=rev;
-            var during=Bridge.CaptureWorkingPresentation();
-            Check(during.BoundaryCount>0 && !Same(during.BoundaryBounds,before.BoundaryBounds),
-                "failure injected only after candidate native geometry is displayed");
-            Bridge.ReleaseWorkingPresentation(during.Id);
-            Bridge.ReturnToWorkingFront(id,rev); // Mutate camera too, before failure.
-            if (throwAfterCamera) throw new InvalidOperationException("injected post-display camera preparation exception");
-            return false;
-        }));
-        try
-        {
-            Invoke(window,"PreviewWorkingSide",new Vec3(0,-.5,-1));
-            var after=Bridge.CaptureWorkingPresentation();
-            try
-            {
-                Check(candidate!=0 && SamePresentation(before,after),"failed preview restores exact boundary/marker presentation, no dead candidate geometry");
-                Check(Same(beforeScreen,Bridge.WorkingPointToScreen(projectionContext.Id,projectionContext.Revision,15,5,0)),
-                    "failed preview restores camera projection/orientation/zoom/pan");
-                Check(ReferenceEquals(state.Preview,oldPreview) && ReferenceEquals(state.Confirmed,oldConfirmed) &&
-                    ReferenceEquals(oldRings,Field<IReadOnlyList<WorkingBoundaryRing>>(window,"_workingRings")) &&
-                    ReferenceEquals(oldSample,Field<WorkingBoundarySample>(window,"_workingBoundarySample")) &&
-                    ReferenceEquals(oldBaseline,Field<object>(window,"_workingPreviewBaseline")),
-                    "failed preview restores prior preview/confirmed/rings/sample/savepoint logical state");
-                Check(box.IsChecked==oldChecked && viewport.WorkingBoundaryPickMode==oldMode &&
-                    ((TextBlock)window.FindName("WorkingSideText")).Text==text,"failed preview restores mode and side label");
-                Check(Bridge.QueryWorkingSurface(candidate,revision,0,0).Status==WorkingQueryStatus.StaleContext,
-                    "failed candidate context is released only after rollback");
-            }
-            finally { Bridge.ReleaseWorkingPresentation(after.Id); }
-        }
-        finally { SetField(window,"_prepareWorkingFront",prepare); Bridge.ReleaseWorkingPresentation(before.Id); }
-    }
-
     [STAThread]
     static void Main(string[] args)
     {
@@ -99,6 +44,20 @@ static class Program
         Check(top.Status==WorkingQueryStatus.Hit && Math.Abs(top.Point[2]-20)<1e-6,"nearest front full-model hit hides lower surface");
         Check(exposed.Status==WorkingQueryStatus.Hit && Math.Abs(exposed.Point[2])<1e-6,"partly occluded face usable only at exposed points");
         Check(top.FaceId!=exposed.FaceId,"first hit returns actual face ID, not selected filter");
+        var hiddenSelection=Bridge.QueryWorkingSurfaceForFaces(front.Id,front.Revision,new[]{exposed.FaceId},0,0);
+        Check(hiddenSelection.Status==WorkingQueryStatus.Miss && hiddenSelection.Point==null,
+            "selected lower face cannot fall through nearer unselected first hit");
+        var visibleSelection=Bridge.QueryWorkingSurfaceForFaces(front.Id,front.Revision,new[]{exposed.FaceId},40,0);
+        Check(visibleSelection.Status==WorkingQueryStatus.Hit && visibleSelection.IsSelectedFace &&
+            visibleSelection.FaceId==exposed.FaceId && visibleSelection.Normal?.Length==3,
+            "selected exposed first hit returns face, XYZ and surface normal");
+        Check(Bridge.QueryWorkingSurfaceForFaces(front.Id,front.Revision,new[]{top.FaceId},0,0).Status==WorkingQueryStatus.Hit,
+            "selected front face is accepted as the full-model first hit");
+        Check(Bridge.QueryWorkingSurfaceForFaces(front.Id,front.Revision,new[]{top.FaceId},0,0).Status==WorkingQueryStatus.Hit &&
+            Bridge.QueryWorkingSurfaceForFaces(front.Id,front.Revision,new[]{top.FaceId},double.NaN,0).Status==WorkingQueryStatus.InvalidInput,
+            "first-hit query retains typed invalid-input status");
+        Check(Bridge.QueryWorkingSurfaceForFaces(front.Id,front.Revision+1,new[]{top.FaceId},0,0).Status==WorkingQueryStatus.StaleContext,
+            "selected-face query rejects stale contexts");
         Check(Query(front,new(80,0,0)).Status==WorkingQueryStatus.Miss,"outside silhouette has no hidden/back fallback");
         Check(Bridge.QueryWorkingSurface(front.Id,front.Revision,double.NaN,0).Status==WorkingQueryStatus.InvalidInput,"invalid UV status");
         var back=Bridge.CreateWorkingContext(0,0,-1,1,0,0);
@@ -116,125 +75,108 @@ static class Program
         Bridge.SetViewFrame(0,0,1,0,1,0);
         Check(!Bridge.IsWorkingPointVisible(front.Id,front.Revision,0,0,0,.001),"camera visibility rejects occluded candidate at its own screen point");
         Check(Bridge.IsWorkingPointVisible(front.Id,front.Revision,40,0,0,.001),"camera visibility allows exposed lower surface");
+        int topFace=top.FaceId;
+        int projectionStage=int.MinValue+1200;
+        var datumProjection=Bridge.StageProjectedWorkingPolyline(front.Id,front.Revision,projectionStage,
+            new[]{0.0,0,30,1,0,30},new[]{topFace},0,0,-1);
+        Check(datumProjection!=null && Math.Abs(datumProjection.Start[2]-20)<1e-5 && Math.Abs(datumProjection.End[2]-20)<1e-5,
+            "outside datum route projects toward and onto selected model face");
+        Bridge.DiscardWorkingRouteGeometry(front.Id,front.Revision,Array.Empty<int>(),new[]{projectionStage});
+        var priorRoute=Bridge.DisplayWorkingRoutePiece(front.Id,front.Revision,900,"TurnConnector",new[]{0.0,0,20,1,0,20});
+        var stagedRoute=Bridge.DisplayWorkingRoutePiece(front.Id,front.Revision,int.MinValue,"TurnConnector",new[]{2.0,0,20,3,0,20});
+        var failedStage=Bridge.DisplayWorkingRoutePiece(front.Id,front.Revision,int.MinValue+1,"TurnConnector",new[]{double.NaN,0,20});
+        int lineStage=int.MinValue/2;
+        bool stagedLine=Bridge.StageWorkingPolyline(front.Id,front.Revision,lineStage,new[]{4.0,0,20,5,0,20});
+        bool failedLine=Bridge.StageWorkingPolyline(front.Id,front.Revision,lineStage-1,new[]{double.NaN,0,20});
+        Check(priorRoute!=null && stagedRoute!=null && failedStage==null && stagedLine && !failedLine,
+            "route and exclusion candidates can fail after earlier route/polyline staging");
+        Check(!Bridge.CommitWorkingRouteGeometry(front.Id,front.Revision,new[]{int.MinValue},Array.Empty<int>(),Array.Empty<int>()),
+            "invalid candidate commit is rejected before replacing existing routes");
+        Bridge.DiscardWorkingRouteGeometry(front.Id,front.Revision,new[]{int.MinValue},new[]{lineStage});
+        Check(Bridge.SetConnectorEnabled(900,true,.2,.8,.3),"discarding failed candidate stage preserves prior selectable connector");
+        Bridge.ClearRoutePieces();
+        var releaseA=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+        var releaseB=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+        int releaseRouteId=int.MinValue+700, releaseLineId=int.MinValue/2+700;
+        Check(Bridge.DisplayWorkingRoutePiece(releaseA.Id,releaseA.Revision,releaseRouteId,"TurnConnector",new[]{6.0,0,20,7,0,20})!=null &&
+              Bridge.StageWorkingPolyline(releaseA.Id,releaseA.Revision,releaseLineId,new[]{6.0,1,20,7,1,20}),
+            "stage route and polyline owned by context A");
+        Check(Bridge.DisplayWorkingRoutePiece(releaseB.Id,releaseB.Revision,releaseRouteId,"TurnConnector",new[]{8.0,0,20,9,0,20})==null &&
+              !Bridge.StageWorkingPolyline(releaseB.Id,releaseB.Revision,releaseLineId,new[]{8.0,1,20,9,1,20}),
+            "same-revision context B cannot claim context A's occupied staging IDs");
+        Bridge.DiscardWorkingRouteGeometry(releaseB.Id,releaseB.Revision,new[]{releaseRouteId},new[]{releaseLineId});
+        Check(Bridge.SetConnectorEnabled(releaseRouteId,true,.2,.8,.3),"wrong-owner discard leaves context A staged route intact");
+        Bridge.ReleaseWorkingContext(releaseA.Id);
+        Check(!Bridge.SetConnectorEnabled(releaseRouteId,true,.2,.8,.3),"releasing context A removes its staged route AIS/ID");
+        var reusedRoute=Bridge.DisplayWorkingRoutePiece(releaseB.Id,releaseB.Revision,releaseRouteId,"TurnConnector",new[]{6.0,0,20,7,0,20});
+        bool reusedLine=Bridge.StageWorkingPolyline(releaseB.Id,releaseB.Revision,releaseLineId,new[]{6.0,1,20,7,1,20});
+        Check(reusedRoute!=null && reusedLine &&
+              Bridge.CommitWorkingRouteGeometry(releaseB.Id,releaseB.Revision,new[]{releaseRouteId},new[]{901},new[]{releaseLineId}) &&
+              Bridge.SetConnectorEnabled(901,true,.2,.8,.3),
+            "context B reuses released IDs and commits only its own staged handles at the same model revision");
+        int ownedDiscardId=int.MinValue/2+701;
+        Check(Bridge.StageWorkingPolyline(releaseB.Id,releaseB.Revision,ownedDiscardId,new[]{6.0,2,20,7,2,20}),"context B stages independently discardable line");
+        Bridge.DiscardWorkingRouteGeometry(releaseB.Id,releaseB.Revision,Array.Empty<int>(),new[]{ownedDiscardId});
+        Check(Bridge.StageWorkingPolyline(releaseB.Id,releaseB.Revision,ownedDiscardId,new[]{6.0,2,20,7,2,20}),"owning context discard frees its temporary polyline ID");
+        Bridge.DiscardWorkingRouteGeometry(releaseB.Id,releaseB.Revision,Array.Empty<int>(),new[]{ownedDiscardId});
+        var commitA=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+        var commitB=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+        int candidateA=int.MinValue+1500,candidateB=int.MinValue+1501;
+        Check(Bridge.DisplayWorkingRoutePiece(commitA.Id,commitA.Revision,candidateA,"TurnConnector",new[]{10.0,0,20,11,0,20})!=null &&
+              Bridge.DisplayWorkingRoutePiece(commitB.Id,commitB.Revision,candidateB,"TurnConnector",new[]{12.0,0,20,13,0,20})!=null,
+              "two contexts own independent staged routes");
+        Check(Bridge.CommitWorkingRouteGeometry(commitA.Id,commitA.Revision,new[]{candidateA},new[]{902},Array.Empty<int>()) &&
+              Bridge.SetConnectorEnabled(candidateB,true,.2,.8,.3),
+              "committing one context preserves another context staged route and ownership");
+        Bridge.DiscardWorkingRouteGeometry(commitB.Id,commitB.Revision,new[]{candidateB},Array.Empty<int>());
+        Check(Bridge.DisplayWorkingRoutePiece(commitB.Id,commitB.Revision,candidateB,"TurnConnector",new[]{12.0,0,20,13,0,20})!=null,
+              "preserved other-context route remains discardable and releases its negative ID");
+        Bridge.ClearOverlays();
         Bridge.SetViewFrame(1,0,1,0,1,0);
         Bridge.ZoomView(1.3);
         Check(Query(front,new(0,0,0)).Point[2]==20,"camera orbit/zoom do not alter fixed working side");
 
         var window=new MainWindow();
         var viewport=(OccViewport)window.FindName("Viewport");
-        var pickBox=(CheckBox)window.FindName("WorkingPickBox");
-        viewport.RectangleSelectionMode=true; viewport.ConnectorEditMode=true; viewport.PowerLocationMode=true;
-        pickBox.IsChecked=true;
-        Check(pickBox.IsChecked==false && !viewport.WorkingBoundaryPickMode && viewport.RectangleSelectionMode &&
-            viewport.ConnectorEditMode && viewport.PowerLocationMode,"ineligible unconfirmed checkbox entry preserves other interaction modes");
-        viewport.RectangleSelectionMode=false; viewport.ConnectorEditMode=false; viewport.PowerLocationMode=false;
-        CheckPreviewRollback(window,front,false);
-        Invoke(window,"PreviewWorkingSide",new Vec3(0,0,1));
-        Invoke(window,"WorkingConfirm_Click",null,new RoutedEventArgs());
-        var state=Field<WorkingSideSession>(window,"_workingSide");
-        Check(state.Confirmed!=null && state.Preview==null,"UI atomic confirmation without heating face or pattern");
-        var screen=Bridge.WorkingPointToScreen(state.Confirmed.Id.Value,state.Confirmed.Revision.Value,50,0,0);
-        Invoke(window,"OnWorkingBoundaryPicked",(int)screen[0],(int)screen[1]);
-        var status=(TextBlock)window.FindName("StatusText");
-        Console.WriteLine(status.Text);
-        Check(status.Text.StartsWith("외곽 진단 UV="),"independent full-model outer boundary screen pick succeeds");
-        pickBox.IsChecked=true;
-        var confirmedSample=Field<WorkingBoundarySample>(window,"_workingBoundarySample");
-        var confirmedPresentation=Bridge.CaptureWorkingPresentation();
-        Check(confirmedPresentation.DiagnosticPoint!=null && viewport.WorkingBoundaryPickMode,"confirmed marker and diagnostic mode active before preview");
-        Bridge.SetViewPerspective(true); Bridge.SetViewFrame(.2,.3,1,0,1,0); Bridge.ZoomView(1.2);
-        CheckPreviewRollback(window,front,true);
-        var cancelScreen=Bridge.WorkingPointToScreen(front.Id,front.Revision,15,5,0);
-        Invoke(window,"PreviewWorkingSide",new Vec3(0,0,-1));
-        Check(ReferenceEquals(confirmedSample,Field<WorkingBoundarySample>(window,"_workingBoundarySample")) &&
-            !viewport.WorkingBoundaryPickMode && pickBox.IsChecked==false,"successful preview preserves confirmed sample and suspends, not discards, its pick mode");
-        var previewPresentation=Bridge.CaptureWorkingPresentation();
-        Check(previewPresentation.DiagnosticPoint==null,"confirmed marker hidden while inspecting an unconfirmed preview");
-        Bridge.ReleaseWorkingPresentation(previewPresentation.Id);
-        viewport.RectangleSelectionMode=true; viewport.ConnectorEditMode=true; viewport.PowerLocationMode=true;
-        pickBox.IsChecked=true;
-        Check(pickBox.IsChecked==false && !viewport.WorkingBoundaryPickMode && viewport.RectangleSelectionMode &&
-            viewport.ConnectorEditMode && viewport.PowerLocationMode,"outstanding preview checkbox rejection does not disable other modes");
-        viewport.RectangleSelectionMode=false; viewport.ConnectorEditMode=false; viewport.PowerLocationMode=false;
-        Invoke(window,"OnWorkingBoundaryPicked",0,0);
-        Check(ReferenceEquals(confirmedSample,Field<WorkingBoundarySample>(window,"_workingBoundarySample")),
-            "rejected preview diagnostic click cannot discard confirmed sample");
-        CheckPreviewRollback(window,front,false);
-        var replaced=state.Preview;
-        var originalBaseline=Field<object>(window,"_workingPreviewBaseline");
-        Invoke(window,"PreviewWorkingSide",new Vec3(.2,0,-1));
-        Check(!ReferenceEquals(replaced,state.Preview) && ReferenceEquals(originalBaseline,Field<object>(window,"_workingPreviewBaseline")) &&
-            ReferenceEquals(confirmedSample,Field<WorkingBoundarySample>(window,"_workingBoundarySample")),
-            "successful preview replacement retains the original confirmed savepoint and sample");
-        Check(Bridge.QueryWorkingSurface(replaced.Id.Value,replaced.Revision.Value,0,0).Status==WorkingQueryStatus.StaleContext,
-            "replaced preview context is released after replacement commits");
-        Invoke(window,"WorkingCancel_Click",null,new RoutedEventArgs());
-        var cancelledPresentation=Bridge.CaptureWorkingPresentation();
-        Check(SamePresentation(confirmedPresentation,cancelledPresentation) &&
-            ReferenceEquals(confirmedSample,Field<WorkingBoundarySample>(window,"_workingBoundarySample")) &&
-            pickBox.IsChecked==true && viewport.WorkingBoundaryPickMode,"cancel restores confirmed native marker/boundary, sample and active pick mode");
-        Check(Same(cancelScreen,Bridge.WorkingPointToScreen(front.Id,front.Revision,15,5,0)),"cancel restores the pre-preview camera, not the preview camera");
-        Bridge.ReleaseWorkingPresentation(confirmedPresentation.Id); Bridge.ReleaseWorkingPresentation(cancelledPresentation.Id);
-        Invoke(window,"WorkingFront_Click",null,new RoutedEventArgs());
-        var returned=Bridge.CaptureWorkingPresentation();
-        Check(returned.DiagnosticPoint!=null && ReferenceEquals(confirmedSample,Field<WorkingBoundarySample>(window,"_workingBoundarySample")),
-            "return to confirmed front does not clear confirmed marker or sample");
-        Bridge.ReleaseWorkingPresentation(returned.Id);
-        Bridge.ZoomView(1.5);
-        Bridge.PanStart(0,0); Bridge.PanMove(17,11); Bridge.PanEnd();
-        screen=Bridge.WorkingPointToScreen(state.Confirmed.Id.Value,state.Confirmed.Revision.Value,50,5,0);
-        Invoke(window,"OnWorkingBoundaryPicked",(int)screen[0]+4,(int)screen[1]);
-        Check(status.Text.StartsWith("외곽 진단 UV="),"screen aperture follows zoom/pan and snaps independently of cursor ray");
-        Bridge.SetViewPerspective(true);
-        Bridge.SetViewFrame(.3,.2,1,0,1,0);
-        screen=Bridge.WorkingPointToScreen(state.Confirmed.Id.Value,state.Confirmed.Revision.Value,50,0,0);
-        Invoke(window,"OnWorkingBoundaryPicked",(int)screen[0],(int)screen[1]);
-        Check(status.Text.StartsWith("외곽 진단 UV="),"perspective screen candidate and visibility ray use actual camera");
-        Check(Query(front,new(0,0,0)).Point[2]==20,"perspective camera still cannot change confirmed orthographic side");
-        Check(Bridge.ReturnToWorkingFront(state.Confirmed.Id.Value,state.Confirmed.Revision.Value),"return to confirmed orthographic front");
-        Invoke(window,"OnWorkingBoundaryPicked",0,0);
-        Check(status.Text.StartsWith("외곽 선택 실패"),"out-of-aperture diagnostic failure, no route generation");
-        Invoke(window,"Generate_Click",null,new RoutedEventArgs());
-        Check(status.Text.StartsWith("생성 보류"),"unsafe legacy pattern generation gated after confirmation");
-        Invoke(window,"PreviewWorkingSide",new Vec3(0,0,-1));
-        Check(state.Confirmed.Frame.Normal.Z==1 && state.Preview.Frame.Normal.Z==-1,"UI preview cannot mutate confirmed direction");
-        Invoke(window,"WorkingCancel_Click",null,new RoutedEventArgs());
-        Check(state.Confirmed.Frame.Normal.Z==1 && state.Preview==null,"UI cancel retains confirmed side");
-        screen=Bridge.WorkingPointToScreen(state.Confirmed.Id.Value,state.Confirmed.Revision.Value,50,0,0);
-        Invoke(window,"OnWorkingBoundaryPicked",(int)screen[0],(int)screen[1]);
-        pickBox.IsChecked=true;
-        var oldConfirmed=state.Confirmed;
-        Check(Field<WorkingBoundarySample>(window,"_workingBoundarySample")!=null,"confirmed diagnostic exists before replacement confirmation");
-        Invoke(window,"PreviewWorkingSide",new Vec3(0,0,1));
-        Invoke(window,"WorkingConfirm_Click",null,new RoutedEventArgs());
-        var committedPresentation=Bridge.CaptureWorkingPresentation();
-        Check(Field<WorkingBoundarySample>(window,"_workingBoundarySample")==null && committedPresentation.DiagnosticPoint==null &&
-            !viewport.WorkingBoundaryPickMode && pickBox.IsChecked==false && Field<object>(window,"_workingPreviewBaseline")==null,
-            "confirmation, not preview, clears old diagnostic and releases its restore savepoint");
-        Bridge.ReleaseWorkingPresentation(committedPresentation.Id);
-        Check(Bridge.QueryWorkingSurface(oldConfirmed.Id.Value,oldConfirmed.Revision.Value,0,0).Status==WorkingQueryStatus.StaleContext,
-            "old confirmed context is released only after new confirmation");
-        Bridge.ReleaseWorkingContext(state.Confirmed.Id.Value);
-        pickBox.IsChecked=false; viewport.RectangleSelectionMode=true; pickBox.IsChecked=true;
-        Check(pickBox.IsChecked==false && !viewport.WorkingBoundaryPickMode && viewport.RectangleSelectionMode,
-            "released native context cannot activate boundary mode even with matching model revision");
-        viewport.RectangleSelectionMode=false;
-
+        var active=Field<WorkingSideSession>(window,"_workingSide");
+        Check((bool)Invoke(window,"ApplyWorkingSide",new Vec3(0,0,1)) && active.Confirmed?.Frame.Normal.Z==1,
+            "direct axis application creates an active +Z context without a confirmation step");
+        var sameSide=active.Confirmed;
+        var retainedRegion=Field<List<List<Vec2>>>(window,"_selectedRegion"); retainedRegion.Add(new(){new(0,0),new(1,0),new(0,1)});
+        var selectedFaceIds=Field<HashSet<int>>(window,"_selectedFaceIds"); selectedFaceIds.Add(7);
+        ((ListBox)window.FindName("SelectedFacesList")).Items.Add("seed");
+        Check((bool)Invoke(window,"ApplyWorkingSide",new Vec3(0,0,1)) && ReferenceEquals(sameSide,active.Confirmed) && retainedRegion.Count==1,
+            "same-axis selection is a no-op and retains dependent state");
+        var prepare=Field<Func<long,long,bool>>(window,"_prepareWorkingFront");
+        SetField(window,"_prepareWorkingFront",new Func<long,long,bool>((_,_)=>false));
+        Check(!(bool)Invoke(window,"ApplyWorkingSide",new Vec3(0,0,-1)) && ReferenceEquals(sameSide,active.Confirmed) && retainedRegion.Count==1,
+            "failed direction application rolls back active side and dependent state");
+        SetField(window,"_prepareWorkingFront",prepare);
+        SetField(window,"_beforeWorkingSideCommit",new Action(()=>throw new InvalidOperationException("injected precommit failure")));
+        Check(!(bool)Invoke(window,"ApplyWorkingSide",new Vec3(0,0,-1)) && ReferenceEquals(sameSide,active.Confirmed) &&
+            retainedRegion.Count==1 && selectedFaceIds.Contains(7) && ((ListBox)window.FindName("SelectedFacesList")).Items.Count==1 &&
+            Bridge.QueryWorkingSurface(sameSide.Id.Value,sameSide.Revision.Value,0,0).Status==WorkingQueryStatus.Hit,
+            "failure after camera preparation preserves old context and dependent presentation state");
+        SetField(window,"_beforeWorkingSideCommit",new Action(()=>{}));
+        Check((bool)Invoke(window,"ApplyWorkingSide",new Vec3(0,0,-1)) && active.Confirmed?.Frame.Normal.Z==-1 &&
+            retainedRegion.Count==0 && selectedFaceIds.Count==0 && ((ListBox)window.FindName("SelectedFacesList")).Items.Count==0,
+            "successful side change invalidates dependent selections");
+        Check(window.FindName("WorkingPickBox")==null && typeof(OccViewport).GetProperty("WorkingBoundaryPickMode")==null &&
+            typeof(OccViewport).GetEvent("WorkingBoundaryPicked")==null,"diagnostic UI and click interception are removed");
+        Check(window.FindName("WorkingBoundaryCanvas")==null && window.FindName("WorkingAxisBox")!=null,
+            "boundary diagnostic canvas removed; direct axis selector remains");
+        Check(typeof(Bridge).GetMethod("HlrProject")==null && typeof(Bridge).GetMethod("HlrEdges")!=null,
+            "HLR smoke API removed while exporter HlrEdges remains");
+        viewport.RectangleSelectionMode=true;
+        Check(viewport.RectangleSelectionMode,"rectangle interaction remains independent of removed diagnostic mode");
+        Check(Bridge.ReturnToWorkingFront(front.Id,front.Revision),"active working front is independent of camera state");
         Check(Bridge.LoadStep(Path.Combine(args[0],"ring.stp")),"load ring fixture");
         Check(Bridge.QueryWorkingSurface(front.Id,front.Revision,0,0).Status==WorkingQueryStatus.StaleContext,"model reload invalidates native contexts");
         var ringContext=Bridge.CreateWorkingContext(0,0,1,1,0,0); var rings=Rings(ringContext);
         Check(rings.Count==2 && rings.Count(r=>r.IsHole)==1,"whole-model union retains hole across disconnected adjacent sheet faces");
         Check(Query(ringContext,new(50,50,0)).Status==WorkingQueryStatus.Miss,"through-hole is not working surface");
-        Invoke(window,"ResetWorkingSide");
-        Invoke(window,"PreviewWorkingSide",new Vec3(0,0,1));
-        Invoke(window,"WorkingConfirm_Click",null,new RoutedEventArgs());
-        screen=Bridge.WorkingPointToScreen(state.Confirmed.Id.Value,state.Confirmed.Revision.Value,20,50,0);
-        Invoke(window,"OnWorkingBoundaryPicked",(int)screen[0],(int)screen[1]);
-        Check(status.Text.StartsWith("외곽 선택 실패"),"interior hole boundary is never a diagnostic endpoint");
-        screen=Bridge.WorkingPointToScreen(state.Confirmed.Id.Value,state.Confirmed.Revision.Value,10,20,0);
-        Invoke(window,"OnWorkingBoundaryPicked",(int)screen[0],(int)screen[1]);
-        Check(status.Text.StartsWith("외곽 선택 실패"),"shared sheet seam is never a diagnostic endpoint");
-        Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curved silhouette, not trim-edge outline");
+        Check(rings.Count(r=>r.NestingDepth==0)==1,"outer contour computation remains available without UI presentation");
+Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curved silhouette, not trim-edge outline");
         var sphere=Bridge.CreateWorkingContext(0,0,1,1,0,0); var sphereRings=Rings(sphere);
         Check(sphereRings.Count==1 && sphereRings[0].Points.Count>20,"curved silhouette exists independently of face wire/seam");
         double area=Math.Abs(RegionOps.SignedArea(sphereRings[0].Points));
@@ -243,13 +185,6 @@ static class Program
         Check(tangent.Status==WorkingQueryStatus.Tangent || tangent.Status==WorkingQueryStatus.Miss,"tangent is explicit or no hit, never back surface fallback");
         var sphereTop=Query(sphere,new(0,0,0));
         Check(sphereTop.Status==WorkingQueryStatus.Hit && Math.Abs(sphereTop.Point[2]-20)<1e-5,"curved surface first hit");
-        Invoke(window,"ResetWorkingSide");
-        Invoke(window,"PreviewWorkingSide",new Vec3(0,0,1));
-        Invoke(window,"WorkingConfirm_Click",null,new RoutedEventArgs());
-        screen=Bridge.WorkingPointToScreen(state.Confirmed.Id.Value,state.Confirmed.Revision.Value,20,0,0);
-        Invoke(window,"OnWorkingBoundaryPicked",(int)screen[0],(int)screen[1]);
-        Console.WriteLine(status.Text);
-        Check(status.Text.StartsWith("외곽 진단 UV="),"curved silhouette candidate BRep-refines and is selectable without CAD trim edge");
         foreach (var n in new[]{new Vec3(1,0,0),new Vec3(-1,0,0),new Vec3(0,1,0),new Vec3(0,-1,0),new Vec3(0,0,1),new Vec3(0,0,-1)})
         {
             var axisX=Math.Abs(n.X)>.9 ? new Vec3(0,1,0) : new Vec3(1,0,0);
@@ -279,8 +214,40 @@ static class Program
             "upper face IN hit still blocks the lower surface");
         Check(Bridge.IsWorkingPointVisible(trimmed.Id,trimmed.Revision,10,0,20,.001),
             "ON trim-boundary hit remains eligible for visibility");
+        Check(Bridge.LoadStep(Path.Combine(args[0],"threePanels.stp")),"load three topologically adjacent working faces");
+        var panels=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+        int faceA=Bridge.QueryWorkingSurface(panels.Id,panels.Revision,-1,0).FaceId;
+        int faceB=Bridge.QueryWorkingSurface(panels.Id,panels.Revision,0,0).FaceId;
+        int faceC=Bridge.QueryWorkingSurface(panels.Id,panels.Revision,1,0).FaceId;
+        bool ab=Bridge.AreWorkingFacesAdjacent(panels.Id,panels.Revision,faceA,faceB);
+        bool bc=Bridge.AreWorkingFacesAdjacent(panels.Id,panels.Revision,faceB,faceC);
+        bool ac=Bridge.AreWorkingFacesAdjacent(panels.Id,panels.Revision,faceA,faceC);
+        Check(faceA!=faceB && faceB!=faceC && faceA!=faceC && ab && bc && !ac,
+            "ordered three-face path accepts A-B-C shared-edge transitions while endpoints A/C are not adjacent");
+        int seamStage=int.MinValue+1300;
+        var acrossSeams=Bridge.StageProjectedWorkingPolyline(panels.Id,panels.Revision,seamStage,
+            new[]{.25, .5, 5.0, 2.75, .5, 5.0},new[]{faceA,faceB,faceC},0,0,-1);
+        Check(acrossSeams!=null,"projected route reconnects across selected three-panel seams");
+        Bridge.DiscardWorkingRouteGeometry(panels.Id,panels.Revision,Array.Empty<int>(),new[]{seamStage});
+        int partialStage=int.MinValue+1301;
+        Check(Bridge.StageProjectedWorkingPolyline(panels.Id,panels.Revision,partialStage,
+            new[]{.25, .5, 5.0, 1.5, .5, 5.0, 3.5, .5, 5.0, 2.75, .5, 5.0},
+            new[]{faceA,faceB,faceC},0,0,-1)==null,"partially out-of-domain projected path is rejected");
+        int reloadStage=int.MinValue/2+91;
+        Check(Bridge.StageWorkingPolyline(panels.Id,panels.Revision,reloadStage,new[]{0.0,0,0,1,0,0}),
+            "working polyline stage created for cleanup/revision test");
+        Bridge.ClearOverlays();
+        Check(Bridge.StageWorkingPolyline(panels.Id,panels.Revision,reloadStage,new[]{0.0,0,0,1,0,0}),
+            "ClearOverlays removes staged AIS and releases its temporary ID");
+        Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"reload model with candidate polyline staged");
+        Check(!Bridge.CommitWorkingRouteGeometry(panels.Id,panels.Revision,Array.Empty<int>(),Array.Empty<int>(),new[]{reloadStage}),
+            "stale model/context cannot commit a staged working polyline");
+        var afterStageReload=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+        Check(Bridge.StageWorkingPolyline(afterStageReload.Id,afterStageReload.Revision,reloadStage,new[]{0.0,0,0,1,0,0}),
+            "model reload removes prior staged polyline handle and frees its ID");
+        Bridge.DiscardWorkingRouteGeometry(panels.Id,panels.Revision,Array.Empty<int>(),new[]{reloadStage});
         Check(!Bridge.LoadStep(Path.Combine(args[0],"absent.stp")),"failed model load");
-        Check(Bridge.QueryWorkingSurface(trimmed.Id,trimmed.Revision,0,0).Status==WorkingQueryStatus.StaleContext,"failed reload also invalidates context");
+        Check(Bridge.QueryWorkingSurface(afterStageReload.Id,afterStageReload.Revision,0,0).Status==WorkingQueryStatus.StaleContext,"failed reload also invalidates context");
         Check(Bridge.CreateWorkingContext(0,0,1,1,0,0)==null,"no context available without model");
         window.Close();
         Console.WriteLine($"{count} working-side checks passed.");
