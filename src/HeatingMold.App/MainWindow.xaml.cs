@@ -19,11 +19,7 @@ namespace HeatingMold.App
 {
     public partial class MainWindow : Window
     {
-        // Legacy pattern state is retained behind the working-side route migration gate.
         private SerpentineResult _pattern;
-        private int _patternFaceIndex = -1;
-        private List<Vec3> _heatPath3D;   // pattern centerline on the surface (world 3D)
-        private List<Vec3> _heatBand3D;   // pattern ribbon band on the surface (world 3D)
         private readonly HashSet<int> _selectedFaceIds = new();
         private List<List<Vec2>> _selectedRegion = new();
         private ProjectionFrame _multiFaceFrame;
@@ -128,9 +124,6 @@ namespace HeatingMold.App
             {
                 ResetCircuitEditState(clearNative: true);
                 _pattern = null;
-                _patternFaceIndex = -1;
-                _heatPath3D = null;
-                _heatBand3D = null;
                 _selectedFaceIds.Clear();
                 SelectedFacesList.Items.Clear();
                 FaceCombo.Items.Clear();
@@ -151,9 +144,6 @@ namespace HeatingMold.App
             Bridge.SetShapeColor(0.55, 0.65, 0.85);   // 고정 표시색 (스틸 블루)
             ResetCircuitEditState(clearNative: true);
             _pattern = null;
-            _patternFaceIndex = -1;
-            _heatPath3D = null;
-            _heatBand3D = null;
             _selectedFaceIds.Clear();
             SelectedFacesList.Items.Clear();
             _selectedRegion.Clear();
@@ -434,9 +424,6 @@ namespace HeatingMold.App
             Bridge.ClearOverlays();
             _multiFacePatternDisplayed = false;
             _pattern = null;
-            _patternFaceIndex = -1;
-            _heatPath3D = null;
-            _heatBand3D = null;
             _selectedRegion.Clear();
             _multiFaceFrame = null;
             _multiFaceRegionFailure = null;
@@ -838,20 +825,18 @@ namespace HeatingMold.App
             var views = new List<DxfView>();
             double[] x = Bridge.GetAutoAxis(0), y = Bridge.GetAutoAxis(1), z = Bridge.GetAutoAxis(2);
             if (x == null || y == null || z == null) return views;
-            views.Add(BuildHlrView("back", z[0], z[1], z[2], x[0], x[1], x[2]));
-            views.Add(BuildHlrView("front", -z[0], -z[1], -z[2], x[0], x[1], x[2]));
-            views.Add(BuildHlrView("top", -y[0], -y[1], -y[2], x[0], x[1], x[2]));
-            views.Add(BuildHlrView("side", x[0], x[1], x[2], y[0], y[1], y[2]));
+            views.Add(BuildHlrView(z[0], z[1], z[2], x[0], x[1], x[2]));
+            views.Add(BuildHlrView(-z[0], -z[1], -z[2], x[0], x[1], x[2]));
+            views.Add(BuildHlrView(-y[0], -y[1], -y[2], x[0], x[1], x[2]));
+            views.Add(BuildHlrView(x[0], x[1], x[2], y[0], y[1], y[2]));
             return views;
         }
 
-        private DxfView BuildHlrView(string label, double nx, double ny, double nz,
+        private DxfView BuildHlrView(double nx, double ny, double nz,
                                      double xx, double xy, double xz)
         {
-            var view = new DxfView { Label = label };
-            var N = new Vec3(nx, ny, nz).Normalized();
+            var view = new DxfView();
             Vec3 xAxis = new Vec3(xx, xy, xz).Normalized();
-            Vec3 yAxis = Vec3.Cross(N, xAxis).Normalized();
 
             foreach (var pl in Bridge.HlrEdges(nx, ny, nz, xAxis.X, xAxis.Y, xAxis.Z, true))
             {
@@ -863,16 +848,8 @@ namespace HeatingMold.App
                 else view.HiddenEdges.Add(poly);
             }
 
-            if (_heatPath3D != null && _heatPath3D.Count >= 2)
-                view.HeatLines.Add(new DxfPolyline { Points = _heatPath3D.Select(p => Project(p, xAxis, yAxis)).ToList() });
-            if (_heatBand3D != null && _heatBand3D.Count >= 3)
-                view.HeatBands.Add(new DxfPolyline { Points = _heatBand3D.Select(p => Project(p, xAxis, yAxis)).ToList(), Closed = true });
-
             return view;
         }
-
-        private static Vec2 Project(Vec3 p, Vec3 xAxis, Vec3 yAxis)
-            => new Vec2(Vec3.Dot(p, xAxis), Vec3.Dot(p, yAxis));
 
         private void Export_Click(object sender, RoutedEventArgs e)
         {
@@ -883,12 +860,10 @@ namespace HeatingMold.App
                     : "먼저 [패턴 생성]을 실행하세요";
                 return;
             }
-            TryGetParams(out _, out _, out double width);
-
             string root = OcctEnv.RepoRoot ?? ".";
             string dir = Path.Combine(root, "output");
             Directory.CreateDirectory(dir);
-            string file = Path.Combine(dir, "heat_pattern_face" + _patternFaceIndex + ".dxf");
+            string file = Path.Combine(dir, "heat_pattern.dxf");
 
             try
             {

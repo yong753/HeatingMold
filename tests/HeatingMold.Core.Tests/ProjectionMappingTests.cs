@@ -29,33 +29,4 @@ public class ProjectionMappingTests
         Assert.Equal(0.0, Vec3.Dot(f.AxisX, f.AxisY), 9);
     }
 
-    // 투영 2D → UV 역매핑 — 아핀 격자에서 보간으로 정확히 복원
-    [Fact]
-    public void UvProjectionGrid_RecoversUvByInterpolation()
-    {
-        const int n = 2;
-        int count = (n + 1) * (n + 1);
-        var u = new double[count];
-        var v = new double[count];
-        var x = new double[count];
-        var y = new double[count];
-        for (int i = 0; i <= n; i++)
-            for (int j = 0; j <= n; j++)
-            {
-                int idx = i * (n + 1) + j;
-                u[idx] = i / (double)n;
-                v[idx] = j / (double)n;
-                x[idx] = u[idx] * 100.0;
-                y[idx] = v[idx] * 100.0;
-            }
-
-        var g = new UvProjectionGrid(n, u, v, x, y);
-
-        Assert.True(g.TryMap(new Vec2(25, 75), out double uu, out double vv));
-        Assert.Equal(0.25, uu, 6);
-        Assert.Equal(0.75, vv, 6);
-
-        // 격자 밖 → 최근접 노드 폴백 (실패하지 않음)
-        Assert.True(g.TryMap(new Vec2(-20, -20), out _, out _));
-    }
 }

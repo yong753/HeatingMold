@@ -43,13 +43,10 @@
 #include <ShapeAnalysis_FreeBounds.hxx>
 #include <TopTools_HSequenceOfShape.hxx>
 #include <BRepAdaptor_Surface.hxx>
-#include <BRepClass_FaceClassifier.hxx>
 #include <Geom2dAdaptor_Curve.hxx>
 #include <Geom2d_Curve.hxx>
 #include <GeomAbs_CurveType.hxx>
 #include <GeomAbs_SurfaceType.hxx>
-#include <GeomLib_IsPlanarSurface.hxx>
-#include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <IntCurvesFace_ShapeIntersector.hxx>
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
@@ -141,9 +138,6 @@ namespace
     std::vector<TopoDS_Face> g_faces;
     std::set<std::pair<int,int>> g_faceAdjacency;
     long long g_faceAdjacencyRevision = -1;
-    std::map<int, std::unique_ptr<IntCurvesFace_ShapeIntersector>> g_surfaceIntersectors;
-    std::map<int, Bnd_Box> g_surfaceBounds;
-    std::map<int, double> g_surfaceTolerances;
     TopTools_IndexedMapOfShape g_faceMap;   // W3 픽킹: g_faces와 같은 순회로 구축 (인덱스 1:1)
     gp_Dir g_autoAxes[3] = { gp::DX(), gp::DY(), gp::DZ() };
     long long g_modelRevision = 0;
@@ -270,7 +264,6 @@ namespace
     Handle(WNT_Window) g_window;
     Handle(AIS_Shape) g_aisShape;
     std::set<int> g_selectedFaceIds;
-    std::map<int, Handle(AIS_Shape)> g_overlays;   // S3 사행 오버레이 — 면별 유지 (다른 면 생성 시에도 보존)
     std::vector<Handle(AIS_Shape)> g_worldOverlays;
     std::map<int, Handle(AIS_Shape)> g_powerLeads;
     Handle(AIS_Shape) g_powerLeadPreview;
@@ -290,9 +283,6 @@ namespace
 
     void RebuildFaceCache()
     {
-        g_surfaceIntersectors.clear();
-        g_surfaceBounds.clear();
-        g_surfaceTolerances.clear();
         g_faces.clear();
         g_faceMap.Clear();
         if (g_shape.IsNull()) return;
@@ -819,67 +809,6 @@ namespace
 
     // ================= 오버레이 natives (S3) =================
 
-    bool BuildWire3DNative(int faceIndex, const std::vector<double>& uv, bool closed)
-    {
-        if (faceIndex < 0 || faceIndex >= (int)g_faces.size()) return false;
-        if (uv.size() < 4) return false;
-
-        BRepAdaptor_Surface surf(g_faces[faceIndex]);
-        BRepBuilderAPI_MakePolygon poly;
-        for (size_t i = 0; i + 1 < uv.size(); i += 2)
-            poly.Add(surf.Value(uv[i], uv[i + 1]));
-        if (!poly.IsDone()) return false;
-        if (closed) poly.Close();
-        if (!poly.IsDone()) return false;
-
-        TopoDS_Shape displayShape = poly.Wire();
-        if (closed)
-        {
-            // 평면이면 리본 면으로 채움 (곡면은 와이어 유지)
-            BRepBuilderAPI_MakeFace mkFace(poly.Wire());
-            if (mkFace.IsDone()) displayShape = mkFace.Face();
-        }
-
-        if (g_ctx.IsNull()) return true;   // 헤드리스(테스트) — 기하 생성만
-
-        // 같은 면을 다시 생성한 경우에만 그 면의 기존 오버레이를 교체하고,
-        // 다른 면의 오버레이는 그대로 유지한다 (누적 표시).
-        auto it = g_overlays.find(faceIndex);
-        if (it != g_overlays.end())
-        {
-            g_ctx->Remove(it->second, Standard_False);
-            g_overlays.erase(it);
-        }
-        Handle(AIS_Shape) overlay = new AIS_Shape(displayShape);
-        g_ctx->SetColor(overlay, Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB), Standard_False);
-        g_ctx->Display(overlay, Standard_False);
-        g_ctx->SetZLayer(overlay, Graphic3d_ZLayerId_Topmost);   // always on top (no depth test)
-        g_ctx->Deactivate(overlay, Standard_False);   // 오버레이가 면 픽킹/호버를 가로채지 않도록 선택 비활성
-        g_overlays[faceIndex] = overlay;
-        if (!g_view.IsNull()) g_view->Redraw();
-        return true;
-    }
-
-    bool BuildPolyline3DNative(const std::vector<double>& xyz, bool closed, bool redraw)
-    {
-        if (xyz.size() < 6 || xyz.size() % 3 != 0) return false;
-        BRepBuilderAPI_MakePolygon poly;
-        for (size_t i = 0; i + 2 < xyz.size(); i += 3)
-            poly.Add(gp_Pnt(xyz[i], xyz[i + 1], xyz[i + 2]));
-        if (!poly.IsDone()) return false;
-        if (closed) poly.Close();
-        if (!poly.IsDone()) return false;
-        if (g_ctx.IsNull()) return true;
-        Handle(AIS_Shape) overlay = new AIS_Shape(poly.Wire());
-        g_ctx->SetColor(overlay, Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB), Standard_False);
-        g_ctx->Display(overlay, Standard_False);
-        g_ctx->SetZLayer(overlay, Graphic3d_ZLayerId_Topmost);
-        g_ctx->Deactivate(overlay, Standard_False);
-        g_worldOverlays.push_back(overlay);
-        if (redraw && !g_view.IsNull()) g_view->Redraw();
-        return true;
-    }
-
     bool ProjectRoutePieceNative(int pieceId, const std::string& kind, const std::vector<double>& xyz,
         const std::vector<int>& faceIds, const gp_Dir& direction, double depth, double* result)
     {
@@ -1284,27 +1213,14 @@ namespace
         ClearRoutePiecesNative();
         if (!g_ctx.IsNull())
         {
-            for (const auto& kv : g_overlays)
-                g_ctx->Remove(kv.second, Standard_False);
             for (const auto& overlay : g_worldOverlays)
                 g_ctx->Remove(overlay, Standard_False);
         }
-        g_overlays.clear();
         g_worldOverlays.clear();
         for (const auto& staged : g_stagedWorkingPolylines)
             if (!g_ctx.IsNull()) g_ctx->Remove(staged.second.ais,Standard_False);
         g_stagedWorkingPolylines.clear();
         if (!g_view.IsNull()) g_view->Redraw();
-    }
-
-    void SetViewDirectionNative(double x, double y, double z)
-    {
-        if (g_view.IsNull()) return;
-        const double len = std::sqrt(x * x + y * y + z * z);
-        if (len < 1e-12) return;
-        g_view->SetProj(x / len, y / len, z / len);
-        g_view->FitAll(0.01, Standard_False);
-        g_view->Redraw();
     }
 
     void SetViewFrameNative(double dx, double dy, double dz, double ux, double uy, double uz)
@@ -1320,136 +1236,6 @@ namespace
         g_view->SetUp(up.X(), up.Y(), up.Z());
         g_view->FitAll(0.01, Standard_False);
         g_view->Redraw();
-    }
-
-    bool FaceNormalNative(int faceIndex, double* out)
-    {
-        if (faceIndex < 0 || faceIndex >= (int)g_faces.size()) return false;
-        BRepAdaptor_Surface surf(g_faces[faceIndex]);
-        const Standard_Real u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
-        const Standard_Real v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
-        gp_Pnt p;
-        gp_Vec d1u, d1v;
-        surf.D1(0.5 * (u0 + u1), 0.5 * (v0 + v1), p, d1u, d1v);
-        gp_Vec n = d1u.Crossed(d1v);
-        if (n.SquareMagnitude() < 1e-18) return false;
-        n.Normalize();
-        if (g_faces[faceIndex].Orientation() == TopAbs_REVERSED) n.Reverse();
-        out[0] = n.X(); out[1] = n.Y(); out[2] = n.Z();
-        return true;
-    }
-
-    bool FaceSurfaceIsPlanarNative(int faceIndex, double tolerance)
-    {
-        if (faceIndex < 0 || faceIndex >= static_cast<int>(g_faces.size()) ||
-            !std::isfinite(tolerance) || tolerance <= 0.0) return false;
-        Handle(Geom_Surface) surface = BRep_Tool::Surface(g_faces[faceIndex]);
-        if (surface.IsNull()) return false;
-        return GeomLib_IsPlanarSurface(surface, tolerance).IsPlanar();
-    }
-
-    bool ProjectPointToFaceNative(int faceIndex, double x, double y, double z, double* out)
-    {
-        if (faceIndex < 0 || faceIndex >= static_cast<int>(g_faces.size()) || out == nullptr ||
-            !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return false;
-        try
-        {
-            const TopoDS_Face& face = g_faces[faceIndex];
-            TopLoc_Location location;
-            Handle(Geom_Surface) surface = BRep_Tool::Surface(face, location);
-            if (surface.IsNull()) return false;
-            Standard_Real uMin, uMax, vMin, vMax;
-            BRepTools::UVBounds(face, uMin, uMax, vMin, vMax);
-            if (!std::isfinite(uMin) || !std::isfinite(uMax) || !std::isfinite(vMin) || !std::isfinite(vMax) ||
-                uMax <= uMin || vMax <= vMin) return false;
-
-            gp_Pnt query(x, y, z);
-            query.Transform(location.Transformation().Inverted());
-            GeomAPI_ProjectPointOnSurf projection(query, surface, uMin, uMax, vMin, vMax, Precision::Confusion());
-            if (!projection.IsDone() || projection.NbPoints() == 0) return false;
-            Standard_Real u, v;
-            projection.LowerDistanceParameters(u, v);
-            BRepClass_FaceClassifier classifier(face, gp_Pnt2d(u, v), 1.0e-6);
-            if (classifier.State() != TopAbs_IN && classifier.State() != TopAbs_ON) return false;
-
-            gp_Pnt projected = projection.NearestPoint();
-            projected.Transform(location.Transformation());
-            out[0] = projected.X(); out[1] = projected.Y(); out[2] = projected.Z();
-            return true;
-        }
-        catch (const Standard_Failure&)
-        {
-            return false;
-        }
-    }
-
-    bool IntersectSelectedFacesNative(const std::vector<int>& faceIds, double x, double y, double z,
-                                      double nx, double ny, double nz, double* out)
-    {
-        if (out == nullptr || faceIds.empty() ||
-            !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) ||
-            !std::isfinite(nx) || !std::isfinite(ny) || !std::isfinite(nz)) return false;
-        // Scale before normalization to avoid overflow/underflow for finite normals.
-        const double scale = std::max(std::fabs(nx), std::max(std::fabs(ny), std::fabs(nz)));
-        if (scale == 0.0) return false;
-        try
-        {
-            const gp_Lin line(gp_Pnt(x, y, z), gp_Dir(nx / scale, ny / scale, nz / scale));
-            // The caller starts on the whole-model +Z datum and casts toward -Z.
-            const double limit = 1.0e12;
-            double nearest = limit;
-            bool found = false;
-            for (int faceId : faceIds)
-            {
-                if (faceId < 0 || faceId >= static_cast<int>(g_faces.size())) continue;
-                try
-                {
-                    auto bound = g_surfaceBounds.find(faceId);
-                    if (bound == g_surfaceBounds.end())
-                    {
-                        Bnd_Box box;
-                        BRepBndLib::Add(g_faces[faceId], box);
-                        bound = g_surfaceBounds.emplace(faceId, box).first;
-                        double tolerance = std::max(Precision::Confusion(), BRep_Tool::Tolerance(g_faces[faceId]));
-                        for (TopExp_Explorer edge(g_faces[faceId], TopAbs_EDGE); edge.More(); edge.Next())
-                            tolerance = std::max(tolerance, BRep_Tool::Tolerance(TopoDS::Edge(edge.Current())));
-                        for (TopExp_Explorer vertex(g_faces[faceId], TopAbs_VERTEX); vertex.More(); vertex.Next())
-                            tolerance = std::max(tolerance, BRep_Tool::Tolerance(TopoDS::Vertex(vertex.Current())));
-                        // Imported STEP tolerances can be ~0.1 mm; do not let
-                        // that broad tolerance expand trimmed-face hit domains.
-                        g_surfaceTolerances[faceId] = std::min(tolerance, 0.01);
-                    }
-                    if (!bound->second.IsVoid() && bound->second.IsOut(line)) continue;
-                    auto& cached = g_surfaceIntersectors[faceId];
-                    if (!cached)
-                    {
-                        cached = std::make_unique<IntCurvesFace_ShapeIntersector>();
-                        cached->Load(g_faces[faceId], g_surfaceTolerances[faceId]);
-                    }
-                    auto& intersector = *cached;
-                    intersector.Perform(line, 0.0, limit);
-                    if (!intersector.IsDone()) continue;
-                    for (Standard_Integer i = 1; i <= intersector.NbPnt(); ++i)
-                    {
-                        const double t = intersector.WParameter(i);
-                        const gp_Pnt& hit = intersector.Pnt(i);
-                        if (!std::isfinite(t) || !std::isfinite(hit.X()) ||
-                            !std::isfinite(hit.Y()) || !std::isfinite(hit.Z())) continue;
-                        if (intersector.State(i) != TopAbs_IN && intersector.State(i) != TopAbs_ON) continue;
-                        if (t < 0.0 || t > limit || (found && t >= nearest)) continue;
-                        nearest = t;
-                        out[0] = hit.X(); out[1] = hit.Y(); out[2] = hit.Z(); out[3] = faceId;
-                        found = true;
-                    }
-                }
-                catch (const Standard_Failure&) { }
-            }
-            return found;
-        }
-        catch (const Standard_Failure&)
-        {
-            return false;
-        }
     }
 
     bool GetModelBoundsInFrameNative(const gp_Dir& xAxis, const gp_Dir& yAxis,
@@ -2120,12 +1906,6 @@ void Bridge::DiscardWorkingRouteGeometry(long long id,long long revision,array<i
         DiscardWorkingGeometryNative(id,revision,sr,sp);
     } catch (...) { }
 }
-array<double>^ Bridge::WorkingPointToScreen(long long id,long long revision,double x,double y,double z)
-{
-    double screen[2];
-    if (!WorkingScreenNative(id,revision,x,y,z,screen)) return nullptr;
-    return gcnew array<double>{screen[0],screen[1]};
-}
 bool Bridge::IsWorkingPointVisible(long long id,long long revision,double x,double y,double z,double tolerance)
 { return WorkingVisibleNative(id,revision,x,y,z,tolerance); }
 void Bridge::ShowWorkingBoundary(array<array<double>^>^ loops)
@@ -2150,12 +1930,6 @@ bool Bridge::ReturnToWorkingFront(long long id,long long revision)
     SetViewFrameNative(ctx->n.X(),ctx->n.Y(),ctx->n.Z(),ctx->y.X(),ctx->y.Y(),ctx->y.Z());
     return true;
 }
-void Bridge::SetViewPerspective(bool perspective)
-{
-    if (g_view.IsNull()) return;
-    g_view->Camera()->SetProjectionType(perspective ? Graphic3d_Camera::Projection_Perspective : Graphic3d_Camera::Projection_Orthographic);
-    g_view->Redraw();
-}
 WorkingPresentation^ Bridge::CaptureWorkingPresentation()
 {
     double bounds[6]={}; bool hasBounds=false;
@@ -2174,9 +1948,6 @@ bool Bridge::LoadStep(String^ path)
 {
     ++g_modelRevision;
     InvalidateWorkingContexts();
-    g_surfaceIntersectors.clear();
-    g_surfaceBounds.clear();
-    g_surfaceTolerances.clear();
     ClearDisplayedShape();
     ClearOverlayNative();
     ClearExclusionOverlaysNative();
@@ -2254,22 +2025,6 @@ array<RegionBoundaryLoop^>^ Bridge::GetSelectedRegionBoundary(array<int>^ faceId
     return result;
 }
 
-array<double>^ Bridge::GetModelBoundsInFrame(double xx, double xy, double xz,
-                                              double yx, double yy, double yz,
-                                              double zx, double zy, double zz)
-{
-    double bounds[6];
-    try
-    {
-        if (!GetModelBoundsInFrameNative(gp_Dir(xx, xy, xz), gp_Dir(yx, yy, yz),
-                                         gp_Dir(zx, zy, zz), bounds)) return nullptr;
-    }
-    catch (const Standard_Failure&) { return nullptr; }
-    auto result = gcnew array<double>(6);
-    for (int i = 0; i < 6; ++i) result[i] = bounds[i];
-    return result;
-}
-
 array<double>^ Bridge::SampleUvTo3D(int faceIndex, double u, double v)
 {
     double p[3];
@@ -2277,28 +2032,6 @@ array<double>^ Bridge::SampleUvTo3D(int faceIndex, double u, double v)
     array<double>^ r = gcnew array<double>(3);
     r[0] = p[0]; r[1] = p[1]; r[2] = p[2];
     return r;
-}
-
-array<double>^ Bridge::ProjectPointToFace(int faceIndex, double x, double y, double z)
-{
-    double p[3];
-    if (!ProjectPointToFaceNative(faceIndex, x, y, z, p)) return nullptr;
-    array<double>^ r = gcnew array<double>(3);
-    r[0] = p[0]; r[1] = p[1]; r[2] = p[2];
-    return r;
-}
-
-array<double>^ Bridge::IntersectSelectedFaces(array<int>^ faceIds, double x, double y, double z,
-                                              double nx, double ny, double nz)
-{
-    if (faceIds == nullptr || faceIds->Length == 0) return nullptr;
-    std::vector<int> ids(faceIds->Length);
-    for (int i = 0; i < faceIds->Length; ++i) ids[(size_t)i] = faceIds[i];
-    double p[4];
-    if (!IntersectSelectedFacesNative(ids, x, y, z, nx, ny, nz, p)) return nullptr;
-    array<double>^ result = gcnew array<double>(4);
-    for (int i = 0; i < 4; ++i) result[i] = p[i];
-    return result;
 }
 
 array<double>^ Bridge::PickSelectedBoundaryPoint(array<int>^ faceIds, int x, int y)
@@ -2494,24 +2227,6 @@ void Bridge::SetShapeColor(double r, double g, double b)
     SetShapeColorNative(r, g, b);
 }
 
-// ================= 오버레이 managed (S3) =================
-
-bool Bridge::BuildWire3D(int faceIndex, array<double>^ uvFlat, bool closed)
-{
-    if (uvFlat == nullptr) return false;
-    std::vector<double> uv(uvFlat->Length);
-    for (int i = 0; i < uvFlat->Length; ++i) uv[i] = uvFlat[i];
-    return BuildWire3DNative(faceIndex, uv, closed);
-}
-
-bool Bridge::BuildPolyline3D(array<double>^ xyzFlat, bool closed, bool redraw)
-{
-    if (xyzFlat == nullptr) return false;
-    std::vector<double> xyz(xyzFlat->Length);
-    for (int i = 0; i < xyzFlat->Length; ++i) xyz[i] = xyzFlat[i];
-    return BuildPolyline3DNative(xyz, closed, redraw);
-}
-
 void Bridge::RedrawView()
 {
     if (!g_view.IsNull()) g_view->Redraw();
@@ -2520,11 +2235,6 @@ void Bridge::RedrawView()
 void Bridge::ClearOverlays()
 {
     ClearOverlayNative();
-}
-
-void Bridge::SetViewDirection(double dx, double dy, double dz)
-{
-    SetViewDirectionNative(dx, dy, dz);
 }
 
 void Bridge::SetViewFrame(double dx, double dy, double dz, double ux, double uy, double uz)
@@ -2593,20 +2303,6 @@ void Bridge::SetExclusionPreview(array<double>^ xyzFlat)
 void Bridge::ClearExclusionOverlays()
 {
     ClearExclusionOverlaysNative();
-}
-
-array<double>^ Bridge::GetFaceNormal(int faceIndex)
-{
-    double n[3];
-    if (!FaceNormalNative(faceIndex, n)) return nullptr;
-    array<double>^ r = gcnew array<double>(3);
-    r[0] = n[0]; r[1] = n[1]; r[2] = n[2];
-    return r;
-}
-
-bool Bridge::IsFaceSurfacePlanar(int faceIndex, double tolerance)
-{
-    return FaceSurfaceIsPlanarNative(faceIndex, tolerance);
 }
 
 int Bridge::HoverFace(int x, int y)

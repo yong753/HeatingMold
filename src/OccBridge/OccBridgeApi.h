@@ -104,12 +104,10 @@ public:
         array<int>^ finalRouteIds, array<int>^ stagedPolylineIds);
     static void DiscardWorkingRouteGeometry(long long id, long long revision,
         array<int>^ stagedRouteIds, array<int>^ stagedPolylineIds);
-    static array<double>^ WorkingPointToScreen(long long id, long long revision, double x, double y, double z);
     static bool IsWorkingPointVisible(long long id, long long revision, double x, double y, double z, double tolerance);
     static void ShowWorkingBoundary(array<array<double>^>^ loops);
     static void ShowWorkingBoundary(array<array<double>^>^ loops, array<bool>^ holes);
     static bool ReturnToWorkingFront(long long id, long long revision);
-    static void SetViewPerspective(bool perspective);
     static WorkingPresentation^ CaptureWorkingPresentation();
     static bool RestoreWorkingPresentation(long long id);
     static void ReleaseWorkingPresentation(long long id);
@@ -127,18 +125,8 @@ public:
     static array<UvWire^>^ GetFaceUvBoundary(int faceIndex);
     /// <summary>임시 0.01mm Sewing 후 공유 내부 Edge를 제거하고 외곽 루프를 3D 적응 샘플링해 반환.</summary>
     static array<RegionBoundaryLoop^>^ GetSelectedRegionBoundary(array<int>^ faceIds, double deflection);
-    /// <summary>전체 모델 AABB의 좌표 범위 [minX,maxX,minY,maxY,minZ,maxZ] in supplied fixed model axes.</summary>
-    static array<double>^ GetModelBoundsInFrame(double xx, double xy, double xz,
-                                                 double yx, double yy, double yz,
-                                                 double zx, double zy, double zz);
-
     /// <summary>UV → 3D 매핑 (V5)</summary>
     static array<double>^ SampleUvTo3D(int faceIndex, double u, double v);
-    /// <summary>Project a world point onto a trimmed face; returns null outside the face.</summary>
-    static array<double>^ ProjectPointToFace(int faceIndex, double x, double y, double z);
-    /// <summary>Cast a directed world-space ray onto trimmed faces; nearest forward hit [x,y,z,faceId], or null.</summary>
-    static array<double>^ IntersectSelectedFaces(array<int>^ faceIds, double x, double y, double z,
-                                                 double nx, double ny, double nz);
     /// <summary>Pick the nearest visible point on the selected faces only when it is on their trim boundary.</summary>
     static array<double>^ PickSelectedBoundaryPoint(array<int>^ faceIds, int x, int y);
     /// <summary>Project source wire along a fixed axis, then shift result by insertionDepth along that axis; returns [success, length, edgeCount, wireCount, statusCode].</summary>
@@ -209,16 +197,9 @@ public:
     static int SelectFace(int x, int y, bool toggle);
 
     // ---- 오버레이 (S3 통합 데모) ----
-    /// <summary>UV 폴리라인을 면 위 3D 와이어(닫힘이면 리본 면)로 오버레이 표시</summary>
-    static bool BuildWire3D(int faceIndex, array<double>^ uvFlat, bool closed);
-
-    /// <summary>Display a world-coordinate 3D polyline overlay.</summary>
-    static bool BuildPolyline3D(array<double>^ xyzFlat, bool closed, bool redraw);
     static void RedrawView();
     static void ClearOverlays();
 
-    /// <summary>지정 방향에서 바라보는 시점으로 설정 + FitAll (S3 평면 뷰)</summary>
-    static void SetViewDirection(double dx, double dy, double dz);
     /// <summary>방향과 화면 위쪽 벡터로 카메라를 설정</summary>
     static void SetViewFrame(double dx, double dy, double dz, double ux, double uy, double uz);
     /// <summary>로드된 형상에서 자동 추정한 주축(0=X, 1=Y, 2=Z)</summary>
@@ -231,9 +212,6 @@ public:
     static void SetExclusionPreview(array<double>^ xyzFlat);
     static void ClearExclusionOverlays();
 
-    /// <summary>면 중앙 UV의 단위 법선 [nx,ny,nz] (S3 정면 뷰)</summary>
-    static array<double>^ GetFaceNormal(int faceIndex);
-    static bool IsFaceSurfacePlanar(int faceIndex, double tolerance);
 
     // ---- HLR (S1 항목 5, S3 측면 뷰에서 본격 사용) ----
     /// <summary>현재 셰이프를 축측(1,1,1) 방향으로 HLR 투영 — 가시/은선 엣지 수 + 소요 ms</summary>

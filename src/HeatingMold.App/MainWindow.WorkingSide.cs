@@ -83,8 +83,7 @@ public partial class MainWindow
             if (old != null) Bridge.ReleaseWorkingContext(old.Id.Value);
 
             ResetCircuitEditState(true);
-            _pattern = null; _heatPath3D = _heatBand3D = null;
-            _patternFaceIndex = -1; _multiFacePatternDisplayed = false;
+            _pattern = null; _multiFacePatternDisplayed = false;
             _selectedFaceIds.Clear(); SelectedFacesList.Items.Clear(); FaceCombo.SelectedIndex = -1;
             _selectedRegion.Clear(); _exclusions.Clear(); _multiFaceFrame = frame;
             Bridge.HideFaceHighlights(); Bridge.ClearOverlays(); Bridge.ClearExclusionOverlays();

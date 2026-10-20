@@ -3,9 +3,6 @@ namespace HeatingMold.Core.Geometry;
 public readonly record struct ModelRevision(long Value);
 public readonly record struct WorkingSideId(long Value);
 public enum WorkingSideState { Unconfirmed, Preview, Confirmed }
-public enum WorkingSurfaceStatus { Hit, Miss, Tangent, InvalidInput, StaleContext, GeometryFailure }
-public sealed record WorkingSurfacePoint(WorkingSurfaceStatus Status, Vec2 DatumPoint,
-    Vec3? Point = null, int? FaceId = null);
 
 /// <summary>Immutable model-owned orthographic datum. Camera state is deliberately absent.</summary>
 public sealed record WorkingSideDefinition(WorkingSideId Id, ModelRevision Revision, ProjectionFrame Frame)
@@ -37,12 +34,6 @@ public sealed record WorkingBoundaryRing(IReadOnlyList<Vec2> Points, int Nesting
 {
     public bool IsHole => NestingDepth % 2 != 0;
 }
-
-/// <summary>Optional BRep reference for a projected candidate. BracketWidth is a local numeric
-/// occupancy bracket only, not a certified global distance to an exact silhouette curve.</summary>
-public sealed record WorkingBoundarySample(WorkingSideId ContextId, ModelRevision Revision,
-    Vec2 DatumPoint, WorkingSurfaceStatus Status, Vec3? ReferencePoint = null,
-    int? FaceId = null, double? BracketWidth = null);
 
 public static class WorkingBoundary
 {

@@ -450,21 +450,6 @@ bool CommitWorkingGeometryNative(long long contextId,long long revision,const st
     }
 }
 
-bool WorkingScreenNative(long long id,long long revision,double x,double y,double z,double* out)
-{
-    if (!FindWorking(id,revision) || g_view.IsNull() || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return false;
-    try {
-        const auto camera=g_view->Camera();
-        const gp_Pnt point(x,y,z);
-        if (!camera->IsOrthographic() && gp_Vec(camera->Eye(),point).Dot(gp_Vec(camera->Direction()))<=0) return false;
-        const gp_Pnt projected=camera->Project(point);
-        int width,height; g_view->Window()->Size(width,height);
-        out[0]=(projected.X()+1)*width/2;
-        out[1]=(1-projected.Y())*height/2;
-        return std::isfinite(out[0]) && std::isfinite(out[1]);
-    } catch (const Standard_Failure&) { return false; }
-}
-
 void ShowWorkingBoundaryNative(const std::vector<std::vector<double>>& loops, const std::vector<bool>& holes)
 {
     ClearWorkingBoundaryNative();

@@ -62,8 +62,9 @@ state; commit-level graphics-system failures remain a documented rollback limita
   bracket, tangent/undefined surface, or hidden candidate fails explicitly. Very thin features,
   complex corners, extreme scales, or poor imported geometry can be unpickable rather than falling
   back to a hidden/back surface. An accepted bracket is not proof of global silhouette topology.
-- `WorkingBoundarySample.BracketWidth` is the **2D local numeric bracket**, not a 3D silhouette
-  distance/error bound; near tangency a very small 2D error can have a much larger depth error.
+- Boundary-refinement bracket widths, where used by native geometry processing, are local 2D
+  numeric brackets rather than 3D silhouette distance/error bounds; near tangency a very small
+  2D error can have a much larger depth error.
 - No whole-face “working surface” coloring/filter is advertised: a partly occluded face is not
   fully usable. Usability is pointwise, via the new nearest-hit query. Dense visible-surface overlays
   and production-scale performance acceleration are not part of this checkpoint.
