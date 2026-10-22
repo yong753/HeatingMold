@@ -27,7 +27,6 @@ namespace HeatingMold.App
         private readonly List<(double MinX, double MinY, double MaxX, double MaxY)> _exclusions = new();
         private bool _multiFacePatternDisplayed;
         private readonly List<bool> _turnEnabled = new();
-        private readonly Stack<bool[]> _connectorUndo = new(), _connectorRedo = new();
         private double[] _routePieceLengths = Array.Empty<double>();
         private readonly List<RoutePieceResult> _projectedPieces = new();
         private int _hoverConnector = -1;
@@ -67,8 +66,6 @@ namespace HeatingMold.App
             Viewport.ConnectorEditMode = false;
             if (ConnectorEditModeBox != null) ConnectorEditModeBox.IsChecked = false;
             _turnEnabled.Clear();
-            _connectorUndo.Clear();
-            _connectorRedo.Clear();
             _routePieceLengths = Array.Empty<double>();
             _hoverConnector = -1;
             _pendingLeads.Clear();
@@ -592,11 +589,10 @@ namespace HeatingMold.App
                 _projectedPieces.AddRange(stagedPieceResults);
                 _turnEnabled.Clear(); _turnEnabled.AddRange(editablePattern.RoutePieces.Where(p=>p.Kind==SerpentineRoutePieceKind.TurnConnector).Select(_=>true));
                 _routePieceLengths=stagedLengths.ToArray();
-                _pattern=editablePattern; _connectorUndo.Clear(); _connectorRedo.Clear(); ApplyConnectorStates();
+                _pattern=editablePattern; ApplyConnectorStates();
             }
             Viewport.CircuitHoverMode = routePiecesMode;
             Bridge.RedrawView();
-            if (routePiecesMode) { _connectorUndo.Clear(); _connectorRedo.Clear(); }
             StatusText.Text = projectedCount == 0
                 ? "생성 가능한 경로가 없습니다. 마진/간격 또는 선택 영역을 확인하세요"
                 : string.Format(_exclusions.Count == 0
@@ -643,7 +639,7 @@ namespace HeatingMold.App
             var connectors = _pattern.RoutePieces.Select((p, i) => (p, i)).Where(x => x.p.Kind == SerpentineRoutePieceKind.TurnConnector).ToList();
             int ci = connectors.FindIndex(x => x.i == id);
             if (ci < 0) return;
-            _connectorUndo.Push(_turnEnabled.ToArray()); _connectorRedo.Clear(); _turnEnabled[ci] = !_turnEnabled[ci];
+            _turnEnabled[ci] = !_turnEnabled[ci];
             ApplyConnectorStates();
         }
         private void ApplyConnectorStates()
@@ -764,9 +760,6 @@ namespace HeatingMold.App
             if (_pendingLeads.Count == 0) { Viewport.PowerLocationMode = false; SetPowerEditingLock(false); }
             StatusText.Text = _pendingLeads.Count == 0 ? "전원 연결 경로 완료 — 실제 3D 접속 길이를 회로별 합계에 반영했습니다" : PowerPrompt();
         }
-        private void ConnectorUndo_Click(object sender, RoutedEventArgs e) { if (_connectorUndo.Count == 0) return; _connectorRedo.Push(_turnEnabled.ToArray()); _turnEnabled.Clear(); _turnEnabled.AddRange(_connectorUndo.Pop()); ApplyConnectorStates(); }
-        private void ConnectorRedo_Click(object sender, RoutedEventArgs e) { if (_connectorRedo.Count == 0) return; _connectorUndo.Push(_turnEnabled.ToArray()); _turnEnabled.Clear(); _turnEnabled.AddRange(_connectorRedo.Pop()); ApplyConnectorStates(); }
-
         private void DrawRegionCanvas()
         {
             if (RegionCanvas == null) return;

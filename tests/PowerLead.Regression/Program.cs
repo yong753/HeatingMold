@@ -191,7 +191,6 @@ static class Program
         Invoke("PowerCancel_Click");
         Check(((IList)Field("_pendingLeads")).Count==0 && !viewport.PowerLocationMode,"explicit cancellation clears pending setup");
         SeedPending();
-        Invoke("ConnectorUndo_Click"); // No history: leaves topology unchanged.
         typeof(MainWindow).GetMethod("ApplyConnectorStates",flags).Invoke(window,null);
         Check(((IList)Field("_pendingLeads")).Count==0 && !viewport.PowerLocationMode,"topology update cancels pending power setup");
         SeedPending();

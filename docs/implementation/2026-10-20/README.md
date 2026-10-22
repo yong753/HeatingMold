@@ -1,0 +1,114 @@
+# 모듈별 상세 구현계획
+
+작성일: 2026-10-20  
+기준: [상위 구현계획](../../Implementation.Plan.2026-10-20.md)  
+상태: 구현 작업을 인계하기 위한 설계 문서. 아래 신규 파일·타입·API·검사는 구현 예정이며, 현재 구현 완료를 뜻하지 않는다.
+
+## 1. 문서 사용 순서
+
+담당자는 상위 계획과 [공통 계약](00.Shared.Contracts.md)을 먼저 읽고 자신의 모듈 문서를 따른다. 공통 계약은 아래 모듈들이 서로 다른 단위·ID·깊이·revision을 구현하지 않도록 정한 구현 기준이다. 상위 계획의 사용자 합의가 우선하며, 수치 미정 사항을 납품 기준으로 임의 확정하지 않는다.
+
+| 문서 | 담당 범위 | 먼저 확보할 산출물 |
+|---|---|---|
+| [01. Core](01.HeatingMold.Core.md) | 영속 설계 모델, 식별자, 단위, 기하 질의 계약, 오류 | CORE-01~04 |
+| [02. Application](02.HeatingMold.Application.md) | 세션, 유스케이스, 후보 확정, 변경 영향, 저장·출력 조합 | Core 계약, APPFLOW-01 |
+| [03. Design](03.HeatingMold.Design.md) | 영역, 제약 생성, 편집, 회로, 접속, 간격·면적 분할 | Core 계약, GEO-00 실험 결과 |
+| [04. Electrical](04.HeatingMold.Electrical.md) | 저항·전류·전력, 회로별 판정, 적합 면적 집계 | Core의 길이·면적·전원 계약 |
+| [05. Infrastructure](05.HeatingMold.Infrastructure.md) | OCCT 어댑터, ZIP/JSON, STEP/DXF, 사양 데이터 | Core/Application 포트, OccBridge API |
+| [06. App](06.HeatingMold.App.md) | WPF, 입력 모드, 뷰어, 조립, 빌드·배포 | Application 유스케이스, Viewer API |
+| [07. OccBridge](07.OccBridge.md) | 문서 소유 네이티브 상태, 기하·외피 깊이, AIS, STEP writer | Core와 일치하는 브리지 DTO 의미 |
+
+`src`의 제품 프로젝트는 **6개 C# + OccBridge = 7개**로 맞춘다. 테스트·실험 실행 프로젝트는 제품 프로젝트 수에 포함하지 않는다. Regions/Routing/Editing 등은 별도 제품 프로젝트를 추가하지 않고 해당 프로젝트 내부 폴더로 둔다. Infrastructure의 Geometry/Persistence/Export도 같은 원칙이다.
+
+## 2. 실제 출발 상태
+
+현재 솔루션은 Core/App/Export/OccBridge 및 Core.Tests로 구성되어 있다. Application/Design/Electrical/Infrastructure는 아직 없다. 이 문서 작업에서는 소스·프로젝트를 재편하지 않는다.
+
+| 현재 파일 | 이전·확장 책임 |
+|---|---|
+| `src/HeatingMold.Core/Geometry/Vec2.cs`, `Vec3.cs`, `ProjectionFrame.cs` | Core 유지, 값 검증 보강 |
+| `Core/Geometry/WorkingSide.cs` | 값/ID는 Core, 변경 세션은 Application, `WorkingBoundary` 연산은 Design |
+| `Core/Geometry/RegionOps.cs`, `Serpentine.cs`, `SurfacePathMapper.cs` | Design으로 이동; 기존 테스트도 담당 기능에 맞춰 이동 |
+| `Core/Model/PatternParams.cs` | 기존 중심 간격 의미를 보존한 이전 어댑터, 신규 `PlacementConstraints` 도입 |
+| `App/MainWindow.xaml.cs`, `MainWindow.WorkingSide.cs` | 세션·흐름은 Application, 계산은 Design/Electrical, 화면은 App |
+| `App/OccViewport.cs`, `OcctEnv.cs` | App/Viewer 및 시작 시 런타임 구성 |
+| `Export/DxfExporter.cs` | Infrastructure/Export/Dxf로 이전 후 기존 Export 제품 프로젝트 제거 |
+| `OccBridge/OccBridgeApi.cpp`, `WorkingSideNative.inc` | OccBridge 내부 책임별 분리 |
+
+작업 시작 시 `git status --short`로 기존 수정 파일을 확인한다. 문서 작성 당시 App XAML/code-behind와 PowerLead 검사 등에 기존 수정이 있으며, 문서 파일 이동·추가도 진행 중이다. 해당 변경을 초기화하거나 덮어쓰지 않는다. 상위 계획 9절의 72개 PowerLead 통과는 과거 기록이며 새 실행 결과로 기록하지 않는다.
+
+## 3. 의존성 및 파일 소유권
+
+| 프로젝트 | 직접 참조 | 외부 의존 |
+|---|---|---|
+| Core | 없음 | .NET 기본 라이브러리 |
+| Design | Core | 기존 Clipper2 2.0.0 |
+| Electrical | Core | .NET 기본 라이브러리 |
+| Application | Core, Design, Electrical | .NET 기본 라이브러리 |
+| Infrastructure | Core, Application, OccBridge | 기존 netDxf 2023.11.10, ZIP/JSON |
+| App | Application, Infrastructure, Core; 조립 위치에서 Design/Electrical | WPF, Viewer에서만 OccBridge |
+| OccBridge | C# 프로젝트 참조 없음 | C++/CLI net8.0, 기존 OCCT 7.9.3 |
+
+Core/Design/Electrical/Application은 `net8.0`, App/Infrastructure는 Windows x64 경계에 맞게 `net8.0-windows`, OccBridge는 기존 `/clr:netcore`를 유지한다. 프레임워크·패키지 버전 업그레이드는 이 작업에 섞지 않는다.
+
+공용 솔루션·빌드 속성·프로젝트 참조 수정은 App 담당의 UI-01에서 모아 반영한다. Core 담당은 공통 타입을, Application 담당은 저장·출력·후보 수명 포트를, OccBridge 담당은 관리형 브리지 DTO를 소유한다. 소비 모듈에서 같은 의미의 타입을 재정의하지 않는다. 계약 변경 시 먼저 공통 문서와 제공 모듈의 테스트를 바꾸고 소비 코드를 함께 수정한다.
+
+## 4. 구현 순서와 인계 지점
+
+| 순서 | 작업 | 다음 단계 진입 증거 |
+|---|---|---|
+| G0 | OCC-01/UI-01로 실행 환경·격리 빌드 확보; 기존 3개 검증군 실행 | 빌드 경로, 실행 명령, 성공/실패 로그, 실패가 환경 문제인지 기능 문제인지 기록 |
+| GEO-00 | OCC-02/04와 DES-02/03 담당이 작은 기하 실험 수행 | 실제 `resource/Mold.stp`의 선택 Face/작업축/앵커 재현 정보, 평판·경사·곡면 외피 깊이, 같은 측면 양 끝점 가능/실패 사례 |
+| G1 | CORE-01~04 → APPFLOW-01/02 → UI-01, DES-01, INF-01, OCC-03 | 계약 컴파일, 새 프로젝트 의존성 검사, 기존 동작 회귀 통과 |
+| G2 | DES-02/03 + OCC-04/05 + INF-02 | 통합 영역·가림·실제 깊이 후보와 정확한 3D 길이 검증 |
+| G3 | DES-04/05 + APPFLOW-03 + UI-03 | 지정 방향·양 끝점·단일 경로 또는 구체적 생성 실패 |
+| G4 | DES-06/07/08 + APPFLOW-04 + UI-04 | 편집·절단·통합·접속 실패 시 전체 이전 상태 보존 |
+| G5 | DES-09/10 + ELEC-01~04 + UI-05 | 최소 간격 거부, 공백 수치, 실제 담당면적, 회로별 전기 판정 |
+| G6 | INF-03~07 + OCC-07 + APPFLOW-05/06 + UI-06 | ZIP 이동·재열기, STEP/DXF 재읽기, CAD 편집 확인 |
+| G7 | UI-07 + 각 모듈 README·검증 기록 | 개발 도구 없는 Windows에서 설치·실행·최종 시연 |
+
+Electrical은 Core 계약 확정 후 기하 구현과 독립적으로 숫자 fixture로 개발할 수 있다. Persistence는 초기 모델부터 직렬화 샘플을 작성하되, 수동 편집·곡선 복원을 포함한 통합 완료는 G6에서 판정한다. UI 세부 구현 전에 GEO-00 결과를 확보한다. 고정 납기 추정은 이 실험 이후에 한다.
+
+표의 선행은 필요한 계약/산출물의 인계를 뜻하며 상대 모듈의 전체 구현 완료를 기다리라는 뜻이 아니다. UI-01은 프로젝트 skeleton 연결(01a)과 구현 빌드/격리 회귀(01b)를 분리한다. Application은 포트/fake를 먼저, Infrastructure는 그 포트 구현을 나중에 제공하고 저장/출력 유스케이스 통합은 같은 검증 지점에서 마친다. 임시 stub은 실제 기능 성공으로 반환하지 않고 미구현 상태를 명시한다.
+
+상위 계획과의 대응은 다음과 같다.
+
+| 상위 계획 | 주 구현 작업 | 통합 작업 |
+|---|---|---|
+| 6.1 적용면/영역 | DES-02, OCC-03 | INF-02, APPFLOW-03, UI-03 |
+| 6.2 시작/종료·방향·생성 | DES-04/05, OCC-02/04 | APPFLOW-03, UI-03 |
+| 6.3 3D 매핑/외피 깊이 | OCC-04/05, DES-03 | INF-02, GEO-00 |
+| 6.4 꼭지점·최소간격·공백 | DES-06/09, OCC-05 | APPFLOW-04, UI-04/05 |
+| 6.5 회로·접속·전원 | DES-07/08, OCC-06 | CORE-03, APPFLOW-04, UI-04 |
+| 6.6 전기/담당면적 | ELEC-01~04, DES-10, OCC-05 | APPFLOW-04, UI-05 |
+| 6.7 프로젝트 저장/재설계 | INF-03/04, CORE-02/03 | APPFLOW-05, UI-06 |
+| 6.8 STEP/DXF/사양표 | INF-05~07, OCC-07 | APPFLOW-06, UI-06 |
+| 4·5·7절 모듈/데이터/변경 영향 | CORE-01~06, APPFLOW-01/02 | UI-01/02, INF-01, DES-01 |
+| 8·9절 검증/납품 | 각 모듈 테스트, OCC-01/02, UI-01/07 | 전체 완료 시나리오 |
+
+## 5. 검증 운영
+
+기존 명령은 저장소 루트 PowerShell에서 실행한다.
+
+```powershell
+dotnet test tests/HeatingMold.Core.Tests/HeatingMold.Core.Tests.csproj -c Release
+& ./tests/WorkingSide.Regression/Run.ps1
+& ./tests/PowerLead.Regression/Run.ps1
+```
+
+현재 네이티브 회귀 러너는 먼저 `x64/Release`를 갱신하고 App을 별도 출력에 빌드한다. 실행 중 DLL 잠금으로 실패한 전력이 있다. UI-01/OCC-01에서 `scripts/Verify.ps1`을 추가하여 `x64/Verification/<run-id>/` 아래 네이티브·앱·회귀 실행물을 일관되게 배치한다. 기존 앱 프로세스를 종료하지 않는다. 새 러너 완성 전에는 기존 러너의 한계를 실행 기록에 남긴다.
+
+새 검증군은 `HeatingMold.Design.Tests`, `HeatingMold.Electrical.Tests`, `HeatingMold.Application.Tests`, `HeatingMold.Infrastructure.Tests` 및 기존 네이티브 회귀군으로 나눈다. 순수 모듈 테스트는 OCCT가 없는 환경에서 실행 가능해야 한다. 파일 이동 시 기존 테스트를 삭제해 회귀 기준을 잃지 않는다. 자동검사 결과와 실제 Viewer/DPI·CAD·설치 수동검사를 구분한다.
+
+모든 작업 인계에는 변경 파일, 구현한 작업 ID, 계약 버전, 재현 입력, 실행 명령/결과, 남은 제한을 기록한다. 미구현 테스트 명령·미실행 검사를 통과로 보고하지 않는다.
+
+## 6. 전체 완료 시나리오
+
+1. STEP를 열고 작업축을 확정한다. 인접 A→B→C Face를 선택하여 내부 공유 경계 없는 발열영역을 만든다.
+2. Case 1/2, 외곽 간격, 양의 외피 깊이, 공통 측면·양 끝점·가로/세로를 지정한다. 카메라를 회전해도 생성 조건은 유지된다.
+3. 단일 연속 경로를 생성하고 꼭지점을 이동한다. 최소 간격 미달·구멍/제외 관통·가림 후보는 이전 경로·접속·계산을 보존하며 거부한다.
+4. 회로를 절단·통합하고 회로별 두 끝점의 동일 측면을 검사한다. 발열사 연장부와 별도 리드선을 나누어 실제 연결부까지 설정한다.
+5. 회로별 길이·전기값·담당면적·간격 편차를 확인한다. 회로별 16A를 합산 한도로 오해하지 않는다.
+6. 수동 편집이 있는 `.hmproj`를 저장하고 원본 외부 경로가 없는 다른 폴더로 한 파일만 이동해 재열기한다. ID·좌표·회로·길이·편집 결과를 비교한다.
+7. 같은 확정 revision으로 STEP/DXF를 출력한다. STEP 재읽기 길이·좌표, DXF 경로·단자·사양표 TEXT, 일반 CAD 편집을 확인한다.
+8. 개발 도구 없는 Windows에서 동일 과정을 수행한다. Undo/Redo·자동 장애물 우회·열해석·전개도·자동 회로 최적화가 제품에 추가되지 않았음을 확인한다.

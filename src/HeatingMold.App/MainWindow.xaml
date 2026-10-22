@@ -39,8 +39,6 @@
                 <Button Content="패턴 생성" Click="Generate_Click" Padding="8,2"/>
                 <CheckBox x:Name="ConnectorEditModeBox" Content="커넥터 편집" Margin="8,0" VerticalAlignment="Center"
                           Checked="ConnectorEditMode_Changed" Unchecked="ConnectorEditMode_Changed"/>
-                <Button Content="Undo" Click="ConnectorUndo_Click" Padding="6,2"/>
-                <Button Content="Redo" Click="ConnectorRedo_Click" Padding="6,2"/>
                 <Button Content="전원 연결 위치 지정" Click="PowerSetup_Click" Padding="6,2"/>
                 <Button Content="전원 설정 취소" Click="PowerCancel_Click" Padding="6,2"/>
                 <Button Content="DXF 내보내기" Click="Export_Click" Padding="8,2"/>
