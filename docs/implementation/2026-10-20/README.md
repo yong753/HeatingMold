@@ -1,5 +1,8 @@
 # 모듈별 상세 구현계획
 
+> 용어 기준: [TERMINOLOGY.md](TERMINOLOGY.md).
+
+
 작성일: 2026-10-20  
 기준: [상위 구현계획](../../Implementation.Plan.2026-10-20.md)  
 상태: 구현 작업을 인계하기 위한 설계 문서. 아래 신규 파일·타입·API·검사는 구현 예정이며, 현재 구현 완료를 뜻하지 않는다.
@@ -12,11 +15,11 @@
 |---|---|---|
 | [01. Core](01.HeatingMold.Core.md) | 영속 설계 모델, 식별자, 단위, 기하 질의 계약, 오류 | CORE-01~04 |
 | [02. Application](02.HeatingMold.Application.md) | 세션, 유스케이스, 후보 확정, 변경 영향, 저장·출력 조합 | Core 계약, APPFLOW-01 |
-| [03. Design](03.HeatingMold.Design.md) | 영역, 제약 생성, 편집, 회로, 접속, 간격·면적 분할 | Core 계약, GEO-00 실험 결과 |
-| [04. Electrical](04.HeatingMold.Electrical.md) | 저항·전류·전력, 회로별 판정, 적합 면적 집계 | Core의 길이·면적·전원 계약 |
+| [03. Design](03.HeatingMold.Design.md) | 영역, 제약 생성, 편집, 회로, 연결, 간격·면적 분할 | Core 계약, GEO-00 실험 결과 |
+| [04. Electrical](04.HeatingMold.Electrical.md) | 저항·전류·전력, 회로별 판정, 전기 조건 만족 적용면적 집계 | Core의 길이·면적·전원 계약 |
 | [05. Infrastructure](05.HeatingMold.Infrastructure.md) | OCCT 어댑터, ZIP/JSON, STEP/DXF, 사양 데이터 | Core/Application 포트, OccBridge API |
 | [06. App](06.HeatingMold.App.md) | WPF, 입력 모드, 뷰어, 조립, 빌드·배포 | Application 유스케이스, Viewer API |
-| [07. OccBridge](07.OccBridge.md) | 문서 소유 네이티브 상태, 기하·외피 깊이, AIS, STEP writer | Core와 일치하는 브리지 DTO 의미 |
+| [07. OccBridge](07.OccBridge.md) | 문서 소유 네이티브 상태, 기하·삽입 깊이, AIS, STEP writer | Core와 일치하는 브리지 DTO 의미 |
 
 `src`의 제품 프로젝트는 **6개 C# + OccBridge = 7개**로 맞춘다. 테스트·실험 실행 프로젝트는 제품 프로젝트 수에 포함하지 않는다. Regions/Routing/Editing 등은 별도 제품 프로젝트를 추가하지 않고 해당 프로젝트 내부 폴더로 둔다. Infrastructure의 Geometry/Persistence/Export도 같은 원칙이다.
 
@@ -27,15 +30,15 @@
 | 현재 파일 | 이전·확장 책임 |
 |---|---|
 | `src/HeatingMold.Core/Geometry/Vec2.cs`, `Vec3.cs`, `ProjectionFrame.cs` | Core 유지, 값 검증 보강 |
-| `Core/Geometry/WorkingSide.cs` | 값/ID는 Core, 변경 세션은 Application, `WorkingBoundary` 연산은 Design |
-| `Core/Geometry/RegionOps.cs`, `Serpentine.cs`, `SurfacePathMapper.cs` | Design으로 이동; 기존 테스트도 담당 기능에 맞춰 이동 |
-| `Core/Model/PatternParams.cs` | 기존 중심 간격 의미를 보존한 이전 어댑터, 신규 `PlacementConstraints` 도입 |
-| `App/MainWindow.xaml.cs`, `MainWindow.WorkingSide.cs` | 세션·흐름은 Application, 계산은 Design/Electrical, 화면은 App |
+| `Core/Geometry/WorkingCoordinateSystem.cs` | 값/ID는 Core, 변경 세션은 Application, `ProjectedModelBoundary` 연산은 Design |
+| `Core/Geometry/RegionOps.cs`, `HeatingPathGenerator.cs`, `SurfacePathMapper.cs` | Design으로 이동; 기존 테스트도 담당 기능에 맞춰 이동 |
+| `Core/Model/PatternParameters.cs` | MVP `CenterPitchMm`/`BoundaryMarginMm` 이름을 유지하고 신규 `PlacementConstraints`로 확장 |
+| `App/MainWindow.xaml.cs`, `MainWindow.WorkingCoordinateSystem.cs` | 세션·흐름은 Application, 계산은 Design/Electrical, 화면은 App |
 | `App/OccViewport.cs`, `OcctEnv.cs` | App/Viewer 및 시작 시 런타임 구성 |
 | `Export/DxfExporter.cs` | Infrastructure/Export/Dxf로 이전 후 기존 Export 제품 프로젝트 제거 |
-| `OccBridge/OccBridgeApi.cpp`, `WorkingSideNative.inc` | OccBridge 내부 책임별 분리 |
+| `OccBridge/OccBridgeApi.cpp`, `WorkingCoordinateSystemNative.inc` | OccBridge 내부 책임별 분리 |
 
-작업 시작 시 `git status --short`로 기존 수정 파일을 확인한다. 문서 작성 당시 App XAML/code-behind와 PowerLead 검사 등에 기존 수정이 있으며, 문서 파일 이동·추가도 진행 중이다. 해당 변경을 초기화하거나 덮어쓰지 않는다. 상위 계획 9절의 72개 PowerLead 통과는 과거 기록이며 새 실행 결과로 기록하지 않는다.
+회귀 프로젝트 경로 `WorkingSide.Regression`과 `PowerLead.Regression`은 기존 실행 harness 이름이라 유지한다. 이 이름은 제품 도메인 용어가 아니며 신규 코드에서는 `WorkingCoordinateSystem`/`ConnectionPath`를 사용한다. 상위 계획 9절의 72개 회귀 검사는 과거 기록이며 새 실행 결과로 기록하지 않는다.
 
 ## 3. 의존성 및 파일 소유권
 
@@ -58,12 +61,12 @@ Core/Design/Electrical/Application은 `net8.0`, App/Infrastructure는 Windows x6
 | 순서 | 작업 | 다음 단계 진입 증거 |
 |---|---|---|
 | G0 | OCC-01/UI-01로 실행 환경·격리 빌드 확보; 기존 3개 검증군 실행 | 빌드 경로, 실행 명령, 성공/실패 로그, 실패가 환경 문제인지 기능 문제인지 기록 |
-| GEO-00 | OCC-02/04와 DES-02/03 담당이 작은 기하 실험 수행 | 실제 `resource/Mold.stp`의 선택 Face/작업축/앵커 재현 정보, 평판·경사·곡면 외피 깊이, 같은 측면 양 끝점 가능/실패 사례 |
+| GEO-00 | OCC-02/04와 DES-02/03 담당이 작은 기하 실험 수행 | 실제 `resource/Mold.stp`의 선택 Face/작업축/앵커 재현 정보, 평판·경사·곡면 삽입 깊이, 같은 측면 양 끝점 가능/실패 사례 |
 | G1 | CORE-01~04 → APPFLOW-01/02 → UI-01, DES-01, INF-01, OCC-03 | 계약 컴파일, 새 프로젝트 의존성 검사, 기존 동작 회귀 통과 |
 | G2 | DES-02/03 + OCC-04/05 + INF-02 | 통합 영역·가림·실제 깊이 후보와 정확한 3D 길이 검증 |
 | G3 | DES-04/05 + APPFLOW-03 + UI-03 | 지정 방향·양 끝점·단일 경로 또는 구체적 생성 실패 |
-| G4 | DES-06/07/08 + APPFLOW-04 + UI-04 | 편집·절단·통합·접속 실패 시 전체 이전 상태 보존 |
-| G5 | DES-09/10 + ELEC-01~04 + UI-05 | 최소 간격 거부, 공백 수치, 실제 담당면적, 회로별 전기 판정 |
+| G4 | DES-06/07/08 + APPFLOW-04 + UI-04 | 편집·절단·통합·연결 실패 시 전체 이전 상태 보존 |
+| G5 | DES-09/10 + ELEC-01~04 + UI-05 | 최소 간격 거부, 공백 수치, 실제 회로별 적용면적, 회로별 전기 판정 |
 | G6 | INF-03~07 + OCC-07 + APPFLOW-05/06 + UI-06 | ZIP 이동·재열기, STEP/DXF 재읽기, CAD 편집 확인 |
 | G7 | UI-07 + 각 모듈 README·검증 기록 | 개발 도구 없는 Windows에서 설치·실행·최종 시연 |
 
@@ -77,10 +80,10 @@ Electrical은 Core 계약 확정 후 기하 구현과 독립적으로 숫자 fix
 |---|---|---|
 | 6.1 적용면/영역 | DES-02, OCC-03 | INF-02, APPFLOW-03, UI-03 |
 | 6.2 시작/종료·방향·생성 | DES-04/05, OCC-02/04 | APPFLOW-03, UI-03 |
-| 6.3 3D 매핑/외피 깊이 | OCC-04/05, DES-03 | INF-02, GEO-00 |
+| 6.3 3D 매핑/삽입 깊이 | OCC-04/05, DES-03 | INF-02, GEO-00 |
 | 6.4 꼭지점·최소간격·공백 | DES-06/09, OCC-05 | APPFLOW-04, UI-04/05 |
-| 6.5 회로·접속·전원 | DES-07/08, OCC-06 | CORE-03, APPFLOW-04, UI-04 |
-| 6.6 전기/담당면적 | ELEC-01~04, DES-10, OCC-05 | APPFLOW-04, UI-05 |
+| 6.5 회로·연결·전원 | DES-07/08, OCC-06 | CORE-03, APPFLOW-04, UI-04 |
+| 6.6 전기/회로별 적용면적 | ELEC-01~04, DES-10, OCC-05 | APPFLOW-04, UI-05 |
 | 6.7 프로젝트 저장/재설계 | INF-03/04, CORE-02/03 | APPFLOW-05, UI-06 |
 | 6.8 STEP/DXF/사양표 | INF-05~07, OCC-07 | APPFLOW-06, UI-06 |
 | 4·5·7절 모듈/데이터/변경 영향 | CORE-01~06, APPFLOW-01/02 | UI-01/02, INF-01, DES-01 |
@@ -93,7 +96,7 @@ Electrical은 Core 계약 확정 후 기하 구현과 독립적으로 숫자 fix
 ```powershell
 dotnet test tests/HeatingMold.Core.Tests/HeatingMold.Core.Tests.csproj -c Release
 & ./tests/WorkingSide.Regression/Run.ps1
-& ./tests/PowerLead.Regression/Run.ps1
+& ./tests/PowerLead.Regression/Run.ps1 # 기존 harness 경로명은 유지
 ```
 
 현재 네이티브 회귀 러너는 먼저 `x64/Release`를 갱신하고 App을 별도 출력에 빌드한다. 실행 중 DLL 잠금으로 실패한 전력이 있다. UI-01/OCC-01에서 `scripts/Verify.ps1`을 추가하여 `x64/Verification/<run-id>/` 아래 네이티브·앱·회귀 실행물을 일관되게 배치한다. 기존 앱 프로세스를 종료하지 않는다. 새 러너 완성 전에는 기존 러너의 한계를 실행 기록에 남긴다.
@@ -105,10 +108,10 @@ dotnet test tests/HeatingMold.Core.Tests/HeatingMold.Core.Tests.csproj -c Releas
 ## 6. 전체 완료 시나리오
 
 1. STEP를 열고 작업축을 확정한다. 인접 A→B→C Face를 선택하여 내부 공유 경계 없는 발열영역을 만든다.
-2. Case 1/2, 외곽 간격, 양의 외피 깊이, 공통 측면·양 끝점·가로/세로를 지정한다. 카메라를 회전해도 생성 조건은 유지된다.
-3. 단일 연속 경로를 생성하고 꼭지점을 이동한다. 최소 간격 미달·구멍/제외 관통·가림 후보는 이전 경로·접속·계산을 보존하며 거부한다.
-4. 회로를 절단·통합하고 회로별 두 끝점의 동일 측면을 검사한다. 발열사 연장부와 별도 리드선을 나누어 실제 연결부까지 설정한다.
-5. 회로별 길이·전기값·담당면적·간격 편차를 확인한다. 회로별 16A를 합산 한도로 오해하지 않는다.
+2. Case 1/2, 최소 외곽 간격, 양의 삽입 깊이, 공통 측면·양 끝점·가로/세로를 지정한다. 카메라를 회전해도 생성 조건은 유지된다.
+3. 단일 연속 경로를 생성하고 꼭지점을 이동한다. 최소 간격 미달·구멍/제외 관통·가림 후보는 이전 경로·연결·계산을 보존하며 거부한다.
+4. 회로를 절단·통합하고 회로별 두 끝점의 동일 출구 측면을 검사한다. 발열사 연장부와 별도 연결선을 구분하고 `연결부 위치`까지 `연결 경로`를 설정한다.
+5. 회로별 길이·전기값·회로별 적용면적·간격 편차를 확인한다. 회로별 16A를 합산 한도로 오해하지 않는다.
 6. 수동 편집이 있는 `.hmproj`를 저장하고 원본 외부 경로가 없는 다른 폴더로 한 파일만 이동해 재열기한다. ID·좌표·회로·길이·편집 결과를 비교한다.
-7. 같은 확정 revision으로 STEP/DXF를 출력한다. STEP 재읽기 길이·좌표, DXF 경로·단자·사양표 TEXT, 일반 CAD 편집을 확인한다.
+7. 같은 확정 revision으로 STEP/DXF를 출력한다. STEP 재읽기 길이·좌표, DXF 경로·연결부 위치·사양표 TEXT, 일반 CAD 편집을 확인한다.
 8. 개발 도구 없는 Windows에서 동일 과정을 수행한다. Undo/Redo·자동 장애물 우회·열해석·전개도·자동 회로 최적화가 제품에 추가되지 않았음을 확인한다.

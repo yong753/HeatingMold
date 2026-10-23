@@ -12,18 +12,18 @@ static class Program
     static int count;
     static void Check(bool value,string label)
     { if (!value) throw new Exception(label); Console.WriteLine("PASS "+label); ++count; }
-    static ProjectionFrame Frame(WorkingContext c) => new(new(c.Frame[0],c.Frame[1],c.Frame[2]),
+    static ProjectionFrame Frame(WorkingSurfaceContext c) => new(new(c.Frame[0],c.Frame[1],c.Frame[2]),
         new(c.Frame[9],c.Frame[10],c.Frame[11]),new(c.Frame[3],c.Frame[4],c.Frame[5]));
-    static WorkingHit Query(WorkingContext c,Vec3 world)
+    static WorkingSurfaceHit Query(WorkingSurfaceContext c,Vec3 world)
     { var uv=Frame(c).Project(world); return Bridge.QueryWorkingSurface(c.Id,c.Revision,uv.X,uv.Y); }
-    static IReadOnlyList<WorkingBoundaryRing> Rings(WorkingContext c)
+    static IReadOnlyList<ProjectedModelBoundaryRing> Rings(WorkingSurfaceContext c)
     {
         var f=Frame(c); var triangles=new List<IReadOnlyList<Vec2>>();
         for (int i=0;i<c.Triangles.Length;i+=9)
             triangles.Add(new[]{f.Project(new(c.Triangles[i],c.Triangles[i+1],c.Triangles[i+2])),
                 f.Project(new(c.Triangles[i+3],c.Triangles[i+4],c.Triangles[i+5])),
                 f.Project(new(c.Triangles[i+6],c.Triangles[i+7],c.Triangles[i+8]))});
-        return WorkingBoundary.FromTriangles(triangles,c.MeshDeflection);
+        return ProjectedModelBoundary.FromTriangles(triangles,c.MeshDeflection);
     }
     static object Invoke(object target,string name,params object[] args) =>
         target.GetType().GetMethod(name,BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(target,args);
@@ -36,37 +36,37 @@ static class Program
     {
         string path=Path.Combine(args[0],"layers.stp");
         Check(Bridge.LoadStep(path),"load layered model without face selection");
-        Check(Bridge.CreateWorkingContext(0,0,0,1,0,0)==null,"invalid working direction cannot create context");
-        var front=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+        Check(Bridge.CreateWorkingSurfaceContext(0,0,0,1,0,0)==null,"invalid working direction cannot create context");
+        var front=Bridge.CreateWorkingSurfaceContext(0,0,1,1,0,0);
         Check(front!=null && front.Triangles.Length>0,"whole-model native context and mesh");
         Check(front.Frame[2]>20,"datum beyond whole-model maximum");
         var top=Query(front,new(0,0,0)); var exposed=Query(front,new(40,0,0));
-        Check(top.Status==WorkingQueryStatus.Hit && Math.Abs(top.Point[2]-20)<1e-6,"nearest front full-model hit hides lower surface");
-        Check(exposed.Status==WorkingQueryStatus.Hit && Math.Abs(exposed.Point[2])<1e-6,"partly occluded face usable only at exposed points");
+        Check(top.Status==WorkingSurfaceQueryStatus.Hit && Math.Abs(top.Point[2]-20)<1e-6,"nearest front full-model hit hides lower surface");
+        Check(exposed.Status==WorkingSurfaceQueryStatus.Hit && Math.Abs(exposed.Point[2])<1e-6,"partly occluded face usable only at exposed points");
         Check(top.FaceId!=exposed.FaceId,"first hit returns actual face ID, not selected filter");
         var hiddenSelection=Bridge.QueryWorkingSurfaceForFaces(front.Id,front.Revision,new[]{exposed.FaceId},0,0);
-        Check(hiddenSelection.Status==WorkingQueryStatus.Miss && hiddenSelection.Point==null,
+        Check(hiddenSelection.Status==WorkingSurfaceQueryStatus.Miss && hiddenSelection.Point==null,
             "selected lower face cannot fall through nearer unselected first hit");
         var visibleSelection=Bridge.QueryWorkingSurfaceForFaces(front.Id,front.Revision,new[]{exposed.FaceId},40,0);
-        Check(visibleSelection.Status==WorkingQueryStatus.Hit && visibleSelection.IsSelectedFace &&
+        Check(visibleSelection.Status==WorkingSurfaceQueryStatus.Hit && visibleSelection.IsSelectedFace &&
             visibleSelection.FaceId==exposed.FaceId && visibleSelection.Normal?.Length==3,
             "selected exposed first hit returns face, XYZ and surface normal");
-        Check(Bridge.QueryWorkingSurfaceForFaces(front.Id,front.Revision,new[]{top.FaceId},0,0).Status==WorkingQueryStatus.Hit,
+        Check(Bridge.QueryWorkingSurfaceForFaces(front.Id,front.Revision,new[]{top.FaceId},0,0).Status==WorkingSurfaceQueryStatus.Hit,
             "selected front face is accepted as the full-model first hit");
-        Check(Bridge.QueryWorkingSurfaceForFaces(front.Id,front.Revision,new[]{top.FaceId},0,0).Status==WorkingQueryStatus.Hit &&
-            Bridge.QueryWorkingSurfaceForFaces(front.Id,front.Revision,new[]{top.FaceId},double.NaN,0).Status==WorkingQueryStatus.InvalidInput,
+        Check(Bridge.QueryWorkingSurfaceForFaces(front.Id,front.Revision,new[]{top.FaceId},0,0).Status==WorkingSurfaceQueryStatus.Hit &&
+            Bridge.QueryWorkingSurfaceForFaces(front.Id,front.Revision,new[]{top.FaceId},double.NaN,0).Status==WorkingSurfaceQueryStatus.InvalidInput,
             "first-hit query retains typed invalid-input status");
-        Check(Bridge.QueryWorkingSurfaceForFaces(front.Id,front.Revision+1,new[]{top.FaceId},0,0).Status==WorkingQueryStatus.StaleContext,
+        Check(Bridge.QueryWorkingSurfaceForFaces(front.Id,front.Revision+1,new[]{top.FaceId},0,0).Status==WorkingSurfaceQueryStatus.StaleContext,
             "selected-face query rejects stale contexts");
-        Check(Query(front,new(80,0,0)).Status==WorkingQueryStatus.Miss,"outside silhouette has no hidden/back fallback");
-        Check(Bridge.QueryWorkingSurface(front.Id,front.Revision,double.NaN,0).Status==WorkingQueryStatus.InvalidInput,"invalid UV status");
-        var back=Bridge.CreateWorkingContext(0,0,-1,1,0,0);
+        Check(Query(front,new(80,0,0)).Status==WorkingSurfaceQueryStatus.Miss,"outside silhouette has no hidden/back fallback");
+        Check(Bridge.QueryWorkingSurface(front.Id,front.Revision,double.NaN,0).Status==WorkingSurfaceQueryStatus.InvalidInput,"invalid UV status");
+        var back=Bridge.CreateWorkingSurfaceContext(0,0,-1,1,0,0);
         Check(back.Frame[2]<0 && Math.Abs(Query(back,new(0,0,0)).Point[2])<1e-6,"flipped side sees lower first hit and opposite outside datum");
         Check(Query(front,new(0,0,0)).Point[2]==20,"new preview leaves confirmed-context geometry unchanged");
-        Check(Bridge.QueryWorkingSurface(front.Id,front.Revision+1,0,0).Status==WorkingQueryStatus.StaleContext,"native rejects wrong revision");
-        Check(Bridge.QueryWorkingSurface(back.Id,front.Revision,0,0).Status==WorkingQueryStatus.Hit,"independent same-revision contexts coexist");
-        Bridge.ReleaseWorkingContext(back.Id);
-        Check(Bridge.QueryWorkingSurface(back.Id,back.Revision,0,0).Status==WorkingQueryStatus.StaleContext,"released context rejected");
+        Check(Bridge.QueryWorkingSurface(front.Id,front.Revision+1,0,0).Status==WorkingSurfaceQueryStatus.StaleContext,"native rejects wrong revision");
+        Check(Bridge.QueryWorkingSurface(back.Id,front.Revision,0,0).Status==WorkingSurfaceQueryStatus.Hit,"independent same-revision contexts coexist");
+        Bridge.ReleaseWorkingSurfaceContext(back.Id);
+        Check(Bridge.QueryWorkingSurface(back.Id,back.Revision,0,0).Status==WorkingSurfaceQueryStatus.StaleContext,"released context rejected");
         var layeredRings=Rings(front);
         Check(layeredRings.Count==1 && !layeredRings[0].IsHole,"occluder edges and shared triangles are not outer boundary");
 
@@ -81,55 +81,55 @@ static class Program
             new[]{0.0,0,30,1,0,30},new[]{topFace},0,0,-1);
         Check(datumProjection!=null && Math.Abs(datumProjection.Start[2]-20)<1e-5 && Math.Abs(datumProjection.End[2]-20)<1e-5,
             "outside datum route projects toward and onto selected model face");
-        Bridge.DiscardWorkingRouteGeometry(front.Id,front.Revision,Array.Empty<int>(),new[]{projectionStage});
-        var priorRoute=Bridge.DisplayWorkingRoutePiece(front.Id,front.Revision,900,"TurnConnector",new[]{0.0,0,20,1,0,20});
-        var stagedRoute=Bridge.DisplayWorkingRoutePiece(front.Id,front.Revision,int.MinValue,"TurnConnector",new[]{2.0,0,20,3,0,20});
-        var failedStage=Bridge.DisplayWorkingRoutePiece(front.Id,front.Revision,int.MinValue+1,"TurnConnector",new[]{double.NaN,0,20});
+        Bridge.DiscardWorkingPathGeometry(front.Id,front.Revision,Array.Empty<int>(),new[]{projectionStage});
+        var priorRoute=Bridge.DisplayWorkingPathSegment(front.Id,front.Revision,900,"Turn",new[]{0.0,0,20,1,0,20});
+        var stagedRoute=Bridge.DisplayWorkingPathSegment(front.Id,front.Revision,int.MinValue,"Turn",new[]{2.0,0,20,3,0,20});
+        var failedStage=Bridge.DisplayWorkingPathSegment(front.Id,front.Revision,int.MinValue+1,"Turn",new[]{double.NaN,0,20});
         int lineStage=int.MinValue/2;
         bool stagedLine=Bridge.StageWorkingPolyline(front.Id,front.Revision,lineStage,new[]{4.0,0,20,5,0,20});
         bool failedLine=Bridge.StageWorkingPolyline(front.Id,front.Revision,lineStage-1,new[]{double.NaN,0,20});
         Check(priorRoute!=null && stagedRoute!=null && failedStage==null && stagedLine && !failedLine,
             "route and exclusion candidates can fail after earlier route/polyline staging");
-        Check(!Bridge.CommitWorkingRouteGeometry(front.Id,front.Revision,new[]{int.MinValue},Array.Empty<int>(),Array.Empty<int>()),
+        Check(!Bridge.CommitWorkingPathGeometry(front.Id,front.Revision,new[]{int.MinValue},Array.Empty<int>(),Array.Empty<int>()),
             "invalid candidate commit is rejected before replacing existing routes");
-        Bridge.DiscardWorkingRouteGeometry(front.Id,front.Revision,new[]{int.MinValue},new[]{lineStage});
-        Check(Bridge.SetConnectorEnabled(900,true,.2,.8,.3),"discarding failed candidate stage preserves prior selectable connector");
-        Bridge.ClearRoutePieces();
-        var releaseA=Bridge.CreateWorkingContext(0,0,1,1,0,0);
-        var releaseB=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+        Bridge.DiscardWorkingPathGeometry(front.Id,front.Revision,new[]{int.MinValue},new[]{lineStage});
+        Check(Bridge.SetTurnSegmentEnabled(900,true,.2,.8,.3),"discarding failed candidate stage preserves prior selectable turnSegment");
+        Bridge.ClearPathSegments();
+        var releaseA=Bridge.CreateWorkingSurfaceContext(0,0,1,1,0,0);
+        var releaseB=Bridge.CreateWorkingSurfaceContext(0,0,1,1,0,0);
         int releaseRouteId=int.MinValue+700, releaseLineId=int.MinValue/2+700;
-        Check(Bridge.DisplayWorkingRoutePiece(releaseA.Id,releaseA.Revision,releaseRouteId,"TurnConnector",new[]{6.0,0,20,7,0,20})!=null &&
+        Check(Bridge.DisplayWorkingPathSegment(releaseA.Id,releaseA.Revision,releaseRouteId,"Turn",new[]{6.0,0,20,7,0,20})!=null &&
               Bridge.StageWorkingPolyline(releaseA.Id,releaseA.Revision,releaseLineId,new[]{6.0,1,20,7,1,20}),
             "stage route and polyline owned by context A");
-        Check(Bridge.DisplayWorkingRoutePiece(releaseB.Id,releaseB.Revision,releaseRouteId,"TurnConnector",new[]{8.0,0,20,9,0,20})==null &&
+        Check(Bridge.DisplayWorkingPathSegment(releaseB.Id,releaseB.Revision,releaseRouteId,"Turn",new[]{8.0,0,20,9,0,20})==null &&
               !Bridge.StageWorkingPolyline(releaseB.Id,releaseB.Revision,releaseLineId,new[]{8.0,1,20,9,1,20}),
             "same-revision context B cannot claim context A's occupied staging IDs");
-        Bridge.DiscardWorkingRouteGeometry(releaseB.Id,releaseB.Revision,new[]{releaseRouteId},new[]{releaseLineId});
-        Check(Bridge.SetConnectorEnabled(releaseRouteId,true,.2,.8,.3),"wrong-owner discard leaves context A staged route intact");
-        Bridge.ReleaseWorkingContext(releaseA.Id);
-        Check(!Bridge.SetConnectorEnabled(releaseRouteId,true,.2,.8,.3),"releasing context A removes its staged route AIS/ID");
-        var reusedRoute=Bridge.DisplayWorkingRoutePiece(releaseB.Id,releaseB.Revision,releaseRouteId,"TurnConnector",new[]{6.0,0,20,7,0,20});
+        Bridge.DiscardWorkingPathGeometry(releaseB.Id,releaseB.Revision,new[]{releaseRouteId},new[]{releaseLineId});
+        Check(Bridge.SetTurnSegmentEnabled(releaseRouteId,true,.2,.8,.3),"wrong-owner discard leaves context A staged route intact");
+        Bridge.ReleaseWorkingSurfaceContext(releaseA.Id);
+        Check(!Bridge.SetTurnSegmentEnabled(releaseRouteId,true,.2,.8,.3),"releasing context A removes its staged route AIS/ID");
+        var reusedRoute=Bridge.DisplayWorkingPathSegment(releaseB.Id,releaseB.Revision,releaseRouteId,"Turn",new[]{6.0,0,20,7,0,20});
         bool reusedLine=Bridge.StageWorkingPolyline(releaseB.Id,releaseB.Revision,releaseLineId,new[]{6.0,1,20,7,1,20});
         Check(reusedRoute!=null && reusedLine &&
-              Bridge.CommitWorkingRouteGeometry(releaseB.Id,releaseB.Revision,new[]{releaseRouteId},new[]{901},new[]{releaseLineId}) &&
-              Bridge.SetConnectorEnabled(901,true,.2,.8,.3),
+              Bridge.CommitWorkingPathGeometry(releaseB.Id,releaseB.Revision,new[]{releaseRouteId},new[]{901},new[]{releaseLineId}) &&
+              Bridge.SetTurnSegmentEnabled(901,true,.2,.8,.3),
             "context B reuses released IDs and commits only its own staged handles at the same model revision");
         int ownedDiscardId=int.MinValue/2+701;
         Check(Bridge.StageWorkingPolyline(releaseB.Id,releaseB.Revision,ownedDiscardId,new[]{6.0,2,20,7,2,20}),"context B stages independently discardable line");
-        Bridge.DiscardWorkingRouteGeometry(releaseB.Id,releaseB.Revision,Array.Empty<int>(),new[]{ownedDiscardId});
+        Bridge.DiscardWorkingPathGeometry(releaseB.Id,releaseB.Revision,Array.Empty<int>(),new[]{ownedDiscardId});
         Check(Bridge.StageWorkingPolyline(releaseB.Id,releaseB.Revision,ownedDiscardId,new[]{6.0,2,20,7,2,20}),"owning context discard frees its temporary polyline ID");
-        Bridge.DiscardWorkingRouteGeometry(releaseB.Id,releaseB.Revision,Array.Empty<int>(),new[]{ownedDiscardId});
-        var commitA=Bridge.CreateWorkingContext(0,0,1,1,0,0);
-        var commitB=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+        Bridge.DiscardWorkingPathGeometry(releaseB.Id,releaseB.Revision,Array.Empty<int>(),new[]{ownedDiscardId});
+        var commitA=Bridge.CreateWorkingSurfaceContext(0,0,1,1,0,0);
+        var commitB=Bridge.CreateWorkingSurfaceContext(0,0,1,1,0,0);
         int candidateA=int.MinValue+1500,candidateB=int.MinValue+1501;
-        Check(Bridge.DisplayWorkingRoutePiece(commitA.Id,commitA.Revision,candidateA,"TurnConnector",new[]{10.0,0,20,11,0,20})!=null &&
-              Bridge.DisplayWorkingRoutePiece(commitB.Id,commitB.Revision,candidateB,"TurnConnector",new[]{12.0,0,20,13,0,20})!=null,
+        Check(Bridge.DisplayWorkingPathSegment(commitA.Id,commitA.Revision,candidateA,"Turn",new[]{10.0,0,20,11,0,20})!=null &&
+              Bridge.DisplayWorkingPathSegment(commitB.Id,commitB.Revision,candidateB,"Turn",new[]{12.0,0,20,13,0,20})!=null,
               "two contexts own independent staged routes");
-        Check(Bridge.CommitWorkingRouteGeometry(commitA.Id,commitA.Revision,new[]{candidateA},new[]{902},Array.Empty<int>()) &&
-              Bridge.SetConnectorEnabled(candidateB,true,.2,.8,.3),
+        Check(Bridge.CommitWorkingPathGeometry(commitA.Id,commitA.Revision,new[]{candidateA},new[]{902},Array.Empty<int>()) &&
+              Bridge.SetTurnSegmentEnabled(candidateB,true,.2,.8,.3),
               "committing one context preserves another context staged route and ownership");
-        Bridge.DiscardWorkingRouteGeometry(commitB.Id,commitB.Revision,new[]{candidateB},Array.Empty<int>());
-        Check(Bridge.DisplayWorkingRoutePiece(commitB.Id,commitB.Revision,candidateB,"TurnConnector",new[]{12.0,0,20,13,0,20})!=null,
+        Bridge.DiscardWorkingPathGeometry(commitB.Id,commitB.Revision,new[]{candidateB},Array.Empty<int>());
+        Check(Bridge.DisplayWorkingPathSegment(commitB.Id,commitB.Revision,candidateB,"Turn",new[]{12.0,0,20,13,0,20})!=null,
               "preserved other-context route remains discardable and releases its negative ID");
         Bridge.ClearOverlays();
         Bridge.SetViewFrame(1,0,1,0,1,0);
@@ -138,32 +138,32 @@ static class Program
 
         var window=new MainWindow();
         var viewport=(OccViewport)window.FindName("Viewport");
-        var active=Field<WorkingSideSession>(window,"_workingSide");
-        Check((bool)Invoke(window,"ApplyWorkingSide",new Vec3(0,0,1)) && active.Confirmed?.Frame.Normal.Z==1,
+        var active=Field<WorkingCoordinateSystemSession>(window,"_workingCoordinateSystem");
+        Check((bool)Invoke(window,"ApplyWorkingCoordinateSystem",new Vec3(0,0,1)) && active.Confirmed?.Frame.Normal.Z==1,
             "direct axis application creates an active +Z context without a confirmation step");
         var sameSide=active.Confirmed;
         var retainedRegion=Field<List<List<Vec2>>>(window,"_selectedRegion"); retainedRegion.Add(new(){new(0,0),new(1,0),new(0,1)});
         var selectedFaceIds=Field<HashSet<int>>(window,"_selectedFaceIds"); selectedFaceIds.Add(7);
         ((ListBox)window.FindName("SelectedFacesList")).Items.Add("seed");
-        Check((bool)Invoke(window,"ApplyWorkingSide",new Vec3(0,0,1)) && ReferenceEquals(sameSide,active.Confirmed) && retainedRegion.Count==1,
+        Check((bool)Invoke(window,"ApplyWorkingCoordinateSystem",new Vec3(0,0,1)) && ReferenceEquals(sameSide,active.Confirmed) && retainedRegion.Count==1,
             "same-axis selection is a no-op and retains dependent state");
         var prepare=Field<Func<long,long,bool>>(window,"_prepareWorkingFront");
         SetField(window,"_prepareWorkingFront",new Func<long,long,bool>((_,_)=>false));
-        Check(!(bool)Invoke(window,"ApplyWorkingSide",new Vec3(0,0,-1)) && ReferenceEquals(sameSide,active.Confirmed) && retainedRegion.Count==1,
+        Check(!(bool)Invoke(window,"ApplyWorkingCoordinateSystem",new Vec3(0,0,-1)) && ReferenceEquals(sameSide,active.Confirmed) && retainedRegion.Count==1,
             "failed direction application rolls back active side and dependent state");
         SetField(window,"_prepareWorkingFront",prepare);
-        SetField(window,"_beforeWorkingSideCommit",new Action(()=>throw new InvalidOperationException("injected precommit failure")));
-        Check(!(bool)Invoke(window,"ApplyWorkingSide",new Vec3(0,0,-1)) && ReferenceEquals(sameSide,active.Confirmed) &&
+        SetField(window,"_beforeWorkingCoordinateSystemCommit",new Action(()=>throw new InvalidOperationException("injected precommit failure")));
+        Check(!(bool)Invoke(window,"ApplyWorkingCoordinateSystem",new Vec3(0,0,-1)) && ReferenceEquals(sameSide,active.Confirmed) &&
             retainedRegion.Count==1 && selectedFaceIds.Contains(7) && ((ListBox)window.FindName("SelectedFacesList")).Items.Count==1 &&
-            Bridge.QueryWorkingSurface(sameSide.Id.Value,sameSide.Revision.Value,0,0).Status==WorkingQueryStatus.Hit,
+            Bridge.QueryWorkingSurface(sameSide.Id.Value,sameSide.Revision.Value,0,0).Status==WorkingSurfaceQueryStatus.Hit,
             "failure after camera preparation preserves old context and dependent presentation state");
-        SetField(window,"_beforeWorkingSideCommit",new Action(()=>{}));
-        Check((bool)Invoke(window,"ApplyWorkingSide",new Vec3(0,0,-1)) && active.Confirmed?.Frame.Normal.Z==-1 &&
+        SetField(window,"_beforeWorkingCoordinateSystemCommit",new Action(()=>{}));
+        Check((bool)Invoke(window,"ApplyWorkingCoordinateSystem",new Vec3(0,0,-1)) && active.Confirmed?.Frame.Normal.Z==-1 &&
             retainedRegion.Count==0 && selectedFaceIds.Count==0 && ((ListBox)window.FindName("SelectedFacesList")).Items.Count==0,
             "successful side change invalidates dependent selections");
-        Check(window.FindName("WorkingPickBox")==null && typeof(OccViewport).GetProperty("WorkingBoundaryPickMode")==null &&
-            typeof(OccViewport).GetEvent("WorkingBoundaryPicked")==null,"diagnostic UI and click interception are removed");
-        Check(window.FindName("WorkingBoundaryCanvas")==null && window.FindName("WorkingAxisBox")!=null,
+        Check(window.FindName("WorkingPickBox")==null && typeof(OccViewport).GetProperty("ProjectedModelBoundaryPickMode")==null &&
+            typeof(OccViewport).GetEvent("ProjectedModelBoundaryPicked")==null,"diagnostic UI and click interception are removed");
+        Check(window.FindName("ProjectedModelBoundaryCanvas")==null && window.FindName("WorkingAxisBox")!=null,
             "boundary diagnostic canvas removed; direct axis selector remains");
         Check(typeof(Bridge).GetMethod("HlrProject")==null && typeof(Bridge).GetMethod("HlrEdges")!=null,
             "HLR smoke API removed while exporter HlrEdges remains");
@@ -171,40 +171,40 @@ static class Program
         Check(viewport.RectangleSelectionMode,"rectangle interaction remains independent of removed diagnostic mode");
         Check(Bridge.ReturnToWorkingFront(front.Id,front.Revision),"active working front is independent of camera state");
         Check(Bridge.LoadStep(Path.Combine(args[0],"ring.stp")),"load ring fixture");
-        Check(Bridge.QueryWorkingSurface(front.Id,front.Revision,0,0).Status==WorkingQueryStatus.StaleContext,"model reload invalidates native contexts");
-        var ringContext=Bridge.CreateWorkingContext(0,0,1,1,0,0); var rings=Rings(ringContext);
+        Check(Bridge.QueryWorkingSurface(front.Id,front.Revision,0,0).Status==WorkingSurfaceQueryStatus.StaleContext,"model reload invalidates native contexts");
+        var ringContext=Bridge.CreateWorkingSurfaceContext(0,0,1,1,0,0); var rings=Rings(ringContext);
         Check(rings.Count==2 && rings.Count(r=>r.IsHole)==1,"whole-model union retains hole across disconnected adjacent sheet faces");
-        Check(Query(ringContext,new(50,50,0)).Status==WorkingQueryStatus.Miss,"through-hole is not working surface");
+        Check(Query(ringContext,new(50,50,0)).Status==WorkingSurfaceQueryStatus.Miss,"through-hole is not working surface");
         Check(rings.Count(r=>r.NestingDepth==0)==1,"outer contour computation remains available without UI presentation");
 Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curved silhouette, not trim-edge outline");
-        var sphere=Bridge.CreateWorkingContext(0,0,1,1,0,0); var sphereRings=Rings(sphere);
+        var sphere=Bridge.CreateWorkingSurfaceContext(0,0,1,1,0,0); var sphereRings=Rings(sphere);
         Check(sphereRings.Count==1 && sphereRings[0].Points.Count>20,"curved silhouette exists independently of face wire/seam");
         double area=Math.Abs(RegionOps.SignedArea(sphereRings[0].Points));
         Check(Math.Abs(area-Math.PI*400)<10,"sphere mesh silhouette approximates projected disk, explicit tolerance");
         var tangent=Query(sphere,new(20,0,0));
-        Check(tangent.Status==WorkingQueryStatus.Tangent || tangent.Status==WorkingQueryStatus.Miss,"tangent is explicit or no hit, never back surface fallback");
+        Check(tangent.Status==WorkingSurfaceQueryStatus.Tangent || tangent.Status==WorkingSurfaceQueryStatus.Miss,"tangent is explicit or no hit, never back surface fallback");
         var sphereTop=Query(sphere,new(0,0,0));
-        Check(sphereTop.Status==WorkingQueryStatus.Hit && Math.Abs(sphereTop.Point[2]-20)<1e-5,"curved surface first hit");
+        Check(sphereTop.Status==WorkingSurfaceQueryStatus.Hit && Math.Abs(sphereTop.Point[2]-20)<1e-5,"curved surface first hit");
         foreach (var n in new[]{new Vec3(1,0,0),new Vec3(-1,0,0),new Vec3(0,1,0),new Vec3(0,-1,0),new Vec3(0,0,1),new Vec3(0,0,-1)})
         {
             var axisX=Math.Abs(n.X)>.9 ? new Vec3(0,1,0) : new Vec3(1,0,0);
-            var c=Bridge.CreateWorkingContext(n.X,n.Y,n.Z,axisX.X,axisX.Y,axisX.Z);
+            var c=Bridge.CreateWorkingSurfaceContext(n.X,n.Y,n.Z,axisX.X,axisX.Y,axisX.Z);
             var hit=Query(c,new(0,0,0));
             var p=new Vec3(hit.Point[0],hit.Point[1],hit.Point[2]);
-            Check(hit.Status==WorkingQueryStatus.Hit && (p-n*20).Length<1e-5 && Vec3.Dot(Frame(c).Origin,n)>20,
+            Check(hit.Status==WorkingSurfaceQueryStatus.Hit && (p-n*20).Length<1e-5 && Vec3.Dot(Frame(c).Origin,n)>20,
                 "all-axis outside datum and nearest surface: "+n);
-            Bridge.ReleaseWorkingContext(c.Id);
+            Bridge.ReleaseWorkingSurfaceContext(c.Id);
         }
         Check(Bridge.LoadStep(Path.Combine(args[0],"tangentBack.stp")),"load tangent contact with rear surface behind it");
-        var tangentContext=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+        var tangentContext=Bridge.CreateWorkingSurfaceContext(0,0,1,1,0,0);
         var grazing=Query(tangentContext,new(20,0,0));
-        Check(grazing.Status==WorkingQueryStatus.Tangent || grazing.Status==WorkingQueryStatus.GeometryFailure,
+        Check(grazing.Status==WorkingSurfaceQueryStatus.Tangent || grazing.Status==WorkingSurfaceQueryStatus.GeometryFailure,
             "nearest grazing contact is not discarded in favor of a rear surface hit");
-        var stalePresentation=Bridge.CaptureWorkingPresentation();
+        var stalePresentation=Bridge.CaptureWorkingCoordinateSystemPresentation();
         Check(Bridge.LoadStep(Path.Combine(args[0],"trimmedVisibility.stp")),"load holed upper trimmed face with full lower sheet");
-        Check(!Bridge.RestoreWorkingPresentation(stalePresentation.Id),"presentation savepoints cannot restore across model revision");
-        Bridge.ReleaseWorkingPresentation(stalePresentation.Id);
-        var trimmed=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+        Check(!Bridge.RestoreWorkingCoordinateSystemPresentation(stalePresentation.Id),"presentation savepoints cannot restore across model revision");
+        Bridge.ReleaseWorkingCoordinateSystemPresentation(stalePresentation.Id);
+        var trimmed=Bridge.CreateWorkingSurfaceContext(0,0,1,1,0,0);
         Bridge.ReturnToWorkingFront(trimmed.Id,trimmed.Revision);
         Check(Query(trimmed,new(0,0,0)).Point[2]==0 && Bridge.IsWorkingPointVisible(trimmed.Id,trimmed.Revision,0,0,0,.001),
             "upper surface extension through trimmed hole does not occlude lower BRep hit");
@@ -215,7 +215,7 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
         Check(Bridge.IsWorkingPointVisible(trimmed.Id,trimmed.Revision,10,0,20,.001),
             "ON trim-boundary hit remains eligible for visibility");
         Check(Bridge.LoadStep(Path.Combine(args[0],"threePanels.stp")),"load three topologically adjacent working faces");
-        var panels=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+        var panels=Bridge.CreateWorkingSurfaceContext(0,0,1,1,0,0);
         int faceA=Bridge.QueryWorkingSurface(panels.Id,panels.Revision,-1,0).FaceId;
         int faceB=Bridge.QueryWorkingSurface(panels.Id,panels.Revision,0,0).FaceId;
         int faceC=Bridge.QueryWorkingSurface(panels.Id,panels.Revision,1,0).FaceId;
@@ -228,7 +228,7 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
         var acrossSeams=Bridge.StageProjectedWorkingPolyline(panels.Id,panels.Revision,seamStage,
             new[]{.25, .5, 5.0, 2.75, .5, 5.0},new[]{faceA,faceB,faceC},0,0,-1);
         Check(acrossSeams!=null,"projected route reconnects across selected three-panel seams");
-        Bridge.DiscardWorkingRouteGeometry(panels.Id,panels.Revision,Array.Empty<int>(),new[]{seamStage});
+        Bridge.DiscardWorkingPathGeometry(panels.Id,panels.Revision,Array.Empty<int>(),new[]{seamStage});
         int partialStage=int.MinValue+1301;
         Check(Bridge.StageProjectedWorkingPolyline(panels.Id,panels.Revision,partialStage,
             new[]{.25, .5, 5.0, 1.5, .5, 5.0, 3.5, .5, 5.0, 2.75, .5, 5.0},
@@ -240,15 +240,15 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
         Check(Bridge.StageWorkingPolyline(panels.Id,panels.Revision,reloadStage,new[]{0.0,0,0,1,0,0}),
             "ClearOverlays removes staged AIS and releases its temporary ID");
         Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"reload model with candidate polyline staged");
-        Check(!Bridge.CommitWorkingRouteGeometry(panels.Id,panels.Revision,Array.Empty<int>(),Array.Empty<int>(),new[]{reloadStage}),
+        Check(!Bridge.CommitWorkingPathGeometry(panels.Id,panels.Revision,Array.Empty<int>(),Array.Empty<int>(),new[]{reloadStage}),
             "stale model/context cannot commit a staged working polyline");
-        var afterStageReload=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+        var afterStageReload=Bridge.CreateWorkingSurfaceContext(0,0,1,1,0,0);
         Check(Bridge.StageWorkingPolyline(afterStageReload.Id,afterStageReload.Revision,reloadStage,new[]{0.0,0,0,1,0,0}),
             "model reload removes prior staged polyline handle and frees its ID");
-        Bridge.DiscardWorkingRouteGeometry(panels.Id,panels.Revision,Array.Empty<int>(),new[]{reloadStage});
+        Bridge.DiscardWorkingPathGeometry(panels.Id,panels.Revision,Array.Empty<int>(),new[]{reloadStage});
         Check(!Bridge.LoadStep(Path.Combine(args[0],"absent.stp")),"failed model load");
-        Check(Bridge.QueryWorkingSurface(afterStageReload.Id,afterStageReload.Revision,0,0).Status==WorkingQueryStatus.StaleContext,"failed reload also invalidates context");
-        Check(Bridge.CreateWorkingContext(0,0,1,1,0,0)==null,"no context available without model");
+        Check(Bridge.QueryWorkingSurface(afterStageReload.Id,afterStageReload.Revision,0,0).Status==WorkingSurfaceQueryStatus.StaleContext,"failed reload also invalidates context");
+        Check(Bridge.CreateWorkingSurfaceContext(0,0,1,1,0,0)==null,"no context available without model");
         window.Close();
         Console.WriteLine($"{count} working-side checks passed.");
     }

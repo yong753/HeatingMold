@@ -141,7 +141,7 @@ namespace
     TopTools_IndexedMapOfShape g_faceMap;   // W3 픽킹: g_faces와 같은 순회로 구축 (인덱스 1:1)
     gp_Dir g_autoAxes[3] = { gp::DX(), gp::DY(), gp::DZ() };
     long long g_modelRevision = 0;
-    void InvalidateWorkingContexts();
+    void InvalidateWorkingSurfaceContexts();
 
     bool TryGetSupplementalAxes(const Handle(StepData_StepModel)& model)
     {
@@ -265,14 +265,14 @@ namespace
     Handle(AIS_Shape) g_aisShape;
     std::set<int> g_selectedFaceIds;
     std::vector<Handle(AIS_Shape)> g_worldOverlays;
-    std::map<int, Handle(AIS_Shape)> g_powerLeads;
-    Handle(AIS_Shape) g_powerLeadPreview;
-    Handle(AIS_Point) g_powerDestinationPreview;
-    struct RoutePieceOverlay { Handle(AIS_Shape) ais; bool connector; bool enabled; Quantity_Color color; double width; };
-    std::map<int, RoutePieceOverlay> g_routePieces;
+    std::map<int, Handle(AIS_Shape)> g_connectionPaths;
+    Handle(AIS_Shape) g_connectionPathPreview;
+    Handle(AIS_Point) g_connectionPointPreview;
+    struct HeatingPathSegmentOverlay { Handle(AIS_Shape) ais; bool turnSegment; bool enabled; Quantity_Color color; double width; };
+    std::map<int, HeatingPathSegmentOverlay> g_pathSegments;
     struct StagedWorkingPolyline { Handle(AIS_Shape) ais; long long contextId, revision; };
     std::map<int, StagedWorkingPolyline> g_stagedWorkingPolylines;
-    std::map<int, std::pair<long long,long long>> g_stagedWorkingRouteOwners;
+    std::map<int, std::pair<long long,long long>> g_stagedWorkingPathSegmentOwners;
     std::set<int> g_hoveredCircuitPieces;
     void HighlightCircuitNative(const std::vector<int>& ids);
     std::vector<Handle(AIS_Shape)> g_exclusionOverlays;
@@ -809,7 +809,7 @@ namespace
 
     // ================= 오버레이 natives (S3) =================
 
-    bool ProjectRoutePieceNative(int pieceId, const std::string& kind, const std::vector<double>& xyz,
+    bool ProjectHeatingPathSegmentNative(int pieceId, const std::string& kind, const std::vector<double>& xyz,
         const std::vector<int>& faceIds, const gp_Dir& direction, double depth, double* result)
     {
         if (g_shape.IsNull() || xyz.size() < 6 || xyz.size() % 3 || faceIds.empty() ||
@@ -863,7 +863,7 @@ namespace
             auto transverseDistance = [&direction](const gp_Pnt& p, const gp_Pnt& q) {
                 gp_Vec v(p, q); return (v - gp_Vec(direction) * v.Dot(gp_Vec(direction))).Magnitude();
             };
-            // OCCT may reverse the resulting wire. Results must follow the source route order.
+            // OCCT may reverse the resulting wire. Results must follow the source heating-path order.
             if (transverseDistance(a, sourceA) > 0.01 || transverseDistance(b, sourceB) > 0.01) std::swap(a, b);
             if (transverseDistance(a, sourceA) > 0.01 || transverseDistance(b, sourceB) > 0.01) return false;
             const gp_Vec offset = gp_Vec(direction) * depth;
@@ -873,29 +873,29 @@ namespace
             std::string normalizedKind = kind;
             std::transform(normalizedKind.begin(), normalizedKind.end(), normalizedKind.begin(),
                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            // Only inter-lane U-turns are editable. Fixed same-lane connectors
-            // stay part of the route and must not respond to connector picking.
-            const bool connector = normalizedKind == "turnconnector" || normalizedKind == "turn";
+            // Only inter-lane turn segments are editable. Fixed same-lane joins
+            // remain part of the heating path and cannot be toggled.
+            const bool turnSegment = normalizedKind == "turnsegment" || normalizedKind == "turn";
             if (!g_ctx.IsNull()) {
-                auto old = g_routePieces.find(pieceId);
-                if (old != g_routePieces.end()) { g_ctx->Remove(old->second.ais, Standard_False); g_routePieces.erase(old); }
+                auto old = g_pathSegments.find(pieceId);
+                if (old != g_pathSegments.end()) { g_ctx->Remove(old->second.ais, Standard_False); g_pathSegments.erase(old); }
                 Handle(AIS_Shape) ais = new AIS_Shape(projected);
-                const Quantity_Color color = connector ? Quantity_Color(0.1, 0.65, 1.0, Quantity_TOC_RGB) : Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB);
+                const Quantity_Color color = turnSegment ? Quantity_Color(0.1, 0.65, 1.0, Quantity_TOC_RGB) : Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB);
                 g_ctx->SetColor(ais, color, Standard_False);
-                if (connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
+                if (turnSegment) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
                 g_ctx->Display(ais, Standard_False); g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
-                // Every run and connector remains selectable for circuit hover.
+                // Every path segment remains selectable for circuit hover.
                 g_ctx->Activate(ais, Standard_False);
-                g_routePieces[pieceId] = { ais, connector, true, color, 1.0 };
+                g_pathSegments[pieceId] = { ais, turnSegment, true, color, 1.0 };
             }
             return true;
         } catch (const Standard_Failure&) { return false; }
     }
 
-    bool SetConnectorNative(int id, bool enabled, double r, double g, double b)
+    bool SetTurnSegmentNative(int id, bool enabled, double r, double g, double b)
     {
-        auto it = g_routePieces.find(id);
-        if (it == g_routePieces.end() || !it->second.connector || g_ctx.IsNull()) return false;
+        auto it = g_pathSegments.find(id);
+        if (it == g_pathSegments.end() || !it->second.turnSegment || g_ctx.IsNull()) return false;
         it->second.enabled = enabled;
         it->second.color = Quantity_Color(r, g, b, Quantity_TOC_RGB);
         g_ctx->SetColor(it->second.ais, it->second.color, Standard_False);
@@ -905,34 +905,34 @@ namespace
         return true;
     }
 
-    void ClearRoutePiecesNative()
+    void ClearPathSegmentsNative()
     {
         HighlightCircuitNative(std::vector<int>());
-        if (!g_ctx.IsNull()) for (const auto& piece : g_routePieces) g_ctx->Remove(piece.second.ais, Standard_False);
-        g_routePieces.clear();
-        g_stagedWorkingRouteOwners.clear();
+        if (!g_ctx.IsNull()) for (const auto& piece : g_pathSegments) g_ctx->Remove(piece.second.ais, Standard_False);
+        g_pathSegments.clear();
+        g_stagedWorkingPathSegmentOwners.clear();
     }
 
-    void ClearPowerLeadPreviewNative()
+    void ClearConnectionPathPreviewNative()
     {
         if (!g_ctx.IsNull()) {
-            if (!g_powerLeadPreview.IsNull()) g_ctx->Remove(g_powerLeadPreview, Standard_False);
-            if (!g_powerDestinationPreview.IsNull()) g_ctx->Remove(g_powerDestinationPreview, Standard_False);
+            if (!g_connectionPathPreview.IsNull()) g_ctx->Remove(g_connectionPathPreview, Standard_False);
+            if (!g_connectionPointPreview.IsNull()) g_ctx->Remove(g_connectionPointPreview, Standard_False);
         }
-        g_powerLeadPreview.Nullify();
-        g_powerDestinationPreview.Nullify();
+        g_connectionPathPreview.Nullify();
+        g_connectionPointPreview.Nullify();
     }
 
-    void ClearPowerLeadsNative()
+    void ClearConnectionPathsNative()
     {
-        ClearPowerLeadPreviewNative();
-        if (!g_ctx.IsNull()) for (const auto& lead : g_powerLeads) g_ctx->Remove(lead.second, Standard_False);
-        g_powerLeads.clear();
+        ClearConnectionPathPreviewNative();
+        if (!g_ctx.IsNull()) for (const auto& connectionPath : g_connectionPaths) g_ctx->Remove(connectionPath.second, Standard_False);
+        g_connectionPaths.clear();
     }
 
     // Validate the complete external segment, not just its destination. Projecting
     // onto the WHOLE mold catches even elevated/unselected faces and concave re-entry.
-    bool ExternalLeadIsClear(const gp_Pnt& from, const gp_Pnt& to, const gp_Dir& direction)
+    bool ExternalConnectionPathIsClear(const gp_Pnt& from, const gp_Pnt& to, const gp_Dir& direction)
     {
         const double tolerance = 1e-7;
         const gp_Vec axis(direction);
@@ -971,7 +971,7 @@ namespace
     {
         // Use model-space trim-edge distance, not a fixed UV classifier epsilon
         // (UV units need not be mm). Imported edge/vertex tolerances may exceed
-        // the face tolerance; never exceed the route's 0.01 mm sewing budget.
+        // the face tolerance; never exceed the heating path's 0.01 mm sewing budget.
         const TopoDS_Vertex query = BRepBuilderAPI_MakeVertex(point).Vertex();
         bool matched = false;
         for (int id : faces) {
@@ -995,17 +995,17 @@ namespace
 
     // No sampled/floating fallback: retain the exact OCCT surface edges and add only
     // the explicit external segment after the trimmed heating-face boundary.
-    void ProjectPowerLeadNative(int id, const std::vector<double>& xyz, const std::vector<double>& actual,
-        const std::vector<int>& faces, const gp_Dir& direction, double depth, double* result, bool previewOnly)
+    void ProjectConnectionPathNative(int connectionPathId, const std::vector<double>& xyz, const std::vector<double>& actual,
+        const std::vector<int>& faces, const gp_Dir& direction, double insertionDepthMm, double* result, bool previewOnly)
     {
         result[0] = -1;
         if (g_shape.IsNull() || xyz.size() != 6 || actual.size() != 3 || faces.empty() ||
-            !std::isfinite(depth) || depth < 0) return;
+            !std::isfinite(insertionDepthMm) || insertionDepthMm < 0) return;
         for (double v : xyz) if (!std::isfinite(v)) return;
         for (double v : actual) if (!std::isfinite(v)) return;
         const gp_Pnt start(xyz[0], xyz[1], xyz[2]), destination(xyz[3], xyz[4], xyz[5]);
         const gp_Pnt expected(actual[0], actual[1], actual[2]);
-        const gp_Vec axis(direction), offset = axis * depth;
+        const gp_Vec axis(direction), offset = axis * insertionDepthMm;
         gp_Vec along(start, destination); along -= axis * along.Dot(axis);
         const double span = along.Magnitude();
         if (span < 0.01) return;
@@ -1028,7 +1028,7 @@ namespace
         double boundaryTolerance = Precision::Confusion();
         const bool outwardBoundary = IsSelectedBoundaryPoint(expected.Translated(-offset), faces, boundaryTolerance) &&
             (startDelta - axis * startDelta.Dot(axis)).Magnitude() <= boundaryTolerance &&
-            ExternalLeadIsClear(expected, end, direction);
+            ExternalConnectionPathIsClear(expected, end, direction);
         if (!outwardBoundary) {
             // Plane destinations must remain outside the entire mold. Boundary
             // destinations are handled as surface endpoints, not axis-line hits.
@@ -1084,7 +1084,7 @@ namespace
             surfaceWire = TopoDS::Wire(shifted.Shape());
         }
         result[0] = -5;
-        if (!ExternalLeadIsClear(b, end, direction)) return;
+        if (!ExternalConnectionPathIsClear(b, end, direction)) return;
         BRepBuilderAPI_MakeEdge external(b, end);
         if (!external.IsDone()) return;
         BRepBuilderAPI_MakeWire joined;
@@ -1098,7 +1098,7 @@ namespace
         if (!g_ctx.IsNull()) {
             Handle(AIS_Shape) overlay = new AIS_Shape(joined.Wire());
             // Own transient objects before any context operation can throw.
-            if (previewOnly) g_powerLeadPreview = overlay;
+            if (previewOnly) g_connectionPathPreview = overlay;
             g_ctx->SetColor(overlay, previewOnly ? Quantity_Color(0.1, 0.9, 1.0, Quantity_TOC_RGB) :
                 Quantity_Color(1.0, 0.65, 0.05, Quantity_TOC_RGB), Standard_False);
             if (previewOnly) {
@@ -1108,30 +1108,30 @@ namespace
             g_ctx->Display(overlay, Standard_False);
             g_ctx->SetZLayer(overlay, Graphic3d_ZLayerId_Topmost); g_ctx->Deactivate(overlay, Standard_False);
             if (previewOnly) {
-                g_powerDestinationPreview = new AIS_Point(new Geom_CartesianPoint(end));
-                g_powerDestinationPreview->SetMarker(Aspect_TOM_O_POINT);
-                g_ctx->SetColor(g_powerDestinationPreview, Quantity_Color(0.1, 0.9, 1.0, Quantity_TOC_RGB), Standard_False);
-                g_ctx->Display(g_powerDestinationPreview, Standard_False);
-                g_ctx->SetZLayer(g_powerDestinationPreview, Graphic3d_ZLayerId_Topmost);
-                g_ctx->Deactivate(g_powerDestinationPreview, Standard_False);
+                g_connectionPointPreview = new AIS_Point(new Geom_CartesianPoint(end));
+                g_connectionPointPreview->SetMarker(Aspect_TOM_O_POINT);
+                g_ctx->SetColor(g_connectionPointPreview, Quantity_Color(0.1, 0.9, 1.0, Quantity_TOC_RGB), Standard_False);
+                g_ctx->Display(g_connectionPointPreview, Standard_False);
+                g_ctx->SetZLayer(g_connectionPointPreview, Graphic3d_ZLayerId_Topmost);
+                g_ctx->Deactivate(g_connectionPointPreview, Standard_False);
             } else {
-                auto old = g_powerLeads.find(id);
-                if (old != g_powerLeads.end()) g_ctx->Remove(old->second, Standard_False);
-                g_powerLeads[id] = overlay;
+                auto old = g_connectionPaths.find(connectionPathId);
+                if (old != g_connectionPaths.end()) g_ctx->Remove(old->second, Standard_False);
+                g_connectionPaths[connectionPathId] = overlay;
             }
         }
         result[0] = 1; result[1] = props.Mass(); result[2] = surfaceProps.Mass(); result[3] = b.Distance(end);
     }
 
-    int PickConnectorNative(int x, int y)
+    int PickTurnSegmentNative(int x, int y)
     {
         if (g_ctx.IsNull() || g_view.IsNull()) return -1;
         g_ctx->MoveTo(x, y, g_view, Standard_False);
         Handle(SelectMgr_EntityOwner) owner = g_ctx->DetectedOwner();
         if (owner.IsNull()) return -1;
         Handle(AIS_InteractiveObject) selectable = Handle(AIS_InteractiveObject)::DownCast(owner->Selectable());
-        for (const auto& piece : g_routePieces)
-            if (piece.second.connector && piece.second.ais == selectable) return piece.first;
+        for (const auto& piece : g_pathSegments)
+            if (piece.second.turnSegment && piece.second.ais == selectable) return piece.first;
         return -1;
     }
 
@@ -1139,16 +1139,16 @@ namespace
     {
         if (g_ctx.IsNull()) return;
         for (int id : g_hoveredCircuitPieces) {
-            auto it = g_routePieces.find(id);
-            if (it != g_routePieces.end()) {
+            auto it = g_pathSegments.find(id);
+            if (it != g_pathSegments.end()) {
                 g_ctx->SetColor(it->second.ais, it->second.color, Standard_False);
                 g_ctx->SetWidth(it->second.ais, it->second.width, Standard_False);
             }
         }
         g_hoveredCircuitPieces.clear();
         for (int id : ids) {
-            auto it = g_routePieces.find(id);
-            if (it == g_routePieces.end()) continue;
+            auto it = g_pathSegments.find(id);
+            if (it == g_pathSegments.end()) continue;
             g_hoveredCircuitPieces.insert(id);
             g_ctx->SetColor(it->second.ais, Quantity_Color(1.0, 0.85, 0.0, Quantity_TOC_RGB), Standard_False);
             g_ctx->SetWidth(it->second.ais, 4.0, Standard_False);
@@ -1209,8 +1209,8 @@ namespace
 
     void ClearOverlayNative()
     {
-        ClearPowerLeadsNative();
-        ClearRoutePiecesNative();
+        ClearConnectionPathsNative();
+        ClearPathSegmentsNative();
         if (!g_ctx.IsNull())
         {
             for (const auto& overlay : g_worldOverlays)
@@ -1338,7 +1338,7 @@ namespace
             *outStatus = 5;
             if (!BRepCheck_Analyzer(projectedWire).IsValid()) return false;
 
-            // Require projection coverage along the complete source route, not
+            // Require projection coverage along the complete source heating path, not
             // merely one surviving fragment. Probe each source edge at both
             // endpoints and its midpoint against the selected trimmed faces.
             IntCurvesFace_ShapeIntersector coverage;
@@ -1431,20 +1431,20 @@ namespace
             if (!std::isfinite(length) || length <= 0.0) return false;
 
             // Insertion depth is a global -projection-axis displacement of the
-            // mapped route; it is not a per-Face normal offset.
-            TopoDS_Shape displayedRoute = projectedWire;
+            // mapped heating path; it is not a per-Face normal offset.
+            TopoDS_Shape displayedPath = projectedWire;
             if (insertionDepth > 0.0)
             {
                 gp_Trsf offset;
                 offset.SetTranslation(gp_Vec(direction) * insertionDepth);
                 BRepBuilderAPI_Transform transformed(projectedWire, offset, Standard_True);
                 if (!transformed.IsDone()) return false;
-                displayedRoute = transformed.Shape();
+                displayedPath = transformed.Shape();
             }
 
             if (!g_ctx.IsNull())
             {
-                Handle(AIS_Shape) overlay = new AIS_Shape(displayedRoute);
+                Handle(AIS_Shape) overlay = new AIS_Shape(displayedPath);
                 g_ctx->SetColor(overlay, Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB), Standard_False);
                 g_ctx->Display(overlay, Standard_False);
                 g_ctx->SetZLayer(overlay, Graphic3d_ZLayerId_Topmost);
@@ -1788,20 +1788,20 @@ namespace
         }
         return out;
     }
-#include "WorkingSideNative.inc"
+#include "WorkingCoordinateSystemNative.inc"
 }
 #pragma managed(pop)
 
 namespace HeatingMold { namespace OccBridge {
 
 long long Bridge::GetModelRevision() { return g_modelRevision; }
-void Bridge::ReleaseWorkingContext(long long id) { ReleaseWorkingNative(id); }
-WorkingContext^ Bridge::CreateWorkingContext(double nx,double ny,double nz,double xx,double xy,double xz)
+void Bridge::ReleaseWorkingSurfaceContext(long long id) { ReleaseWorkingNative(id); }
+WorkingSurfaceContext^ Bridge::CreateWorkingSurfaceContext(double nx,double ny,double nz,double xx,double xy,double xz)
 {
     const long long id = CreateWorkingNative(nx,ny,nz,xx,xy,xz);
     if (!id) return nullptr;
     auto* c = FindWorking(id,g_modelRevision);
-    auto result = gcnew WorkingContext();
+    auto result = gcnew WorkingSurfaceContext();
     result->Id=id; result->Revision=c->revision; result->MeshDeflection=c->deflection;
     result->Frame=gcnew array<double>{c->origin.X(),c->origin.Y(),c->origin.Z(),
         c->x.X(),c->x.Y(),c->x.Z(),c->y.X(),c->y.Y(),c->y.Z(),c->n.X(),c->n.Y(),c->n.Z()};
@@ -1809,59 +1809,59 @@ WorkingContext^ Bridge::CreateWorkingContext(double nx,double ny,double nz,doubl
     for (int i=0;i<result->Triangles->Length;++i) result->Triangles[i]=c->triangles[i];
     return result;
 }
-WorkingHit^ Bridge::QueryWorkingSurface(long long id,long long revision,double u,double v)
+WorkingSurfaceHit^ Bridge::QueryWorkingSurface(long long id,long long revision,double u,double v)
 {
     double p[3]={}, n[3]={}; int face=-1;
     const auto status=QueryWorkingNative(id,revision,u,v,p,face,n);
-    auto result=gcnew WorkingHit();
+    auto result=gcnew WorkingSurfaceHit();
     result->ContextId=id; result->Revision=revision; result->DatumPoint=gcnew array<double>{u,v};
-    result->Status=static_cast<WorkingQueryStatus>(static_cast<int>(status)); result->FaceId=face;
+    result->Status=static_cast<WorkingSurfaceQueryStatus>(static_cast<int>(status)); result->FaceId=face;
     if (status==WorkingStatusNative::Hit || status==WorkingStatusNative::Tangent) {
         result->Point=gcnew array<double>{p[0],p[1],p[2]};
         result->Normal=gcnew array<double>{n[0],n[1],n[2]};
     }
     return result;
 }
-WorkingHit^ Bridge::QueryWorkingSurfaceForFaces(long long id,long long revision,array<int>^ faceIds,double u,double v)
+WorkingSurfaceHit^ Bridge::QueryWorkingSurfaceForFaces(long long id,long long revision,array<int>^ faceIds,double u,double v)
 {
     if (faceIds==nullptr) {
-        auto invalid=gcnew WorkingHit(); invalid->ContextId=id; invalid->Revision=revision;
-        invalid->DatumPoint=gcnew array<double>{u,v}; invalid->Status=WorkingQueryStatus::InvalidInput; invalid->FaceId=-1; return invalid;
+        auto invalid=gcnew WorkingSurfaceHit(); invalid->ContextId=id; invalid->Revision=revision;
+        invalid->DatumPoint=gcnew array<double>{u,v}; invalid->Status=WorkingSurfaceQueryStatus::InvalidInput; invalid->FaceId=-1; return invalid;
     }
     for each (int candidate in faceIds) if (candidate<0 || candidate>=static_cast<int>(g_faces.size())) {
-        auto invalid=gcnew WorkingHit(); invalid->ContextId=id; invalid->Revision=revision;
-        invalid->DatumPoint=gcnew array<double>{u,v}; invalid->Status=WorkingQueryStatus::InvalidInput; invalid->FaceId=-1; return invalid;
+        auto invalid=gcnew WorkingSurfaceHit(); invalid->ContextId=id; invalid->Revision=revision;
+        invalid->DatumPoint=gcnew array<double>{u,v}; invalid->Status=WorkingSurfaceQueryStatus::InvalidInput; invalid->FaceId=-1; return invalid;
     }
     double p[3]={}, n[3]={}; int face=-1;
     const auto status=QueryWorkingNative(id,revision,u,v,p,face,n);
-    auto result=gcnew WorkingHit();
+    auto result=gcnew WorkingSurfaceHit();
     result->ContextId=id; result->Revision=revision; result->DatumPoint=gcnew array<double>{u,v};
-    result->Status=static_cast<WorkingQueryStatus>(static_cast<int>(status)); result->FaceId=face;
+    result->Status=static_cast<WorkingSurfaceQueryStatus>(static_cast<int>(status)); result->FaceId=face;
     if (status==WorkingStatusNative::Hit || status==WorkingStatusNative::Tangent) {
         result->Point=gcnew array<double>{p[0],p[1],p[2]};
         result->Normal=gcnew array<double>{n[0],n[1],n[2]};
         bool selected=false;
         if (faceIds!=nullptr) for each (int candidate in faceIds) {
             if (candidate<0 || candidate>=static_cast<int>(g_faces.size())) {
-                result->Status=WorkingQueryStatus::InvalidInput; result->Point=nullptr; result->Normal=nullptr; return result;
+                result->Status=WorkingSurfaceQueryStatus::InvalidInput; result->Point=nullptr; result->Normal=nullptr; return result;
             }
             selected |= candidate==face;
         }
         result->IsSelectedFace=selected;
-        if (!selected) { result->Status=WorkingQueryStatus::Miss; result->Point=nullptr; result->Normal=nullptr; }
+        if (!selected) { result->Status=WorkingSurfaceQueryStatus::Miss; result->Point=nullptr; result->Normal=nullptr; }
     }
     return result;
 }
 bool Bridge::AreWorkingFacesAdjacent(long long id,long long revision,int faceA,int faceB)
 { return WorkingFacesAdjacentNative(id,revision,faceA,faceB); }
-RoutePieceResult^ Bridge::DisplayWorkingRoutePiece(long long id,long long revision,int pieceId,String^ kind,array<double>^ flat)
+HeatingPathSegmentResult^ Bridge::DisplayWorkingPathSegment(long long id,long long revision,int pieceId,String^ kind,array<double>^ flat)
 {
     if (kind==nullptr || flat==nullptr) return nullptr;
     try {
         std::vector<double> xyz; for each(double v in flat) xyz.push_back(v);
         double data[7]={};
-        if (!DisplayWorkingRoutePieceNative(id,revision,pieceId,msclr::interop::marshal_as<std::string>(kind),xyz,data)) return nullptr;
-        auto result=gcnew RoutePieceResult(); result->Length=data[0];
+        if (!DisplayWorkingPathSegmentNative(id,revision,pieceId,msclr::interop::marshal_as<std::string>(kind),xyz,data)) return nullptr;
+        auto result=gcnew HeatingPathSegmentResult(); result->Length=data[0];
         result->Start=gcnew array<double>{data[1],data[2],data[3]}; result->End=gcnew array<double>{data[4],data[5],data[6]};
         return result;
     } catch (...) { return nullptr; }
@@ -1872,45 +1872,45 @@ bool Bridge::StageWorkingPolyline(long long id,long long revision,int stageId,ar
     try { std::vector<double> xyz; for each(double v in flat) xyz.push_back(v); return StageWorkingPolylineNative(id,revision,stageId,xyz); }
     catch (...) { return false; }
 }
-RoutePieceResult^ Bridge::StageProjectedWorkingRoutePiece(long long id,long long revision,int stageId,String^ kind,
+HeatingPathSegmentResult^ Bridge::StageProjectedWorkingPathSegment(long long id,long long revision,int stageId,String^ kind,
     array<double>^ flat,array<int>^ faceIds,double dx,double dy,double dz)
 {
     if(kind==nullptr||flat==nullptr||faceIds==nullptr) return nullptr;
     try { std::vector<double> xyz;std::vector<int> faces;for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
-        double data[7]={};if(!StageProjectedWorkingRouteNative(id,revision,stageId,msclr::interop::marshal_as<std::string>(kind),xyz,faces,gp_Dir(dx,dy,dz),data))return nullptr;
-        auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;
+        double data[7]={};if(!StageProjectedWorkingPathSegmentNative(id,revision,stageId,msclr::interop::marshal_as<std::string>(kind),xyz,faces,gp_Dir(dx,dy,dz),data))return nullptr;
+        auto r=gcnew HeatingPathSegmentResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;
     } catch(...) { return nullptr; }
 }
-RoutePieceResult^ Bridge::StageProjectedWorkingPolyline(long long id,long long revision,int stageId,array<double>^ flat,array<int>^ faceIds,double dx,double dy,double dz)
+HeatingPathSegmentResult^ Bridge::StageProjectedWorkingPolyline(long long id,long long revision,int stageId,array<double>^ flat,array<int>^ faceIds,double dx,double dy,double dz)
 {
     if(flat==nullptr||faceIds==nullptr)return nullptr;
     try {std::vector<double> xyz;std::vector<int> faces;for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
         double data[7]={};if(!StageProjectedWorkingPolylineNative(id,revision,stageId,xyz,faces,gp_Dir(dx,dy,dz),data))return nullptr;
-        auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;}catch(...){return nullptr;}
+        auto r=gcnew HeatingPathSegmentResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;}catch(...){return nullptr;}
 }
-bool Bridge::CommitWorkingRouteGeometry(long long id,long long revision,array<int>^ stagedRouteIds,array<int>^ finalRouteIds,array<int>^ stagedPolylineIds)
+bool Bridge::CommitWorkingPathGeometry(long long id,long long revision,array<int>^ stagedPathSegmentIds,array<int>^ finalPathSegmentIds,array<int>^ stagedPolylineIds)
 {
-    if (stagedRouteIds==nullptr || finalRouteIds==nullptr || stagedPolylineIds==nullptr) return false;
+    if (stagedPathSegmentIds==nullptr || finalPathSegmentIds==nullptr || stagedPolylineIds==nullptr) return false;
     try {
-        std::vector<int> sr,fr,sp; for each(int v in stagedRouteIds) sr.push_back(v);
-        for each(int v in finalRouteIds) fr.push_back(v); for each(int v in stagedPolylineIds) sp.push_back(v);
+        std::vector<int> sr,fr,sp; for each(int v in stagedPathSegmentIds) sr.push_back(v);
+        for each(int v in finalPathSegmentIds) fr.push_back(v); for each(int v in stagedPolylineIds) sp.push_back(v);
         return CommitWorkingGeometryNative(id,revision,sr,fr,sp);
     } catch (...) { return false; }
 }
-void Bridge::DiscardWorkingRouteGeometry(long long id,long long revision,array<int>^ stagedRouteIds,array<int>^ stagedPolylineIds)
+void Bridge::DiscardWorkingPathGeometry(long long id,long long revision,array<int>^ stagedPathSegmentIds,array<int>^ stagedPolylineIds)
 {
     try {
         std::vector<int> sr,sp;
-        if (stagedRouteIds!=nullptr) for each(int v in stagedRouteIds) sr.push_back(v);
+        if (stagedPathSegmentIds!=nullptr) for each(int v in stagedPathSegmentIds) sr.push_back(v);
         if (stagedPolylineIds!=nullptr) for each(int v in stagedPolylineIds) sp.push_back(v);
         DiscardWorkingGeometryNative(id,revision,sr,sp);
     } catch (...) { }
 }
 bool Bridge::IsWorkingPointVisible(long long id,long long revision,double x,double y,double z,double tolerance)
 { return WorkingVisibleNative(id,revision,x,y,z,tolerance); }
-void Bridge::ShowWorkingBoundary(array<array<double>^>^ loops)
-{ ShowWorkingBoundary(loops,nullptr); }
-void Bridge::ShowWorkingBoundary(array<array<double>^>^ loops,array<bool>^ holes)
+void Bridge::ShowProjectedModelBoundary(array<array<double>^>^ loops)
+{ ShowProjectedModelBoundary(loops,nullptr); }
+void Bridge::ShowProjectedModelBoundary(array<array<double>^>^ loops,array<bool>^ holes)
 {
     std::vector<std::vector<double>> values;
     std::vector<bool> flags;
@@ -1920,7 +1920,7 @@ void Bridge::ShowWorkingBoundary(array<array<double>^>^ loops,array<bool>^ holes
         if (loop!=nullptr) for each(double v in loop) points.push_back(v);
         values.push_back(points);
     }
-    ShowWorkingBoundaryNative(values,flags);
+    ShowProjectedModelBoundaryNative(values,flags);
 }
 bool Bridge::ReturnToWorkingFront(long long id,long long revision)
 {
@@ -1930,24 +1930,24 @@ bool Bridge::ReturnToWorkingFront(long long id,long long revision)
     SetViewFrameNative(ctx->n.X(),ctx->n.Y(),ctx->n.Z(),ctx->y.X(),ctx->y.Y(),ctx->y.Z());
     return true;
 }
-WorkingPresentation^ Bridge::CaptureWorkingPresentation()
+WorkingCoordinateSystemPresentation^ Bridge::CaptureWorkingCoordinateSystemPresentation()
 {
     double bounds[6]={}; bool hasBounds=false;
-    const long long id=CaptureWorkingPresentationNative(bounds,hasBounds);
+    const long long id=CaptureWorkingCoordinateSystemPresentationNative(bounds,hasBounds);
     if (!id) return nullptr;
-    auto result=gcnew WorkingPresentation();
+    auto result=gcnew WorkingCoordinateSystemPresentation();
     result->Id=id; result->Revision=g_modelRevision;
     result->BoundaryCount=static_cast<int>(g_workingPresentations.at(id).boundaries.size());
     if (hasBounds) result->BoundaryBounds=gcnew array<double>{bounds[0],bounds[1],bounds[2],bounds[3],bounds[4],bounds[5]};
     return result;
 }
-bool Bridge::RestoreWorkingPresentation(long long id) { return RestoreWorkingPresentationNative(id); }
-void Bridge::ReleaseWorkingPresentation(long long id) { g_workingPresentations.erase(id); }
+bool Bridge::RestoreWorkingCoordinateSystemPresentation(long long id) { return RestoreWorkingCoordinateSystemPresentationNative(id); }
+void Bridge::ReleaseWorkingCoordinateSystemPresentation(long long id) { g_workingPresentations.erase(id); }
 
 bool Bridge::LoadStep(String^ path)
 {
     ++g_modelRevision;
-    InvalidateWorkingContexts();
+    InvalidateWorkingSurfaceContexts();
     ClearDisplayedShape();
     ClearOverlayNative();
     ClearExclusionOverlaysNative();
@@ -2072,8 +2072,8 @@ array<double>^ Bridge::ProjectPathWireOntoSelectedFaces(array<int>^ faceIds, arr
     return result;
 }
 
-RoutePieceResult^ Bridge::ProjectRoutePiece(int pieceId, String^ kind, array<double>^ xyzFlat,
-    array<int>^ faceIds, double dx, double dy, double dz, double depth)
+HeatingPathSegmentResult^ Bridge::ProjectHeatingPathSegment(int pieceId, String^ kind, array<double>^ xyzFlat,
+    array<int>^ faceIds, double dx, double dy, double dz, double insertionDepthMm)
 {
     if (kind == nullptr || xyzFlat == nullptr || faceIds == nullptr) return nullptr;
     std::vector<double> xyz(xyzFlat->Length);
@@ -2081,50 +2081,50 @@ RoutePieceResult^ Bridge::ProjectRoutePiece(int pieceId, String^ kind, array<dou
     for (int i = 0; i < xyzFlat->Length; ++i) xyz[i] = xyzFlat[i];
     for (int i = 0; i < faceIds->Length; ++i) ids[i] = faceIds[i];
     double data[7];
-    try { if (!ProjectRoutePieceNative(pieceId, msclr::interop::marshal_as<std::string>(kind), xyz, ids, gp_Dir(dx, dy, dz), depth, data)) return nullptr; }
+    try { if (!ProjectHeatingPathSegmentNative(pieceId, msclr::interop::marshal_as<std::string>(kind), xyz, ids, gp_Dir(dx, dy, dz), insertionDepthMm, data)) return nullptr; }
     catch (const Standard_Failure&) { return nullptr; }
-    auto result = gcnew RoutePieceResult();
+    auto result = gcnew HeatingPathSegmentResult();
     result->Length = data[0];
     result->Start = gcnew array<double>(3); result->End = gcnew array<double>(3);
     for (int i = 0; i < 3; ++i) { result->Start[i] = data[i + 1]; result->End[i] = data[i + 4]; }
     return result;
 }
 
-bool Bridge::SetConnectorEnabled(int pieceId, bool enabled, double r, double g, double b)
+bool Bridge::SetTurnSegmentEnabled(int pieceId, bool enabled, double r, double g, double b)
 {
-    return SetConnectorNative(pieceId, enabled, r, g, b);
+    return SetTurnSegmentNative(pieceId, enabled, r, g, b);
 }
 
-void Bridge::ClearRoutePieces() { ClearRoutePiecesNative(); if (!g_view.IsNull()) g_view->Redraw(); }
+void Bridge::ClearPathSegments() { ClearPathSegmentsNative(); if (!g_view.IsNull()) g_view->Redraw(); }
 
-array<double>^ Bridge::ProjectPowerLead(int leadId, array<double>^ sourceAndDestination,
-    array<double>^ actualStart, array<int>^ faceIds, double dx, double dy, double dz, double depth)
+array<double>^ Bridge::ProjectConnectionPath(int connectionPathId, array<double>^ endpointAndConnectionPoint,
+    array<double>^ actualPathEndpoint, array<int>^ faceIds, double dx, double dy, double dz, double insertionDepthMm)
 {
-    return ProjectPowerLead(leadId, sourceAndDestination, actualStart, faceIds, dx, dy, dz, depth, false);
+    return ProjectConnectionPath(connectionPathId, endpointAndConnectionPoint, actualPathEndpoint, faceIds, dx, dy, dz, insertionDepthMm, false);
 }
 
-array<double>^ Bridge::ProjectPowerLead(int leadId, array<double>^ sourceAndDestination,
-    array<double>^ actualStart, array<int>^ faceIds, double dx, double dy, double dz, double depth, bool previewOnly)
+array<double>^ Bridge::ProjectConnectionPath(int connectionPathId, array<double>^ endpointAndConnectionPoint,
+    array<double>^ actualPathEndpoint, array<int>^ faceIds, double dx, double dy, double dz, double insertionDepthMm, bool previewOnly)
 {
     // Remove the old preview without painting a blank frame. Redraw once after
     // replacement/validation, including failure so invalid positions clear it.
-    const bool hadPreview = !g_powerLeadPreview.IsNull() || !g_powerDestinationPreview.IsNull();
-    ClearPowerLeadPreviewNative();
+    const bool hadPreview = !g_connectionPathPreview.IsNull() || !g_connectionPointPreview.IsNull();
+    ClearConnectionPathPreviewNative();
     auto result = gcnew array<double>(4);
     result[0] = -1;
-    if (sourceAndDestination == nullptr || actualStart == nullptr || faceIds == nullptr) {
+    if (endpointAndConnectionPoint == nullptr || actualPathEndpoint == nullptr || faceIds == nullptr) {
         if (hadPreview && !g_view.IsNull()) g_view->Redraw();
         return result;
     }
-    std::vector<double> xyz(sourceAndDestination->Length), actual(actualStart->Length);
+    std::vector<double> xyz(endpointAndConnectionPoint->Length), actual(actualPathEndpoint->Length);
     std::vector<int> ids(faceIds->Length);
-    for (int i = 0; i < sourceAndDestination->Length; ++i) xyz[i] = sourceAndDestination[i];
-    for (int i = 0; i < actualStart->Length; ++i) actual[i] = actualStart[i];
+    for (int i = 0; i < endpointAndConnectionPoint->Length; ++i) xyz[i] = endpointAndConnectionPoint[i];
+    for (int i = 0; i < actualPathEndpoint->Length; ++i) actual[i] = actualPathEndpoint[i];
     for (int i = 0; i < faceIds->Length; ++i) ids[i] = faceIds[i];
     double data[4] = { -9, 0, 0, 0 };
-    try { ProjectPowerLeadNative(leadId, xyz, actual, ids, gp_Dir(dx, dy, dz), depth, data, previewOnly); }
+    try { ProjectConnectionPathNative(connectionPathId, xyz, actual, ids, gp_Dir(dx, dy, dz), insertionDepthMm, data, previewOnly); }
     catch (const Standard_Failure&) {
-        if (previewOnly) ClearPowerLeadPreviewNative();
+        if (previewOnly) ClearConnectionPathPreviewNative();
         data[0] = -9;
     }
     if (!g_view.IsNull()) g_view->Redraw();
@@ -2132,22 +2132,22 @@ array<double>^ Bridge::ProjectPowerLead(int leadId, array<double>^ sourceAndDest
     return result;
 }
 
-void Bridge::ClearPowerLeads() { ClearPowerLeadsNative(); if (!g_view.IsNull()) g_view->Redraw(); }
-void Bridge::ClearPowerLeadPreview()
+void Bridge::ClearConnectionPaths() { ClearConnectionPathsNative(); if (!g_view.IsNull()) g_view->Redraw(); }
+void Bridge::ClearConnectionPathPreview()
 {
-    const bool hadPreview = !g_powerLeadPreview.IsNull() || !g_powerDestinationPreview.IsNull();
-    ClearPowerLeadPreviewNative();
+    const bool hadPreview = !g_connectionPathPreview.IsNull() || !g_connectionPointPreview.IsNull();
+    ClearConnectionPathPreviewNative();
     if (hadPreview && !g_view.IsNull()) g_view->Redraw();
 }
-int Bridge::PickConnector(int x, int y) { return PickConnectorNative(x, y); }
-int Bridge::PickRoutePiece(int x, int y)
+int Bridge::PickTurnSegment(int x, int y) { return PickTurnSegmentNative(x, y); }
+int Bridge::PickHeatingPathSegment(int x, int y)
 {
     if (g_ctx.IsNull() || g_view.IsNull()) return -1;
     g_ctx->MoveTo(x, y, g_view, Standard_False);
     Handle(SelectMgr_EntityOwner) owner = g_ctx->DetectedOwner();
     if (owner.IsNull()) return -1;
     Handle(AIS_InteractiveObject) selectable = Handle(AIS_InteractiveObject)::DownCast(owner->Selectable());
-    for (const auto& piece : g_routePieces) if (piece.second.ais == selectable) return piece.first;
+    for (const auto& piece : g_pathSegments) if (piece.second.ais == selectable) return piece.first;
     return -1;
 }
 void Bridge::HighlightCircuit(array<int>^ pieceIds)

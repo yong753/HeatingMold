@@ -1,11 +1,12 @@
 namespace HeatingMold.Core.Geometry;
 
+/// <summary>작업 평면의 점과 표면에 매핑된 3D 점 및 Face 식별자.</summary>
 public readonly record struct SurfaceMappedSample(Vec2 DatumPoint, Vec3 Point, int FaceId);
 
-/// <summary>Maps a complete planar polyline onto one caller-selected surface domain.</summary>
+/// <summary>작업 평면의 발열사 경로를 지정된 표면 영역 전체에 매핑하고 연속성을 확인한다.</summary>
 public static class SurfacePathMapper
 {
-    // Conservative depth-zero route target. Probes are at quarter intervals within
+    // Conservative depth-zero path target. Probes are at quarter intervals within
     // accepted leaves (at most 0.025 mm apart); sub-probe-width features are not guaranteed.
     private const double MaxPlanarSpacing = 0.1;
     private const double MaxChordError = 0.05;
@@ -27,11 +28,11 @@ public static class SurfacePathMapper
     }
 
     /// <summary>
-    /// Samples endpoints, quarter points and midpoints, refining until planar spacing
-    /// (0.1 mm) and chord error (0.05 mm) are within tolerance. The hit delegate must query the entire
-    /// selected domain. Any missing/invalid hit or exhausted refinement limit rejects
-    /// the entire path; no partial path is returned. Only consecutive duplicates are
-    /// removed, preserving intentional returns to earlier vertices.
+    /// 양 끝점·1/4점·중간점을 표본화하고, 평면 간격(0.1 mm)과 현 오차(0.05 mm)가
+    /// 허용 범위에 들 때까지 세분화한다. hit 함수는 선택된 표면 영역 전체를 조회해야 한다.
+    /// 누락되거나 잘못된 hit가 있거나 세분화 한도에 도달하면 경로 전체를 거부하고,
+    /// 일부만 매핑한 결과는 반환하지 않는다. 연속 중복점만 제거하여 앞서 지난 꼭짓점으로
+    /// 의도적으로 되돌아오는 경로는 보존한다.
     /// </summary>
     public static bool TryMap(IReadOnlyList<Vec2> path, Func<Vec2, Vec3?> hit,
         out List<Vec3> mapped, out string failure, int maxProbes = DefaultMaxProbes)

@@ -3,7 +3,7 @@ using HeatingMold.Core.Model;
 
 namespace HeatingMold.Core.Tests;
 
-public class SerpentineTests
+public class HeatingPathGeneratorTests
 {
     private static List<Vec2> Rect(double x0, double y0, double x1, double y1) =>
         new() { new(x0, y0), new(x1, y0), new(x1, y1), new(x0, y1) };
@@ -13,17 +13,17 @@ public class SerpentineTests
     public void T1_Rectangle_Margin_LaneCount_Length_Spacing()
     {
         var outer = Rect(0, 0, 100, 60);
-        var r = Serpentine.Generate(outer, null, new PatternParams { Margin = 5, Spacing = 10 });
+        var r = HeatingPathGenerator.Generate(outer, null, new PatternParameters { BoundaryMarginMm = 5, CenterPitchMm = 10 });
 
         Assert.Equal(0.0, r.AngleDeg, 9);
         Assert.Equal(5, r.LaneCount);
-        Assert.Equal(5, r.Segments.Count);
+        Assert.Equal(5, r.HeatingRuns.Count);
 
-        for (int i = 0; i < r.Segments.Count; i++)
+        for (int i = 0; i < r.HeatingRuns.Count; i++)
         {
-            SerpentineSegment s = r.Segments[i];
+            HeatingRunSegment s = r.HeatingRuns[i];
             Assert.Equal(10.0 + 10.0 * i, s.Start.Y, 9);   // 레인 y = 10,20,30,40,50
-            if (i > 0) Assert.Equal(10.0, s.Start.Y - r.Segments[i - 1].Start.Y, 9);
+            if (i > 0) Assert.Equal(10.0, s.Start.Y - r.HeatingRuns[i - 1].Start.Y, 9);
             Assert.Equal(90.0, s.Length, 9);               // 마진 5 → 100 − 2×5
         }
     }
@@ -34,12 +34,12 @@ public class SerpentineTests
     {
         var outer = Rect(0, 0, 100, 60);
         var holes = new List<IReadOnlyList<Vec2>> { Rect(40, 18, 60, 22) };
-        var r = Serpentine.Generate(outer, holes, new PatternParams { Margin = 5, Spacing = 10 });
+        var r = HeatingPathGenerator.Generate(outer, holes, new PatternParameters { BoundaryMarginMm = 5, CenterPitchMm = 10 });
 
         Assert.Equal(5, r.LaneCount);
-        Assert.Equal(6, r.Segments.Count);   // 레인 5개 중 y=20 하나가 홀에 의해 2분절
+        Assert.Equal(6, r.HeatingRuns.Count);   // 레인 5개 중 y=20 하나가 홀에 의해 2분절
 
-        var split = r.Segments.Where(s => Math.Abs(s.Start.Y - 20.0) < 1e-9).ToList();
+        var split = r.HeatingRuns.Where(s => Math.Abs(s.Start.Y - 20.0) < 1e-9).ToList();
         Assert.Equal(2, split.Count);
 
         var spans = split
@@ -57,24 +57,24 @@ public class SerpentineTests
     public void T3_OddLaneCount_AlternatesDirection_SingleContinuousPath()
     {
         var outer = Rect(0, 0, 100, 60);
-        var r = Serpentine.Generate(outer, null, new PatternParams { Margin = 5, Spacing = 10 });
+        var r = HeatingPathGenerator.Generate(outer, null, new PatternParameters { BoundaryMarginMm = 5, CenterPitchMm = 10 });
 
         Assert.Equal(5, r.LaneCount);   // 홀수 레인
 
         // 진행 방향 교대: 레인 0 LTR, 1 RTL, 2 LTR, ...
-        for (int i = 0; i < r.Segments.Count; i++)
+        for (int i = 0; i < r.HeatingRuns.Count; i++)
         {
-            SerpentineSegment s = r.Segments[i];
+            HeatingRunSegment s = r.HeatingRuns[i];
             bool ltr = s.Start.X < s.End.X;
             Assert.Equal(i % 2 == 0, ltr);
         }
 
         // 단일 연속 폴리라인: 세그먼트들이 경로에 순서대로 포함
-        Assert.Equal(r.Segments.First().Start, r.Path[0]);
-        Assert.Equal(r.Segments.Last().End, r.Path[^1]);
+        Assert.Equal(r.HeatingRuns.First().Start, r.Path[0]);
+        Assert.Equal(r.HeatingRuns.Last().End, r.Path[^1]);
 
         int idx = 0;
-        foreach (SerpentineSegment s in r.Segments)
+        foreach (HeatingRunSegment s in r.HeatingRuns)
         {
             while (idx < r.Path.Count && r.Path[idx] != s.Start) idx++;
             Assert.True(idx < r.Path.Count, $"세그먼트 시작점 누락 (lane {s.LaneIndex})");
@@ -87,8 +87,8 @@ public class SerpentineTests
     [Fact]
     public void T4_AutoLongAxisRotation()
     {
-        var wide = Serpentine.Generate(Rect(0, 0, 100, 60), null, new PatternParams { Margin = 5, Spacing = 10 });
-        var tall = Serpentine.Generate(Rect(0, 0, 60, 100), null, new PatternParams { Margin = 5, Spacing = 10 });
+        var wide = HeatingPathGenerator.Generate(Rect(0, 0, 100, 60), null, new PatternParameters { BoundaryMarginMm = 5, CenterPitchMm = 10 });
+        var tall = HeatingPathGenerator.Generate(Rect(0, 0, 60, 100), null, new PatternParameters { BoundaryMarginMm = 5, CenterPitchMm = 10 });
 
         Assert.Equal(0.0, wide.AngleDeg, 9);    // 장축 = X
         Assert.Equal(90.0, tall.AngleDeg, 9);   // 장축 = Y
@@ -98,7 +98,7 @@ public class SerpentineTests
         Assert.Equal(wide.TotalLength, tall.TotalLength, 6);
 
         // tall의 레인은 월드 Y축 방향
-        SerpentineSegment s0 = tall.Segments[0];
+        HeatingRunSegment s0 = tall.HeatingRuns[0];
         Assert.True(Math.Abs(s0.End.Y - s0.Start.Y) > 80.0);
         Assert.True(Math.Abs(s0.End.X - s0.Start.X) < 1e-6);
     }
@@ -108,77 +108,77 @@ public class SerpentineTests
     public void T5_TotalLengthSanity()
     {
         var outer = Rect(0, 0, 100, 60);
-        var r = Serpentine.Generate(outer, null, new PatternParams { Margin = 5, Spacing = 10 });
+        var r = HeatingPathGenerator.Generate(outer, null, new PatternParameters { BoundaryMarginMm = 5, CenterPitchMm = 10 });
 
         double straight = 5 * 90.0;           // 레인 5개 × 길이 90
-        double turns = 4 * Math.PI * 5.0;     // U턴 반원 4개 (r = Spacing/2 = 5)
+        double turns = 4 * Math.PI * 5.0;     // U턴 반원 4개 (r = CenterPitchMm/2 = 5)
 
         Assert.True(r.TotalLength > straight);
         Assert.InRange(r.TotalLength, straight + turns * 0.98, straight + turns * 1.02);
     }
 
-    // T6: 비볼록(쐐기) 면 — 인접 레인 극단점이 크게 어긋나도 커넥터가 면 밖으로 이탈하지 않아야 함 (#597 회귀)
+    // T6: 비볼록(쐐기) 면 — 인접 레인 극단점이 크게 어긋나도 회전 연결 구간이 면 밖으로 이탈하지 않아야 함 (#597 회귀)
     [Fact]
-    public void T6_NonConvexWedge_ConnectorStaysInsideFace()
+    public void T6_NonConvexWedge_TurnSegmentStaysInsideFace()
     {
         // 상단이 완만하게 기울어진 쐐기 — 레인 극단점이 레인당 ~130mm씩 이동
         var outer = new List<Vec2> { new(0, 0), new(400, 0), new(400, 120), new(0, 90) };
-        double margin = 5, spacing = 10;
-        var r = Serpentine.Generate(outer, null, new PatternParams { Margin = margin, Spacing = spacing });
+        double boundaryMarginMm = 5, centerPitchMm = 10;
+        var r = HeatingPathGenerator.Generate(outer, null, new PatternParameters { BoundaryMarginMm = boundaryMarginMm, CenterPitchMm = centerPitchMm });
 
         // 트리거 존재 확인: 인접 레인 끝↔시작 직선거리가 간격보다 훨씬 큼
         double maxJump = 0;
-        for (int i = 0; i + 1 < r.Segments.Count; i++)
+        for (int i = 0; i + 1 < r.HeatingRuns.Count; i++)
         {
-            if (r.Segments[i].LaneIndex == r.Segments[i + 1].LaneIndex) continue;
-            maxJump = Math.Max(maxJump, r.Segments[i].End.DistanceTo(r.Segments[i + 1].Start));
+            if (r.HeatingRuns[i].LaneIndex == r.HeatingRuns[i + 1].LaneIndex) continue;
+            maxJump = Math.Max(maxJump, r.HeatingRuns[i].End.DistanceTo(r.HeatingRuns[i + 1].Start));
         }
-        Assert.True(maxJump > 3 * spacing, $"트리거 없음 (maxJump={maxJump:F1})");
+        Assert.True(maxJump > 3 * centerPitchMm, $"트리거 없음 (maxJump={maxJump:F1})");
 
         foreach (Vec2 p in r.Path)
             Assert.True(InsideOrOn(outer, p), $"면 밖 경로점 {p}");
     }
 
-    // T7: 볼록 직사각형이라도 margin < Spacing/2 이면 반원이 면 밖으로 나가므로 경계 라우팅되어야 함
+    // T7: 경계 여유가 중심 피치 절반보다 작으면 U턴 호가 면 밖으로 나갈 수 있어 경계 추종이 필요함
     [Fact]
     public void T7_ConvexButTightMargin_StaysInsideFace()
     {
         var outer = Rect(0, 0, 100, 60);
-        var r = Serpentine.Generate(outer, null, new PatternParams { Margin = 2, Spacing = 10 });
+        var r = HeatingPathGenerator.Generate(outer, null, new PatternParameters { BoundaryMarginMm = 2, CenterPitchMm = 10 });
 
         foreach (Vec2 p in r.Path)
             Assert.True(InsideOrOn(outer, p), $"면 밖 경로점 {p}");
     }
 
     [Fact]
-    public void RoutePieces_ReconstructPathAndClassifyConnectors()
+    public void PathSegments_ReconstructPathAndClassifyPathSegments()
     {
-        var result = Serpentine.Generate(Rect(0, 0, 100, 60),
+        var result = HeatingPathGenerator.Generate(Rect(0, 0, 100, 60),
             new List<IReadOnlyList<Vec2>> { Rect(40, 18, 60, 22) },
-            new PatternParams { Margin = 5, Spacing = 10 });
-        Assert.Equal(result.LaneCount - 1, result.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector));
-        Assert.Single(result.RoutePieces.Where(p => p.Kind == SerpentineRoutePieceKind.FixedConnector));
-        var rebuilt = result.RoutePieces.SelectMany((p, i) => i == 0 ? p.Points : p.Points.Skip(1)).ToList();
+            new PatternParameters { BoundaryMarginMm = 5, CenterPitchMm = 10 });
+        Assert.Equal(result.LaneCount - 1, result.PathSegments.Count(p => p.Kind == HeatingPathSegmentKind.TurnSegment));
+        Assert.Single(result.PathSegments.Where(p => p.Kind == HeatingPathSegmentKind.FixedJoinSegment));
+        var rebuilt = result.PathSegments.SelectMany((p, i) => i == 0 ? p.Points : p.Points.Skip(1)).ToList();
         Assert.Equal(result.Path, rebuilt);
-        Assert.Equal(result.TotalLength, result.RoutePieces.Sum(p => p.Length), 8);
+        Assert.Equal(result.TotalLength, result.PathSegments.Sum(p => p.Length), 8);
     }
 
     [Fact]
-    public void DisabledTurnSplitsTopologyButFixedConnectorIsRetained()
+    public void DisabledTurnSplitsTopologyButFixedJoinIsRetained()
     {
         var pieces = new[]
         {
-            new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, 0, new[] { new Vec2(0,0), new Vec2(1,0) }),
-            new SerpentineRoutePiece(SerpentineRoutePieceKind.TurnConnector, 1, new[] { new Vec2(1,0), new Vec2(1,1) }),
-            new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, 1, new[] { new Vec2(1,1), new Vec2(2,1) }),
-            new SerpentineRoutePiece(SerpentineRoutePieceKind.FixedConnector, 1, new[] { new Vec2(2,1), new Vec2(3,1) }),
-            new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, 1, new[] { new Vec2(3,1), new Vec2(4,1) }),
+            new HeatingPathSegment(HeatingPathSegmentKind.HeatingRunSegment, 0, new[] { new Vec2(0,0), new Vec2(1,0) }),
+            new HeatingPathSegment(HeatingPathSegmentKind.TurnSegment, 1, new[] { new Vec2(1,0), new Vec2(1,1) }),
+            new HeatingPathSegment(HeatingPathSegmentKind.HeatingRunSegment, 1, new[] { new Vec2(1,1), new Vec2(2,1) }),
+            new HeatingPathSegment(HeatingPathSegmentKind.FixedJoinSegment, 1, new[] { new Vec2(2,1), new Vec2(3,1) }),
+            new HeatingPathSegment(HeatingPathSegmentKind.HeatingRunSegment, 1, new[] { new Vec2(3,1), new Vec2(4,1) }),
         };
-        var components = SerpentineTopology.Compute(pieces, new[] { false });
+        var components = CircuitPathPartitioner.Compute(pieces, new[] { false });
         Assert.True(components.Count == 2);
         Assert.Equal(new[] { new Vec2(0,0), new Vec2(1,0) }, components[0]);
         Assert.Equal(new[] { new Vec2(1,1), new Vec2(2,1), new Vec2(3,1), new Vec2(4,1) }, components[1]);
-        Assert.Equal(1, SerpentineTopology.Compute(pieces).Count);
+        Assert.Single(CircuitPathPartitioner.Compute(pieces));
     }
 
     private static bool InsideOrOn(IReadOnlyList<Vec2> ring, Vec2 p)

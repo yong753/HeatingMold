@@ -137,29 +137,29 @@ namespace HeatingMold.App
         private int _lastExclusionPreviewX, _lastExclusionPreviewY;
         private int _lastHover = -2;      // W5 — 호버 이벤트 중복 억제
         private int _activeDragMode; // 0=orbit, 1=rectangle selection, 2=exclusion sketch
-        private bool _connectorEditMode;
+        private bool _turnSegmentEditMode;
         private bool _circuitHoverMode;
-        public bool ConnectorEditMode
+        public bool CircuitSplitMode
         {
-            get => _connectorEditMode;
-            set { if (_connectorEditMode == value) return; _connectorEditMode = value; if (!value) ConnectorHovered?.Invoke(-1); }
+            get => _turnSegmentEditMode;
+            set { if (_turnSegmentEditMode == value) return; _turnSegmentEditMode = value; if (!value) TurnSegmentHovered?.Invoke(-1); }
         }
         public bool CircuitHoverMode
         {
             get => _circuitHoverMode;
-            set { if (_circuitHoverMode == value) return; _circuitHoverMode = value; if (!value) RoutePieceHovered?.Invoke(-1); }
+            set { if (_circuitHoverMode == value) return; _circuitHoverMode = value; if (!value) HeatingPathSegmentHovered?.Invoke(-1); }
         }
-        private bool _powerLocationMode;
-        private DispatcherTimer _powerPreviewTimer;
-        private (int X, int Y)? _pendingPowerPreview, _lastPowerPreview;
-        public bool PowerLocationMode
+        private bool _connectionPointSelectionMode;
+        private DispatcherTimer _connectionPointPreviewTimer;
+        private (int X, int Y)? _pendingConnectionPointPreview, _lastConnectionPointPreview;
+        public bool ConnectionPointSelectionMode
         {
-            get => _powerLocationMode;
+            get => _connectionPointSelectionMode;
             set
             {
-                CancelPowerLeadPreview();
-                if (_powerLocationMode == value) return;
-                _powerLocationMode = value;
+                CancelConnectionPathPreview();
+                if (_connectionPointSelectionMode == value) return;
+                _connectionPointSelectionMode = value;
             }
         }
 
@@ -174,11 +174,11 @@ namespace HeatingMold.App
         public event Action<int, int, int, int> ExclusionSketchMoved;
         public event Action<int, int, int, int> ExclusionSketchCompleted;
         public event Action ExclusionSketchCancelled;
-        public event Action<int> ConnectorHovered;
-        public event Action<int> RoutePieceHovered;
-        public event Action<int> ConnectorPicked;
-        public event Action<int, int> PowerLocationPicked;
-        public event Action<int, int> PowerLocationMoved;
+        public event Action<int> TurnSegmentHovered;
+        public event Action<int> HeatingPathSegmentHovered;
+        public event Action<int> TurnSegmentPicked;
+        public event Action<int, int> ConnectionPointPicked;
+        public event Action<int, int> ConnectionPointMoved;
 
         public bool RectangleSelectionMode { get; set; }
         public bool ExclusionSketchMode { get; set; }
@@ -187,35 +187,35 @@ namespace HeatingMold.App
 
         // Only the latest cursor is projected, at most once per 100 ms. Duplicate
         // pixels do not rerun OCCT; all navigation/lifecycle exits invalidate it.
-        private void QueuePowerLocationPreview(int x, int y)
+        private void QueueConnectionPointPreview(int x, int y)
         {
             var point = (X: x, Y: y);
-            if (_pendingPowerPreview == point || (_pendingPowerPreview == null && _lastPowerPreview == point)) return;
-            _pendingPowerPreview = point;
-            if (_powerPreviewTimer == null)
+            if (_pendingConnectionPointPreview == point || (_pendingConnectionPointPreview == null && _lastConnectionPointPreview == point)) return;
+            _pendingConnectionPointPreview = point;
+            if (_connectionPointPreviewTimer == null)
             {
-                _powerPreviewTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+                _connectionPointPreviewTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
                     { Interval = TimeSpan.FromMilliseconds(100) };
-                _powerPreviewTimer.Tick += FlushPowerLocationPreview;
+                _connectionPointPreviewTimer.Tick += FlushConnectionPointPreview;
             }
-            if (!_powerPreviewTimer.IsEnabled) _powerPreviewTimer.Start();
+            if (!_connectionPointPreviewTimer.IsEnabled) _connectionPointPreviewTimer.Start();
         }
 
-        private void FlushPowerLocationPreview(object sender, EventArgs e)
+        private void FlushConnectionPointPreview(object sender, EventArgs e)
         {
-            _powerPreviewTimer?.Stop();
-            var point = _pendingPowerPreview;
-            _pendingPowerPreview = null;
-            if (!_ready || !PowerLocationMode || _dragging || _panDragging || point == null || point == _lastPowerPreview) return;
-            _lastPowerPreview = point;
-            PowerLocationMoved?.Invoke(point.Value.X, point.Value.Y);
+            _connectionPointPreviewTimer?.Stop();
+            var point = _pendingConnectionPointPreview;
+            _pendingConnectionPointPreview = null;
+            if (!_ready || !ConnectionPointSelectionMode || _dragging || _panDragging || point == null || point == _lastConnectionPointPreview) return;
+            _lastConnectionPointPreview = point;
+            ConnectionPointMoved?.Invoke(point.Value.X, point.Value.Y);
         }
 
-        public void CancelPowerLeadPreview()
+        public void CancelConnectionPathPreview()
         {
-            _powerPreviewTimer?.Stop();
-            _pendingPowerPreview = _lastPowerPreview = null;
-            Bridge.ClearPowerLeadPreview();
+            _connectionPointPreviewTimer?.Stop();
+            _pendingConnectionPointPreview = _lastConnectionPointPreview = null;
+            Bridge.ClearConnectionPathPreview();
         }
 
         protected override HandleRef BuildWindowCore(HandleRef hwndParent)
@@ -229,7 +229,7 @@ namespace HeatingMold.App
 
         protected override void DestroyWindowCore(HandleRef hwnd)
         {
-            CancelPowerLeadPreview();
+            CancelConnectionPathPreview();
             _ready = false;
             _dragging = false;
             _dragStarted = false;
@@ -248,7 +248,7 @@ namespace HeatingMold.App
         protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
         {
             base.OnRenderSizeChanged(sizeInfo);
-            CancelPowerLeadPreview();
+            CancelConnectionPathPreview();
             if (_ready) Bridge.ResizeView((int)ActualWidth, (int)ActualHeight);
         }
 
@@ -257,7 +257,7 @@ namespace HeatingMold.App
             switch (msg)
             {
                 case WM_LBUTTONDOWN:
-                    CancelPowerLeadPreview();
+                    CancelConnectionPathPreview();
                     SetCapture(hwnd);
                     _dragging = true;
                     _dragStarted = false;
@@ -267,12 +267,12 @@ namespace HeatingMold.App
                     _lastExclusionPreviewY = _downY;
                     _lastSelectionPreviewX = _downX;
                     _lastSelectionPreviewY = _downY;
-                    _activeDragMode = PowerLocationMode ? 0 : (ExclusionSketchMode ? 2 : (RectangleSelectionMode ? 1 : 0));
+                    _activeDragMode = ConnectionPointSelectionMode ? 0 : (ExclusionSketchMode ? 2 : (RectangleSelectionMode ? 1 : 0));
                     handled = true;
                     break;
 
                 case WM_RBUTTONDOWN:
-                    CancelPowerLeadPreview();
+                    CancelConnectionPathPreview();
                     SetCapture(hwnd);
                     _panDragging = true;
                     _downX = LoWord(lParam);
@@ -323,7 +323,7 @@ namespace HeatingMold.App
                                 if (_activeDragMode == 0)
                                 {
                                     Bridge.ClearHover();          // 회전 중 잔상 방지
-                                    CancelPowerLeadPreview();
+                                    CancelConnectionPathPreview();
                                     Bridge.RotateStart(_downX, _downY);
                                 }
                             }
@@ -348,18 +348,18 @@ namespace HeatingMold.App
                             handled = true;
                         }
                     }
-                    else if (_ready && PowerLocationMode)
+                    else if (_ready && ConnectionPointSelectionMode)
                     {
-                        // Do not highlight/select faces or connectors while choosing destinations.
-                        QueuePowerLocationPreview(x, y);
+                        // Do not highlight/select faces or turnSegments while choosing destinations.
+                        QueueConnectionPointPreview(x, y);
                     }
-                    else if (_ready && ConnectorEditMode)
+                    else if (_ready && CircuitSplitMode)
                     {
-                        ConnectorHovered?.Invoke(Bridge.PickConnector(x, y));
+                        TurnSegmentHovered?.Invoke(Bridge.PickTurnSegment(x, y));
                     }
                     else if (_ready && CircuitHoverMode)
                     {
-                        RoutePieceHovered?.Invoke(Bridge.PickRoutePiece(x, y));
+                        HeatingPathSegmentHovered?.Invoke(Bridge.PickHeatingPathSegment(x, y));
                     }
                     else if (_ready)
                     {
@@ -374,11 +374,11 @@ namespace HeatingMold.App
                 }
 
                 case WM_MOUSELEAVE:
-                    CancelPowerLeadPreview();
+                    CancelConnectionPathPreview();
                     _trackingMouse = false;
                     Bridge.ClearHover();
-                    ConnectorHovered?.Invoke(-1);
-                    RoutePieceHovered?.Invoke(-1);
+                    TurnSegmentHovered?.Invoke(-1);
+                    HeatingPathSegmentHovered?.Invoke(-1);
                     if (_lastHover != -1)
                     {
                         _lastHover = -1;
@@ -405,14 +405,14 @@ namespace HeatingMold.App
                             else if (_activeDragMode == 2)
                                 ExclusionSketchCompleted?.Invoke(_downX, _downY, x, y);
                         }
-                        else if (_activeDragMode == 0 && PowerLocationMode)
+                        else if (_activeDragMode == 0 && ConnectionPointSelectionMode)
                         {
-                            CancelPowerLeadPreview();
-                            PowerLocationPicked?.Invoke(LoWord(lParam), HiWord(lParam));
+                            CancelConnectionPathPreview();
+                            ConnectionPointPicked?.Invoke(LoWord(lParam), HiWord(lParam));
                         }
-                        else if (_activeDragMode == 0 && ConnectorEditMode)
+                        else if (_activeDragMode == 0 && CircuitSplitMode)
                         {
-                            ConnectorPicked?.Invoke(Bridge.PickConnector(LoWord(lParam), HiWord(lParam)));
+                            TurnSegmentPicked?.Invoke(Bridge.PickTurnSegment(LoWord(lParam), HiWord(lParam)));
                         }
                         else if (_activeDragMode == 0)
                         {
@@ -427,7 +427,7 @@ namespace HeatingMold.App
                     break;
 
                 case WM_CAPTURECHANGED:
-                    CancelPowerLeadPreview();
+                    CancelConnectionPathPreview();
                     _dragging = false;
                     if (_panDragging && _ready) Bridge.PanEnd();
                     _panDragging = false;
@@ -445,7 +445,7 @@ namespace HeatingMold.App
                         Y = (short)(((long)lParam >> 16) & 0xFFFF)
                     };
                     ScreenToClient(hwnd, ref point);
-                    CancelPowerLeadPreview();
+                    CancelConnectionPathPreview();
                     Bridge.ZoomViewAtPoint(point.X, point.Y, WheelZoomAmount(delta));
                     handled = true;
                     break;

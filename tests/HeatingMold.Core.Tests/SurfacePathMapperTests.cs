@@ -166,7 +166,7 @@ public class SurfacePathMapperTests
         Vec2[] right = { new(0, 0), new(10, 0), new(10, 8), new(0, 8) };
         var union = RegionOps.UnionPolygons(new IReadOnlyList<Vec2>[] { left, right });
         var outline = Assert.Single(union);
-        var pattern = Serpentine.Generate(outline, null, new PatternParams { Margin = 1, Spacing = 2 });
+        var pattern = HeatingPathGenerator.Generate(outline, null, new PatternParameters { BoundaryMarginMm = 1, CenterPitchMm = 2 });
 
         Vec3? Hit(Vec2 p) => p.X < -10 || p.X > 10 || p.Y < 0 || p.Y > 8 ? null : SmoothSurface(p);
         Assert.True(SurfacePathMapper.TryMap(pattern.Path, Hit, out var mapped, out var failure), failure);
@@ -186,11 +186,11 @@ public class SurfacePathMapperTests
     {
         Vec2[] outline = { new(-20, 0), new(20, 0), new(20, 20), new(10, 20),
             new(10, 5), new(-10, 5), new(-10, 20), new(-20, 20) };
-        var parameters = new PatternParams { Margin = 0, Spacing = 3 };
+        var parameters = new PatternParameters { BoundaryMarginMm = 0, CenterPitchMm = 3 };
         Vec3? Hit(Vec2 p) => p.Y > 5 && p.X > -10 && p.X < 10
             ? null : SmoothSurface(p);
 
-        var pattern = Serpentine.Generate(outline, null, parameters, constrainConnectors: true);
+        var pattern = HeatingPathGenerator.Generate(outline, null, parameters, requireContinuousPath: true);
         Assert.True(SurfacePathMapper.TryMap(pattern.Path, Hit, out var mapped, out var failure), failure);
         Assert.Contains(mapped, p => p.X < -10 && p.Y > 5);
         Assert.Contains(mapped, p => p.X > 10 && p.Y > 5);

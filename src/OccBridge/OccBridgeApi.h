@@ -38,8 +38,8 @@ public:
     property array<double>^ Points;
 };
 
-/// <summary>Projected route piece result [length,start xyz,end xyz].</summary>
-public ref class RoutePieceResult
+/// <summary>Projected heating path segment result [length,start xyz,end xyz].</summary>
+public ref class HeatingPathSegmentResult
 {
 public:
     property double Length;
@@ -51,8 +51,8 @@ public:
 /// OCCT 최소 브리지 (S1 스파이크, /clr:netcore net8.0).
 /// 상태는 프로세스 전역(단일 문서) — 본 개발에서 handle 기반으로 전환 예정.
 /// </summary>
-public enum class WorkingQueryStatus { Hit, Miss, Tangent, InvalidInput, StaleContext, GeometryFailure };
-public ref class WorkingContext
+public enum class WorkingSurfaceQueryStatus { Hit, Miss, Tangent, InvalidInput, StaleContext, GeometryFailure };
+public ref class WorkingSurfaceContext
 {
 public:
     property long long Id;
@@ -61,20 +61,20 @@ public:
     property array<double>^ Triangles; // world XYZ triples, 9 doubles per triangle
     property double MeshDeflection;
 };
-public ref class WorkingHit
+public ref class WorkingSurfaceHit
 {
 public:
     property long long ContextId;
     property long long Revision;
     property array<double>^ DatumPoint;
-    property WorkingQueryStatus Status;
+    property WorkingSurfaceQueryStatus Status;
     property array<double>^ Point;
     property array<double>^ Normal;
     property int FaceId;
     property bool IsSelectedFace;
 };
 /// <summary>Revision-owned presentation/camera savepoint. Release after restore or commit.</summary>
-public ref class WorkingPresentation
+public ref class WorkingCoordinateSystemPresentation
 {
 public:
     property long long Id;
@@ -87,30 +87,30 @@ public ref class Bridge abstract sealed
 {
 public:
     static long long GetModelRevision();
-    static WorkingContext^ CreateWorkingContext(double nx, double ny, double nz, double xx, double xy, double xz);
-    static void ReleaseWorkingContext(long long id);
-    static WorkingHit^ QueryWorkingSurface(long long id, long long revision, double u, double v);
+    static WorkingSurfaceContext^ CreateWorkingSurfaceContext(double nx, double ny, double nz, double xx, double xy, double xz);
+    static void ReleaseWorkingSurfaceContext(long long id);
+    static WorkingSurfaceHit^ QueryWorkingSurface(long long id, long long revision, double u, double v);
     /// <summary>Cast against the complete model; succeeds only when its nearest trimmed hit belongs to faceIds.</summary>
-    static WorkingHit^ QueryWorkingSurfaceForFaces(long long id, long long revision, array<int>^ faceIds, double u, double v);
+    static WorkingSurfaceHit^ QueryWorkingSurfaceForFaces(long long id, long long revision, array<int>^ faceIds, double u, double v);
     static bool AreWorkingFacesAdjacent(long long id, long long revision, int faceA, int faceB);
-    static RoutePieceResult^ DisplayWorkingRoutePiece(long long id, long long revision, int pieceId,
+    static HeatingPathSegmentResult^ DisplayWorkingPathSegment(long long id, long long revision, int pieceId,
         System::String^ kind, array<double>^ xyzFlat);
     static bool StageWorkingPolyline(long long id, long long revision, int stageId, array<double>^ xyzFlat);
-    static RoutePieceResult^ StageProjectedWorkingRoutePiece(long long id, long long revision, int stageId,
+    static HeatingPathSegmentResult^ StageProjectedWorkingPathSegment(long long id, long long revision, int stageId,
         System::String^ kind, array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);
-    static RoutePieceResult^ StageProjectedWorkingPolyline(long long id, long long revision, int stageId,
+    static HeatingPathSegmentResult^ StageProjectedWorkingPolyline(long long id, long long revision, int stageId,
         array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);
-    static bool CommitWorkingRouteGeometry(long long id, long long revision, array<int>^ stagedRouteIds,
-        array<int>^ finalRouteIds, array<int>^ stagedPolylineIds);
-    static void DiscardWorkingRouteGeometry(long long id, long long revision,
-        array<int>^ stagedRouteIds, array<int>^ stagedPolylineIds);
+    static bool CommitWorkingPathGeometry(long long id, long long revision, array<int>^ stagedPathSegmentIds,
+        array<int>^ finalPathSegmentIds, array<int>^ stagedPolylineIds);
+    static void DiscardWorkingPathGeometry(long long id, long long revision,
+        array<int>^ stagedPathSegmentIds, array<int>^ stagedPolylineIds);
     static bool IsWorkingPointVisible(long long id, long long revision, double x, double y, double z, double tolerance);
-    static void ShowWorkingBoundary(array<array<double>^>^ loops);
-    static void ShowWorkingBoundary(array<array<double>^>^ loops, array<bool>^ holes);
+    static void ShowProjectedModelBoundary(array<array<double>^>^ loops);
+    static void ShowProjectedModelBoundary(array<array<double>^>^ loops, array<bool>^ holes);
     static bool ReturnToWorkingFront(long long id, long long revision);
-    static WorkingPresentation^ CaptureWorkingPresentation();
-    static bool RestoreWorkingPresentation(long long id);
-    static void ReleaseWorkingPresentation(long long id);
+    static WorkingCoordinateSystemPresentation^ CaptureWorkingCoordinateSystemPresentation();
+    static bool RestoreWorkingCoordinateSystemPresentation(long long id);
+    static void ReleaseWorkingCoordinateSystemPresentation(long long id);
     // ---- 로드/기하 (S1 항목 2·3·4) ----
     /// <summary>STEP 파일 로드 (성공 여부 반환). 뷰어 초기화 후면 즉시 표시+Fit</summary>
     static bool LoadStep(System::String^ path);
@@ -132,26 +132,26 @@ public:
     /// <summary>Project source wire along a fixed axis, then shift result by insertionDepth along that axis; returns [success, length, edgeCount, wireCount, statusCode].</summary>
     static array<double>^ ProjectPathWireOntoSelectedFaces(array<int>^ faceIds, array<double>^ xyzFlat,
                                                            double dx, double dy, double dz, double insertionDepth);
-    /// <summary>Project and display one route piece, replacing the cached piece with the same stable ID.</summary>
-    static RoutePieceResult^ ProjectRoutePiece(int pieceId, System::String^ kind, array<double>^ xyzFlat,
-                                               array<int>^ faceIds, double dx, double dy, double dz, double depth);
-    /// <summary>Toggle connector presentation; disabled connectors are shown as dashed guides.</summary>
-    static bool SetConnectorEnabled(int pieceId, bool enabled, double r, double g, double b);
-    static void ClearRoutePieces();
+    /// <summary>Project and display one heating path segment, replacing the cached piece with the same stable ID.</summary>
+    static HeatingPathSegmentResult^ ProjectHeatingPathSegment(int pieceId, System::String^ kind, array<double>^ xyzFlat,
+                                               array<int>^ faceIds, double dx, double dy, double dz, double insertionDepthMm);
+    /// <summary>Toggle turn-segment presentation; disabled turnSegments are shown as dashed guides.</summary>
+    static bool SetTurnSegmentEnabled(int pieceId, bool enabled, double r, double g, double b);
+    static void ClearPathSegments();
     /// <summary>Project datum start-to-destination onto heating faces, then continue externally.
     /// Returns [status (1=success; negative=failure), total, surface, external] lengths in mm.</summary>
-    static array<double>^ ProjectPowerLead(int leadId, array<double>^ sourceAndDestination,
-        array<double>^ actualStart, array<int>^ faceIds, double dx, double dy, double dz, double depth);
+    static array<double>^ ProjectConnectionPath(int connectionPathId, array<double>^ endpointAndConnectionPoint,
+        array<double>^ actualPathEndpoint, array<int>^ faceIds, double dx, double dy, double dz, double insertionDepthMm);
     /// <summary>previewOnly uses the same validation but replaces only transient cyan geometry.</summary>
-    static array<double>^ ProjectPowerLead(int leadId, array<double>^ sourceAndDestination,
-        array<double>^ actualStart, array<int>^ faceIds, double dx, double dy, double dz, double depth,
+    static array<double>^ ProjectConnectionPath(int connectionPathId, array<double>^ endpointAndConnectionPoint,
+        array<double>^ actualPathEndpoint, array<int>^ faceIds, double dx, double dy, double dz, double insertionDepthMm,
         bool previewOnly);
-    /// <summary>Remove only the transient power destination/lead; committed leads are untouched.</summary>
-    static void ClearPowerLeadPreview();
-    static void ClearPowerLeads();
-    /// <summary>Return connector piece ID under screen point, or -1.</summary>
-    static int PickConnector(int x, int y);
-    static int PickRoutePiece(int x, int y);
+    /// <summary>Remove only the transient connection-point/path preview; committed paths are untouched.</summary>
+    static void ClearConnectionPathPreview();
+    static void ClearConnectionPaths();
+    /// <summary>ReturnSegment piece ID under screen point, or -1.</summary>
+    static int PickTurnSegment(int x, int y);
+    static int PickHeatingPathSegment(int x, int y);
     static void HighlightCircuit(array<int>^ pieceIds);
 
     // ---- AIS 뷰어 (S1 항목 1·6) — WPF HwndHost 자식 HWND 임베드 ----

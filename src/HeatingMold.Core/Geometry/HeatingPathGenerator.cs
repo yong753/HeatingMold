@@ -3,15 +3,15 @@ using HeatingMold.Core.Model;
 namespace HeatingMold.Core.Geometry;
 
 /// <summary>레인 1개 위의 직선 분절 (Start→End 순서 = 진행 방향).</summary>
-public sealed record SerpentineSegment(int LaneIndex, Vec2 Start, Vec2 End)
+public sealed record HeatingRunSegment(int LaneIndex, Vec2 Start, Vec2 End)
 {
     public double Length => Start.DistanceTo(End);
 }
 
-public enum SerpentineRoutePieceKind { HeatingRun, TurnConnector, FixedConnector }
+public enum HeatingPathSegmentKind { HeatingRunSegment, TurnSegment, FixedJoinSegment }
 
-/// <summary>An ordered, world-frame portion of a generated serpentine route.</summary>
-public sealed record SerpentineRoutePiece(SerpentineRoutePieceKind Kind, int LaneIndex, IReadOnlyList<Vec2> Points)
+/// <summary>An ordered segment of the generated heating-wire path.</summary>
+public sealed record HeatingPathSegment(HeatingPathSegmentKind Kind, int LaneIndex, IReadOnlyList<Vec2> Points)
 {
     public double Length
     {
@@ -20,31 +20,31 @@ public sealed record SerpentineRoutePiece(SerpentineRoutePieceKind Kind, int Lan
 }
 
 /// <summary>사행 생성 결과 — 단일 연속 폴리라인.</summary>
-public sealed class SerpentineResult
+public sealed class HeatingPath
 {
     public required IReadOnlyList<Vec2> Path { get; init; }
-    public required IReadOnlyList<SerpentineSegment> Segments { get; init; }
+    public required IReadOnlyList<HeatingRunSegment> HeatingRuns { get; init; }
     public required int LaneCount { get; init; }
     public required double AngleDeg { get; init; }
     public required double TotalLength { get; init; }
-    public IReadOnlyList<SerpentineRoutePiece> RoutePieces { get; init; } = Array.Empty<SerpentineRoutePiece>();
+    public IReadOnlyList<HeatingPathSegment> PathSegments { get; init; } = Array.Empty<HeatingPathSegment>();
 }
 
-/// <summary>Pure topology projection of route pieces. Disabling a turn separates the route;</summary>
-/// <summary>fixed same-lane connectors are never editable and remain in their component.</summary>
-public static class SerpentineTopology
+/// <summary>Pure topology projection of heating path segments. Disabling a turn segment separates the path;</summary>
+/// <summary>fixed same-lane join segments are never editable and remain in their component.</summary>
+public static class CircuitPathPartitioner
 {
     public static IReadOnlyList<IReadOnlyList<Vec2>> Compute(
-        IReadOnlyList<SerpentineRoutePiece> pieces, IReadOnlyList<bool>? turnEnabled = null)
+        IReadOnlyList<HeatingPathSegment> pathSegments, IReadOnlyList<bool>? turnSegmentEnabled = null)
     {
-        if (turnEnabled != null && turnEnabled.Count != pieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector))
-            throw new ArgumentException("One enabled state is required per turn connector", nameof(turnEnabled));
+        if (turnSegmentEnabled != null && turnSegmentEnabled.Count != pathSegments.Count(p => p.Kind == HeatingPathSegmentKind.TurnSegment))
+            throw new ArgumentException("One enabled state is required per turn segment", nameof(turnSegmentEnabled));
         var components = new List<IReadOnlyList<Vec2>>();
         var current = new List<Vec2>();
         int turn = 0;
-        foreach (var piece in pieces)
+        foreach (var piece in pathSegments)
         {
-            bool enabled = piece.Kind != SerpentineRoutePieceKind.TurnConnector || turnEnabled == null || turnEnabled[turn++];
+            bool enabled = piece.Kind != HeatingPathSegmentKind.TurnSegment || turnSegmentEnabled == null || turnSegmentEnabled[turn++];
             if (!enabled)
             {
                 if (current.Count > 0) { components.Add(current); current = new List<Vec2>(); }
@@ -60,19 +60,19 @@ public static class SerpentineTopology
 }
 
 /// <summary>스캔라인 기반 사행(serpentine) 발열 패턴 생성기.
-/// 영역을 방향축 기준 로컬 프레임으로 회전 → 마진/홀 차집합(Clipper2) → 레인별 교차 구간 분절
+/// 영역을 방향축 기준 로컬 투영 좌표로 회전 → 경계 여유/홀 차집합(Clipper2) → 레인별 교차 구간 분절
 /// → 지그재그 연결(U턴 호) → 단일 연속 폴리라인.</summary>
-public static class Serpentine
+public static class HeatingPathGenerator
 {
     /// <summary>Generate independent lane components for a face with rectangular exclusions.
     /// Each scanline interval is emitted separately, so no path bridges an excluded gap.</summary>
     public static IReadOnlyList<IReadOnlyList<Vec2>> GenerateComponents(
         IReadOnlyList<Vec2> outer,
         IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
-        PatternParams p)
+        PatternParameters p)
     {
         if (outer.Count < 3) throw new ArgumentException("외곽 링은 점 3개 이상 필요", nameof(outer));
-        if (p.Spacing <= 0) throw new ArgumentOutOfRangeException(nameof(p), "Spacing > 0 필요");
+        if (p.CenterPitchMm <= 0) throw new ArgumentOutOfRangeException(nameof(p), "CenterPitchMm must be positive");
         double angle = AutoAngleDeg(outer), rad = angle * Math.PI / 180.0;
         List<Vec2> local = Rotate(outer, -rad);
         var rotatedExclusions = exclusions.Select(r =>
@@ -84,31 +84,31 @@ public static class Serpentine
             return (q.Min(v => v.X), q.Min(v => v.Y), q.Max(v => v.X), q.Max(v => v.Y));
         }).ToList();
         List<List<Vec2>> region = RegionOps.SubtractRectangles(
-            RegionOps.BuildPatternRegion(local, null, p.Margin), rotatedExclusions);
+            RegionOps.BuildPatternRegion(local, null, p.BoundaryMarginMm), rotatedExclusions);
         if (region.Count == 0) return Array.Empty<IReadOnlyList<Vec2>>();
         double minY = region.Min(r => r.Min(v => v.Y)), maxY = region.Max(r => r.Max(v => v.Y));
         double height = maxY - minY;
-        int lanes = Math.Max(1, (int)Math.Floor((height + 1e-9) / p.Spacing));
-        double y0 = minY + (height - (lanes - 1) * p.Spacing) / 2.0;
+        int lanes = Math.Max(1, (int)Math.Floor((height + 1e-9) / p.CenterPitchMm));
+        double y0 = minY + (height - (lanes - 1) * p.CenterPitchMm) / 2.0;
         var result = new List<IReadOnlyList<Vec2>>();
         for (int k = 0; k < lanes; k++)
         {
-            double y = y0 + k * p.Spacing;
+            double y = y0 + k * p.CenterPitchMm;
             foreach (var interval in ScanlineIntervals(region, y))
                 result.Add(new[] { new Vec2(interval.X0, y).Rotate(rad), new Vec2(interval.X1, y).Rotate(rad) });
         }
         return result;
     }
 
-    public static SerpentineResult Generate(
+    public static HeatingPath Generate(
         IReadOnlyList<Vec2> outer,
         IReadOnlyList<IReadOnlyList<Vec2>>? holes,
-        PatternParams p,
+        PatternParameters p,
         int arcPoints = 12,
-        bool constrainConnectors = false)
+        bool requireContinuousPath = false)
     {
         if (outer.Count < 3) throw new ArgumentException("외곽 링은 점 3개 이상 필요", nameof(outer));
-        if (p.Spacing <= 0) throw new ArgumentOutOfRangeException(nameof(p), "Spacing > 0 필요");
+        if (p.CenterPitchMm <= 0) throw new ArgumentOutOfRangeException(nameof(p), "CenterPitchMm must be positive");
 
         double angleDeg = AutoAngleDeg(outer);
         double rad = angleDeg * Math.PI / 180.0;
@@ -117,31 +117,31 @@ public static class Serpentine
         List<Vec2> outerLocal = Rotate(outer, -rad);
         List<List<Vec2>>? holesLocal = holes?.Select(h => Rotate(h, -rad)).ToList();
 
-        // 마진·홀 차집합
-        List<List<Vec2>> region = RegionOps.BuildPatternRegion(outerLocal, holesLocal, p.Margin);
+        // 경계 여유·홀 차집합
+        List<List<Vec2>> region = RegionOps.BuildPatternRegion(outerLocal, holesLocal, p.BoundaryMarginMm);
         if (region.Count == 0)
         {
-            return new SerpentineResult
+            return new HeatingPath
             {
                 Path = Array.Empty<Vec2>(),
-                Segments = Array.Empty<SerpentineSegment>(),
+                HeatingRuns = Array.Empty<HeatingRunSegment>(),
                 LaneCount = 0,
                 AngleDeg = angleDeg,
                 TotalLength = 0,
             };
         }
-        if (constrainConnectors && region.Count != 1)
-            throw new InvalidOperationException("마진 적용 후 영역이 분리되어 단일 연속 경로를 구성할 수 없습니다");
+        if (requireContinuousPath && region.Count != 1)
+            throw new InvalidOperationException("경계 여유 적용 후 발열 영역이 분리되어 단일 연속 발열사 경로를 구성할 수 없습니다");
 
-        // 레인 배치: 로컬 Y 범위에 Spacing 간격으로 균등 배치
+        // 레인 배치: 로컬 Y 범위에 CenterPitchMm 간격으로 균등 배치
         double minY = region.Min(r => r.Min(v => v.Y));
         double maxY = region.Max(r => r.Max(v => v.Y));
         double height = maxY - minY;
-        int laneCount = Math.Max(1, (int)Math.Floor((height + 1e-9) / p.Spacing));
-        double y0 = minY + (height - (laneCount - 1) * p.Spacing) / 2.0;
+        int laneCount = Math.Max(1, (int)Math.Floor((height + 1e-9) / p.CenterPitchMm));
+        double y0 = minY + (height - (laneCount - 1) * p.CenterPitchMm) / 2.0;
 
-        var segments = new List<SerpentineSegment>();
-        var routePieces = new List<SerpentineRoutePiece>();
+        var heatingRuns = new List<HeatingRunSegment>();
+        var pathSegments = new List<HeatingPathSegment>();
         var pts = new List<Vec2>();
         int traversed = 0;
         Vec2? prevEnd = null;
@@ -149,7 +149,7 @@ public static class Serpentine
 
         for (int k = 0; k < laneCount; k++)
         {
-            double y = y0 + k * p.Spacing;
+            double y = y0 + k * p.CenterPitchMm;
             List<(double X0, double X1)> intervals = ScanlineIntervals(region, y);
             if (intervals.Count == 0) continue;
 
@@ -169,31 +169,31 @@ public static class Serpentine
                     // 레인 간 연결: 반원 U턴이 원본 면(외곽−홀) 안에 머물면 그대로 사용하고,
                     // 면 밖으로 튀어나오면(모서리·끝단의 완만한 경계) 영역 경계를 따라 라우팅한다.
                     List<Vec2> arc = ArcInterior(prevEnd.Value, a, prevLtr ? +1 : -1, arcPoints).ToList();
-                    List<Vec2> connector;
-                    if (constrainConnectors
+                    List<Vec2> turnSegment;
+                    if (requireContinuousPath
                         ? ArcStaysInsideFace(region[0], null, arc, 1e-6)
                         : ArcStaysInsideFace(outerLocal, holesLocal, arc, 1e-6))
-                        connector = arc;
+                        turnSegment = arc;
                     else
-                        connector = RouteAlongBoundary(region, prevEnd.Value, a);
-                    pts.AddRange(connector);
-                    routePieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.TurnConnector, traversed, new[] { prevEnd.Value }.Concat(connector).Append(a).ToList()));
+                        turnSegment = FollowBoundary(region, prevEnd.Value, a);
+                    pts.AddRange(turnSegment);
+                    pathSegments.Add(new HeatingPathSegment(HeatingPathSegmentKind.TurnSegment, traversed, new[] { prevEnd.Value }.Concat(turnSegment).Append(a).ToList()));
                 }
                 else if (pts.Count > 0 && prevEnd.HasValue)
                 {
                     // A concave connected outline can have multiple intervals on
                     // one lane. Follow its inset boundary, never cut across the
                     // unselected notch between those intervals.
-                    List<Vec2> connector = RouteAlongBoundary(region, prevEnd.Value, a);
-                    pts.AddRange(connector);
-                    routePieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.FixedConnector, traversed, new[] { prevEnd.Value }.Concat(connector).Append(a).ToList()));
+                    List<Vec2> turnSegment = FollowBoundary(region, prevEnd.Value, a);
+                    pts.AddRange(turnSegment);
+                    pathSegments.Add(new HeatingPathSegment(HeatingPathSegmentKind.FixedJoinSegment, traversed, new[] { prevEnd.Value }.Concat(turnSegment).Append(a).ToList()));
                 }
                 // 같은 레인 내부 분절(홀)은 직선 연결 — MVP 허용 (홀 자동회피 제외 항목)
 
                 pts.Add(a);
                 pts.Add(b);
-                segments.Add(new SerpentineSegment(traversed, a, b));
-                routePieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, traversed, new[] { a, b }));
+                heatingRuns.Add(new HeatingRunSegment(traversed, a, b));
+                pathSegments.Add(new HeatingPathSegment(HeatingPathSegmentKind.HeatingRunSegment, traversed, new[] { a, b }));
                 prevEnd = b;
                 firstOnLane = false;
             }
@@ -204,23 +204,23 @@ public static class Serpentine
 
         // 원래 프레임으로 복원
         List<Vec2> pathWorld = Rotate(pts, +rad);
-        List<SerpentineSegment> segmentsWorld = segments
-            .Select(s => new SerpentineSegment(s.LaneIndex, s.Start.Rotate(rad), s.End.Rotate(rad)))
+        List<HeatingRunSegment> heatingRunsWorld = heatingRuns
+            .Select(s => new HeatingRunSegment(s.LaneIndex, s.Start.Rotate(rad), s.End.Rotate(rad)))
             .ToList();
-        List<SerpentineRoutePiece> piecesWorld = routePieces.Select(piece => piece with
+        List<HeatingPathSegment> piecesWorld = pathSegments.Select(piece => piece with
         { Points = piece.Points.Select(point => point.Rotate(rad)).ToList() }).ToList();
 
         double total = 0;
         for (int i = 1; i < pathWorld.Count; i++) total += pathWorld[i].DistanceTo(pathWorld[i - 1]);
 
-        return new SerpentineResult
+        return new HeatingPath
         {
             Path = pathWorld,
-            Segments = segmentsWorld,
+            HeatingRuns = heatingRunsWorld,
             LaneCount = traversed,
             AngleDeg = angleDeg,
             TotalLength = total,
-            RoutePieces = piecesWorld,
+            PathSegments = piecesWorld,
         };
     }
 
@@ -318,7 +318,7 @@ public static class Serpentine
 
     /// <summary>영역 경계를 따라 P→Q로 가는 내부 점들(끝점 제외). 두 경계 호 중 짧은 쪽을 따른다.
     /// P·Q가 서로 다른 링이면 빈 목록(호출부가 직선 연결).</summary>
-    private static List<Vec2> RouteAlongBoundary(IReadOnlyList<IReadOnlyList<Vec2>> region, Vec2 p, Vec2 q)
+    private static List<Vec2> FollowBoundary(IReadOnlyList<IReadOnlyList<Vec2>> region, Vec2 p, Vec2 q)
     {
         // P·Q가 모두 경계 위에 있는 링을 찾는다 (외곽 우선 = 면적 큰 순)
         IReadOnlyList<Vec2>? ring = null;

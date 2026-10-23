@@ -2,7 +2,10 @@ using Clipper2Lib;
 
 namespace HeatingMold.Core.Geometry;
 
-/// <summary>Clipper2 래퍼 — 마진 오프셋·홀 차집합.</summary>
+/// <summary>
+/// 2D 평면 발열 영역의 합집합·제외영역 차집합·경계 여유 오프셋을 수행하는 Clipper2 래퍼.
+/// 3D 표면 매핑이나 실제 CAD 면 검증은 담당하지 않는다.
+/// </summary>
 public static class RegionOps
 {
     /// <summary>Union overlapping or adjacent planar face polygons into non-overlapping region rings.</summary>
@@ -52,17 +55,17 @@ public static class RegionOps
         return a / 2.0;
     }
 
-    /// <summary>패턴 영역 = outer를 margin만큼 안쪽 오프셋 − holes를 margin만큼 바깥쪽 오프셋.</summary>
+    /// <summary>배치 영역 = outer를 경계 여유만큼 안쪽 오프셋 − holes를 여유만큼 바깥쪽 오프셋.</summary>
     public static List<List<Vec2>> BuildPatternRegion(
         IReadOnlyList<Vec2> outer,
         IReadOnlyList<IReadOnlyList<Vec2>>? holes,
-        double margin)
+        double boundaryMarginMm)
     {
         if (outer.Count < 3) throw new ArgumentException("외곽 링은 점 3개 이상 필요", nameof(outer));
 
         PathD outerPath = ToPath(EnsureOrientation(outer, ccw: true));
         PathsD subject = Clipper.InflatePaths(
-            new PathsD { outerPath }, -margin, JoinType.Miter, EndType.Polygon);
+            new PathsD { outerPath }, -boundaryMarginMm, JoinType.Miter, EndType.Polygon);
 
         if (holes is null || holes.Count == 0)
             return FromPaths(subject);
@@ -75,7 +78,7 @@ public static class RegionOps
         }
         if (clipPaths.Count == 0) return FromPaths(subject);
 
-        PathsD clip = Clipper.InflatePaths(clipPaths, margin, JoinType.Miter, EndType.Polygon);
+        PathsD clip = Clipper.InflatePaths(clipPaths, boundaryMarginMm, JoinType.Miter, EndType.Polygon);
         PathsD result = Clipper.Difference(subject, clip, FillRule.NonZero);
         return FromPaths(result);
     }

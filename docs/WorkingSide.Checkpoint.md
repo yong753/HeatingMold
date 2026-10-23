@@ -1,5 +1,7 @@
 # Working-side geometry checkpoint (milestones 1–2)
 
+> This is a historical checkpoint; its original identifiers and behavior notes are preserved. For current terminology, use [the canonical glossary](implementation/2026-10-20/TERMINOLOGY.md): `WorkingSide` means `WorkingCoordinateSystem`, and route-generation/UI wording should be read as `HeatingPath`/발열사 경로. New code and current design documents use the glossary terms.
+
 ## Contract and implementation
 
 - `WorkingSideDefinition` is immutable and reuses `ProjectionFrame`. It owns a typed context ID

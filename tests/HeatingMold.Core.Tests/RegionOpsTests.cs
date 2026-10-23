@@ -27,8 +27,8 @@ public class RegionOpsTests
     [Fact]
     public void SerpentineComponentsNeverBridgeExcludedGap()
     {
-        var paths = Serpentine.GenerateComponents(Rect(0,0,100,40), new[] { (40d, 0d, 60d, 40d) },
-            new PatternParams { Margin = 0, Spacing = 10 });
+        var paths = HeatingPathGenerator.GenerateComponents(Rect(0,0,100,40), new[] { (40d, 0d, 60d, 40d) },
+            new PatternParameters { BoundaryMarginMm = 0, CenterPitchMm = 10 });
         Assert.Equal(8, paths.Count);
         Assert.All(paths, path => Assert.Equal(2, path.Count));
         Assert.All(paths, path => Assert.True(path.Max(p => p.X) <= 40 || path.Min(p => p.X) >= 60));
