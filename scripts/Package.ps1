@@ -22,12 +22,24 @@ $requiredFiles = @(
     'HeatingMold.App.dll',
     'OccBridge.dll',
     'ijwhost.dll',
+    'resource/Mold.stp',
     'INSTALL.md',
     'runtime-manifest.json')
 foreach ($relativePath in $requiredFiles) {
     if (-not (Test-Path (Join-Path $publishRoot $relativePath) -PathType Leaf)) {
         throw "패키지에 필요한 게시 파일이 없습니다: $relativePath"
     }
+}
+
+$sourceModelPath = Join-Path $repositoryRoot 'resource/Mold.stp'
+$publishedModelPath = Join-Path $publishRoot 'resource/Mold.stp'
+if (-not (Test-Path -LiteralPath $sourceModelPath -PathType Leaf)) {
+    throw "저장소 기본 모델 파일이 없습니다: $sourceModelPath"
+}
+$sourceModelHash = (Get-FileHash -LiteralPath $sourceModelPath -Algorithm SHA256).Hash
+$publishedModelHash = (Get-FileHash -LiteralPath $publishedModelPath -Algorithm SHA256).Hash
+if ($sourceModelHash -ne $publishedModelHash) {
+    throw '게시된 Mold.stp가 저장소의 기본 모델과 다릅니다.'
 }
 
 $occtRuntimeDirectory = Join-Path $publishRoot 'native/occt/bin'

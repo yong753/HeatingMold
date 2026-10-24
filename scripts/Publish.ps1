@@ -9,7 +9,6 @@ param(
     [string]$NativeBridgeAssembly,
     [string]$OcctRoot,
     [string]$ThirdPartyRoot,
-    [string]$ResourceModelPath,
     [string]$OutputDirectory
 )
 
@@ -20,6 +19,11 @@ if (Test-Path variable:PSNativeCommandUseErrorActionPreference) {
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $applicationProject = Join-Path $repositoryRoot 'src/HeatingMold.App/HeatingMold.App.csproj'
+$resourceModelPath = Join-Path $repositoryRoot 'resource/Mold.stp'
+if (-not (Test-Path -LiteralPath $resourceModelPath -PathType Leaf)) {
+    throw "배포에 필요한 기본 모델 파일이 없습니다: $resourceModelPath"
+}
+
 $resolvedBridge = if ([string]::IsNullOrWhiteSpace($NativeBridgeAssembly)) {
     Join-Path $repositoryRoot 'x64/Release/OccBridge.dll'
 } else {
@@ -162,23 +166,9 @@ Get-ChildItem -LiteralPath $resolvedThirdPartyRoot -Filter '*.dll' -File -Recurs
     Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $destinationDirectory $_.Name)
 }
 
-if ([string]::IsNullOrWhiteSpace($ResourceModelPath)) {
-    $defaultModelPath = Join-Path $repositoryRoot 'resource/Mold.stp'
-    if (Test-Path $defaultModelPath -PathType Leaf) {
-        $ResourceModelPath = $defaultModelPath
-    }
-} else {
-    $ResourceModelPath = [System.IO.Path]::GetFullPath($ResourceModelPath)
-}
-if (-not [string]::IsNullOrWhiteSpace($ResourceModelPath)) {
-    if (-not (Test-Path $ResourceModelPath -PathType Leaf)) {
-        throw "지정한 기본 모델 파일이 없습니다: $ResourceModelPath"
-    }
-
-    $resourceDirectory = Join-Path $publishRoot 'resource'
-    New-Item -ItemType Directory -Path $resourceDirectory -Force | Out-Null
-    Copy-Item -LiteralPath $ResourceModelPath -Destination (Join-Path $resourceDirectory 'Mold.stp')
-}
+$resourceDirectory = Join-Path $publishRoot 'resource'
+New-Item -ItemType Directory -Path $resourceDirectory -Force | Out-Null
+Copy-Item -LiteralPath $resourceModelPath -Destination (Join-Path $resourceDirectory 'Mold.stp')
 
 $installationGuide = @'
 # HeatingMold 설치 및 실행
