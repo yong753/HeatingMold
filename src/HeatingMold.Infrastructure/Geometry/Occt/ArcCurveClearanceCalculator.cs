@@ -95,11 +95,29 @@ internal static class ArcCurveClearanceCalculator
             maximumAngleMagnitudeRad = Math.Max(maximumAngleMagnitudeRad, angleMagnitudeRad);
         }
 
-        if (HasDeclaredArcJoint(curves, localCurvePairs, tolerances.ConnectionToleranceMm))
+        ArcJointContactStatus jointStatus = ArcJointContactValidator.Validate(
+            curves,
+            localCurvePairs,
+            tolerances.ConnectionToleranceMm,
+            cancellationToken);
+        if (jointStatus != ArcJointContactStatus.Certified)
         {
+            if (jointStatus == ArcJointContactStatus.Cancelled)
+                return Unresolved("OperationCancelled", "원호 연결 접점 검사가 취소되었습니다.");
+
+            string diagnostic = jointStatus switch
+            {
+                ArcJointContactStatus.AdditionalIntersection =>
+                    "선언된 원호 연결 끝점 밖에서 추가 교차가 발견되어 간격을 확정하지 않습니다.",
+                ArcJointContactStatus.UnsupportedCurvePair =>
+                    "이 원호 연결 곡선 조합은 접점 주변의 추가 교차를 관리형으로 인증하지 않습니다.",
+                ArcJointContactStatus.BudgetExceeded =>
+                    "원호 연결 접점 검사 선분 한도를 넘어 간격을 확정하지 않습니다.",
+                _ => "원호 연결 접점의 추가 교차 여부를 수치적으로 확정할 수 없습니다."
+            };
             return Unresolved(
                 "CurvedEndpointContactNotCertified",
-                "원호가 포함된 연결 끝점은 관리형 근사에서 국소 접촉과 추가 교차를 구분하지 않습니다.");
+                diagnostic);
         }
 
         double approximationErrorMm = 2 * maximumChordDeviationMm +

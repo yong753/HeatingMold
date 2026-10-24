@@ -1230,12 +1230,12 @@ public sealed class OcctGeometryQueriesTests
         Assert.Contains(result.Issues, issue => issue.Code == "ArcApproximationBudgetExceeded");
     }
 
-    /// <summary>원호가 포함된 선언 연결 끝점은 추가 접촉을 배제하지 못해 미확정으로 둡니다.</summary>
+    /// <summary>원호와 직선의 선언된 단일 접점을 제외하고 근사 오차 안에서 간격을 계산합니다.</summary>
     [Fact]
-    public void MeasureClearance_LeavesDeclaredArcJointUnresolved()
+    public void MeasureClearance_MeasuresDeclaredArcAndLineJointWithoutAdditionalIntersection()
     {
         CurveGeometrySnapshot arc = CreateArc(2, 0, Math.PI / 2);
-        CurveGeometrySnapshot line = CreateLine(arc.End, arc.End + new Vec3(1, 0, 0));
+        CurveGeometrySnapshot line = CreateLine(arc.End, arc.End + new Vec3(0, 1, 0));
 
         GeometryQueryResult<ClearanceMeasurement> result = MeasureClearance(
             [arc, line],
@@ -1244,6 +1244,48 @@ public sealed class OcctGeometryQueriesTests
             [new CurveSegmentAdjacency(
                 arc.HeatingPathSegmentId!.Value,
                 line.HeatingPathSegmentId!.Value)]);
+
+        Assert.Equal(GeometryQueryStatus.Success, result.Status);
+        Assert.True(result.Value!.IsComplete);
+        Assert.True(result.Value.ErrorBoundMm.Value <= GeometryToleranceProfile.Initial.ConnectionToleranceMm);
+    }
+
+    /// <summary>접점 주변의 작은 원호-직선 루프를 추가 교차로 검출해 성공으로 넘기지 않습니다.</summary>
+    [Fact]
+    public void MeasureClearance_LeavesTinyLoopAtDeclaredArcJointUnresolved()
+    {
+        CurveGeometrySnapshot arc = CreateArc(2, 0, Math.PI / 2);
+        double secondIntersectionDistanceMm = GeometryToleranceProfile.Initial.ConnectionToleranceMm * 2.5;
+        CurveGeometrySnapshot line = CreateLine(
+            arc.End,
+            arc.End + new Vec3(1, -secondIntersectionDistanceMm / 4, 0));
+
+        GeometryQueryResult<ClearanceMeasurement> result = MeasureClearance(
+            [arc, line],
+            wireDiameterMm: 0.4,
+            localAdjacencies:
+            [new CurveSegmentAdjacency(
+                arc.HeatingPathSegmentId!.Value,
+                line.HeatingPathSegmentId!.Value)]);
+
+        Assert.Equal(GeometryQueryStatus.Unresolved, result.Status);
+        Assert.Contains(result.Issues, issue => issue.Code == "CurvedEndpointContactNotCertified");
+    }
+
+    /// <summary>원호끼리 선언된 연결은 관리형 교차 검사 범위 밖이므로 미확정으로 둡니다.</summary>
+    [Fact]
+    public void MeasureClearance_LeavesDeclaredArcToArcJointUnresolved()
+    {
+        CurveGeometrySnapshot first = CreateArc(2, 0, Math.PI / 2);
+        CurveGeometrySnapshot second = CreateArc(2, Math.PI / 2, Math.PI);
+
+        GeometryQueryResult<ClearanceMeasurement> result = MeasureClearance(
+            [first, second],
+            wireDiameterMm: 0.4,
+            localAdjacencies:
+            [new CurveSegmentAdjacency(
+                first.HeatingPathSegmentId!.Value,
+                second.HeatingPathSegmentId!.Value)]);
 
         Assert.Equal(GeometryQueryStatus.Unresolved, result.Status);
         Assert.Contains(result.Issues, issue => issue.Code == "CurvedEndpointContactNotCertified");
@@ -1409,6 +1451,66 @@ public sealed class OcctGeometryQueriesTests
         Assert.Equal(GeometryQueryStatus.Success, result.Status);
         Assert.InRange(result.Value!.MinimumCenterlineDistanceMm.Value, 7.9, 8.1);
         Assert.Equal(1, bridge.ClearanceCallCount);
+    }
+
+    /// <summary>Native가 미확정한 원호-직선 연결을 관리형 교차 검사로 인증하면 fallback 결과를 사용합니다.</summary>
+    [Fact]
+    public void MeasureClearance_UsesManagedFallbackWhenNativeLeavesDeclaredArcLineJointUnresolved()
+    {
+        CurveGeometrySnapshot arc = CreateArc(2, 0, Math.PI / 2);
+        CurveGeometrySnapshot line = CreateLine(arc.End, arc.End + new Vec3(0, 1, 0));
+        var bridge = new NativeClearanceFakeBridge
+        {
+            ClearanceResult = new OcctCurveClearanceQueryResult(
+                OcctCurveClearanceStatus.Unresolved,
+                diagnostic: "Native 원호 접점의 추가 교차를 인증하지 못했습니다.")
+        };
+
+        GeometryQueryResult<ClearanceMeasurement> result = CreateQueries(bridge).MeasureClearance(
+            [arc, line],
+            new LengthMm(0.4),
+            new LengthMm(0),
+            GeometryToleranceProfile.Initial,
+            [new CurveSegmentAdjacency(
+                arc.HeatingPathSegmentId!.Value,
+                line.HeatingPathSegmentId!.Value)]);
+
+        Assert.Equal(GeometryQueryStatus.Success, result.Status);
+        Assert.True(result.Value!.IsComplete);
+        Assert.True(result.Value.ErrorBoundMm.Value <= GeometryToleranceProfile.Initial.ConnectionToleranceMm);
+        Assert.Equal(1, bridge.ClearanceCallCount);
+    }
+
+    /// <summary>관리형 원호 fallback도 작은 추가 교차를 찾으면 Native 미확정 사유를 보존합니다.</summary>
+    [Fact]
+    public void MeasureClearance_PreservesNativeUnresolvedReasonWhenArcFallbackFindsTinyLoop()
+    {
+        CurveGeometrySnapshot arc = CreateArc(2, 0, Math.PI / 2);
+        double secondIntersectionDistanceMm = GeometryToleranceProfile.Initial.ConnectionToleranceMm * 2.5;
+        CurveGeometrySnapshot line = CreateLine(
+            arc.End,
+            arc.End + new Vec3(1, -secondIntersectionDistanceMm / 4, 0));
+        var bridge = new NativeClearanceFakeBridge
+        {
+            ClearanceResult = new OcctCurveClearanceQueryResult(
+                OcctCurveClearanceStatus.Unresolved,
+                diagnostic: "Native 원호 접점 진단을 유지합니다.")
+        };
+
+        GeometryQueryResult<ClearanceMeasurement> result = CreateQueries(bridge).MeasureClearance(
+            [arc, line],
+            new LengthMm(0.4),
+            new LengthMm(0),
+            GeometryToleranceProfile.Initial,
+            [new CurveSegmentAdjacency(
+                arc.HeatingPathSegmentId!.Value,
+                line.HeatingPathSegmentId!.Value)]);
+
+        Assert.Equal(GeometryQueryStatus.Unresolved, result.Status);
+        Assert.Null(result.Value);
+        Assert.Contains(result.Issues, issue => issue.Code == "OcctClearanceUnresolved");
+        Assert.Contains(result.Issues.SelectMany(issue => issue.Evidence),
+            evidence => evidence.Contains("Native 원호 접점 진단", StringComparison.Ordinal));
     }
 
     /// <summary>관리형 근사가 B-spline 지원 범위를 벗어나면 Native 미확정 사유를 보존합니다.</summary>
