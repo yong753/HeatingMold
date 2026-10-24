@@ -955,7 +955,7 @@ public:
     /// <summary>현재 셰이프를 축측(1,1,1) 방향으로 HLR 투영 — 가시/은선 엣지 수 + 소요 ms</summary>
     /// <summary>전체 형상을 N 방향으로 HLR 투영하고 평면 X/Y 좌표의 폴리라인으로 반환합니다.</summary>
     static array<HlrPolyline^>^ HlrEdges(double nx, double ny, double nz,
-                                         double xx, double xy, double xz, bool hiddenToo);
+                                         double xx, double xy, double xz, bool includeHidden);
 };
 
 }}

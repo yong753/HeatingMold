@@ -750,9 +750,9 @@ int Bridge::SelectFace(int x, int y, bool toggle)
 }
 
 array<HlrPolyline^>^ Bridge::HlrEdges(double nx, double ny, double nz,
-                                     double xx, double xy, double xz, bool hiddenToo)
+                                     double xx, double xy, double xz, bool includeHidden)
 {
-    const std::vector<NativeHlrLine> lines = RunHlrGeometryNative(nx, ny, nz, xx, xy, xz, hiddenToo);
+    const std::vector<NativeHlrLine> lines = RunHlrGeometryNative(nx, ny, nz, xx, xy, xz, includeHidden);
     List<HlrPolyline^>^ result = gcnew List<HlrPolyline^>();
     for (size_t i = 0; i < lines.size(); ++i)
     {
