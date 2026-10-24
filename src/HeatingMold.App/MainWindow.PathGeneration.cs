@@ -114,8 +114,14 @@ public partial class MainWindow
     /// <summary>선택한 영역과 좌표계가 현재 상태인지 확인한 뒤 클릭을 기다립니다.</summary>
     private void BeginSurfaceAnchorPick(SurfaceAnchorTarget target)
     {
+        ClearPendingSurfaceAnchorPick();
+        if (CircuitSplitModeBox.IsChecked == true)
+            Viewport.CircuitSplitMode = true;
         if (!WorkingGenerationReady())
+        {
+            _mainWindowViewModel.PathAnchors.SetPickInstruction(StatusText.Text);
             return;
+        }
 
         CircuitTopologyEditor.PendingSurfaceAnchorEndpointKey = target == SurfaceAnchorTarget.CircuitEndpoint
             ? GetSelectedCircuitTopologyEndpoint()?.Key
@@ -133,15 +139,24 @@ public partial class MainWindow
                 SurfaceAnchorTarget.CircuitEndpoint => "표면 위치를 입력할 신규 회로 끝점을 선택하세요.",
                 _ => "먼저 경로를 생성할 발열 영역을 선택하세요."
             };
+            _mainWindowViewModel.PathAnchors.SetPickInstruction(StatusText.Text);
             return;
         }
 
         WorkingCoordinateSystem coordinateSystem = WorkingCoordinates.Session.Confirmed;
+        if (!Viewport.IsReady)
+        {
+            CircuitTopologyEditor.PendingSurfaceAnchorEndpointKey = null;
+            SetAnchorPickMessage("3D 뷰포트가 준비되지 않아 앵커를 지정할 수 없습니다.");
+            return;
+        }
+
         if (coordinateSystem is null ||
             !Bridge.ReturnToWorkingFront(coordinateSystem.Id.Value, coordinateSystem.Revision.Value))
         {
             CircuitTopologyEditor.PendingSurfaceAnchorEndpointKey = null;
             StatusText.Text = "표면 앵커를 지정할 작업 화면을 준비하지 못했습니다.";
+            _mainWindowViewModel.PathAnchors.SetPickInstruction(StatusText.Text);
             return;
         }
 
@@ -176,6 +191,13 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>앵커 입력 결과나 준비 실패를 상태 표시줄과 경로 생성 안내에 함께 표시합니다.</summary>
+    private void SetAnchorPickMessage(string message)
+    {
+        StatusText.Text = message;
+        _mainWindowViewModel.PathAnchors.SetPickInstruction(message);
+    }
+
     /// <summary>뷰포트 선택을 검증해 표면 앵커 입력 대상에 보관합니다.</summary>
     private void CompleteSurfaceAnchorPick(
         SurfaceAnchorTarget target,
@@ -184,7 +206,10 @@ public partial class MainWindow
         int y)
     {
         if (!WorkingGenerationReady())
+        {
+            _mainWindowViewModel.PathAnchors.SetPickInstruction(StatusText.Text);
             return;
+        }
 
         WorkingCoordinateSystem coordinateSystem = WorkingCoordinates.Session.Confirmed;
         SessionSnapshot snapshot = _projectSession.Current;
@@ -192,7 +217,7 @@ public partial class MainWindow
         if (region is null || coordinateSystem is null || snapshot.Geometry is not { } geometry ||
             coordinateSystem.Revision != geometry.ModelRevision)
         {
-            StatusText.Text = "영역 또는 작업 좌표계가 바뀌었습니다. 앵커를 다시 지정하세요.";
+            SetAnchorPickMessage("영역 또는 작업 좌표계가 바뀌었습니다. 앵커를 다시 지정하세요.");
             return;
         }
 
@@ -210,7 +235,7 @@ public partial class MainWindow
             projectedPoint.Length < 3 ||
             projectedPoint.Take(3).Any(value => !double.IsFinite(value)))
         {
-            StatusText.Text = "화면 위치를 작업 평면에 투영하지 못했습니다.";
+            SetAnchorPickMessage("화면 위치를 작업 평면에 투영하지 못했습니다.");
             return;
         }
 
@@ -219,7 +244,7 @@ public partial class MainWindow
         IReadOnlyDictionary<FaceRefId, int> nativeFaceIndices = _faceReferenceIndex.NativeIndicesByReference;
         if (region.FaceReferences.Any(faceReferenceId => !nativeFaceIndices.ContainsKey(faceReferenceId)))
         {
-            StatusText.Text = "선택 영역의 Face 참조를 현재 모델의 면 번호에 연결하지 못했습니다.";
+            SetAnchorPickMessage("선택 영역의 Face 참조를 현재 모델의 면 번호에 연결하지 못했습니다.");
             return;
         }
 
@@ -237,11 +262,11 @@ public partial class MainWindow
                 string diagnostic = query.Issues.Count > 0
                     ? FormatIssues(query.Issues)
                     : "선택한 발열 영역의 표면이 아닙니다.";
-                StatusText.Text = string.Format(
+                SetAnchorPickMessage(string.Format(
                     CultureInfo.CurrentCulture,
                     "{0} 표면을 확인하지 못했습니다: {1}",
                     GetAnchorLabel(target),
-                    diagnostic);
+                    diagnostic));
                 return;
             }
 
@@ -251,11 +276,11 @@ public partial class MainWindow
                 workingUv,
                 hit.ModelPoint);
             SetSurfaceAnchor(target, anchor, endpointKey);
-            StatusText.Text = string.Concat(GetAnchorLabel(target), " 앵커를 저장했습니다.");
+            SetAnchorPickMessage(string.Concat(GetAnchorLabel(target), " 앵커를 지정했습니다."));
         }
         catch (Exception exception)
         {
-            StatusText.Text = string.Concat("표면 앵커 질의에 실패했습니다: ", exception.Message);
+            SetAnchorPickMessage(string.Concat("표면 앵커 질의에 실패했습니다: ", exception.Message));
         }
     }
 

@@ -20,6 +20,7 @@ internal sealed class HeatingPathAnchorViewModel : INotifyPropertyChanged
     private string _heatingEndStatusText = "끝 앵커: 미지정";
     private string _startMoldExitStatusText = "시작 인출: 미지정";
     private string _endMoldExitStatusText = "끝 인출: 미지정";
+    private string _pickInstructionText = "앵커 버튼을 누른 뒤 3D 모델 표면을 클릭하세요.";
     private SurfaceAnchorTarget? _pendingSurfaceAnchorTarget;
 
     /// <summary>발열 경로 시작 위치를 고정한 표면 앵커입니다.</summary>
@@ -45,6 +46,9 @@ internal sealed class HeatingPathAnchorViewModel : INotifyPropertyChanged
 
     /// <summary>끝부 인출 앵커 선택 상태를 화면에 표시합니다.</summary>
     public string EndMoldExitStatusText => _endMoldExitStatusText;
+
+    /// <summary>현재 앵커 입력 단계나 준비 상태를 경로 생성 화면에 안내합니다.</summary>
+    public string PickInstructionText => _pickInstructionText;
 
     /// <summary>뷰포트에서 다음으로 확정할 표면 앵커의 대상입니다.</summary>
     public SurfaceAnchorTarget? PendingSurfaceAnchorTarget => _pendingSurfaceAnchorTarget;
@@ -98,6 +102,9 @@ internal sealed class HeatingPathAnchorViewModel : INotifyPropertyChanged
             throw new ArgumentOutOfRangeException(nameof(target));
 
         _pendingSurfaceAnchorTarget = target;
+        _pickInstructionText = GetPickInstruction(target);
+        OnPropertyChanged(nameof(PendingSurfaceAnchorTarget));
+        OnPropertyChanged(nameof(PickInstructionText));
     }
 
     /// <summary>대기 중인 앵커 입력 대상을 가져오고 대기 상태를 끝냅니다.</summary>
@@ -111,11 +118,33 @@ internal sealed class HeatingPathAnchorViewModel : INotifyPropertyChanged
 
         target = pendingTarget;
         _pendingSurfaceAnchorTarget = null;
+        _pickInstructionText = "앵커 버튼을 누른 뒤 3D 모델 표면을 클릭하세요.";
+        OnPropertyChanged(nameof(PendingSurfaceAnchorTarget));
+        OnPropertyChanged(nameof(PickInstructionText));
         return true;
     }
 
     /// <summary>진행 중인 표면 앵커 입력 대기를 취소합니다.</summary>
-    public void CancelPicking() => _pendingSurfaceAnchorTarget = null;
+    public void CancelPicking()
+    {
+        _pendingSurfaceAnchorTarget = null;
+        _pickInstructionText = "앵커 버튼을 누른 뒤 3D 모델 표면을 클릭하세요.";
+        OnPropertyChanged(nameof(PendingSurfaceAnchorTarget));
+        OnPropertyChanged(nameof(PickInstructionText));
+    }
+
+    /// <summary>앵커 입력을 시작할 수 없는 이유를 화면에 표시합니다.</summary>
+    public void SetPickInstruction(string instruction)
+    {
+        if (string.IsNullOrWhiteSpace(instruction))
+            throw new ArgumentException("앵커 입력 안내는 비어 있을 수 없습니다.", nameof(instruction));
+
+        if (_pickInstructionText == instruction)
+            return;
+
+        _pickInstructionText = instruction;
+        OnPropertyChanged(nameof(PickInstructionText));
+    }
 
     /// <summary>영역이 바뀌었을 때 네 앵커와 표시 상태를 함께 초기화합니다.</summary>
     public void Clear()
@@ -166,6 +195,17 @@ internal sealed class HeatingPathAnchorViewModel : INotifyPropertyChanged
             anchor.WorkingUv.X,
             anchor.WorkingUv.Y);
     }
+
+    private static string GetPickInstruction(SurfaceAnchorTarget target) => target switch
+    {
+        SurfaceAnchorTarget.HeatingStart => "시작 앵커 지정 중 · 3D 모델에서 발열 경로 시작점을 클릭하세요.",
+        SurfaceAnchorTarget.HeatingEnd => "끝 앵커 지정 중 · 3D 모델에서 발열 경로 끝점을 클릭하세요.",
+        SurfaceAnchorTarget.StartMoldExit => "시작부 인출 앵커 지정 중 · 3D 모델에서 위치를 클릭하세요.",
+        SurfaceAnchorTarget.EndMoldExit => "끝부 인출 앵커 지정 중 · 3D 모델에서 위치를 클릭하세요.",
+        SurfaceAnchorTarget.ControlPointTarget => "제어점 위치 지정 중 · 3D 모델 표면을 클릭하세요.",
+        SurfaceAnchorTarget.CircuitEndpoint => "회로 연결 앵커 지정 중 · 3D 모델 표면을 클릭하세요.",
+        _ => throw new ArgumentOutOfRangeException(nameof(target))
+    };
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));

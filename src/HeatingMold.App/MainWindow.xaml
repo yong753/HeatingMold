@@ -84,11 +84,14 @@
                     <TextBlock x:Name="WorkingCoordinateSystemText" Text="{Binding WorkingCoordinates.DisplayStatus}" TextWrapping="Wrap"/>
                     <Separator Margin="0,8,0,6"/>
                     <TextBlock Text="경로 생성 입력" FontWeight="Bold"/>
-                    <TextBlock Text="확정할 발열 영역" Margin="0,5,0,2"/>
+                    <TextBlock Text="경로 생성 대상 발열 영역" Margin="0,5,0,2"/>
                     <ComboBox x:Name="HeatingRegionCombo" DisplayMemberPath="DisplayName"
                               SelectionChanged="HeatingRegion_SelectionChanged"/>
-                    <TextBlock Text="작업 화면을 클릭해 표면 앵커를 지정하세요." TextWrapping="Wrap"
-                               FontSize="11" Margin="0,5,0,4"/>
+                    <TextBlock Text="영역 설정에서 확정해 둔 영역 중 이번 경로를 생성할 대상을 고릅니다."
+                               TextWrapping="Wrap" FontSize="11" Margin="0,5,0,4"/>
+                    <TextBlock Text="{Binding PathAnchors.PickInstructionText}"
+                               TextWrapping="Wrap" FontSize="11" FontWeight="SemiBold"
+                               Background="#FFFFE8B3" Padding="6" Margin="0,2,0,4"/>
                     <Button Content="발열 경로 시작 앵커 지정" Click="PickHeatingStartAnchor_Click" Margin="0,2"/>
                     <TextBlock Text="{Binding PathAnchors.HeatingStartStatusText}"
                                TextWrapping="Wrap" FontSize="11"/>
