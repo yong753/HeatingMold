@@ -81,7 +81,8 @@ bool MeasurePointDistanceAlongEdgeNative(
     const double startParameter = edge.Orientation() == TopAbs_REVERSED ? lastParameter : firstParameter;
     for (int solutionIndex = 1; solutionIndex <= projection.NbSolution(); ++solutionIndex)
     {
-        const double parameter = projection.ParOnEdgeS1(solutionIndex);
+        double parameter = 0.0;
+        projection.ParOnEdgeS1(solutionIndex, parameter);
         if (!std::isfinite(parameter) || parameter < std::min(firstParameter, lastParameter) - Precision::PConfusion() ||
             parameter > std::max(firstParameter, lastParameter) + Precision::PConfusion())
         {

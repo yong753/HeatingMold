@@ -159,6 +159,7 @@ namespace
     using HeatingMoldNative::NativeDocumentSession;
     using HeatingMoldNative::HeatingPathSegmentOverlay;
     using HeatingMoldNative::PreparedPathSegmentGeometry;
+    using HeatingMoldNative::StagedPreparedPathSegmentGeometry;
     using HeatingMoldNative::StagedWorkingPolyline;
     using HeatingMoldNative::WorkingCoordinateSystemPresentationNative;
     using HeatingMoldNative::WorkingNative;

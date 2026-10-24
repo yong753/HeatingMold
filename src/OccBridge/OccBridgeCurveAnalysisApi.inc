@@ -22,7 +22,11 @@ CurveClearanceResultData^ Bridge::MeasureWorkingCurveClearance(
         for each (CurveDefinitionData^ curve in curves)
             nativeCurves.push_back(ReadNativeCurveDefinition(curve));
         for (int index = 0; index < localCurveIndexPairs->Length; index += 2)
-            nativeLocalCurvePairs.emplace_back(localCurveIndexPairs[index], localCurveIndexPairs[index + 1]);
+        {
+            const int firstCurveIndex = localCurveIndexPairs[index];
+            const int secondCurveIndex = localCurveIndexPairs[index + 1];
+            nativeLocalCurvePairs.emplace_back(firstCurveIndex, secondCurveIndex);
+        }
 
         const NativeCurveClearanceMeasurement measured = MeasureCurveClearanceNative(
             *g_documentSession,
@@ -93,7 +97,11 @@ CurveClearanceResultData^ Bridge::MeasurePreparedCandidateWorkingCurveClearance(
         for each (CurveDefinitionData^ curve in curves)
             nativeCurves.push_back(ReadNativeCurveDefinition(curve));
         for (int index = 0; index < localCurveIndexPairs->Length; index += 2)
-            nativeLocalCurvePairs.emplace_back(localCurveIndexPairs[index], localCurveIndexPairs[index + 1]);
+        {
+            const int firstCurveIndex = localCurveIndexPairs[index];
+            const int secondCurveIndex = localCurveIndexPairs[index + 1];
+            nativeLocalCurvePairs.emplace_back(firstCurveIndex, secondCurveIndex);
+        }
 
         const NativeCurveClearanceMeasurement measured = MeasureCurveClearanceNative(
             *candidate->second.document,
