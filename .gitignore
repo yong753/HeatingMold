@@ -1,5 +1,6 @@
 # Visual Studio / MSBuild
 .vs/
+.dotnet-cli/
 [Bb]in/
 [Oo]bj/
 [Dd]ebug/

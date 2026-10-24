@@ -1,0 +1,88 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>HeatingMold.App.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <ProjectReference Include="..\..\src\HeatingMold.Core\HeatingMold.Core.csproj" />
+    <ProjectReference Include="..\..\src\HeatingMold.Application\HeatingMold.Application.csproj" />
+    <ProjectReference Include="..\..\src\HeatingMold.Infrastructure\HeatingMold.Infrastructure.csproj" />
+    <Compile Include="..\..\src\HeatingMold.App\MainWindow.ModelLoading.cs" Link="MainWindow.ModelLoading.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\MainWindow.ProjectFiles.cs" Link="MainWindow.ProjectFiles.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\MainWindow.DesignExport.cs" Link="MainWindow.DesignExport.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\MainWindow.OrthographicExport.cs" Link="MainWindow.OrthographicExport.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\MainWindow.RegionSelection.cs" Link="MainWindow.RegionSelection.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\MainWindow.FacePicking.cs" Link="MainWindow.FacePicking.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\MainWindow.WorkingCoordinateSystem.cs" Link="MainWindow.WorkingCoordinateSystem.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\MainWindow.PathGeneration.cs" Link="MainWindow.PathGeneration.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\MainWindow.RegionAdjustment.cs" Link="MainWindow.RegionAdjustment.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\MainWindow.ControlPointEditing.cs" Link="MainWindow.ControlPointEditing.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\MainWindow.TurnSegmentCurveEditing.cs" Link="MainWindow.TurnSegmentCurveEditing.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\Geometry\ControlPointPreviewCurveSampler.cs" Link="ControlPointPreviewCurveSampler.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\Geometry\LatestControlPointPreviewQueue.cs" Link="LatestControlPointPreviewQueue.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\Presentation\RegionCanvasProjection.cs" Link="RegionCanvasProjection.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\CircuitLengthTablePresentation.cs" Link="CircuitLengthTablePresentation.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\MainWindow.ConnectionPathEditing.cs" Link="MainWindow.ConnectionPathEditing.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\MainWindow.CircuitTopologyEditing.cs" Link="MainWindow.CircuitTopologyEditing.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\MainWindow.ElectricalResults.cs" Link="MainWindow.ElectricalResults.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\MainWindow.ElectricalSpecification.cs" Link="MainWindow.ElectricalSpecification.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewModels\ElectricalSpecificationViewModel.cs" Link="ElectricalSpecificationViewModel.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewModels\HeatingPathPlacementInputViewModel.cs" Link="HeatingPathPlacementInputViewModel.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewModels\HeatingPathCircuitInputViewModel.cs" Link="HeatingPathCircuitInputViewModel.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewModels\HeatingPathAnchorViewModel.cs" Link="HeatingPathAnchorViewModel.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewModels\HeatingPathRegionSelectionViewModel.cs" Link="HeatingPathRegionSelectionViewModel.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewModels\MainWindowViewModel.cs" Link="MainWindowViewModel.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewModels\MainWindowSessionPresentationViewModel.cs" Link="MainWindowSessionPresentationViewModel.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewModels\WorkingCoordinateSystemViewModel.cs" Link="WorkingCoordinateSystemViewModel.cs" />
+    <None Include="..\..\src\HeatingMold.App\MainWindow.xaml" Link="MainWindow.xaml" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewModels\RelayCommand.cs" Link="RelayCommand.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewModels\WireSpecificationInputsViewModel.cs" Link="WireSpecificationInputsViewModel.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewModels\ViewerInputMode.cs" Link="ViewerInputMode.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewModels\CircuitTopologyEditorViewModel.cs" Link="CircuitTopologyEditorViewModel.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewModels\ConnectionPathEditorViewModel.cs" Link="ConnectionPathEditorViewModel.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewModels\ControlPointEditorViewModel.cs" Link="ControlPointEditorViewModel.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewModels\TurnSegmentCurveEditorViewModel.cs" Link="TurnSegmentCurveEditorViewModel.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewModels\RegionSelectionViewModel.cs" Link="RegionSelectionViewModel.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\Services\UserMessageFormatter.cs" Link="UserMessageFormatter.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ElectricalResultsPresentation.cs" Link="ElectricalResultsPresentation.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ClearanceIssueLocationPresentation.cs" Link="ClearanceIssueLocationPresentation.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\CenterPitchQualityPresentation.cs" Link="CenterPitchQualityPresentation.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\HeatingPathRegenerationPresentation.cs" Link="HeatingPathRegenerationPresentation.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\OcctEnv.cs" Link="OcctEnv.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\OccViewport.cs" Link="OccViewport.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ViewerWindowAttachment.cs" Link="ViewerWindowAttachment.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\App.xaml.cs" Link="App.xaml.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\MainWindow.xaml.cs" Link="MainWindow.xaml.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\AppCompositionRoot.cs" Link="AppCompositionRoot.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\ApplicationEventAdapter.cs" Link="ApplicationEventAdapter.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\Geometry\Occt\OcctGeometryWorkspace.cs" Link="OcctGeometryWorkspace.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\Geometry\Occt\GeometryQueriesUnavailable.cs" Link="GeometryQueriesUnavailable.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\Geometry\WorkingPathProjectionCoordinator.cs" Link="WorkingPathProjectionCoordinator.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\Geometry\Occt\CurveDefinitionBridgeAdapter.cs" Link="CurveDefinitionBridgeAdapter.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\Geometry\Occt\FaceFeatureBridgeAdapter.cs" Link="FaceFeatureBridgeAdapter.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\Geometry\Occt\FaceReferenceIndex.cs" Link="FaceReferenceIndex.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\Geometry\Occt\PreparedCandidateFirstHitBridgeAdapter.cs" Link="PreparedCandidateFirstHitBridgeAdapter.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\Geometry\Occt\PreparedCandidateWorkingSurfaceSession.cs" Link="PreparedCandidateWorkingSurfaceSession.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\Geometry\Occt\PreparedCandidateStepSession.cs" Link="PreparedCandidateStepSession.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\Geometry\Occt\PreparedCandidateWorkingPathProjectionAdapter.cs" Link="PreparedCandidateWorkingPathProjectionAdapter.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\Geometry\Occt\WorkingSurfaceBridgeAdapter.cs" Link="WorkingSurfaceBridgeAdapter.cs" />
+    <Compile Include="..\..\src\HeatingMold.App\Geometry\Occt\BridgeWorkingPathProjectionAdapter.cs" Link="BridgeWorkingPathProjectionAdapter.cs" />
+  </ItemGroup>
+</Project>

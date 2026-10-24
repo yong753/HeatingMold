@@ -5,7 +5,7 @@
 
 작성일: 2026-10-20  
 기준: [상위 구현계획](../../Implementation.Plan.2026-10-20.md)  
-상태: 구현 작업을 인계하기 위한 설계 문서. 아래 신규 파일·타입·API·검사는 구현 예정이며, 현재 구현 완료를 뜻하지 않는다.
+상태: 전체 목표와 인계 기준을 설명하는 설계 문서. 일부 프로젝트·계약·테스트 이전을 시작했으며, 현재 진행 상태와 검증 결과는 [실행 계획](08.Refactoring.Execution.Plan.md)에 기록한다.
 
 ## 1. 문서 사용 순서
 
@@ -21,11 +21,13 @@
 | [06. App](06.HeatingMold.App.md) | WPF, 입력 모드, 뷰어, 조립, 빌드·배포 | Application 유스케이스, Viewer API |
 | [07. OccBridge](07.OccBridge.md) | 문서 소유 네이티브 상태, 기하·삽입 깊이, AIS, STEP writer | Core와 일치하는 브리지 DTO 의미 |
 
+2026-10-24 현재 소스와 실행 환경을 대조한 구현 진행과 검증 결과는 [레거시 기반 리팩토링 실행 계획](08.Refactoring.Execution.Plan.md)에 정리했다. 선택 Face 영역 확정, 프로젝트 저장·출력, 회로 topology·연결 경로·제어점 편집, 회전 다중선 내부 곡선 편집이 Application 후보 확정과 App preview에 연결됐다. 영역 투영, 회로 길이 표 집계, topology 연결 입력·여유·회전 목록·survivor 선택 상태, 무변경 판정의 Application 이전, Face 선택 이벤트와 입력 취소·주요 편집 상태도 전용 모듈로 분리했다. 작업 좌표계 세션·축 선택·안내 문구와 인덱스↔법선 변환은 `WorkingCoordinateSystemViewModel`로, 세션 변경 갱신 보류와 복구 진단은 `MainWindowSessionPresentationViewModel`로 옮겼다. XAML 양방향 바인딩·이벤트 처리기 연결을 검사하는 회귀도 추가했다. 직접 작성한 `src`·`tests` 코드의 XML `<summary>`는 한글로 유지하고, `scripts/Verify.ps1`이 매 검증 전에 자동 검사한다. 최신 App 199개와 Managed Release/x64 전체 631개(Core 41, Design 108, Electrical 22, Application 75, Infrastructure 186, App 199)는 한글 summary 3,995개 검사와 함께 `x64/Verification/20261024-134422-360fef23/run.json`에서 통과했다. Native clearance는 비주기 1차 spline과 비공선 단일 구간 2차 spline의 exact 거리 코드 및 회귀 입력까지 추가했지만 Native 실행은 C++/CLI용 `MSBuild.exe`가 없어 아직 검증되지 않았다(`x64/Verification/20261024-111252-6d2c8611/run.json`). 실제 `Mold.stp` GEO-00 계측, G4/G5, Native·실제 WPF 검증, 연속 B-rep 깊이 극값과 실제 Mold 면적 수렴은 미완료다. 잔여 범위와 실행 증거는 실행 계획에 기록한다.
+
 `src`의 제품 프로젝트는 **6개 C# + OccBridge = 7개**로 맞춘다. 테스트·실험 실행 프로젝트는 제품 프로젝트 수에 포함하지 않는다. Regions/Routing/Editing 등은 별도 제품 프로젝트를 추가하지 않고 해당 프로젝트 내부 폴더로 둔다. Infrastructure의 Geometry/Persistence/Export도 같은 원칙이다.
 
-## 2. 실제 출발 상태
+## 2. 착수 전 상태
 
-현재 솔루션은 Core/App/Export/OccBridge 및 Core.Tests로 구성되어 있다. Application/Design/Electrical/Infrastructure는 아직 없다. 이 문서 작업에서는 소스·프로젝트를 재편하지 않는다.
+아래 표는 실행 계획을 작성한 기준점 `c4b760b`의 상태다. 이후 진행 현황과 미완료 검증은 [실행 계획](08.Refactoring.Execution.Plan.md)에서 갱신한다.
 
 | 현재 파일 | 이전·확장 책임 |
 |---|---|
@@ -35,7 +37,7 @@
 | `Core/Model/PatternParameters.cs` | MVP `CenterPitchMm`/`BoundaryMarginMm` 이름을 유지하고 신규 `PlacementConstraints`로 확장 |
 | `App/MainWindow.xaml.cs`, `MainWindow.WorkingCoordinateSystem.cs` | 세션·흐름은 Application, 계산은 Design/Electrical, 화면은 App |
 | `App/OccViewport.cs`, `OcctEnv.cs` | App/Viewer 및 시작 시 런타임 구성 |
-| `Export/DxfExporter.cs` | Infrastructure/Export/Dxf로 이전 후 기존 Export 제품 프로젝트 제거 |
+| `Export/DxfExporter.cs` | HLR 입력 계약을 Application 포트로 옮기고 DXF writer를 Infrastructure로 이전. 기존 Export 제품 프로젝트 제거 완료 |
 | `OccBridge/OccBridgeApi.cpp`, `WorkingCoordinateSystemNative.inc` | OccBridge 내부 책임별 분리 |
 
 회귀 프로젝트 경로 `WorkingSide.Regression`과 `PowerLead.Regression`은 기존 실행 harness 이름이라 유지한다. 이 이름은 제품 도메인 용어가 아니며 신규 코드에서는 `WorkingCoordinateSystem`/`ConnectionPath`를 사용한다. 상위 계획 9절의 72개 회귀 검사는 과거 기록이며 새 실행 결과로 기록하지 않는다.
@@ -101,7 +103,7 @@ dotnet test tests/HeatingMold.Core.Tests/HeatingMold.Core.Tests.csproj -c Releas
 
 현재 네이티브 회귀 러너는 먼저 `x64/Release`를 갱신하고 App을 별도 출력에 빌드한다. 실행 중 DLL 잠금으로 실패한 전력이 있다. UI-01/OCC-01에서 `scripts/Verify.ps1`을 추가하여 `x64/Verification/<run-id>/` 아래 네이티브·앱·회귀 실행물을 일관되게 배치한다. 기존 앱 프로세스를 종료하지 않는다. 새 러너 완성 전에는 기존 러너의 한계를 실행 기록에 남긴다.
 
-새 검증군은 `HeatingMold.Design.Tests`, `HeatingMold.Electrical.Tests`, `HeatingMold.Application.Tests`, `HeatingMold.Infrastructure.Tests` 및 기존 네이티브 회귀군으로 나눈다. 순수 모듈 테스트는 OCCT가 없는 환경에서 실행 가능해야 한다. 파일 이동 시 기존 테스트를 삭제해 회귀 기준을 잃지 않는다. 자동검사 결과와 실제 Viewer/DPI·CAD·설치 수동검사를 구분한다.
+새 검증군은 `HeatingMold.Design.Tests`, `HeatingMold.Electrical.Tests`, `HeatingMold.Application.Tests`, `HeatingMold.Infrastructure.Tests`, WPF 소스를 직접 컴파일하는 `HeatingMold.App.Tests`, 그리고 기존 네이티브 회귀군으로 나눈다. 순수 모듈 테스트는 OCCT가 없는 환경에서 실행 가능해야 한다. App 테스트는 `MainWindow` partial의 트랜잭션 회귀를 테스트 대역으로 확인하며 Native 실행을 대신하지 않는다. 파일 이동 시 기존 테스트를 삭제해 회귀 기준을 잃지 않는다. 자동검사 결과와 실제 Viewer/DPI·CAD/설치 수동검사를 구분한다. `scripts/Verify.ps1 -Group Managed`는 6개 managed/App 테스트 프로젝트를 순서대로 실행한다.
 
 모든 작업 인계에는 변경 파일, 구현한 작업 ID, 계약 버전, 재현 입력, 실행 명령/결과, 남은 제한을 기록한다. 미구현 테스트 명령·미실행 검사를 통과로 보고하지 않는다.
 

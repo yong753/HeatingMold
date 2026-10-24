@@ -51,7 +51,21 @@
   <ItemGroup>
     <ClCompile Include="OccBridgeApi.cpp" />
     <ClInclude Include="OccBridgeApi.h" />
+    <ClInclude Include="NativeDocumentSession.h" />
+    <ClInclude Include="NativeGeometryMath.h" />
     <ClInclude Include="WorkingCoordinateSystemNative.inc" />
+    <ClInclude Include="NativeWorkingSurface.inc" />
+    <ClInclude Include="NativeRegionTopology.inc" />
+    <ClInclude Include="NativeHeatingPathGeometry.inc" />
+    <ClInclude Include="NativeConnectionPathGeometry.inc" />
+    <ClInclude Include="NativeClearanceQueries.inc" />
+    <ClInclude Include="NativeHeatingPathPreparation.inc" />
+    <ClInclude Include="OccBridgeManagedSupport.inc" />
+    <ClInclude Include="OccBridgeWorkingSurfaceApi.inc" />
+    <ClInclude Include="OccBridgeCurveAnalysisApi.inc" />
+    <ClInclude Include="OccBridgeTopologyAreaApi.inc" />
+    <ClInclude Include="OccBridgePathStagingApi.inc" />
+    <ClInclude Include="OccBridgeViewerAndModelApi.inc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

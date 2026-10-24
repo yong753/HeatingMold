@@ -4,11 +4,19 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <PlatformTarget>x64</PlatformTarget>
     <UseWPF>true</UseWPF>
+    <BridgeAssemblyPath Condition="'$(BridgeAssemblyPath)' == ''">$(MSBuildThisFileDirectory)..\..\x64\PowerLeadBuild\OccBridge.dll</BridgeAssemblyPath>
+    <AppAssemblyPath Condition="'$(AppAssemblyPath)' == ''">$(MSBuildThisFileDirectory)..\..\x64\PowerLeadBuild\HeatingMold.App.dll</AppAssemblyPath>
+    <CoreAssemblyPath Condition="'$(CoreAssemblyPath)' == ''">$(MSBuildThisFileDirectory)..\..\x64\PowerLeadBuild\HeatingMold.Core.dll</CoreAssemblyPath>
+    <DesignAssemblyPath Condition="'$(DesignAssemblyPath)' == ''">$(MSBuildThisFileDirectory)..\..\x64\PowerLeadBuild\HeatingMold.Design.dll</DesignAssemblyPath>
+    <ApplicationAssemblyPath Condition="'$(ApplicationAssemblyPath)' == ''">$(MSBuildThisFileDirectory)..\..\x64\PowerLeadBuild\HeatingMold.Application.dll</ApplicationAssemblyPath>
+    <IjwHostPath Condition="'$(IjwHostPath)' == ''">$(MSBuildThisFileDirectory)..\..\x64\PowerLeadBuild\Ijwhost.dll</IjwHostPath>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="OccBridge"><HintPath>../../x64/PowerLeadBuild/OccBridge.dll</HintPath></Reference>
-    <Reference Include="HeatingMold.App"><HintPath>../../x64/PowerLeadBuild/HeatingMold.App.dll</HintPath></Reference>
-    <Reference Include="HeatingMold.Core"><HintPath>../../x64/PowerLeadBuild/HeatingMold.Core.dll</HintPath></Reference>
-    <None Include="../../x64/PowerLeadBuild/Ijwhost.dll" Link="Ijwhost.dll" CopyToOutputDirectory="PreserveNewest" />
+    <Reference Include="OccBridge"><HintPath>$(BridgeAssemblyPath)</HintPath><Private>true</Private></Reference>
+    <Reference Include="HeatingMold.App"><HintPath>$(AppAssemblyPath)</HintPath><Private>true</Private></Reference>
+    <Reference Include="HeatingMold.Core"><HintPath>$(CoreAssemblyPath)</HintPath><Private>true</Private></Reference>
+    <Reference Include="HeatingMold.Design"><HintPath>$(DesignAssemblyPath)</HintPath><Private>true</Private></Reference>
+    <Reference Include="HeatingMold.Application"><HintPath>$(ApplicationAssemblyPath)</HintPath><Private>true</Private></Reference>
+    <None Include="$(IjwHostPath)" Link="Ijwhost.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('$(IjwHostPath)')" />
   </ItemGroup>
 </Project>

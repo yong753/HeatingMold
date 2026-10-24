@@ -1,67 +1,53 @@
 namespace HeatingMold.Core.Geometry;
 
-public readonly record struct ModelRevision(long Value);
+/// <summary>열린 네이티브 문서의 기하 revision을 나타냅니다.</summary>
+public readonly record struct ModelRevision
+{
+    /// <summary>모델 문서 안에서 증가하는 기하 세대입니다.</summary>
+    public long Value { get; }
+
+    /// <summary>음수가 아닌 모델 기하 세대를 만듭니다.</summary>
+    public ModelRevision(long value)
+    {
+        if (value < 0)
+            throw new ArgumentOutOfRangeException(nameof(value), "모델 revision은 음수일 수 없습니다.");
+
+        Value = value;
+    }
+}
+/// <summary>런타임 작업 좌표계 context의 식별자입니다.</summary>
 public readonly record struct WorkingCoordinateSystemId(long Value);
 
-/// <summary>
-/// 작업 좌표계 입력 상태. 미리보기 중에는 기존 확정 좌표계를 유지할 수 있으며,
-/// 미리보기를 취소하면 확정 상태 또는 미확정 상태로 돌아간다.
-/// </summary>
-public enum WorkingCoordinateSystemState { Unconfirmed, Preview, Confirmed }
-
-/// <summary>카메라 상태와 독립적으로 모델에 고정되는 정사영 작업 좌표계.</summary>
-public sealed record WorkingCoordinateSystem(WorkingCoordinateSystemId Id, ModelRevision Revision, ProjectionFrame Projection)
+/// <summary>카메라 상태와 독립적으로 모델에 고정되는 작업 좌표계입니다.</summary>
+public sealed record WorkingCoordinateSystem
 {
+    /// <summary>네이티브 작업 좌표계 context의 런타임 식별자입니다.</summary>
+    public WorkingCoordinateSystemId Id { get; }
+
+    /// <summary>작업 좌표계가 참조하는 열린 모델의 기하 revision입니다.</summary>
+    public ModelRevision Revision { get; }
+
+    /// <summary>원점과 오른손 X/Y/N축을 정의하는 정사영 좌표계입니다.</summary>
+    public ProjectionFrame Projection { get; }
+
+    /// <summary>식별자, 모델 revision, 좌표계 값으로 세션용 값을 만듭니다.</summary>
+    public WorkingCoordinateSystem(WorkingCoordinateSystemId id, ModelRevision revision, ProjectionFrame projection)
+    {
+        ArgumentNullException.ThrowIfNull(projection);
+
+        Id = id;
+        Revision = revision;
+        Projection = projection;
+    }
+
+    /// <summary>모델 바깥 datum에서 표면을 질의하는 작업축 방향입니다.</summary>
     public Vec3 RayDirection => Projection.Normal * -1;
-}
 
-public sealed class WorkingCoordinateSystemSession
-{
-    public WorkingCoordinateSystem? Preview { get; private set; }
-    public WorkingCoordinateSystem? Confirmed { get; private set; }
-    public WorkingCoordinateSystemState State => Preview != null ? WorkingCoordinateSystemState.Preview :
-        Confirmed != null ? WorkingCoordinateSystemState.Confirmed : WorkingCoordinateSystemState.Unconfirmed;
-    public void SetPreview(WorkingCoordinateSystem coordinateSystem) => Preview = coordinateSystem;
-    public void Confirm(ModelRevision revision)
+    /// <summary>좌표계 식별자, 모델 revision, 투영 좌표계를 분리해 반환합니다.</summary>
+    public void Deconstruct(out WorkingCoordinateSystemId id, out ModelRevision revision, out ProjectionFrame projection)
     {
-        if (Preview == null || Preview.Revision != revision)
-            throw new InvalidOperationException("Working coordinate system preview is missing or stale.");
-        Confirmed = Preview;
-        Preview = null;
-    }
-    public void Invalidate() { Preview = null; Confirmed = null; }
-    public void CancelPreview() => Preview = null;
-}
-
-/// <summary>Mesh projection candidates, NOT exact CAD boundaries. Negative rings are holes.
-/// References are obtained separately by nearest full-model BRep queries.</summary>
-public sealed record ProjectedModelBoundaryRing(IReadOnlyList<Vec2> Points, int NestingDepth, double MeshDeflection)
-{
-    public bool IsHole => NestingDepth % 2 != 0;
-}
-
-public static class ProjectedModelBoundary
-{
-    public static IReadOnlyList<ProjectedModelBoundaryRing> FromTriangles(IEnumerable<IReadOnlyList<Vec2>> triangles,
-        double meshDeflection)
-    {
-        if (!double.IsFinite(meshDeflection) || meshDeflection <= 0)
-            throw new ArgumentOutOfRangeException(nameof(meshDeflection));
-        var rings = RegionOps.UnionPolygons(triangles.Where(t => t.Count == 3 &&
-            Math.Abs(RegionOps.SignedArea(t)) > 1e-10), precision: 6);
-        return rings.Select(r => new ProjectedModelBoundaryRing(r,
-            rings.Count(other => !ReferenceEquals(other, r) && Contains(other, r[0])), meshDeflection)).ToArray();
-    }
-
-    private static bool Contains(IReadOnlyList<Vec2> ring, Vec2 point)
-    {
-        bool inside = false;
-        for (int i = 0, j = ring.Count - 1; i < ring.Count; j = i++)
-        {
-            var a = ring[i]; var b = ring[j];
-            if ((a.Y > point.Y) != (b.Y > point.Y) &&
-                point.X < (b.X - a.X) * (point.Y - a.Y) / (b.Y - a.Y) + a.X) inside = !inside;
-        }
-        return inside;
+        id = Id;
+        revision = Revision;
+        projection = Projection;
     }
 }

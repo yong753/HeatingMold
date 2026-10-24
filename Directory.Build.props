@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup Condition="'$(VerificationIntermediateRoot)' != ''">
+    <BaseIntermediateOutputPath>$(VerificationIntermediateRoot)\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <DefaultItemExcludesInProjectFolder>$(DefaultItemExcludesInProjectFolder);obj/**</DefaultItemExcludesInProjectFolder>
+  </PropertyGroup>
+</Project>

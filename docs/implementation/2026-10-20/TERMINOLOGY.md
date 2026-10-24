@@ -41,7 +41,7 @@
 
 ## 현재 코드와 목표 계약
 
-현재 저장소는 단일 Core/App/OccBridge 중심의 MVP이며, 새 `HeatingMold.Design`, `HeatingMold.Application`, `HeatingMold.Electrical`, `HeatingMold.Infrastructure` 프로젝트는 아직 계획 단계다. 코드 이름은 구현되어 있는 동작에 맞춰 정리한다. 특히 현재 `PatternParameters.CenterPitchMm`는 중심 피치 입력이며, 최소 외곽 간격을 이미 구현한다는 뜻이 아니다. 양의 삽입 깊이, 연결부 위치 지정 및 적용면적 계산도 구현 완료로 간주하지 않는다.
+현재 저장소에는 Core, Design, Application, Electrical, Infrastructure, App의 C# 제품 프로젝트와 OccBridge가 있다. 기존 `HeatingMold.Export` 제품 프로젝트는 Infrastructure로 이전하며 제거했다. 순수 관리형 모듈은 각자 테스트 프로젝트를 갖는다. 레거시 `PatternParameters.CenterPitchMm`는 `Design.Legacy` 안에서 이전을 위해 유지하며, 새 경로 요청은 `MinimumClearGapMm`과 도체 지름으로 중심 피치를 계산한다. 새 요청 계약에는 삽입 깊이와 연결부 조건이 있다. 후보 geometry workspace와 `.hmproj` 저장·복원, snapshot 기반 `ExportDesign`은 WPF 및 Application에 연결됐다. 화면에서만 변경된 레거시 경로는 session 반영 전 저장·출력을 거부한다. Native C++/CLI 실행 검증, 일부 깊이·간격·연결 충돌 질의와 경로·회로 편집 명령의 session 이전은 남아 있다. 적용면적 배정 로직은 관리형 코드에 있으며 OCCT 실면적 질의는 Native 빌드 환경에서 추가 검증해야 한다.
 
 공통 설계 타입의 소유 위치는 `HeatingMold.Core`다. 경로 생성·경로 구간/회로 분할은 목표 `HeatingMold.Design`, 설계 수명과 연결부 위치 입력은 `HeatingMold.Application`, 3D 기하 질의와 표시·STEP는 `HeatingMold.Infrastructure`/`OccBridge`, 화면 표현은 `HeatingMold.App`이 맡는다. 모든 개념이 하나의 기능 모듈에 모이는 구조는 아니다.
 

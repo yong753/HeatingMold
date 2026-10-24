@@ -32,3 +32,27 @@ They verify that the old context and dependent selection state survive rollback,
 axis changes invalidate dependent state. No preview/confirmation or diagnostic-picking UI state is
 tested or claimed. IN/ON visibility through a holed trimmed face and outside its supporting-surface
 extension remains covered.
+
+## GEO-00 actual-mold probe
+
+When the Visual Studio C++/CLI and OCCT build environment is available, the verifier can append a
+bounded actual-model probe to the normal WorkingSide regression:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Verify.ps1 `
+    -Configuration Release -Platform x64 -Group WorkingSide `
+    -Geo00MoldPath resource/Mold.stp
+```
+
+The actual-mold report is written to
+`x64/Verification/<run-id>/fixtures/WorkingSide/GEO-00/report.json`. It records the STEP SHA-256,
+shape and surface inventory, a 17-by-17 first-hit grid for each signed world axis, and bounded
+depth-adjustment/envelope probes for same-Face paths found in that grid. Eleven control reports
+are written under `GEO-00/control-fixtures/` for the flat plane, 30°/60° slopes, B-spline, half
+cylinder, sphere, layered occlusion, ring and trimmed holes, tangent-back surface, and three-panel
+surface boundary. These scenarios use +Z and record up to three paths spanning the longest, working
+U, and working V directions; each report retains its input STEP hash. The reports are
+exploratory evidence: the harness requires all three directions in the flat and 30°/60° slope
+reports, but the grid does not prove visibility between samples, and a same-Face pair does not by
+itself establish an approved production region or common exit side. See
+`docs/verification/GEO-00.md` for the parameter set and remaining checks.

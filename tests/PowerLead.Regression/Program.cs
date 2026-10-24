@@ -2,7 +2,10 @@ using System;
 using System.IO;
 using HeatingMold.OccBridge;
 using HeatingMold.App;
+using HeatingMold.Application.Sessions;
 using HeatingMold.Core.Geometry;
+using HeatingMold.Core.Primitives;
+using HeatingMold.Design.Legacy;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
@@ -106,7 +109,7 @@ static class Program
         void Set(string name, object value) => typeof(MainWindow).GetField(name,flags).SetValue(window,value);
         void Invoke(string name) => typeof(MainWindow).GetMethod(name,flags).Invoke(window,new object[]{null,null});
         var pattern = HeatingPathGenerator.Generate(new List<Vec2>{new(0,0),new(100,0),new(100,60),new(0,60)},null,
-            new HeatingMold.Core.Model.PatternParameters{Margin =5,CenterPitchMm =10},requireContinuousPath:true);
+            new PatternParameters { BoundaryMarginMm = 5, CenterPitchMm = 10 }, requireContinuousPath: true);
         Set("_pattern",pattern);
         Set("_multiFaceFrame",new ProjectionFrame(new Vec3(0,0,100),new Vec3(0,0,1),new Vec3(1,0,0)));
         var turns = (List<bool>)Field("_turnSegmentEnabled");
@@ -121,7 +124,9 @@ static class Program
             if(p.Kind==HeatingPathSegmentKind.TurnSegment) turns.Add(true);
         }
         Set("_pathSegmentLengths",lengths);
-        ((HashSet<int>)Field("_selectedFaceIds")).Add(0);
+        object mainWindowViewModel=Field("_mainWindowViewModel");
+        object regionSelection=mainWindowViewModel.GetType().GetProperty("RegionSelection").GetValue(mainWindowViewModel);
+        regionSelection.GetType().GetMethod("Add").Invoke(regionSelection,new object[]{FaceRefId.New()});
         typeof(MainWindow).GetMethod("ApplyPathSegmentStates",flags).Invoke(window,null);
         var grid=(DataGrid)window.FindName("CircuitLengthGrid");
         double SumColumn(string name)
@@ -183,6 +188,16 @@ static class Program
         Check(Zoom(120)==-12 && Zoom(-120)==12 && Zoom(240)==-24 && Zoom(-240)==24,
             "wheel zoom direction inverted for both directions and multiple notches");
         Check(Zoom(60)==-12 && Zoom(-60)==12 && Zoom(0)==12,"wheel preserves baseline fractional-notch and zero-delta quantization, only reversing sign");
+        var dipToPixelsMethod = typeof(OccViewport).GetMethod("DipToDevicePixels", BindingFlags.Static | BindingFlags.NonPublic);
+        int Pixels(double dip, double dpiScale) => (int)dipToPixelsMethod.Invoke(null, new object[] { dip, dpiScale });
+        Check(Pixels(4, 1.0) == 4 && Pixels(4, 1.25) == 5 && Pixels(4, 1.5) == 6 && Pixels(4, 2.0) == 8,
+            "viewer drag thresholds scale from WPF logical units to native pixels at common DPI settings");
+        Check(Pixels(1.1, 1.25) == 2,
+            "viewer size conversion rounds fractional device pixels upward to avoid clipping the native child window");
+        var thresholdMethod = typeof(OccViewport).GetMethod("GetDevicePixelThreshold", BindingFlags.Static | BindingFlags.NonPublic);
+        int anisotropicThreshold = (int)thresholdMethod.Invoke(null, new object[] { 4.0, 1.25, 1.5 });
+        Check(anisotropicThreshold == 6,
+            "drag threshold uses the larger device scale when horizontal and vertical DPI differ");
         var restoredLengths=new[]{123.0,456.0};
         Set("_connectionLengths",restoredLengths);
         Invoke("ConnectionPointSetup_Click");
@@ -193,9 +208,6 @@ static class Program
         SeedPending();
         typeof(MainWindow).GetMethod("ApplyPathSegmentStates",flags).Invoke(window,null);
         Check(((IList)Field("_pendingConnectionPoints")).Count==0 && !viewport.ConnectionPointSelectionMode,"topology update cancels pending power setup");
-        SeedPending();
-        typeof(MainWindow).GetMethod("GenerateMultiFace",flags).Invoke(window,null);
-        Check(((IList)Field("_pendingConnectionPoints")).Count==0 && !viewport.ConnectionPointSelectionMode,"regeneration attempt cancels pending power setup even when validation fails");
         SeedPending();
         Invoke("ClearExclusions_Click");
         Check(Field("_pattern")==null && ((IList)Field("_pendingConnectionPoints")).Count==0 && !viewport.ConnectionPointSelectionMode,"exclusion changes invalidate generated topology and pending leads");

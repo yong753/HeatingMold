@@ -16,12 +16,16 @@
 #include <msclr/marshal_cppstd.h>
 
 #include <STEPControl_Reader.hxx>
+#include <STEPControl_Writer.hxx>
+#include <STEPControl_StepModelType.hxx>
 #include <IFSelect_ReturnStatus.hxx>
 #include <TopoDS_Shape.hxx>
+#include <TopoDS_Compound.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Wire.hxx>
 #include <TopoDS_Edge.hxx>
+#include <TopoDS_Vertex.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopExp.hxx>
 #include <TopAbs_ShapeEnum.hxx>
@@ -34,12 +38,15 @@
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
+#include <Geom_BSplineCurve.hxx>
+#include <Geom_Surface.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRep_Builder.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepProj_Projection.hxx>
+#include <BRepAlgoAPI_Common.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
 #include <TopTools_HSequenceOfShape.hxx>
 #include <BRepAdaptor_Surface.hxx>
@@ -56,6 +63,7 @@
 #include <gp_Pnt.hxx>
 #include <gp_Pnt2d.hxx>
 #include <gp_Ax2.hxx>
+#include <gp_Circ.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Lin.hxx>
 #include <gp_Trsf.hxx>
@@ -69,6 +77,9 @@
 #include <StepGeom_Axis2Placement3d.hxx>
 #include <StepGeom_Direction.hxx>
 #include <TCollection_HAsciiString.hxx>
+#include <TColgp_Array1OfPnt.hxx>
+#include <TColStd_Array1OfInteger.hxx>
+#include <TColStd_Array1OfReal.hxx>
 
 // 뷰어 (S1 항목 1·6) — WNT_Window/Aspect_DisplayConnection=TKService, OpenGl_GraphicDriver=TKOpenGl, V3d_*/AIS_*=TKV3d
 #include <Aspect_DisplayConnection.hxx>
@@ -99,11 +110,15 @@
 #include <HLRBRep_HLRToShape.hxx>
 #include <HLRAlgo_Projector.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
 #include <GCPnts_QuasiUniformDeflection.hxx>
 
 // 메싱 (W2 — shaded 렌더링 실패 원인 대응) — TKMesh
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <Poly_Triangulation.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
+#include <gp_Pln.hxx>
+#include <gp_Ax3.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_ShadingAspect.hxx>
@@ -117,16 +132,23 @@
 #include <chrono>
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <cctype>
+#include <exception>
 #include <limits>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
+
+#include "NativeDocumentSession.h"
 
 using namespace System;
 using namespace System::Collections::Generic;
@@ -134,16 +156,54 @@ using namespace System::Collections::Generic;
 #pragma managed(push, off)
 namespace
 {
-    TopoDS_Shape g_shape;
-    std::vector<TopoDS_Face> g_faces;
-    std::set<std::pair<int,int>> g_faceAdjacency;
-    long long g_faceAdjacencyRevision = -1;
-    TopTools_IndexedMapOfShape g_faceMap;   // W3 픽킹: g_faces와 같은 순회로 구축 (인덱스 1:1)
-    gp_Dir g_autoAxes[3] = { gp::DX(), gp::DY(), gp::DZ() };
-    long long g_modelRevision = 0;
-    void InvalidateWorkingSurfaceContexts();
+    using HeatingMoldNative::NativeDocumentSession;
+    using HeatingMoldNative::HeatingPathSegmentOverlay;
+    using HeatingMoldNative::PreparedPathSegmentGeometry;
+    using HeatingMoldNative::StagedWorkingPolyline;
+    using HeatingMoldNative::WorkingCoordinateSystemPresentationNative;
+    using HeatingMoldNative::WorkingNative;
 
-    bool TryGetSupplementalAxes(const Handle(StepData_StepModel)& model)
+    struct PreparedDocumentCandidate final
+    {
+        std::unique_ptr<NativeDocumentSession> document;
+        long long baseModelRevision;
+    };
+
+    std::unique_ptr<NativeDocumentSession> g_documentSession =
+        std::make_unique<NativeDocumentSession>();
+    std::map<long long, PreparedDocumentCandidate> g_preparedDocumentCandidates;
+    long long g_nextPreparedDocumentCandidateId = 1;
+    void InvalidateWorkingSurfaceContexts(NativeDocumentSession& document);
+
+    long long AllocatePreparedDocumentCandidateId()
+    {
+        const long long firstCandidateId = g_nextPreparedDocumentCandidateId > 0
+            ? g_nextPreparedDocumentCandidateId
+            : 1;
+        long long candidateId = firstCandidateId;
+
+        do
+        {
+            if (g_preparedDocumentCandidates.find(candidateId) == g_preparedDocumentCandidates.end())
+            {
+                g_nextPreparedDocumentCandidateId = candidateId == std::numeric_limits<long long>::max()
+                    ? 1
+                    : candidateId + 1;
+                return candidateId;
+            }
+
+            candidateId = candidateId == std::numeric_limits<long long>::max()
+                ? 1
+                : candidateId + 1;
+        }
+        while (candidateId != firstCandidateId);
+
+        return 0;
+    }
+
+    bool TryGetSupplementalAxes(
+        NativeDocumentSession& document,
+        const Handle(StepData_StepModel)& model)
     {
         if (model.IsNull()) return false;
         for (Standard_Integer i = 1; i <= model->NbEntities(); ++i)
@@ -184,29 +244,33 @@ namespace
                 gp_Vec y = z.Crossed(x);
                 if (y.SquareMagnitude() < 1e-12) continue;
                 y.Normalize();
-                g_autoAxes[0] = gp_Dir(x);
-                g_autoAxes[1] = gp_Dir(y);
-                g_autoAxes[2] = gp_Dir(z);
+                document.autoAxes[0] = gp_Dir(x);
+                document.autoAxes[1] = gp_Dir(y);
+                document.autoAxes[2] = gp_Dir(z);
                 return true;
             }
         }
         return false;
     }
 
-    void ComputeAutoAxes(const Handle(StepData_StepModel)& stepModel)
+    void ComputeAutoAxes(
+        NativeDocumentSession& document,
+        const Handle(StepData_StepModel)& stepModel)
     {
-        g_autoAxes[0] = gp::DX(); g_autoAxes[1] = gp::DY(); g_autoAxes[2] = gp::DZ();
-        if (TryGetSupplementalAxes(stepModel)) return;
-        if (g_shape.IsNull()) return;
+        document.autoAxes[0] = gp::DX();
+        document.autoAxes[1] = gp::DY();
+        document.autoAxes[2] = gp::DZ();
+        if (TryGetSupplementalAxes(document, stepModel)) return;
+        if (document.shape.IsNull()) return;
         GProp_GProps props;
         bool hasSolid = false;
-        for (TopExp_Explorer ex(g_shape, TopAbs_SOLID); ex.More(); ex.Next()) { hasSolid = true; break; }
+        for (TopExp_Explorer ex(document.shape, TopAbs_SOLID); ex.More(); ex.Next()) { hasSolid = true; break; }
         if (hasSolid)
-            BRepGProp::VolumeProperties(g_shape, props, Standard_True, Standard_True, Standard_False);
+            BRepGProp::VolumeProperties(document.shape, props, Standard_True, Standard_True, Standard_False);
         if (!hasSolid || std::fabs(props.Mass()) <= 1e-12)
         {
             props = GProp_GProps();
-            BRepGProp::SurfaceProperties(g_shape, props, Standard_True, Standard_False);
+            BRepGProp::SurfaceProperties(document.shape, props, Standard_True, Standard_False);
         }
         if (std::fabs(props.Mass()) <= 1e-12) return;
         const GProp_PrincipalProps principal = props.PrincipalProperties();
@@ -226,32 +290,34 @@ namespace
         axes[1].Normalize();
         axes[2] = axes[0].Crossed(axes[1]);
         axes[2].Normalize();
-        for (int i = 0; i < 3; ++i) g_autoAxes[i] = gp_Dir(axes[i]);
+        for (int i = 0; i < 3; ++i) document.autoAxes[i] = gp_Dir(axes[i]);
     }
 
-    void AlignShapeToWorldAxes()
+    void AlignShapeToWorldAxes(NativeDocumentSession& document)
     {
         // Express every point in the detected model frame. Keep the origin fixed;
         // only remove the model's rotational misalignment.
-        const gp_Dir& x = g_autoAxes[0];
-        const gp_Dir& y = g_autoAxes[1];
-        const gp_Dir& z = g_autoAxes[2];
+        const gp_Dir& x = document.autoAxes[0];
+        const gp_Dir& y = document.autoAxes[1];
+        const gp_Dir& z = document.autoAxes[2];
         gp_Trsf rotation;
         rotation.SetValues(
             x.X(), x.Y(), x.Z(), 0.0,
             y.X(), y.Y(), y.Z(), 0.0,
             z.X(), z.Y(), z.Z(), 0.0);
-        BRepBuilderAPI_Transform aligned(g_shape, rotation, Standard_True);
-        g_shape = aligned.Shape();
-        g_autoAxes[0] = gp::DX();
-        g_autoAxes[1] = gp::DY();
-        g_autoAxes[2] = gp::DZ();
+        BRepBuilderAPI_Transform aligned(document.shape, rotation, Standard_True);
+        document.shape = aligned.Shape();
+        document.autoAxes[0] = gp::DX();
+        document.autoAxes[1] = gp::DY();
+        document.autoAxes[2] = gp::DZ();
     }
 
     bool GetAutoAxisNative(int axis, double* out)
     {
         if (axis < 0 || axis > 2 || out == nullptr) return false;
-        out[0] = g_autoAxes[axis].X(); out[1] = g_autoAxes[axis].Y(); out[2] = g_autoAxes[axis].Z();
+        out[0] = g_documentSession->autoAxes[axis].X();
+        out[1] = g_documentSession->autoAxes[axis].Y();
+        out[2] = g_documentSession->autoAxes[axis].Z();
         return true;
     }
 
@@ -262,43 +328,41 @@ namespace
     Handle(AIS_InteractiveContext) g_ctx;
     Handle(V3d_View) g_view;
     Handle(WNT_Window) g_window;
-    Handle(AIS_Shape) g_aisShape;
-    std::set<int> g_selectedFaceIds;
-    std::vector<Handle(AIS_Shape)> g_worldOverlays;
-    std::map<int, Handle(AIS_Shape)> g_connectionPaths;
-    Handle(AIS_Shape) g_connectionPathPreview;
-    Handle(AIS_Point) g_connectionPointPreview;
-    struct HeatingPathSegmentOverlay { Handle(AIS_Shape) ais; bool turnSegment; bool enabled; Quantity_Color color; double width; };
-    std::map<int, HeatingPathSegmentOverlay> g_pathSegments;
-    struct StagedWorkingPolyline { Handle(AIS_Shape) ais; long long contextId, revision; };
-    std::map<int, StagedWorkingPolyline> g_stagedWorkingPolylines;
-    std::map<int, std::pair<long long,long long>> g_stagedWorkingPathSegmentOwners;
-    std::set<int> g_hoveredCircuitPieces;
+    bool g_viewInitialized = false;
     void HighlightCircuitNative(const std::vector<int>& ids);
-    std::vector<Handle(AIS_Shape)> g_exclusionOverlays;
-    Handle(AIS_Shape) g_exclusionPreview;
     Handle(AIS_RubberBand) g_selectionRubberBand;
-    int g_lastHoverFace = -1;      // W5 — 호버 하이라이트 중복 Redraw 억제
-    bool g_faceHighlightsVisible = true;
 
-    void RebuildFaceCache()
+    void ResetViewerResources()
     {
-        g_faces.clear();
-        g_faceMap.Clear();
-        if (g_shape.IsNull()) return;
-        for (TopExp_Explorer ex(g_shape, TopAbs_FACE); ex.More(); ex.Next())
+        g_viewInitialized = false;
+        g_view.Nullify();
+        g_ctx.Nullify();
+        g_window.Nullify();
+        g_viewer.Nullify();
+        g_driver.Nullify();
+        g_disp.Nullify();
+    }
+
+    void RebuildFaceCache(NativeDocumentSession& document)
+    {
+        document.faces.clear();
+        document.faceMap.Clear();
+        document.faceAdjacency.clear();
+        document.faceAdjacencyRevision = -1;
+        if (document.shape.IsNull()) return;
+        for (TopExp_Explorer ex(document.shape, TopAbs_FACE); ex.More(); ex.Next())
         {
             const TopoDS_Face f = TopoDS::Face(ex.Current());
-            g_faces.push_back(f);
-            g_faceMap.Add(f);   // g_faces와 동일 순회 → FindIndex == g_faces 인덱스 + 1
+            document.faces.push_back(f);
+            document.faceMap.Add(f);   // faces와 같은 순회이므로 FindIndex는 배열 인덱스 + 1입니다.
         }
     }
 
     void UpdateSelectedFaceColors()
     {
-        if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
-        g_faceHighlightsVisible = true;
-        Handle(AIS_ColoredShape) colored = Handle(AIS_ColoredShape)::DownCast(g_aisShape);
+        if (g_ctx.IsNull() || g_documentSession->presentation.aisShape.IsNull()) return;
+        g_documentSession->presentation.faceHighlightsVisible = true;
+        Handle(AIS_ColoredShape) colored = Handle(AIS_ColoredShape)::DownCast(g_documentSession->presentation.aisShape);
         if (colored.IsNull()) return;
 
         std::set<int> current;
@@ -306,18 +370,18 @@ namespace
         {
             const Handle(StdSelect_BRepOwner)& owner =
                 Handle(StdSelect_BRepOwner)::DownCast(g_ctx->SelectedOwner());
-            if (owner.IsNull() || !owner->HasShape() || !g_faceMap.Contains(owner->Shape())) continue;
-            current.insert(g_faceMap.FindIndex(owner->Shape()) - 1);
+            if (owner.IsNull() || !owner->HasShape() || !g_documentSession->faceMap.Contains(owner->Shape())) continue;
+            current.insert(g_documentSession->faceMap.FindIndex(owner->Shape()) - 1);
         }
-        for (int faceId : g_selectedFaceIds)
-            if (current.count(faceId) == 0 && faceId >= 0 && faceId < static_cast<int>(g_faces.size()))
-                colored->UnsetCustomAspects(g_faces[faceId], Standard_True);
+        for (int faceId : g_documentSession->presentation.selectedFaceIds)
+            if (current.count(faceId) == 0 && faceId >= 0 && faceId < static_cast<int>(g_documentSession->faces.size()))
+                colored->UnsetCustomAspects(g_documentSession->faces[faceId], Standard_True);
         for (int faceId : current)
-            if (g_selectedFaceIds.count(faceId) == 0 && faceId >= 0 && faceId < static_cast<int>(g_faces.size()))
+            if (g_documentSession->presentation.selectedFaceIds.count(faceId) == 0 && faceId >= 0 && faceId < static_cast<int>(g_documentSession->faces.size()))
             {
-                colored->SetCustomColor(g_faces[faceId], Quantity_Color(0.12, 0.82, 0.38, Quantity_TOC_RGB));
-                colored->SetCustomTransparency(g_faces[faceId], 0.0);
-                Handle(AIS_ColoredDrawer) faceStyle = colored->CustomAspects(g_faces[faceId]);
+                colored->SetCustomColor(g_documentSession->faces[faceId], Quantity_Color(0.12, 0.82, 0.38, Quantity_TOC_RGB));
+                colored->SetCustomTransparency(g_documentSession->faces[faceId], 0.0);
+                Handle(AIS_ColoredDrawer) faceStyle = colored->CustomAspects(g_documentSession->faces[faceId]);
                 faceStyle->SetupOwnShadingAspect();
                 faceStyle->SetDisplayMode(AIS_Shaded);
                 faceStyle->ShadingAspect()->SetColor(Quantity_Color(0.12, 0.82, 0.38, Quantity_TOC_RGB));
@@ -326,44 +390,44 @@ namespace
                 // toward the camera to avoid depth-buffer z-fighting.
                 faceStyle->ShadingAspect()->Aspect()->SetPolygonOffsets(Aspect_POM_Fill, -2.0f, -2.0f);
             }
-        g_selectedFaceIds.swap(current);
-        g_ctx->Redisplay(g_aisShape, Standard_False);
+        g_documentSession->presentation.selectedFaceIds.swap(current);
+        g_ctx->Redisplay(g_documentSession->presentation.aisShape, Standard_False);
     }
 
     void HideFaceHighlightsNative()
     {
-        if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
-        Handle(AIS_ColoredShape) colored = Handle(AIS_ColoredShape)::DownCast(g_aisShape);
+        if (g_ctx.IsNull() || g_documentSession->presentation.aisShape.IsNull()) return;
+        Handle(AIS_ColoredShape) colored = Handle(AIS_ColoredShape)::DownCast(g_documentSession->presentation.aisShape);
         if (colored.IsNull()) return;
         // Remove presentation overrides, not selected owners: Ctrl selection and
         // pattern regeneration must retain the current selection.
-        for (int faceId : g_selectedFaceIds)
-            if (faceId >= 0 && faceId < static_cast<int>(g_faces.size()))
-                colored->UnsetCustomAspects(g_faces[faceId], Standard_True);
-        g_selectedFaceIds.clear();
-        g_faceHighlightsVisible = false;
+        for (int faceId : g_documentSession->presentation.selectedFaceIds)
+            if (faceId >= 0 && faceId < static_cast<int>(g_documentSession->faces.size()))
+                colored->UnsetCustomAspects(g_documentSession->faces[faceId], Standard_True);
+        g_documentSession->presentation.selectedFaceIds.clear();
+        g_documentSession->presentation.faceHighlightsVisible = false;
         g_ctx->UnhilightSelected(Standard_False);
         g_ctx->ClearDetected(Standard_False);
-        g_lastHoverFace = -1;
-        g_ctx->Redisplay(g_aisShape, Standard_False);
+        g_documentSession->presentation.lastHoverFace = -1;
+        g_ctx->Redisplay(g_documentSession->presentation.aisShape, Standard_False);
         if (!g_view.IsNull()) g_view->Redraw();
     }
 
     /// <summary>W2 — STEP 로드는 메시 미생성이므로 shaded 표시를 위해 삼각분할 1회 수행</summary>
-    void MeshShapeNative(double linearDeflection)
+    void MeshShapeNative(NativeDocumentSession& document, double linearDeflection)
     {
-        if (g_shape.IsNull()) return;
-        BRepMesh_IncrementalMesh mesher(g_shape, linearDeflection, Standard_False, 0.5, Standard_False);
+        if (document.shape.IsNull()) return;
+        BRepMesh_IncrementalMesh mesher(document.shape, linearDeflection, Standard_False, 0.5, Standard_False);
         (void)mesher;   // 생성자가 Perform까지 수행
     }
 
     /// <summary>W2/W3 — 표시 상태(모드/경계/색) 구성 + 면 선택 모드 활성화</summary>
     void ConfigureDisplay()
     {
-        if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
-        g_aisShape->Attributes()->SetFaceBoundaryDraw(Standard_True);
-        g_ctx->Display(g_aisShape, Standard_False);
-        g_ctx->SetDisplayMode(g_aisShape, AIS_Shaded, Standard_False);   // W2 — 기본 와이어프레임 무시, 음영 강제
+        if (g_ctx.IsNull() || g_documentSession->presentation.aisShape.IsNull()) return;
+        g_documentSession->presentation.aisShape->Attributes()->SetFaceBoundaryDraw(Standard_True);
+        g_ctx->Display(g_documentSession->presentation.aisShape, Standard_False);
+        g_ctx->SetDisplayMode(g_documentSession->presentation.aisShape, AIS_Shaded, Standard_False);   // W2 — 기본 와이어프레임 무시, 음영 강제
         // Face 선택은 커서 호버와 독립된 LocalSelected 스타일로 유지하고, 면 채움색도 구분한다.
         Handle(Prs3d_Drawer) selectedStyle = g_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected);
         if (selectedStyle.IsNull())
@@ -379,49 +443,422 @@ namespace
         selectedStyle->ShadingAspect()->SetColor(Quantity_Color(0.12, 0.82, 0.38, Quantity_TOC_RGB));
         selectedStyle->ShadingAspect()->SetTransparency(1.0);
         g_ctx->SetToHilightSelected(Standard_False);
-        g_ctx->Activate(g_aisShape, TopAbs_FACE, Standard_True);          // W3 — 면 서브셰이프 선택 활성화
-        g_selectedFaceIds.clear();
-        g_faceHighlightsVisible = true;
+        g_ctx->Activate(g_documentSession->presentation.aisShape, TopAbs_FACE, Standard_True);          // W3 — 면 서브셰이프 선택 활성화
+        g_documentSession->presentation.selectedFaceIds.clear();
+        g_documentSession->presentation.faceHighlightsVisible = true;
     }
 
-    void ClearDisplayedShape()
+    bool DisplayPreparedPathSegmentsNative(NativeDocumentSession& document)
+    {
+        if (document.preparedPathSegments.empty() || g_ctx.IsNull())
+            return true;
+
+        std::map<int, HeatingPathSegmentOverlay> nextPresentationPaths = document.presentation.pathSegments;
+        std::map<int, HeatingPathSegmentOverlay> newPresentationPaths;
+        std::map<int, Handle(AIS_Shape)> nextConnectionPaths = document.presentation.connectionPaths;
+        std::map<int, Handle(AIS_Shape)> newConnectionPaths;
+        std::vector<Handle(AIS_Shape)> displayedShapes;
+        std::vector<Handle(AIS_Shape)> replacedShapes;
+
+        try
+        {
+            for (const auto& preparedEntry : document.preparedPathSegments)
+            {
+                const int segmentId = preparedEntry.first;
+                const auto& prepared = preparedEntry.second;
+                if (segmentId < 0 || prepared.wire.IsNull())
+                    return false;
+
+                const Quantity_Color color = prepared.connectionPathSegment
+                    ? Quantity_Color(1.0, 0.65, 0.05, Quantity_TOC_RGB)
+                    : prepared.turnSegment
+                        ? Quantity_Color(0.1, 0.65, 1.0, Quantity_TOC_RGB)
+                        : Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB);
+                Handle(AIS_Shape) ais = new AIS_Shape(prepared.wire);
+                g_ctx->SetColor(ais, color, Standard_False);
+                if (prepared.connectionPathSegment)
+                {
+                    g_ctx->SetWidth(ais, 3.0, Standard_False);
+                    auto heatingPath = nextPresentationPaths.find(segmentId);
+                    if (heatingPath != nextPresentationPaths.end())
+                    {
+                        replacedShapes.push_back(heatingPath->second.ais);
+                        nextPresentationPaths.erase(heatingPath);
+                    }
+
+                    auto insertion = nextConnectionPaths.emplace(segmentId, ais);
+                    if (!insertion.second)
+                    {
+                        replacedShapes.push_back(insertion.first->second);
+                        insertion.first->second = ais;
+                    }
+                    newConnectionPaths.emplace(segmentId, ais);
+                    continue;
+                }
+
+                auto connectionPath = nextConnectionPaths.find(segmentId);
+                if (connectionPath != nextConnectionPaths.end())
+                {
+                    replacedShapes.push_back(connectionPath->second);
+                    nextConnectionPaths.erase(connectionPath);
+                }
+                if (prepared.turnSegment)
+                    ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
+
+                auto insertion = nextPresentationPaths.emplace(
+                    segmentId,
+                    HeatingPathSegmentOverlay{ ais, prepared.turnSegment, true, color, 1.0 });
+                if (!insertion.second)
+                {
+                    replacedShapes.push_back(insertion.first->second.ais);
+                    insertion.first->second = HeatingPathSegmentOverlay{ ais, prepared.turnSegment, true, color, 1.0 };
+                }
+
+                newPresentationPaths.emplace(
+                    segmentId,
+                    HeatingPathSegmentOverlay{ ais, prepared.turnSegment, true, color, 1.0 });
+            }
+
+            for (const auto& newPath : newPresentationPaths)
+            {
+                const Handle(AIS_Shape)& ais = newPath.second.ais;
+                displayedShapes.push_back(ais);
+                g_ctx->Display(ais, Standard_False);
+                g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
+                g_ctx->Activate(ais, Standard_False);
+            }
+
+            for (const auto& newPath : newConnectionPaths)
+            {
+                const Handle(AIS_Shape)& ais = newPath.second;
+                displayedShapes.push_back(ais);
+                g_ctx->Display(ais, Standard_False);
+                g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
+                g_ctx->Deactivate(ais, Standard_False);
+            }
+
+            for (const Handle(AIS_Shape)& replacedShape : replacedShapes)
+            {
+                if (!replacedShape.IsNull())
+                    g_ctx->Remove(replacedShape, Standard_False);
+            }
+
+            document.presentation.pathSegments.swap(nextPresentationPaths);
+            document.presentation.connectionPaths.swap(nextConnectionPaths);
+            return true;
+        }
+        catch (...)
+        {
+            for (const Handle(AIS_Shape)& displayedShape : displayedShapes)
+            {
+                try
+                {
+                    g_ctx->Remove(displayedShape, Standard_False);
+                }
+                catch (...) { }
+            }
+
+            return false;
+        }
+    }
+
+    void RemovePreparedPathPresentationNative(NativeDocumentSession& document)
+    {
+        for (const auto& preparedPath : document.preparedPathSegments)
+        {
+            const int segmentId = preparedPath.first;
+            if (preparedPath.second.connectionPathSegment)
+            {
+                auto connectionPath = document.presentation.connectionPaths.find(segmentId);
+                if (connectionPath == document.presentation.connectionPaths.end())
+                    continue;
+
+                if (!g_ctx.IsNull() && !connectionPath->second.IsNull())
+                {
+                    try
+                    {
+                        g_ctx->Remove(connectionPath->second, Standard_False);
+                    }
+                    catch (...) { }
+                }
+
+                document.presentation.connectionPaths.erase(connectionPath);
+                continue;
+            }
+
+            auto overlay = document.presentation.pathSegments.find(segmentId);
+            if (overlay == document.presentation.pathSegments.end())
+                continue;
+
+            if (!g_ctx.IsNull() && !overlay->second.ais.IsNull())
+            {
+                try
+                {
+                    g_ctx->Remove(overlay->second.ais, Standard_False);
+                }
+                catch (...) { }
+            }
+
+            document.presentation.pathSegments.erase(overlay);
+        }
+    }
+
+    bool RebuildModelPresentationNative()
+    {
+        if (g_ctx.IsNull() || g_view.IsNull() || g_documentSession->shape.IsNull())
+            return false;
+
+        auto& presentation = g_documentSession->presentation;
+        try
+        {
+            if (!presentation.aisShape.IsNull())
+                g_ctx->Remove(presentation.aisShape, Standard_False);
+            presentation.aisShape.Nullify();
+            presentation.aisShape = new AIS_ColoredShape(g_documentSession->shape);
+            ConfigureDisplay();
+            if (!DisplayPreparedPathSegmentsNative(*g_documentSession))
+                throw std::runtime_error("PreparedPathPresentationFailed");
+            g_view->FitAll(0.01, Standard_False);
+            g_view->Redraw();
+            g_documentSession->presentationOutOfSync = false;
+            return true;
+        }
+        catch (...)
+        {
+            g_documentSession->presentationOutOfSync = true;
+            RemovePreparedPathPresentationNative(*g_documentSession);
+            try
+            {
+                if (!presentation.aisShape.IsNull())
+                    g_ctx->Remove(presentation.aisShape, Standard_False);
+            }
+            catch (...) { }
+            presentation.aisShape.Nullify();
+            return false;
+        }
+    }
+
+    void ClearDisplayedShape(NativeDocumentSession& document)
     {
         if (!g_ctx.IsNull())
         {
             g_ctx->ClearSelected(Standard_False);   // 이전 선택 해제 (해당 프레젠테이션 제거 전)
             g_ctx->ClearDetected(Standard_False);
         }
-        if (!g_ctx.IsNull() && !g_aisShape.IsNull())
+        if (!document.presentation.aisShape.IsNull())
         {
-            g_ctx->Remove(g_aisShape, Standard_False);
-            g_aisShape.Nullify();
+            if (!g_ctx.IsNull())
+                g_ctx->Remove(document.presentation.aisShape, Standard_False);
+            document.presentation.aisShape.Nullify();
         }
-        g_selectedFaceIds.clear();
-        g_lastHoverFace = -1;
+        if (!document.presentation.qualityIssueLocation.IsNull())
+        {
+            if (!g_ctx.IsNull())
+                g_ctx->Remove(document.presentation.qualityIssueLocation, Standard_False);
+            document.presentation.qualityIssueLocation.Nullify();
+        }
+        document.presentation.selectedFaceIds.clear();
+        document.presentation.lastHoverFace = -1;
     }
 
-    bool LoadStepFile(const char* path)
+    void ClearDocumentPresentation(NativeDocumentSession& document)
     {
+        ClearDisplayedShape(document);
+
+        if (!g_ctx.IsNull())
+        {
+            for (const auto& path : document.presentation.connectionPaths)
+                g_ctx->Remove(path.second, Standard_False);
+            for (const auto& path : document.presentation.pathSegments)
+                g_ctx->Remove(path.second.ais, Standard_False);
+            for (const auto& overlay : document.presentation.worldOverlays)
+                g_ctx->Remove(overlay, Standard_False);
+            for (const auto& overlay : document.presentation.exclusionOverlays)
+                g_ctx->Remove(overlay, Standard_False);
+            if (!document.presentation.connectionPathPreview.IsNull())
+                g_ctx->Remove(document.presentation.connectionPathPreview, Standard_False);
+            if (!document.presentation.connectionPointPreview.IsNull())
+                g_ctx->Remove(document.presentation.connectionPointPreview, Standard_False);
+            if (!document.presentation.controlPointEditPreview.IsNull())
+                g_ctx->Remove(document.presentation.controlPointEditPreview, Standard_False);
+            if (!document.presentation.exclusionPreview.IsNull())
+                g_ctx->Remove(document.presentation.exclusionPreview, Standard_False);
+        }
+
+        document.presentation.connectionPaths.clear();
+        document.presentation.pathSegments.clear();
+        document.presentation.worldOverlays.clear();
+        document.presentation.exclusionOverlays.clear();
+        document.presentation.connectionPathPreview.Nullify();
+        document.presentation.connectionPointPreview.Nullify();
+        document.presentation.controlPointEditPreview.Nullify();
+        document.presentation.exclusionPreview.Nullify();
+        document.presentation.hoveredCircuitPieces.clear();
+        document.presentation.faceHighlightsVisible = true;
+
+        if (!g_view.IsNull())
+            g_view->Redraw();
+    }
+
+    enum class NativeModelLoadStatus
+    {
+        FailedBeforeCommit,
+        Committed,
+        CommittedPresentationOutOfSync
+    };
+
+    NativeModelLoadStatus ClassifyLoadException(
+        NativeDocumentSession* documentBeforeLoad,
+        std::string& diagnostic)
+    {
+        if (g_documentSession.get() != documentBeforeLoad)
+        {
+            g_documentSession->presentationOutOfSync = true;
+            diagnostic = "StepLoadPostCommitFailure";
+            return NativeModelLoadStatus::CommittedPresentationOutOfSync;
+        }
+
+        diagnostic = "StepLoadFailedBeforeCommit";
+        return NativeModelLoadStatus::FailedBeforeCommit;
+    }
+
+    bool PrepareStepFile(
+        const char* path,
+        std::unique_ptr<NativeDocumentSession>& candidateSession,
+        long long& baseModelRevision,
+        std::string& diagnostic)
+    {
+        baseModelRevision = g_documentSession->modelRevision;
         STEPControl_Reader reader;
-        if (reader.ReadFile(path) != IFSelect_RetDone) return false;
-        reader.TransferRoots();
-        g_shape = reader.OneShape();
-        if (g_shape.IsNull()) return false;
-        ComputeAutoAxes(reader.StepModel());
-        AlignShapeToWorldAxes();
-        RebuildFaceCache();
-        MeshShapeNative(1.0);   // W2 — shaded 표시용 삼각분할 (선형 편향 1mm)
+        TopoDS_Shape candidateShape;
+        try
+        {
+            if (reader.ReadFile(path) != IFSelect_RetDone)
+            {
+                diagnostic = "StepReadFailed";
+                return false;
+            }
+            reader.TransferRoots();
+            candidateShape = reader.OneShape();
+        }
+        catch (...)
+        {
+            diagnostic = "StepReadFailed";
+            return false;
+        }
+        if (candidateShape.IsNull())
+        {
+            diagnostic = "StepContainsNoShape";
+            return false;
+        }
+
+        auto preparedSession = std::make_unique<NativeDocumentSession>();
+        preparedSession->shape = candidateShape;
+        preparedSession->modelRevision = baseModelRevision;
+        try
+        {
+            ComputeAutoAxes(*preparedSession, reader.StepModel());
+            AlignShapeToWorldAxes(*preparedSession);
+            RebuildFaceCache(*preparedSession);
+            MeshShapeNative(*preparedSession, 1.0);   // 음영 표시용 삼각분할
+        }
+        catch (...)
+        {
+            diagnostic = "CandidateGeometryPreparationFailed";
+            return false;
+        }
+
+        candidateSession = std::move(preparedSession);
+        return true;
+    }
+
+    NativeModelLoadStatus PublishPreparedDocument(
+        std::unique_ptr<NativeDocumentSession> candidateSession,
+        long long baseModelRevision,
+        std::string& diagnostic)
+    {
+        if (!candidateSession || baseModelRevision != g_documentSession->modelRevision)
+        {
+            diagnostic = "PreparedCandidateStale";
+            return NativeModelLoadStatus::FailedBeforeCommit;
+        }
+
+        if (!candidateSession->stagedPreparedPathSegments.empty())
+        {
+            diagnostic = "UncommittedPreparedPathSegments";
+            return NativeModelLoadStatus::FailedBeforeCommit;
+        }
+
+        if (baseModelRevision == std::numeric_limits<long long>::max())
+        {
+            diagnostic = "ModelRevisionExhausted";
+            return NativeModelLoadStatus::FailedBeforeCommit;
+        }
+
+        // 후보 검증에서 만든 작업 context는 확정된 새 revision에 재사용하지 않습니다.
+        candidateSession->workingContexts.clear();
+        candidateSession->modelRevision = baseModelRevision + 1;
+
+        // 후보 기하를 준비하는 동안 활성 문서가 바뀌지 않았을 때만 한 번에 교체합니다.
+        g_documentSession.swap(candidateSession);
+        bool presentationSynchronized = true;
+        try
+        {
+            ClearDocumentPresentation(*candidateSession);
+        }
+        catch (...)
+        {
+            presentationSynchronized = false;
+            diagnostic = "PreviousPresentationCleanupFailed";
+        }
+
+        try
+        {
+            InvalidateWorkingSurfaceContexts(*candidateSession);
+        }
+        catch (...)
+        {
+            presentationSynchronized = false;
+            diagnostic = "PreviousWorkingContextCleanupFailed";
+        }
 
         // 뷰어가 이미 초기화된 경우 즉시 표시 (S1 항목 1)
         if (!g_ctx.IsNull())
         {
-            ClearDisplayedShape();
-            g_aisShape = new AIS_ColoredShape(g_shape);
-            ConfigureDisplay();
-            g_view->FitAll(0.01, Standard_False);
-            g_view->Redraw();
+            try
+            {
+                g_documentSession->presentation.aisShape = new AIS_ColoredShape(g_documentSession->shape);
+                ConfigureDisplay();
+                if (!DisplayPreparedPathSegmentsNative(*g_documentSession))
+                {
+                    presentationSynchronized = false;
+                    diagnostic = "PreparedPathPresentationFailed";
+                }
+                if (!g_view.IsNull())
+                {
+                    g_view->FitAll(0.01, Standard_False);
+                    g_view->Redraw();
+                }
+            }
+            catch (...)
+            {
+                presentationSynchronized = false;
+                diagnostic = "ActiveModelPresentationFailed";
+                RemovePreparedPathPresentationNative(*g_documentSession);
+                try
+                {
+                    if (!g_documentSession->presentation.aisShape.IsNull())
+                        g_ctx->Remove(g_documentSession->presentation.aisShape, Standard_False);
+                }
+                catch (...) { }
+                g_documentSession->presentation.aisShape.Nullify();
+            }
         }
-        return true;
+
+        g_documentSession->presentationOutOfSync = !presentationSynchronized;
+        return presentationSynchronized
+            ? NativeModelLoadStatus::Committed
+            : NativeModelLoadStatus::CommittedPresentationOutOfSync;
     }
 
     const char* SurfaceTypeName(GeomAbs_SurfaceType t)
@@ -450,12 +887,12 @@ namespace
     ShapeCounts ComputeCounts()
     {
         ShapeCounts c = { 0, 0, 0, 0 };
-        if (g_shape.IsNull()) return c;
-        for (TopExp_Explorer ex(g_shape, TopAbs_SOLID); ex.More(); ex.Next()) ++c.solids;
-        for (TopExp_Explorer ex(g_shape, TopAbs_SHELL); ex.More(); ex.Next()) ++c.shells;
-        c.faces = (int)g_faces.size();
-        for (size_t i = 0; i < g_faces.size(); ++i)
-            if (BRepAdaptor_Surface(g_faces[i]).GetType() == GeomAbs_Plane) ++c.planes;
+        if (g_documentSession->shape.IsNull()) return c;
+        for (TopExp_Explorer ex(g_documentSession->shape, TopAbs_SOLID); ex.More(); ex.Next()) ++c.solids;
+        for (TopExp_Explorer ex(g_documentSession->shape, TopAbs_SHELL); ex.More(); ex.Next()) ++c.shells;
+        c.faces = (int)g_documentSession->faces.size();
+        for (size_t i = 0; i < g_documentSession->faces.size(); ++i)
+            if (BRepAdaptor_Surface(g_documentSession->faces[i]).GetType() == GeomAbs_Plane) ++c.planes;
         return c;
     }
 
@@ -466,10 +903,10 @@ namespace
         std::vector<double> pts;   // flat: u0,v0,u1,v1,...
     };
 
-    bool ExtractUvWires(int faceIndex, std::vector<NativeWire>& out)
+    bool ExtractUvWires(const NativeDocumentSession& document, int faceIndex, std::vector<NativeWire>& out)
     {
-        if (faceIndex < 0 || faceIndex >= (int)g_faces.size()) return false;
-        const TopoDS_Face& face = g_faces[faceIndex];
+        if (faceIndex < 0 || faceIndex >= static_cast<int>(document.faces.size())) return false;
+        const TopoDS_Face& face = document.faces[faceIndex];
         const TopoDS_Wire outer = BRepTools::OuterWire(face);
 
         // pass 0: 외곽 와이어, pass 1: 홀 와이어
@@ -530,7 +967,7 @@ namespace
         std::set<int> selected;
         for (int id : faceIds)
         {
-            if (id < 0 || id >= static_cast<int>(g_faces.size())) return false;
+            if (id < 0 || id >= static_cast<int>(g_documentSession->faces.size())) return false;
             selected.insert(id);
         }
 
@@ -542,7 +979,7 @@ namespace
         // geometric sewing tolerance; larger gaps are deliberately not joined.
         const double sewingTolerance = 0.01;
         BRepBuilderAPI_Sewing sewing(sewingTolerance, Standard_True, Standard_True, Standard_True, Standard_True);
-        for (int faceId : selected) sewing.Add(g_faces[faceId]);
+        for (int faceId : selected) sewing.Add(g_documentSession->faces[faceId]);
         sewing.Perform();
         const TopoDS_Shape workingShape = sewing.SewedShape();
         if (workingShape.IsNull()) return false;
@@ -661,27 +1098,48 @@ namespace
         return !loops.empty();
     }
 
-    bool SamplePoint(int faceIndex, double u, double v, double* out)
+    bool SamplePoint(const NativeDocumentSession& document, int faceIndex, double u, double v, double* out)
     {
-        if (faceIndex < 0 || faceIndex >= (int)g_faces.size()) return false;
-        BRepAdaptor_Surface surf(g_faces[faceIndex]);
+        if (faceIndex < 0 || faceIndex >= static_cast<int>(document.faces.size())) return false;
+        BRepAdaptor_Surface surf(document.faces[faceIndex]);
         const gp_Pnt p = surf.Value(u, v);
         out[0] = p.X(); out[1] = p.Y(); out[2] = p.Z();
         return true;
     }
 
-    const char* FaceTypeName(int faceIndex)
+    const char* FaceTypeName(const NativeDocumentSession& document, int faceIndex)
     {
-        if (faceIndex < 0 || faceIndex >= (int)g_faces.size()) return nullptr;
-        return SurfaceTypeName(BRepAdaptor_Surface(g_faces[faceIndex]).GetType());
+        if (faceIndex < 0 || faceIndex >= static_cast<int>(document.faces.size())) return nullptr;
+        return SurfaceTypeName(BRepAdaptor_Surface(document.faces[faceIndex]).GetType());
     }
 
     // ================= 뷰어 natives (S1 항목 1·6) =================
 
     bool InitViewerNative(void* hwnd)
     {
-        if (!g_view.IsNull()) return true;
         if (hwnd == nullptr) return false;
+
+        // HwndHost는 창을 다시 만들 수 있으므로 기존 OCCT 뷰가 있으면 새 HWND에 연결한다.
+        if (!g_view.IsNull() && g_viewInitialized)
+        {
+            try
+            {
+                Handle(WNT_Window) window = new WNT_Window((Aspect_Handle)hwnd);
+                g_view->SetWindow(window);
+                if (!window->IsMapped()) window->Map();
+                g_window = window;
+                g_view->MustBeResized();
+                g_view->Redraw();
+                return true;
+            }
+            catch (const Standard_Failure&)
+            {
+                return false;
+            }
+        }
+
+        // 이전 초기화가 중간에 실패한 경우 불완전한 전역 핸들을 버리고 다시 구성한다.
+        ResetViewerResources();
 
         // 진단 로그: HEATINGMOLD_OCC_LOG 환경변수가 있으면 OCCT 메시지 + GL 컨텍스트 정보를 파일로 수집
         // (.NET의 프로세스 환경변수 변경은 CRT getenv에 반영되지 않음 → Win32 API로 읽음)
@@ -738,14 +1196,16 @@ namespace
                 diag.flush();
             }
 
-            if (!g_shape.IsNull())
+            if (!g_documentSession->shape.IsNull())
             {
-                g_aisShape = new AIS_ColoredShape(g_shape);
+                if (g_documentSession->presentation.aisShape.IsNull())
+                    g_documentSession->presentation.aisShape = new AIS_ColoredShape(g_documentSession->shape);
                 ConfigureDisplay();
             }
             g_view->MustBeResized();
             g_view->FitAll(0.01, Standard_False);
             g_view->Redraw();
+            g_viewInitialized = true;
             return true;
         }
         catch (const Standard_Failure& f)
@@ -755,8 +1215,18 @@ namespace
                 diag << "[bridge] Standard_Failure: " << f.GetMessageString() << "\n";
                 diag.flush();
             }
+            ResetViewerResources();
             return false;
         }
+    }
+
+    void ShutdownNative()
+    {
+        // 후보와 활성 문서가 보유한 기하를 먼저 해제한 뒤 Viewer의 표시 context를 해제한다.
+        g_preparedDocumentCandidates.clear();
+        g_documentSession.reset();
+        g_selectionRubberBand.Nullify();
+        ResetViewerResources();
     }
 
     void ResizeViewNative()
@@ -802,8 +1272,8 @@ namespace
 
     void SetShapeColorNative(double r, double g, double b)
     {
-        if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
-        g_ctx->SetColor(g_aisShape, Quantity_Color(r, g, b, Quantity_TOC_RGB), Standard_False);
+        if (g_ctx.IsNull() || g_documentSession->presentation.aisShape.IsNull()) return;
+        g_ctx->SetColor(g_documentSession->presentation.aisShape, Quantity_Color(r, g, b, Quantity_TOC_RGB), Standard_False);
         g_view->Redraw();
     }
 
@@ -812,7 +1282,7 @@ namespace
     bool ProjectHeatingPathSegmentNative(int pieceId, const std::string& kind, const std::vector<double>& xyz,
         const std::vector<int>& faceIds, const gp_Dir& direction, double depth, double* result)
     {
-        if (g_shape.IsNull() || xyz.size() < 6 || xyz.size() % 3 || faceIds.empty() ||
+        if (g_documentSession->shape.IsNull() || xyz.size() < 6 || xyz.size() % 3 || faceIds.empty() ||
             !std::isfinite(depth) || depth < 0 || result == nullptr) return false;
         try
         {
@@ -825,8 +1295,8 @@ namespace
             BRepBuilderAPI_Sewing sewing(0.01, Standard_True, Standard_True, Standard_True, Standard_True);
             std::set<int> unique;
             for (int id : faceIds) {
-                if (id < 0 || id >= static_cast<int>(g_faces.size())) return false;
-                if (unique.insert(id).second) sewing.Add(g_faces[id]);
+                if (id < 0 || id >= static_cast<int>(g_documentSession->faces.size())) return false;
+                if (unique.insert(id).second) sewing.Add(g_documentSession->faces[id]);
             }
             sewing.Perform();
             const TopoDS_Shape target = sewing.SewedShape();
@@ -877,8 +1347,8 @@ namespace
             // remain part of the heating path and cannot be toggled.
             const bool turnSegment = normalizedKind == "turnsegment" || normalizedKind == "turn";
             if (!g_ctx.IsNull()) {
-                auto old = g_pathSegments.find(pieceId);
-                if (old != g_pathSegments.end()) { g_ctx->Remove(old->second.ais, Standard_False); g_pathSegments.erase(old); }
+                auto old = g_documentSession->presentation.pathSegments.find(pieceId);
+                if (old != g_documentSession->presentation.pathSegments.end()) { g_ctx->Remove(old->second.ais, Standard_False); g_documentSession->presentation.pathSegments.erase(old); }
                 Handle(AIS_Shape) ais = new AIS_Shape(projected);
                 const Quantity_Color color = turnSegment ? Quantity_Color(0.1, 0.65, 1.0, Quantity_TOC_RGB) : Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB);
                 g_ctx->SetColor(ais, color, Standard_False);
@@ -886,7 +1356,7 @@ namespace
                 g_ctx->Display(ais, Standard_False); g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
                 // Every path segment remains selectable for circuit hover.
                 g_ctx->Activate(ais, Standard_False);
-                g_pathSegments[pieceId] = { ais, turnSegment, true, color, 1.0 };
+                g_documentSession->presentation.pathSegments[pieceId] = { ais, turnSegment, true, color, 1.0 };
             }
             return true;
         } catch (const Standard_Failure&) { return false; }
@@ -894,8 +1364,8 @@ namespace
 
     bool SetTurnSegmentNative(int id, bool enabled, double r, double g, double b)
     {
-        auto it = g_pathSegments.find(id);
-        if (it == g_pathSegments.end() || !it->second.turnSegment || g_ctx.IsNull()) return false;
+        auto it = g_documentSession->presentation.pathSegments.find(id);
+        if (it == g_documentSession->presentation.pathSegments.end() || !it->second.turnSegment || g_ctx.IsNull()) return false;
         it->second.enabled = enabled;
         it->second.color = Quantity_Color(r, g, b, Quantity_TOC_RGB);
         g_ctx->SetColor(it->second.ais, it->second.color, Standard_False);
@@ -908,26 +1378,77 @@ namespace
     void ClearPathSegmentsNative()
     {
         HighlightCircuitNative(std::vector<int>());
-        if (!g_ctx.IsNull()) for (const auto& piece : g_pathSegments) g_ctx->Remove(piece.second.ais, Standard_False);
-        g_pathSegments.clear();
-        g_stagedWorkingPathSegmentOwners.clear();
+        if (!g_ctx.IsNull()) for (const auto& piece : g_documentSession->presentation.pathSegments) g_ctx->Remove(piece.second.ais, Standard_False);
+        g_documentSession->presentation.pathSegments.clear();
+        g_documentSession->stagedWorkingPathSegmentOwners.clear();
     }
 
     void ClearConnectionPathPreviewNative()
     {
         if (!g_ctx.IsNull()) {
-            if (!g_connectionPathPreview.IsNull()) g_ctx->Remove(g_connectionPathPreview, Standard_False);
-            if (!g_connectionPointPreview.IsNull()) g_ctx->Remove(g_connectionPointPreview, Standard_False);
+            if (!g_documentSession->presentation.connectionPathPreview.IsNull()) g_ctx->Remove(g_documentSession->presentation.connectionPathPreview, Standard_False);
+            if (!g_documentSession->presentation.connectionPointPreview.IsNull()) g_ctx->Remove(g_documentSession->presentation.connectionPointPreview, Standard_False);
         }
-        g_connectionPathPreview.Nullify();
-        g_connectionPointPreview.Nullify();
+        g_documentSession->presentation.connectionPathPreview.Nullify();
+        g_documentSession->presentation.connectionPointPreview.Nullify();
+    }
+
+    void ClearControlPointEditPreviewNative()
+    {
+        if (!g_ctx.IsNull() && !g_documentSession->presentation.controlPointEditPreview.IsNull())
+            g_ctx->Remove(g_documentSession->presentation.controlPointEditPreview, Standard_False);
+        g_documentSession->presentation.controlPointEditPreview.Nullify();
+    }
+
+    bool SetControlPointEditPreviewNative(const std::vector<std::vector<double>>& polylines)
+    {
+        ClearControlPointEditPreviewNative();
+        if (g_ctx.IsNull() || polylines.empty())
+            return false;
+
+        TopoDS_Compound preview;
+        BRep_Builder compoundBuilder;
+        compoundBuilder.MakeCompound(preview);
+        for (const std::vector<double>& coordinates : polylines)
+        {
+            if (coordinates.size() < 6 || coordinates.size() % 3 != 0)
+                return false;
+
+            BRepBuilderAPI_MakePolygon polygon;
+            for (size_t index = 0; index < coordinates.size(); index += 3)
+            {
+                const double x = coordinates[index];
+                const double y = coordinates[index + 1];
+                const double z = coordinates[index + 2];
+                if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+                    return false;
+
+                polygon.Add(gp_Pnt(x, y, z));
+            }
+            if (!polygon.IsDone())
+                return false;
+
+            compoundBuilder.Add(preview, polygon.Wire());
+        }
+
+        if (preview.IsNull())
+            return false;
+
+        Handle(AIS_Shape) overlay = new AIS_Shape(preview);
+        g_ctx->SetColor(overlay, Quantity_Color(0.05, 0.85, 0.9, Quantity_TOC_RGB), Standard_False);
+        g_ctx->SetWidth(overlay, 2.5, Standard_False);
+        g_ctx->Display(overlay, Standard_False);
+        g_ctx->SetZLayer(overlay, Graphic3d_ZLayerId_Topmost);
+        g_ctx->Deactivate(overlay, Standard_False);
+        g_documentSession->presentation.controlPointEditPreview = overlay;
+        return true;
     }
 
     void ClearConnectionPathsNative()
     {
         ClearConnectionPathPreviewNative();
-        if (!g_ctx.IsNull()) for (const auto& connectionPath : g_connectionPaths) g_ctx->Remove(connectionPath.second, Standard_False);
-        g_connectionPaths.clear();
+        if (!g_ctx.IsNull()) for (const auto& connectionPath : g_documentSession->presentation.connectionPaths) g_ctx->Remove(connectionPath.second, Standard_False);
+        g_documentSession->presentation.connectionPaths.clear();
     }
 
     // Validate the complete external segment, not just its destination. Projecting
@@ -944,7 +1465,7 @@ namespace
         if (!source.IsDone()) return false;
         // Keep faces independent: a tolerant imported neighbor must not merge
         // away a narrow obstruction in a whole-shape projection operation.
-        for (const TopoDS_Face& face : g_faces) {
+        for (const TopoDS_Face& face : g_documentSession->faces) {
             BRepProj_Projection footprint(source.Wire(), face, direction);
             for (footprint.Init(); footprint.More(); footprint.Next()) {
                 for (TopExp_Explorer ex(footprint.Current(), TopAbs_EDGE); ex.More(); ex.Next()) {
@@ -962,7 +1483,7 @@ namespace
         // Also reject direct material intersections (including axis-parallel faces).
         const gp_Vec segment(from, to);
         IntCurvesFace_ShapeIntersector material;
-        material.Load(g_shape, tolerance);
+        material.Load(g_documentSession->shape, tolerance);
         material.Perform(gp_Lin(from, gp_Dir(segment)), tolerance, segment.Magnitude());
         return material.IsDone() && material.NbPnt() == 0;
     }
@@ -975,7 +1496,7 @@ namespace
         const TopoDS_Vertex query = BRepBuilderAPI_MakeVertex(point).Vertex();
         bool matched = false;
         for (int id : faces) {
-            const TopoDS_Face& face = g_faces[id];
+            const TopoDS_Face& face = g_documentSession->faces[id];
             for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
                 const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
                 double cadTolerance = std::max(Precision::Confusion(),
@@ -999,7 +1520,7 @@ namespace
         const std::vector<int>& faces, const gp_Dir& direction, double insertionDepthMm, double* result, bool previewOnly)
     {
         result[0] = -1;
-        if (g_shape.IsNull() || xyz.size() != 6 || actual.size() != 3 || faces.empty() ||
+        if (g_documentSession->shape.IsNull() || xyz.size() != 6 || actual.size() != 3 || faces.empty() ||
             !std::isfinite(insertionDepthMm) || insertionDepthMm < 0) return;
         for (double v : xyz) if (!std::isfinite(v)) return;
         for (double v : actual) if (!std::isfinite(v)) return;
@@ -1013,8 +1534,8 @@ namespace
         BRepBuilderAPI_Sewing sewing(0.01, Standard_True, Standard_True, Standard_True, Standard_True);
         std::set<int> unique;
         for (int face : faces) {
-            if (face < 0 || face >= static_cast<int>(g_faces.size())) return;
-            if (unique.insert(face).second) sewing.Add(g_faces[face]);
+            if (face < 0 || face >= static_cast<int>(g_documentSession->faces.size())) return;
+            if (unique.insert(face).second) sewing.Add(g_documentSession->faces[face]);
         }
         sewing.Perform();
         if (sewing.SewedShape().IsNull()) return;
@@ -1033,7 +1554,7 @@ namespace
             // Plane destinations must remain outside the entire mold. Boundary
             // destinations are handled as surface endpoints, not axis-line hits.
             IntCurvesFace_ShapeIntersector outside;
-            outside.Load(g_shape, 1e-7);
+            outside.Load(g_documentSession->shape, 1e-7);
             outside.Perform(gp_Lin(destination, direction), -1e100, 1e100);
             result[0] = -2;
             if (!outside.IsDone() || outside.NbPnt() != 0) return;
@@ -1098,7 +1619,7 @@ namespace
         if (!g_ctx.IsNull()) {
             Handle(AIS_Shape) overlay = new AIS_Shape(joined.Wire());
             // Own transient objects before any context operation can throw.
-            if (previewOnly) g_connectionPathPreview = overlay;
+            if (previewOnly) g_documentSession->presentation.connectionPathPreview = overlay;
             g_ctx->SetColor(overlay, previewOnly ? Quantity_Color(0.1, 0.9, 1.0, Quantity_TOC_RGB) :
                 Quantity_Color(1.0, 0.65, 0.05, Quantity_TOC_RGB), Standard_False);
             if (previewOnly) {
@@ -1108,16 +1629,16 @@ namespace
             g_ctx->Display(overlay, Standard_False);
             g_ctx->SetZLayer(overlay, Graphic3d_ZLayerId_Topmost); g_ctx->Deactivate(overlay, Standard_False);
             if (previewOnly) {
-                g_connectionPointPreview = new AIS_Point(new Geom_CartesianPoint(end));
-                g_connectionPointPreview->SetMarker(Aspect_TOM_O_POINT);
-                g_ctx->SetColor(g_connectionPointPreview, Quantity_Color(0.1, 0.9, 1.0, Quantity_TOC_RGB), Standard_False);
-                g_ctx->Display(g_connectionPointPreview, Standard_False);
-                g_ctx->SetZLayer(g_connectionPointPreview, Graphic3d_ZLayerId_Topmost);
-                g_ctx->Deactivate(g_connectionPointPreview, Standard_False);
+                g_documentSession->presentation.connectionPointPreview = new AIS_Point(new Geom_CartesianPoint(end));
+                g_documentSession->presentation.connectionPointPreview->SetMarker(Aspect_TOM_O_POINT);
+                g_ctx->SetColor(g_documentSession->presentation.connectionPointPreview, Quantity_Color(0.1, 0.9, 1.0, Quantity_TOC_RGB), Standard_False);
+                g_ctx->Display(g_documentSession->presentation.connectionPointPreview, Standard_False);
+                g_ctx->SetZLayer(g_documentSession->presentation.connectionPointPreview, Graphic3d_ZLayerId_Topmost);
+                g_ctx->Deactivate(g_documentSession->presentation.connectionPointPreview, Standard_False);
             } else {
-                auto old = g_connectionPaths.find(connectionPathId);
-                if (old != g_connectionPaths.end()) g_ctx->Remove(old->second, Standard_False);
-                g_connectionPaths[connectionPathId] = overlay;
+                auto old = g_documentSession->presentation.connectionPaths.find(connectionPathId);
+                if (old != g_documentSession->presentation.connectionPaths.end()) g_ctx->Remove(old->second, Standard_False);
+                g_documentSession->presentation.connectionPaths[connectionPathId] = overlay;
             }
         }
         result[0] = 1; result[1] = props.Mass(); result[2] = surfaceProps.Mass(); result[3] = b.Distance(end);
@@ -1130,7 +1651,7 @@ namespace
         Handle(SelectMgr_EntityOwner) owner = g_ctx->DetectedOwner();
         if (owner.IsNull()) return -1;
         Handle(AIS_InteractiveObject) selectable = Handle(AIS_InteractiveObject)::DownCast(owner->Selectable());
-        for (const auto& piece : g_pathSegments)
+        for (const auto& piece : g_documentSession->presentation.pathSegments)
             if (piece.second.turnSegment && piece.second.ais == selectable) return piece.first;
         return -1;
     }
@@ -1138,18 +1659,18 @@ namespace
     void HighlightCircuitNative(const std::vector<int>& ids)
     {
         if (g_ctx.IsNull()) return;
-        for (int id : g_hoveredCircuitPieces) {
-            auto it = g_pathSegments.find(id);
-            if (it != g_pathSegments.end()) {
+        for (int id : g_documentSession->presentation.hoveredCircuitPieces) {
+            auto it = g_documentSession->presentation.pathSegments.find(id);
+            if (it != g_documentSession->presentation.pathSegments.end()) {
                 g_ctx->SetColor(it->second.ais, it->second.color, Standard_False);
                 g_ctx->SetWidth(it->second.ais, it->second.width, Standard_False);
             }
         }
-        g_hoveredCircuitPieces.clear();
+        g_documentSession->presentation.hoveredCircuitPieces.clear();
         for (int id : ids) {
-            auto it = g_pathSegments.find(id);
-            if (it == g_pathSegments.end()) continue;
-            g_hoveredCircuitPieces.insert(id);
+            auto it = g_documentSession->presentation.pathSegments.find(id);
+            if (it == g_documentSession->presentation.pathSegments.end()) continue;
+            g_documentSession->presentation.hoveredCircuitPieces.insert(id);
             g_ctx->SetColor(it->second.ais, Quantity_Color(1.0, 0.85, 0.0, Quantity_TOC_RGB), Standard_False);
             g_ctx->SetWidth(it->second.ais, 4.0, Standard_False);
         }
@@ -1179,19 +1700,19 @@ namespace
     {
         Handle(AIS_Shape) overlay = MakeExclusionOverlay(xyz, Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB));
         if (overlay.IsNull()) return false;
-        g_exclusionOverlays.push_back(overlay);
+        g_documentSession->presentation.exclusionOverlays.push_back(overlay);
         if (!g_view.IsNull()) g_view->Redraw();
         return true;
     }
 
     void SetExclusionPreviewNative(const std::vector<double>& xyz)
     {
-        if (!g_ctx.IsNull() && !g_exclusionPreview.IsNull())
+        if (!g_ctx.IsNull() && !g_documentSession->presentation.exclusionPreview.IsNull())
         {
-            g_ctx->Remove(g_exclusionPreview, Standard_False);
-            g_exclusionPreview.Nullify();
+            g_ctx->Remove(g_documentSession->presentation.exclusionPreview, Standard_False);
+            g_documentSession->presentation.exclusionPreview.Nullify();
         }
-        g_exclusionPreview = MakeExclusionOverlay(xyz, Quantity_Color(0.95, 0.55, 0.05, Quantity_TOC_RGB));
+        g_documentSession->presentation.exclusionPreview = MakeExclusionOverlay(xyz, Quantity_Color(0.95, 0.55, 0.05, Quantity_TOC_RGB));
         if (!g_view.IsNull()) g_view->Redraw();
     }
 
@@ -1199,27 +1720,61 @@ namespace
     {
         if (!g_ctx.IsNull())
         {
-            for (const auto& overlay : g_exclusionOverlays) g_ctx->Remove(overlay, Standard_False);
-            if (!g_exclusionPreview.IsNull()) g_ctx->Remove(g_exclusionPreview, Standard_False);
+            for (const auto& overlay : g_documentSession->presentation.exclusionOverlays) g_ctx->Remove(overlay, Standard_False);
+            if (!g_documentSession->presentation.exclusionPreview.IsNull()) g_ctx->Remove(g_documentSession->presentation.exclusionPreview, Standard_False);
         }
-        g_exclusionOverlays.clear();
-        g_exclusionPreview.Nullify();
+        g_documentSession->presentation.exclusionOverlays.clear();
+        g_documentSession->presentation.exclusionPreview.Nullify();
         if (!g_view.IsNull()) g_view->Redraw();
+    }
+
+    void ClearQualityIssueLocationNative()
+    {
+        if (!g_documentSession)
+            return;
+
+        if (!g_documentSession->presentation.qualityIssueLocation.IsNull())
+        {
+            if (!g_ctx.IsNull())
+                g_ctx->Remove(g_documentSession->presentation.qualityIssueLocation, Standard_False);
+            g_documentSession->presentation.qualityIssueLocation.Nullify();
+        }
+    }
+
+    bool ShowQualityIssueLocationNative(double x, double y, double z)
+    {
+        if (!g_documentSession || g_ctx.IsNull() ||
+            !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+            return false;
+
+        ClearQualityIssueLocationNative();
+        Handle(AIS_Point) marker = new AIS_Point(new Geom_CartesianPoint(gp_Pnt(x, y, z)));
+        marker->SetMarker(Aspect_TOM_O_POINT);
+        g_documentSession->presentation.qualityIssueLocation = marker;
+        g_ctx->SetColor(marker, Quantity_Color(1.0, 0.15, 0.05, Quantity_TOC_RGB), Standard_False);
+        g_ctx->Display(marker, Standard_False);
+        g_ctx->SetZLayer(marker, Graphic3d_ZLayerId_Topmost);
+        g_ctx->Deactivate(marker, Standard_False);
+        if (!g_view.IsNull())
+            g_view->Redraw();
+        return true;
     }
 
     void ClearOverlayNative()
     {
         ClearConnectionPathsNative();
+        ClearControlPointEditPreviewNative();
+        ClearQualityIssueLocationNative();
         ClearPathSegmentsNative();
         if (!g_ctx.IsNull())
         {
-            for (const auto& overlay : g_worldOverlays)
+            for (const auto& overlay : g_documentSession->presentation.worldOverlays)
                 g_ctx->Remove(overlay, Standard_False);
         }
-        g_worldOverlays.clear();
-        for (const auto& staged : g_stagedWorkingPolylines)
+        g_documentSession->presentation.worldOverlays.clear();
+        for (const auto& staged : g_documentSession->stagedWorkingPolylines)
             if (!g_ctx.IsNull()) g_ctx->Remove(staged.second.ais,Standard_False);
-        g_stagedWorkingPolylines.clear();
+        g_documentSession->stagedWorkingPolylines.clear();
         if (!g_view.IsNull()) g_view->Redraw();
     }
 
@@ -1238,14 +1793,15 @@ namespace
         g_view->Redraw();
     }
 
-    bool GetModelBoundsInFrameNative(const gp_Dir& xAxis, const gp_Dir& yAxis,
+    bool GetModelBoundsInFrameNative(const NativeDocumentSession& document,
+                                     const gp_Dir& xAxis, const gp_Dir& yAxis,
                                      const gp_Dir& zAxis, double* out)
     {
-        if (g_shape.IsNull() || out == nullptr) return false;
+        if (document.shape.IsNull() || out == nullptr) return false;
         try
         {
             Bnd_Box box;
-            BRepBndLib::Add(g_shape, box);
+            BRepBndLib::Add(document.shape, box);
             if (box.IsVoid()) return false;
             double xmin, ymin, zmin, xmax, ymax, zmax;
             box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
@@ -1282,7 +1838,7 @@ namespace
     {
         if (outStatus) *outStatus = 1;
         if (outWireCount) *outWireCount = 0;
-        if (g_shape.IsNull() || faceIds.empty() || xyz.size() < 6 || xyz.size() % 3 != 0 ||
+        if (g_documentSession->shape.IsNull() || faceIds.empty() || xyz.size() < 6 || xyz.size() % 3 != 0 ||
             !std::isfinite(insertionDepth) || insertionDepth < 0.0 ||
             outLength == nullptr || outEdgeCount == nullptr || outStatus == nullptr || outWireCount == nullptr) return false;
         try
@@ -1305,8 +1861,8 @@ namespace
             std::set<int> uniqueFaces;
             for (int id : faceIds)
             {
-                if (id < 0 || id >= static_cast<int>(g_faces.size())) return false;
-                if (uniqueFaces.insert(id).second) sewing.Add(g_faces[id]);
+                if (id < 0 || id >= static_cast<int>(g_documentSession->faces.size())) return false;
+                if (uniqueFaces.insert(id).second) sewing.Add(g_documentSession->faces[id]);
             }
             sewing.Perform();
             const TopoDS_Shape target = sewing.SewedShape();
@@ -1449,7 +2005,7 @@ namespace
                 g_ctx->Display(overlay, Standard_False);
                 g_ctx->SetZLayer(overlay, Graphic3d_ZLayerId_Topmost);
                 g_ctx->Deactivate(overlay, Standard_False);
-                g_worldOverlays.push_back(overlay);
+                g_documentSession->presentation.worldOverlays.push_back(overlay);
             }
             *outLength = length;
             *outEdgeCount = static_cast<int>(edgeCount);
@@ -1461,7 +2017,7 @@ namespace
 
     // ================= 면 픽킹/선택 (W3·W5) =================
 
-    /// <summary>현재 DetectedOwner가 가리키는 면 인덱스 (g_faces와 1:1) — 없으면 -1</summary>
+    /// <summary>현재 DetectedOwner가 가리키는 면 인덱스 (g_documentSession->faces와 1:1) — 없으면 -1</summary>
     int DetectedFaceIndex()
     {
         if (g_ctx.IsNull()) return -1;
@@ -1470,21 +2026,21 @@ namespace
         const Handle(StdSelect_BRepOwner) brep = Handle(StdSelect_BRepOwner)::DownCast(owner);
         if (brep.IsNull() || !brep->HasShape()) return -1;
         const TopoDS_Shape& sub = brep->Shape();
-        if (!g_faceMap.Contains(sub)) return -1;
-        return g_faceMap.FindIndex(sub) - 1;
+        if (!g_documentSession->faceMap.Contains(sub)) return -1;
+        return g_documentSession->faceMap.FindIndex(sub) - 1;
     }
 
     /// <summary>W5 — 호버: 동적 하이라이트. 면이 바뀔 때만 Redraw (무효화 폭주 방지)</summary>
     int HoverFaceNative(int x, int y)
     {
-        if (g_ctx.IsNull() || g_view.IsNull() || g_aisShape.IsNull()) return -1;
-        if (!g_faceHighlightsVisible) return -1;
+        if (g_ctx.IsNull() || g_view.IsNull() || g_documentSession->presentation.aisShape.IsNull()) return -1;
+        if (!g_documentSession->presentation.faceHighlightsVisible) return -1;
         g_ctx->MoveTo(x, y, g_view, Standard_False);
 
         const int idx = DetectedFaceIndex();
-        if (idx != g_lastHoverFace)
+        if (idx != g_documentSession->presentation.lastHoverFace)
         {
-            g_lastHoverFace = idx;
+            g_documentSession->presentation.lastHoverFace = idx;
             g_view->Redraw();
         }
         return idx;
@@ -1493,8 +2049,8 @@ namespace
     void ClearHoverNative()
     {
         if (g_ctx.IsNull() || g_view.IsNull()) return;
-        if (g_lastHoverFace == -1) return;
-        g_lastHoverFace = -1;
+        if (g_documentSession->presentation.lastHoverFace == -1) return;
+        g_documentSession->presentation.lastHoverFace = -1;
         g_ctx->ClearDetected(Standard_False);
         g_view->Redraw();
     }
@@ -1502,10 +2058,10 @@ namespace
     /// <summary>W5 — 클릭: 면 선택(선택 하이라이트 유지). 빈 곳이면 선택 해제 후 -1</summary>
     int SelectFaceNative(int x, int y, bool toggle)
     {
-        if (g_ctx.IsNull() || g_view.IsNull() || g_aisShape.IsNull()) return -1;
+        if (g_ctx.IsNull() || g_view.IsNull() || g_documentSession->presentation.aisShape.IsNull()) return -1;
         g_ctx->MoveTo(x, y, g_view, Standard_False);
         const int idx = DetectedFaceIndex();
-        g_lastHoverFace = idx;
+        g_documentSession->presentation.lastHoverFace = idx;
         if (idx < 0 && !toggle)
             g_ctx->ClearSelected(Standard_False);
         else if (idx >= 0)
@@ -1518,7 +2074,7 @@ namespace
     std::vector<int> SelectFacesRectangleNative(int x0, int y0, int x1, int y1, bool toggle)
     {
         std::vector<int> result;
-        if (g_ctx.IsNull() || g_view.IsNull() || g_aisShape.IsNull()) return result;
+        if (g_ctx.IsNull() || g_view.IsNull() || g_documentSession->presentation.aisShape.IsNull()) return result;
         const int minX = std::min(x0, x1), maxX = std::max(x0, x1);
         const int minY = std::min(y0, y1), maxY = std::max(y0, y1);
         Standard_Integer viewWidth = 0, viewHeight = 0;
@@ -1536,8 +2092,8 @@ namespace
             Handle(SelectMgr_EntityOwner) owner = g_ctx->SelectedOwner();
             const Handle(StdSelect_BRepOwner) brep = Handle(StdSelect_BRepOwner)::DownCast(owner);
             if (brep.IsNull() || !brep->HasShape()) continue;
-            if (!g_faceMap.Contains(brep->Shape())) continue;
-            const int faceId = g_faceMap.FindIndex(brep->Shape()) - 1;
+            if (!g_documentSession->faceMap.Contains(brep->Shape())) continue;
+            const int faceId = g_documentSession->faceMap.FindIndex(brep->Shape()) - 1;
             previouslySelected.insert(faceId);
             owners[faceId] = owner;
         }
@@ -1559,9 +2115,9 @@ namespace
                 g_ctx->MoveTo(x, y, g_view, Standard_False);
                 Handle(SelectMgr_EntityOwner) owner = g_ctx->DetectedOwner();
                 const Handle(StdSelect_BRepOwner) brep = Handle(StdSelect_BRepOwner)::DownCast(owner);
-                if (!brep.IsNull() && brep->HasShape() && g_faceMap.Contains(brep->Shape()))
+                if (!brep.IsNull() && brep->HasShape() && g_documentSession->faceMap.Contains(brep->Shape()))
                 {
-                    const int faceId = g_faceMap.FindIndex(brep->Shape()) - 1;
+                    const int faceId = g_documentSession->faceMap.FindIndex(brep->Shape()) - 1;
                     visibleFaces.insert(faceId);
                     owners[faceId] = owner;
                 }
@@ -1585,7 +2141,7 @@ namespace
         g_ctx->HilightSelected(Standard_False);
         UpdateSelectedFaceColors();
         g_ctx->ClearDetected(Standard_False);
-        g_lastHoverFace = -1;
+        g_documentSession->presentation.lastHoverFace = -1;
         result.assign(targetFaces.begin(), targetFaces.end());
         g_view->Redraw();
         return result;
@@ -1631,13 +2187,13 @@ namespace
 
     bool PickSelectedBoundaryPointNative(const std::vector<int>& faces, int x, int y, double* out)
     {
-        if (g_view.IsNull() || g_shape.IsNull() || faces.empty() || out == nullptr) return false;
+        if (g_view.IsNull() || g_documentSession->shape.IsNull() || faces.empty() || out == nullptr) return false;
         try {
             std::set<int> unique;
             BRepBuilderAPI_Sewing sewing(0.01, Standard_True, Standard_True, Standard_True, Standard_True);
             for (int id : faces) {
-                if (id < 0 || id >= static_cast<int>(g_faces.size())) return false;
-                if (unique.insert(id).second) sewing.Add(g_faces[id]);
+                if (id < 0 || id >= static_cast<int>(g_documentSession->faces.size())) return false;
+                if (unique.insert(id).second) sewing.Add(g_documentSession->faces[id]);
             }
             sewing.Perform();
             const TopoDS_Shape united = sewing.SewedShape();
@@ -1708,7 +2264,7 @@ namespace
             if (direction.SquareMagnitude() < 1e-18) return false;
             direction.Normalize();
             IntCurvesFace_ShapeIntersector visibility;
-            visibility.Load(g_shape, 1e-7);
+            visibility.Load(g_documentSession->shape, 1e-7);
             visibility.Perform(gp_Lin(gp_Pnt(rx, ry, rz), gp_Dir(direction)), 0.0, 1e100);
             if (!visibility.IsDone() || visibility.NbPnt() == 0) return false;
             const gp_Pnt front = visibility.Pnt(1);
@@ -1758,7 +2314,7 @@ namespace
         double nx, double ny, double nz, double xx, double xy, double xz, bool hiddenToo)
     {
         std::vector<NativeHlrLine> out;
-        if (g_shape.IsNull()) return out;
+        if (g_documentSession->shape.IsNull()) return out;
 
         const gp_Dir n(nx, ny, nz);
         gp_Dir x(xx, xy, xz);
@@ -1770,7 +2326,7 @@ namespace
         }
 
         Handle(HLRBRep_Algo) algo = new HLRBRep_Algo();
-        algo->Add(g_shape);
+        algo->Add(g_documentSession->shape);
         algo->Projector(HLRAlgo_Projector(gp_Ax2(gp_Pnt(0.0, 0.0, 0.0), n, x)));
         algo->Update();
         algo->Hide();
@@ -1789,558 +2345,378 @@ namespace
         return out;
     }
 #include "WorkingCoordinateSystemNative.inc"
+
+    enum class FaceGeometryFeaturesStatusNative
+    {
+        Success,
+        InvalidModel,
+        GeometryFailure
+    };
+
+    struct FaceGeometryFeatureNative
+    {
+        int faceIndex;
+        std::string surfaceType;
+        double surfaceAreaMm2;
+        gp_Pnt center;
+        std::vector<int> adjacentFaceIndices;
+    };
+
+    bool CollectFaceGeometryFeaturesNative(
+        NativeDocumentSession& document,
+        std::vector<FaceGeometryFeatureNative>& features,
+        FaceGeometryFeaturesStatusNative& status)
+    {
+        if (document.shape.IsNull() || document.faces.empty())
+        {
+            status = FaceGeometryFeaturesStatusNative::InvalidModel;
+            return false;
+        }
+
+        if (!EnsureFaceAdjacencyNative(document, document.modelRevision))
+        {
+            status = FaceGeometryFeaturesStatusNative::GeometryFailure;
+            return false;
+        }
+
+        try
+        {
+            std::vector<FaceGeometryFeatureNative> preparedFeatures;
+            preparedFeatures.reserve(document.faces.size());
+
+            for (int faceIndex = 0; faceIndex < static_cast<int>(document.faces.size()); ++faceIndex)
+            {
+                GProp_GProps properties;
+                BRepGProp::SurfaceProperties(
+                    document.faces[faceIndex],
+                    properties,
+                    Standard_True,
+                    Standard_False);
+
+                const double surfaceAreaMm2 = std::fabs(properties.Mass());
+                const gp_Pnt center = properties.CentreOfMass();
+                const char* surfaceType = FaceTypeName(document, faceIndex);
+                if (!std::isfinite(surfaceAreaMm2) || surfaceAreaMm2 <= 0.0 ||
+                    !std::isfinite(center.X()) || !std::isfinite(center.Y()) || !std::isfinite(center.Z()) ||
+                    surfaceType == nullptr)
+                {
+                    status = FaceGeometryFeaturesStatusNative::GeometryFailure;
+                    return false;
+                }
+
+                FaceGeometryFeatureNative feature;
+                feature.faceIndex = faceIndex;
+                feature.surfaceType = surfaceType;
+                feature.surfaceAreaMm2 = surfaceAreaMm2;
+                feature.center = center;
+                feature.adjacentFaceIndices = GetAdjacentFaceIndicesNative(document, faceIndex);
+                preparedFeatures.push_back(std::move(feature));
+            }
+
+            features.swap(preparedFeatures);
+            status = FaceGeometryFeaturesStatusNative::Success;
+            return true;
+        }
+        catch (const Standard_Failure&)
+        {
+            status = FaceGeometryFeaturesStatusNative::GeometryFailure;
+            return false;
+        }
+    }
+
+    struct StepCurveNative
+    {
+        CurveDefinitionNative definition;
+        bool isReversed = false;
+    };
+
+    struct StepWireNative
+    {
+        std::vector<StepCurveNative> curves;
+    };
+
+    struct StepGroupNative
+    {
+        std::vector<StepWireNative> wires;
+    };
+
+    /// <summary>STEP 왕복에서 비교할 edge 길이, 방향 없는 끝점과 저장 공차입니다.</summary>
+    struct StepEdgeSignatureNative
+    {
+        gp_Pnt firstEndpoint;
+        gp_Pnt lastEndpoint;
+        double lengthMm = 0.0;
+        double toleranceMm = 0.0;
+    };
+
+    /// <summary>형상의 모든 edge에서 재읽기 비교용 측정값을 수집합니다.</summary>
+    bool CollectStepEdgeSignaturesNative(
+        const TopoDS_Shape& shape,
+        std::vector<StepEdgeSignatureNative>& signatures)
+    {
+        if (shape.IsNull())
+            return false;
+
+        std::vector<StepEdgeSignatureNative> preparedSignatures;
+        for (TopExp_Explorer explorer(shape, TopAbs_EDGE); explorer.More(); explorer.Next())
+        {
+            const TopoDS_Edge edge = TopoDS::Edge(explorer.Current());
+            TopoDS_Vertex firstVertex;
+            TopoDS_Vertex lastVertex;
+            TopExp::Vertices(edge, firstVertex, lastVertex, Standard_True);
+            if (firstVertex.IsNull() || lastVertex.IsNull())
+                return false;
+
+            GProp_GProps properties;
+            BRepGProp::LinearProperties(edge, properties);
+            const double lengthMm = properties.Mass();
+            const double toleranceMm = BRep_Tool::Tolerance(edge);
+            const gp_Pnt firstEndpoint = BRep_Tool::Pnt(firstVertex);
+            const gp_Pnt lastEndpoint = BRep_Tool::Pnt(lastVertex);
+            if (!std::isfinite(lengthMm) || lengthMm <= Precision::Confusion() ||
+                !std::isfinite(toleranceMm) || toleranceMm < 0.0 ||
+                !std::isfinite(firstEndpoint.X()) || !std::isfinite(firstEndpoint.Y()) ||
+                !std::isfinite(firstEndpoint.Z()) || !std::isfinite(lastEndpoint.X()) ||
+                !std::isfinite(lastEndpoint.Y()) || !std::isfinite(lastEndpoint.Z()))
+            {
+                return false;
+            }
+
+            preparedSignatures.push_back(StepEdgeSignatureNative{
+                firstEndpoint,
+                lastEndpoint,
+                lengthMm,
+                toleranceMm});
+        }
+
+        if (preparedSignatures.empty())
+            return false;
+
+        signatures.swap(preparedSignatures);
+        return true;
+    }
+
+    /// <summary>STEP edge를 길이와 방향 없는 끝점 순으로 정렬합니다.</summary>
+    bool StepEdgeSignatureLessNative(
+        const StepEdgeSignatureNative& first,
+        const StepEdgeSignatureNative& second)
+    {
+        auto pointLess = [](const gp_Pnt& left, const gp_Pnt& right)
+        {
+            if (left.X() != right.X()) return left.X() < right.X();
+            if (left.Y() != right.Y()) return left.Y() < right.Y();
+            return left.Z() < right.Z();
+        };
+
+        const bool firstIsReversed = pointLess(first.lastEndpoint, first.firstEndpoint);
+        const bool secondIsReversed = pointLess(second.lastEndpoint, second.firstEndpoint);
+        const gp_Pnt firstStart = firstIsReversed ? first.lastEndpoint : first.firstEndpoint;
+        const gp_Pnt firstEnd = firstIsReversed ? first.firstEndpoint : first.lastEndpoint;
+        const gp_Pnt secondStart = secondIsReversed ? second.lastEndpoint : second.firstEndpoint;
+        const gp_Pnt secondEnd = secondIsReversed ? second.firstEndpoint : second.lastEndpoint;
+
+        if (first.lengthMm != second.lengthMm)
+            return first.lengthMm < second.lengthMm;
+        if (pointLess(firstStart, secondStart))
+            return true;
+        if (pointLess(secondStart, firstStart))
+            return false;
+        return pointLess(firstEnd, secondEnd);
+    }
+
+    /// <summary>STEP 재읽기 edge 집합의 수, 길이와 끝점을 기대 형상과 대조합니다.</summary>
+    bool MatchStepEdgeSignaturesNative(
+        const std::vector<StepEdgeSignatureNative>& expected,
+        const std::vector<StepEdgeSignatureNative>& actual,
+        std::string& diagnostic)
+    {
+        if (expected.size() != actual.size())
+        {
+            diagnostic = "STEP 재읽기 edge 수가 출력 전 형상과 다릅니다.";
+            return false;
+        }
+
+        std::vector<StepEdgeSignatureNative> expectedOrdered = expected;
+        std::vector<StepEdgeSignatureNative> actualOrdered = actual;
+        std::sort(expectedOrdered.begin(), expectedOrdered.end(), StepEdgeSignatureLessNative);
+        std::sort(actualOrdered.begin(), actualOrdered.end(), StepEdgeSignatureLessNative);
+
+        for (size_t edgeIndex = 0; edgeIndex < expectedOrdered.size(); ++edgeIndex)
+        {
+            const StepEdgeSignatureNative& expectedEdge = expectedOrdered[edgeIndex];
+            const StepEdgeSignatureNative& actualEdge = actualOrdered[edgeIndex];
+            const double toleranceMm = std::max(
+                1e-5,
+                expectedEdge.toleranceMm + actualEdge.toleranceMm);
+            const bool sameDirection =
+                expectedEdge.firstEndpoint.Distance(actualEdge.firstEndpoint) <= toleranceMm &&
+                expectedEdge.lastEndpoint.Distance(actualEdge.lastEndpoint) <= toleranceMm;
+            const bool reverseDirection =
+                expectedEdge.firstEndpoint.Distance(actualEdge.lastEndpoint) <= toleranceMm &&
+                expectedEdge.lastEndpoint.Distance(actualEdge.firstEndpoint) <= toleranceMm;
+            if (std::fabs(expectedEdge.lengthMm - actualEdge.lengthMm) > toleranceMm ||
+                (!sameDirection && !reverseDirection))
+            {
+                diagnostic = "STEP 재읽기에서 길이와 양 끝점이 일치하는 edge를 찾지 못했습니다.";
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool BuildStepWireNative(const StepWireNative& source, TopoDS_Wire& result,
+        int& status, std::string& diagnostic)
+    {
+        if (source.curves.empty())
+        {
+            status = 1;
+            diagnostic = "STEP wire에 곡선이 없습니다.";
+            return false;
+        }
+
+        BRepBuilderAPI_MakeWire wireBuilder;
+        for (const StepCurveNative& curve : source.curves)
+        {
+            TopoDS_Wire curveWire;
+            if (!BuildCurveWireNative(curve.definition, curveWire))
+            {
+                status = 3;
+                diagnostic = "곡선 정의를 OCCT wire로 만들지 못했습니다.";
+                return false;
+            }
+
+            if (curve.isReversed)
+                curveWire.Reverse();
+            wireBuilder.Add(curveWire);
+            if (!wireBuilder.IsDone())
+            {
+                status = 4;
+                diagnostic = "연속 곡선 조각을 하나의 wire로 연결하지 못했습니다.";
+                return false;
+            }
+        }
+
+        result = wireBuilder.Wire();
+        if (result.IsNull() || !BRepCheck_Analyzer(result).IsValid())
+        {
+            status = 4;
+            diagnostic = "구성한 STEP wire가 유효하지 않습니다.";
+            return false;
+        }
+        return true;
+    }
+
+    int WriteDesignStepNative(const std::string& outputPath, const std::string& sourceModelPath,
+        bool includeSourceModel, const std::vector<StepGroupNative>& groups, std::string& diagnostic)
+    {
+        if (outputPath.empty() || groups.empty())
+        {
+            diagnostic = "STEP 출력 경로와 geometry 그룹이 필요합니다.";
+            return 1;
+        }
+
+        STEPControl_Writer writer;
+        BRep_Builder compoundBuilder;
+        TopoDS_Compound expectedGeometry;
+        compoundBuilder.MakeCompound(expectedGeometry);
+        if (includeSourceModel)
+        {
+            if (sourceModelPath.empty())
+            {
+                diagnostic = "원본 STEP 경로가 비어 있습니다.";
+                return 2;
+            }
+
+            STEPControl_Reader reader;
+            if (reader.ReadFile(sourceModelPath.c_str()) != IFSelect_RetDone ||
+                reader.TransferRoots() == 0 || reader.OneShape().IsNull())
+            {
+                diagnostic = "원본 STEP 형상을 읽거나 전송하지 못했습니다.";
+                return 2;
+            }
+            const TopoDS_Shape sourceShape = reader.OneShape();
+            if (writer.Transfer(sourceShape, STEPControl_AsIs) != IFSelect_RetDone)
+            {
+                diagnostic = "원본 금형 형상을 STEP 출력 모델로 전송하지 못했습니다.";
+                return 5;
+            }
+            compoundBuilder.Add(expectedGeometry, sourceShape);
+        }
+
+        bool hasWire = false;
+        for (const StepGroupNative& group : groups)
+        {
+            if (group.wires.empty())
+            {
+                diagnostic = "STEP geometry 그룹에 wire가 없습니다.";
+                return 1;
+            }
+
+            TopoDS_Compound groupCompound;
+            compoundBuilder.MakeCompound(groupCompound);
+            for (const StepWireNative& sourceWire : group.wires)
+            {
+                TopoDS_Wire wire;
+                int wireStatus = 0;
+                if (!BuildStepWireNative(sourceWire, wire, wireStatus, diagnostic))
+                    return wireStatus;
+
+                compoundBuilder.Add(groupCompound, wire);
+                compoundBuilder.Add(expectedGeometry, wire);
+                hasWire = true;
+            }
+
+            if (writer.Transfer(groupCompound, STEPControl_AsIs) != IFSelect_RetDone)
+            {
+                diagnostic = "회로 geometry 그룹을 STEP entity로 전송하지 못했습니다.";
+                return 5;
+            }
+        }
+
+        if (!hasWire)
+        {
+            diagnostic = "STEP으로 기록할 유효 wire가 없습니다.";
+            return 1;
+        }
+        if (writer.Write(outputPath.c_str()) != IFSelect_RetDone)
+        {
+            diagnostic = "OCCT STEP 파일 쓰기가 실패했습니다.";
+            return 5;
+        }
+
+        std::vector<StepEdgeSignatureNative> expectedEdges;
+        if (!CollectStepEdgeSignaturesNative(expectedGeometry, expectedEdges))
+        {
+            diagnostic = "STEP 출력 전 edge 길이와 끝점 요약을 만들지 못했습니다.";
+            return 6;
+        }
+
+        STEPControl_Reader readbackReader;
+        if (readbackReader.ReadFile(outputPath.c_str()) != IFSelect_RetDone ||
+            readbackReader.TransferRoots() == 0)
+        {
+            diagnostic = "기록한 STEP 파일을 다시 읽지 못했습니다.";
+            return 5;
+        }
+
+        std::vector<StepEdgeSignatureNative> actualEdges;
+        if (!CollectStepEdgeSignaturesNative(readbackReader.OneShape(), actualEdges))
+        {
+            diagnostic = "STEP 재읽기 형상에서 edge 길이와 끝점 요약을 만들지 못했습니다.";
+            return 5;
+        }
+        if (!MatchStepEdgeSignaturesNative(expectedEdges, actualEdges, diagnostic))
+            return 5;
+
+        return 0;
+    }
 }
 #pragma managed(pop)
 
-namespace HeatingMold { namespace OccBridge {
-
-long long Bridge::GetModelRevision() { return g_modelRevision; }
-void Bridge::ReleaseWorkingSurfaceContext(long long id) { ReleaseWorkingNative(id); }
-WorkingSurfaceContext^ Bridge::CreateWorkingSurfaceContext(double nx,double ny,double nz,double xx,double xy,double xz)
-{
-    const long long id = CreateWorkingNative(nx,ny,nz,xx,xy,xz);
-    if (!id) return nullptr;
-    auto* c = FindWorking(id,g_modelRevision);
-    auto result = gcnew WorkingSurfaceContext();
-    result->Id=id; result->Revision=c->revision; result->MeshDeflection=c->deflection;
-    result->Frame=gcnew array<double>{c->origin.X(),c->origin.Y(),c->origin.Z(),
-        c->x.X(),c->x.Y(),c->x.Z(),c->y.X(),c->y.Y(),c->y.Z(),c->n.X(),c->n.Y(),c->n.Z()};
-    result->Triangles=gcnew array<double>(static_cast<int>(c->triangles.size()));
-    for (int i=0;i<result->Triangles->Length;++i) result->Triangles[i]=c->triangles[i];
-    return result;
-}
-WorkingSurfaceHit^ Bridge::QueryWorkingSurface(long long id,long long revision,double u,double v)
-{
-    double p[3]={}, n[3]={}; int face=-1;
-    const auto status=QueryWorkingNative(id,revision,u,v,p,face,n);
-    auto result=gcnew WorkingSurfaceHit();
-    result->ContextId=id; result->Revision=revision; result->DatumPoint=gcnew array<double>{u,v};
-    result->Status=static_cast<WorkingSurfaceQueryStatus>(static_cast<int>(status)); result->FaceId=face;
-    if (status==WorkingStatusNative::Hit || status==WorkingStatusNative::Tangent) {
-        result->Point=gcnew array<double>{p[0],p[1],p[2]};
-        result->Normal=gcnew array<double>{n[0],n[1],n[2]};
-    }
-    return result;
-}
-WorkingSurfaceHit^ Bridge::QueryWorkingSurfaceForFaces(long long id,long long revision,array<int>^ faceIds,double u,double v)
-{
-    if (faceIds==nullptr) {
-        auto invalid=gcnew WorkingSurfaceHit(); invalid->ContextId=id; invalid->Revision=revision;
-        invalid->DatumPoint=gcnew array<double>{u,v}; invalid->Status=WorkingSurfaceQueryStatus::InvalidInput; invalid->FaceId=-1; return invalid;
-    }
-    for each (int candidate in faceIds) if (candidate<0 || candidate>=static_cast<int>(g_faces.size())) {
-        auto invalid=gcnew WorkingSurfaceHit(); invalid->ContextId=id; invalid->Revision=revision;
-        invalid->DatumPoint=gcnew array<double>{u,v}; invalid->Status=WorkingSurfaceQueryStatus::InvalidInput; invalid->FaceId=-1; return invalid;
-    }
-    double p[3]={}, n[3]={}; int face=-1;
-    const auto status=QueryWorkingNative(id,revision,u,v,p,face,n);
-    auto result=gcnew WorkingSurfaceHit();
-    result->ContextId=id; result->Revision=revision; result->DatumPoint=gcnew array<double>{u,v};
-    result->Status=static_cast<WorkingSurfaceQueryStatus>(static_cast<int>(status)); result->FaceId=face;
-    if (status==WorkingStatusNative::Hit || status==WorkingStatusNative::Tangent) {
-        result->Point=gcnew array<double>{p[0],p[1],p[2]};
-        result->Normal=gcnew array<double>{n[0],n[1],n[2]};
-        bool selected=false;
-        if (faceIds!=nullptr) for each (int candidate in faceIds) {
-            if (candidate<0 || candidate>=static_cast<int>(g_faces.size())) {
-                result->Status=WorkingSurfaceQueryStatus::InvalidInput; result->Point=nullptr; result->Normal=nullptr; return result;
-            }
-            selected |= candidate==face;
-        }
-        result->IsSelectedFace=selected;
-        if (!selected) { result->Status=WorkingSurfaceQueryStatus::Miss; result->Point=nullptr; result->Normal=nullptr; }
-    }
-    return result;
-}
-bool Bridge::AreWorkingFacesAdjacent(long long id,long long revision,int faceA,int faceB)
-{ return WorkingFacesAdjacentNative(id,revision,faceA,faceB); }
-HeatingPathSegmentResult^ Bridge::DisplayWorkingPathSegment(long long id,long long revision,int pieceId,String^ kind,array<double>^ flat)
-{
-    if (kind==nullptr || flat==nullptr) return nullptr;
-    try {
-        std::vector<double> xyz; for each(double v in flat) xyz.push_back(v);
-        double data[7]={};
-        if (!DisplayWorkingPathSegmentNative(id,revision,pieceId,msclr::interop::marshal_as<std::string>(kind),xyz,data)) return nullptr;
-        auto result=gcnew HeatingPathSegmentResult(); result->Length=data[0];
-        result->Start=gcnew array<double>{data[1],data[2],data[3]}; result->End=gcnew array<double>{data[4],data[5],data[6]};
-        return result;
-    } catch (...) { return nullptr; }
-}
-bool Bridge::StageWorkingPolyline(long long id,long long revision,int stageId,array<double>^ flat)
-{
-    if (flat==nullptr) return false;
-    try { std::vector<double> xyz; for each(double v in flat) xyz.push_back(v); return StageWorkingPolylineNative(id,revision,stageId,xyz); }
-    catch (...) { return false; }
-}
-HeatingPathSegmentResult^ Bridge::StageProjectedWorkingPathSegment(long long id,long long revision,int stageId,String^ kind,
-    array<double>^ flat,array<int>^ faceIds,double dx,double dy,double dz)
-{
-    if(kind==nullptr||flat==nullptr||faceIds==nullptr) return nullptr;
-    try { std::vector<double> xyz;std::vector<int> faces;for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
-        double data[7]={};if(!StageProjectedWorkingPathSegmentNative(id,revision,stageId,msclr::interop::marshal_as<std::string>(kind),xyz,faces,gp_Dir(dx,dy,dz),data))return nullptr;
-        auto r=gcnew HeatingPathSegmentResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;
-    } catch(...) { return nullptr; }
-}
-HeatingPathSegmentResult^ Bridge::StageProjectedWorkingPolyline(long long id,long long revision,int stageId,array<double>^ flat,array<int>^ faceIds,double dx,double dy,double dz)
-{
-    if(flat==nullptr||faceIds==nullptr)return nullptr;
-    try {std::vector<double> xyz;std::vector<int> faces;for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
-        double data[7]={};if(!StageProjectedWorkingPolylineNative(id,revision,stageId,xyz,faces,gp_Dir(dx,dy,dz),data))return nullptr;
-        auto r=gcnew HeatingPathSegmentResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;}catch(...){return nullptr;}
-}
-bool Bridge::CommitWorkingPathGeometry(long long id,long long revision,array<int>^ stagedPathSegmentIds,array<int>^ finalPathSegmentIds,array<int>^ stagedPolylineIds)
-{
-    if (stagedPathSegmentIds==nullptr || finalPathSegmentIds==nullptr || stagedPolylineIds==nullptr) return false;
-    try {
-        std::vector<int> sr,fr,sp; for each(int v in stagedPathSegmentIds) sr.push_back(v);
-        for each(int v in finalPathSegmentIds) fr.push_back(v); for each(int v in stagedPolylineIds) sp.push_back(v);
-        return CommitWorkingGeometryNative(id,revision,sr,fr,sp);
-    } catch (...) { return false; }
-}
-void Bridge::DiscardWorkingPathGeometry(long long id,long long revision,array<int>^ stagedPathSegmentIds,array<int>^ stagedPolylineIds)
-{
-    try {
-        std::vector<int> sr,sp;
-        if (stagedPathSegmentIds!=nullptr) for each(int v in stagedPathSegmentIds) sr.push_back(v);
-        if (stagedPolylineIds!=nullptr) for each(int v in stagedPolylineIds) sp.push_back(v);
-        DiscardWorkingGeometryNative(id,revision,sr,sp);
-    } catch (...) { }
-}
-bool Bridge::IsWorkingPointVisible(long long id,long long revision,double x,double y,double z,double tolerance)
-{ return WorkingVisibleNative(id,revision,x,y,z,tolerance); }
-void Bridge::ShowProjectedModelBoundary(array<array<double>^>^ loops)
-{ ShowProjectedModelBoundary(loops,nullptr); }
-void Bridge::ShowProjectedModelBoundary(array<array<double>^>^ loops,array<bool>^ holes)
-{
-    std::vector<std::vector<double>> values;
-    std::vector<bool> flags;
-    if (holes!=nullptr) for each(bool hole in holes) flags.push_back(hole);
-    if (loops!=nullptr) for each(array<double>^ loop in loops) {
-        std::vector<double> points;
-        if (loop!=nullptr) for each(double v in loop) points.push_back(v);
-        values.push_back(points);
-    }
-    ShowProjectedModelBoundaryNative(values,flags);
-}
-bool Bridge::ReturnToWorkingFront(long long id,long long revision)
-{
-    auto* ctx=FindWorking(id,revision);
-    if (!ctx || g_view.IsNull()) return false;
-    g_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
-    SetViewFrameNative(ctx->n.X(),ctx->n.Y(),ctx->n.Z(),ctx->y.X(),ctx->y.Y(),ctx->y.Z());
-    return true;
-}
-WorkingCoordinateSystemPresentation^ Bridge::CaptureWorkingCoordinateSystemPresentation()
-{
-    double bounds[6]={}; bool hasBounds=false;
-    const long long id=CaptureWorkingCoordinateSystemPresentationNative(bounds,hasBounds);
-    if (!id) return nullptr;
-    auto result=gcnew WorkingCoordinateSystemPresentation();
-    result->Id=id; result->Revision=g_modelRevision;
-    result->BoundaryCount=static_cast<int>(g_workingPresentations.at(id).boundaries.size());
-    if (hasBounds) result->BoundaryBounds=gcnew array<double>{bounds[0],bounds[1],bounds[2],bounds[3],bounds[4],bounds[5]};
-    return result;
-}
-bool Bridge::RestoreWorkingCoordinateSystemPresentation(long long id) { return RestoreWorkingCoordinateSystemPresentationNative(id); }
-void Bridge::ReleaseWorkingCoordinateSystemPresentation(long long id) { g_workingPresentations.erase(id); }
-
-bool Bridge::LoadStep(String^ path)
-{
-    ++g_modelRevision;
-    InvalidateWorkingSurfaceContexts();
-    ClearDisplayedShape();
-    ClearOverlayNative();
-    ClearExclusionOverlaysNative();
-    g_shape.Nullify();
-    g_faces.clear();
-    g_faceMap.Clear();
-    g_autoAxes[0] = gp::DX(); g_autoAxes[1] = gp::DY(); g_autoAxes[2] = gp::DZ();
-    if (String::IsNullOrWhiteSpace(path)) return false;
-    const std::string native = msclr::interop::marshal_as<std::string>(path);
-    return LoadStepFile(native.c_str());
-}
-
-ShapeInfo^ Bridge::GetShapeInfo()
-{
-    const ShapeCounts c = ComputeCounts();
-    ShapeInfo^ info = gcnew ShapeInfo();
-    info->Solids = c.solids;
-    info->Shells = c.shells;
-    info->Faces = c.faces;
-    info->Planes = c.planes;
-    return info;
-}
-
-String^ Bridge::GetFaceType(int faceIndex)
-{
-    const char* name = FaceTypeName(faceIndex);
-    return name == nullptr ? nullptr : gcnew String(name);
-}
-
-array<UvWire^>^ Bridge::GetFaceUvBoundary(int faceIndex)
-{
-    std::vector<NativeWire> nativeWires;
-    if (!ExtractUvWires(faceIndex, nativeWires)) return nullptr;
-
-    List<UvWire^>^ wires = gcnew List<UvWire^>();
-    for (size_t i = 0; i < nativeWires.size(); ++i)
-    {
-        UvWire^ w = gcnew UvWire();
-        w->IsOuter = nativeWires[i].isOuter;
-        w->Closed = nativeWires[i].closed;
-
-        array<double>^ pts = gcnew array<double>((int)nativeWires[i].pts.size());
-        for (size_t k = 0; k < nativeWires[i].pts.size(); ++k)
-            pts[(int)k] = nativeWires[i].pts[k];
-        w->Points = pts;
-        wires->Add(w);
-    }
-    return wires->ToArray();
-}
-
-array<RegionBoundaryLoop^>^ Bridge::GetSelectedRegionBoundary(array<int>^ faceIds, double deflection)
-{
-    if (faceIds == nullptr || faceIds->Length == 0) return nullptr;
-    std::vector<int> ids(faceIds->Length);
-    for (int i = 0; i < faceIds->Length; ++i) ids[(size_t)i] = faceIds[i];
-    std::vector<NativeBoundaryLoop> nativeLoops;
-    try
-    {
-        if (!ExtractSelectedRegionBoundary(ids, deflection, nativeLoops)) return nullptr;
-    }
-    catch (const Standard_Failure&)
-    {
-        return nullptr;
-    }
-    auto result = gcnew array<RegionBoundaryLoop^>((int)nativeLoops.size());
-    for (int i = 0; i < result->Length; ++i)
-    {
-        RegionBoundaryLoop^ loop = gcnew RegionBoundaryLoop();
-        loop->Closed = nativeLoops[(size_t)i].closed;
-        auto points = gcnew array<double>((int)nativeLoops[(size_t)i].xyz.size());
-        for (int k = 0; k < points->Length; ++k) points[k] = nativeLoops[(size_t)i].xyz[(size_t)k];
-        loop->Points = points;
-        result[i] = loop;
-    }
-    return result;
-}
-
-array<double>^ Bridge::SampleUvTo3D(int faceIndex, double u, double v)
-{
-    double p[3];
-    if (!SamplePoint(faceIndex, u, v, p)) return nullptr;
-    array<double>^ r = gcnew array<double>(3);
-    r[0] = p[0]; r[1] = p[1]; r[2] = p[2];
-    return r;
-}
-
-array<double>^ Bridge::PickSelectedBoundaryPoint(array<int>^ faceIds, int x, int y)
-{
-    if (faceIds == nullptr || faceIds->Length == 0) return nullptr;
-    std::vector<int> ids(faceIds->Length);
-    for (int i = 0; i < faceIds->Length; ++i) ids[(size_t)i] = faceIds[i];
-    double p[4];
-    if (!PickSelectedBoundaryPointNative(ids, x, y, p)) return nullptr;
-    array<double>^ result = gcnew array<double>(4);
-    for (int i = 0; i < 4; ++i) result[i] = p[i];
-    return result;
-}
-
-array<double>^ Bridge::ProjectPathWireOntoSelectedFaces(array<int>^ faceIds, array<double>^ xyzFlat,
-                                                        double dx, double dy, double dz, double insertionDepth)
-{
-    if (faceIds == nullptr || faceIds->Length == 0 || xyzFlat == nullptr) return nullptr;
-    std::vector<int> ids(faceIds->Length);
-    for (int i = 0; i < faceIds->Length; ++i) ids[(size_t)i] = faceIds[i];
-    std::vector<double> xyz(xyzFlat->Length);
-    for (int i = 0; i < xyzFlat->Length; ++i) xyz[(size_t)i] = xyzFlat[i];
-    double length = 0.0;
-    int edgeCount = 0, status = 0, wireCount = 0;
-    bool success = false;
-    try
-    {
-        success = ProjectPathWireOntoSelectedFacesNative(ids, xyz, gp_Dir(dx, dy, dz), insertionDepth,
-            &length, &edgeCount, &status, &wireCount);
-    }
-    catch (const Standard_Failure&) { status = 99; }
-    auto result = gcnew array<double>(5);
-    result[0] = success ? 1.0 : 0.0;
-    result[1] = length;
-    result[2] = edgeCount;
-    result[3] = wireCount;
-    result[4] = status;
-    return result;
-}
-
-HeatingPathSegmentResult^ Bridge::ProjectHeatingPathSegment(int pieceId, String^ kind, array<double>^ xyzFlat,
-    array<int>^ faceIds, double dx, double dy, double dz, double insertionDepthMm)
-{
-    if (kind == nullptr || xyzFlat == nullptr || faceIds == nullptr) return nullptr;
-    std::vector<double> xyz(xyzFlat->Length);
-    std::vector<int> ids(faceIds->Length);
-    for (int i = 0; i < xyzFlat->Length; ++i) xyz[i] = xyzFlat[i];
-    for (int i = 0; i < faceIds->Length; ++i) ids[i] = faceIds[i];
-    double data[7];
-    try { if (!ProjectHeatingPathSegmentNative(pieceId, msclr::interop::marshal_as<std::string>(kind), xyz, ids, gp_Dir(dx, dy, dz), insertionDepthMm, data)) return nullptr; }
-    catch (const Standard_Failure&) { return nullptr; }
-    auto result = gcnew HeatingPathSegmentResult();
-    result->Length = data[0];
-    result->Start = gcnew array<double>(3); result->End = gcnew array<double>(3);
-    for (int i = 0; i < 3; ++i) { result->Start[i] = data[i + 1]; result->End[i] = data[i + 4]; }
-    return result;
-}
-
-bool Bridge::SetTurnSegmentEnabled(int pieceId, bool enabled, double r, double g, double b)
-{
-    return SetTurnSegmentNative(pieceId, enabled, r, g, b);
-}
-
-void Bridge::ClearPathSegments() { ClearPathSegmentsNative(); if (!g_view.IsNull()) g_view->Redraw(); }
-
-array<double>^ Bridge::ProjectConnectionPath(int connectionPathId, array<double>^ endpointAndConnectionPoint,
-    array<double>^ actualPathEndpoint, array<int>^ faceIds, double dx, double dy, double dz, double insertionDepthMm)
-{
-    return ProjectConnectionPath(connectionPathId, endpointAndConnectionPoint, actualPathEndpoint, faceIds, dx, dy, dz, insertionDepthMm, false);
-}
-
-array<double>^ Bridge::ProjectConnectionPath(int connectionPathId, array<double>^ endpointAndConnectionPoint,
-    array<double>^ actualPathEndpoint, array<int>^ faceIds, double dx, double dy, double dz, double insertionDepthMm, bool previewOnly)
-{
-    // Remove the old preview without painting a blank frame. Redraw once after
-    // replacement/validation, including failure so invalid positions clear it.
-    const bool hadPreview = !g_connectionPathPreview.IsNull() || !g_connectionPointPreview.IsNull();
-    ClearConnectionPathPreviewNative();
-    auto result = gcnew array<double>(4);
-    result[0] = -1;
-    if (endpointAndConnectionPoint == nullptr || actualPathEndpoint == nullptr || faceIds == nullptr) {
-        if (hadPreview && !g_view.IsNull()) g_view->Redraw();
-        return result;
-    }
-    std::vector<double> xyz(endpointAndConnectionPoint->Length), actual(actualPathEndpoint->Length);
-    std::vector<int> ids(faceIds->Length);
-    for (int i = 0; i < endpointAndConnectionPoint->Length; ++i) xyz[i] = endpointAndConnectionPoint[i];
-    for (int i = 0; i < actualPathEndpoint->Length; ++i) actual[i] = actualPathEndpoint[i];
-    for (int i = 0; i < faceIds->Length; ++i) ids[i] = faceIds[i];
-    double data[4] = { -9, 0, 0, 0 };
-    try { ProjectConnectionPathNative(connectionPathId, xyz, actual, ids, gp_Dir(dx, dy, dz), insertionDepthMm, data, previewOnly); }
-    catch (const Standard_Failure&) {
-        if (previewOnly) ClearConnectionPathPreviewNative();
-        data[0] = -9;
-    }
-    if (!g_view.IsNull()) g_view->Redraw();
-    for (int i = 0; i < 4; ++i) result[i] = data[i];
-    return result;
-}
-
-void Bridge::ClearConnectionPaths() { ClearConnectionPathsNative(); if (!g_view.IsNull()) g_view->Redraw(); }
-void Bridge::ClearConnectionPathPreview()
-{
-    const bool hadPreview = !g_connectionPathPreview.IsNull() || !g_connectionPointPreview.IsNull();
-    ClearConnectionPathPreviewNative();
-    if (hadPreview && !g_view.IsNull()) g_view->Redraw();
-}
-int Bridge::PickTurnSegment(int x, int y) { return PickTurnSegmentNative(x, y); }
-int Bridge::PickHeatingPathSegment(int x, int y)
-{
-    if (g_ctx.IsNull() || g_view.IsNull()) return -1;
-    g_ctx->MoveTo(x, y, g_view, Standard_False);
-    Handle(SelectMgr_EntityOwner) owner = g_ctx->DetectedOwner();
-    if (owner.IsNull()) return -1;
-    Handle(AIS_InteractiveObject) selectable = Handle(AIS_InteractiveObject)::DownCast(owner->Selectable());
-    for (const auto& piece : g_pathSegments) if (piece.second.ais == selectable) return piece.first;
-    return -1;
-}
-void Bridge::HighlightCircuit(array<int>^ pieceIds)
-{
-    std::vector<int> ids;
-    if (pieceIds != nullptr) for each (int id in pieceIds) ids.push_back(id);
-    HighlightCircuitNative(ids);
-}
-
-// ================= 뷰어 managed (S1 항목 1·6) =================
-
-bool Bridge::InitViewer(IntPtr hwnd, int width, int height)
-{
-    (void)width; (void)height;
-    return InitViewerNative(hwnd.ToPointer());
-}
-
-void Bridge::ResizeView(int width, int height)
-{
-    (void)width; (void)height;
-    ResizeViewNative();
-}
-
-void Bridge::FitView()
-{
-    FitViewNative();
-}
-
-void Bridge::RotateStart(int x, int y)
-{
-    RotateStartNative(x, y);
-}
-
-void Bridge::RotateMove(int x, int y)
-{
-    RotateMoveNative(x, y);
-}
-
-void Bridge::RotateEnd()
-{
-    // StartRotation/Rotation 쌍으로 충분 — 종료 시 별도 처리 없음
-}
-
-namespace { int g_panStartX = 0, g_panStartY = 0; }
-
-void Bridge::PanStart(int x, int y)
-{
-    g_panStartX = x;
-    g_panStartY = y;
-    if (!g_view.IsNull()) g_view->Pan(0, 0, 1.0, Standard_True);
-}
-
-void Bridge::PanMove(int x, int y)
-{
-    if (g_view.IsNull()) return;
-    g_view->Pan(x - g_panStartX, g_panStartY - y, 1.0, Standard_False);
-    g_view->Redraw();
-}
-
-void Bridge::PanEnd()
-{
-    // Pan remembers the starting camera state; no explicit end call is needed.
-}
-
-void Bridge::ZoomView(double factor)
-{
-    ZoomViewNative(factor);
-}
-
-void Bridge::ZoomViewAtPoint(int x, int y, int deltaY)
-{
-    ZoomViewAtPointNative(x, y, deltaY);
-}
-
-void Bridge::SetShapeColor(double r, double g, double b)
-{
-    SetShapeColorNative(r, g, b);
-}
-
-void Bridge::RedrawView()
-{
-    if (!g_view.IsNull()) g_view->Redraw();
-}
-
-void Bridge::ClearOverlays()
-{
-    ClearOverlayNative();
-}
-
-void Bridge::SetViewFrame(double dx, double dy, double dz, double ux, double uy, double uz)
-{
-    SetViewFrameNative(dx, dy, dz, ux, uy, uz);
-}
-
-array<double>^ Bridge::GetAutoAxis(int axis)
-{
-    double v[3];
-    if (!GetAutoAxisNative(axis, v)) return nullptr;
-    array<double>^ r = gcnew array<double>(3);
-    r[0] = v[0]; r[1] = v[1]; r[2] = v[2];
-    return r;
-}
-
-array<int>^ Bridge::SelectFacesInRectangle(int x0, int y0, int x1, int y1, bool toggle)
-{
-    const std::vector<int> ids = SelectFacesRectangleNative(x0, y0, x1, y1, toggle);
-    array<int>^ result = gcnew array<int>((int)ids.size());
-    for (int i = 0; i < result->Length; ++i) result[i] = ids[(size_t)i];
-    return result;
-}
-
-void Bridge::SetSelectionRectangle(int x0, int y0, int x1, int y1)
-{
-    SetSelectionRectangleNative(x0, y0, x1, y1);
-}
-
-void Bridge::ClearSelectionRectangle()
-{
-    ClearSelectionRectangleNative();
-}
-
-array<double>^ Bridge::ScreenPointOnPlane(int x, int y, double ox, double oy, double oz, double nx, double ny, double nz)
-{
-    gp_Vec n(nx, ny, nz);
-    if (n.SquareMagnitude() < 1e-18) return nullptr;
-    n.Normalize();
-    double p[3];
-    if (!ScreenPointOnPlaneNative(x, y, gp_Pnt(ox, oy, oz), gp_Dir(n), p)) return nullptr;
-    array<double>^ result = gcnew array<double>(3);
-    result[0] = p[0]; result[1] = p[1]; result[2] = p[2];
-    return result;
-}
-
-bool Bridge::AddExclusionOverlay(array<double>^ xyzFlat)
-{
-    if (xyzFlat == nullptr) return false;
-    std::vector<double> xyz(xyzFlat->Length);
-    for (int i = 0; i < xyzFlat->Length; ++i) xyz[(size_t)i] = xyzFlat[i];
-    return AddExclusionOverlayNative(xyz);
-}
-
-void Bridge::SetExclusionPreview(array<double>^ xyzFlat)
-{
-    std::vector<double> xyz;
-    if (xyzFlat != nullptr)
-    {
-        xyz.resize(xyzFlat->Length);
-        for (int i = 0; i < xyzFlat->Length; ++i) xyz[(size_t)i] = xyzFlat[i];
-    }
-    SetExclusionPreviewNative(xyz);
-}
-
-void Bridge::ClearExclusionOverlays()
-{
-    ClearExclusionOverlaysNative();
-}
-
-int Bridge::HoverFace(int x, int y)
-{
-    return HoverFaceNative(x, y);
-}
-
-void Bridge::HideFaceHighlights()
-{
-    HideFaceHighlightsNative();
-}
-
-void Bridge::ClearHover()
-{
-    ClearHoverNative();
-}
-
-int Bridge::SelectFace(int x, int y, bool toggle)
-{
-    return SelectFaceNative(x, y, toggle);
-}
-
-array<HlrPolyline^>^ Bridge::HlrEdges(double nx, double ny, double nz,
-                                     double xx, double xy, double xz, bool hiddenToo)
-{
-    const std::vector<NativeHlrLine> lines = RunHlrGeometryNative(nx, ny, nz, xx, xy, xz, hiddenToo);
-    List<HlrPolyline^>^ result = gcnew List<HlrPolyline^>();
-    for (size_t i = 0; i < lines.size(); ++i)
-    {
-        HlrPolyline^ poly = gcnew HlrPolyline();
-        poly->Visible = lines[i].visible;
-        array<double>^ pts = gcnew array<double>((int)lines[i].pts.size());
-        for (size_t k = 0; k < lines[i].pts.size(); ++k)
-            pts[(int)k] = lines[i].pts[k];
-        poly->Points = pts;
-        result->Add(poly);
-    }
-    return result->ToArray();
-}
-
-}}
+#include "OccBridgeManagedSupport.inc"
+#include "OccBridgeWorkingSurfaceApi.inc"
+#include "OccBridgeCurveAnalysisApi.inc"
+#include "OccBridgeTopologyAreaApi.inc"
+#include "OccBridgePathStagingApi.inc"
+#include "OccBridgeViewerAndModelApi.inc"
