@@ -491,12 +491,21 @@ public sealed class OcctGeometryQueries : IGeometryQueries
                 if (cancellationToken.IsCancellationRequested)
                     return Unresolved<ClearanceMeasurement>("OperationCancelled", "곡선 간격 질의가 취소되었습니다.");
 
+                bool containsBSpline = curves.Any(curve => curve.Definition is BSplineCurveDefinition);
+                bool containsArc = curves.Any(curve => curve.Definition is ArcCurveDefinition);
                 if (nativeResult.Status == OcctCurveClearanceStatus.Unresolved &&
-                    curves.Any(curve => curve.Definition is BSplineCurveDefinition))
+                    (containsBSpline || containsArc))
                 {
-                    // Native 미확정 결과만 관리형 B-spline 지원 범위에서 재시도합니다.
-                    GeometryQueryResult<ClearanceMeasurement> fallbackResult =
-                        BSplineCurveClearanceCalculator.Measure(
+                    // Native 미확정 결과만 각 관리형 근사 계산기의 지원 범위에서 재시도합니다.
+                    GeometryQueryResult<ClearanceMeasurement> fallbackResult = containsBSpline
+                        ? BSplineCurveClearanceCalculator.Measure(
+                            curves,
+                            wireDiameterMm,
+                            requiredClearGapMm,
+                            localCurvePairs,
+                            tolerances,
+                            cancellationToken)
+                        : ArcCurveClearanceCalculator.Measure(
                             curves,
                             wireDiameterMm,
                             requiredClearGapMm,
