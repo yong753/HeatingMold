@@ -13,6 +13,14 @@
     <RootNamespace>HeatingMold.App</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <!-- 기본 로드 STEP: 솔리드 30개 / 574면 (중복 면 0).
+         생성 스크립트: tools/step-cleanup/remove-surface-bodies.ps1 -->
+    <Content Include="..\..\resource\Mold_Solids.stp">
+      <Link>resource\Mold_Solids.stp</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
     <!-- OccBridge는 솔루션 빌드 순서(ProjectDependencies)로 먼저 빌드됨 -->
     <Reference Include="OccBridge">
       <HintPath>$(MSBuildThisFileDirectory)..\..\x64\Release\OccBridge.dll</HintPath>

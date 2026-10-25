@@ -54,11 +54,28 @@ namespace HeatingMold.App
             catch (Exception) { }
         }
 
+        /// <summary>
+        /// 기본 로드 모델 경로.
+        /// Mold_Solids.stp = Mold.stp 에서 자유 곡면 바디(SURFACE.135 / SURFACE.142)를
+        /// 제품 구조에서 분리한 파일. 솔리드 30개 / 574면만 로드되어 중복 면이 없다.
+        /// 생성: tools/step-cleanup/remove-surface-bodies.ps1
+        /// </summary>
         public static string FindMoldStp()
         {
-            if (RepoRoot == null) return null;
-            string p = Path.Combine(RepoRoot, "resource", "Mold.stp");
-            return File.Exists(p) ? p : null;
+            string[] candidates = { "Mold_Solids.stp", "Mold.stp" };
+            foreach (string name in candidates)
+            {
+                if (RepoRoot != null)
+                {
+                    string p = Path.Combine(RepoRoot, "resource", name);
+                    if (File.Exists(p)) return p;
+                }
+
+                // 배포 산출물(x64\Release\resource)에서도 찾는다.
+                string q = Path.Combine(AppContext.BaseDirectory, "resource", name);
+                if (File.Exists(q)) return q;
+            }
+            return null;
         }
     }
 }
