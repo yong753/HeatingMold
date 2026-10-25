@@ -411,7 +411,6 @@ bool CommitWorkingGeometryNative(long long contextId,long long revision,const st
     std::map<int,RoutePieceOverlay> nextRoutes;
     std::vector<Handle(AIS_Shape)> nextWorld;
     std::vector<Handle(AIS_Shape)> removed;
-    std::set<int> stagedSet;
     try {
         for (size_t i=0;i<stagedRoutes.size();++i) nextRoutes.emplace(finalRoutes[i],g_routePieces.at(stagedRoutes[i]));
         for (const auto& route:g_routePieces) {
@@ -423,15 +422,14 @@ bool CommitWorkingGeometryNative(long long contextId,long long revision,const st
         nextWorld.reserve(stagedLines.size());
         for (int id : stagedLines) nextWorld.push_back(g_stagedWorkingPolylines.at(id).ais);
         removed.reserve(g_routePieces.size()+g_worldOverlays.size());
-        stagedSet.insert(stagedRoutes.begin(),stagedRoutes.end());
     } catch (...) { return false; }
     try {
         // Candidate geometry is already displayed and selectable. All validation precedes destructive swap.
         HighlightCircuitNative(std::vector<int>());
         for (const auto& old : g_routePieces) {
-            // Keep private candidates belonging to other live contexts. Replace committed
-            // positive routes and only this transaction's staged candidates.
-            if (old.first<0 && !stagedSet.count(old.first)) continue;
+            // Staged candidates are already displayed and are adopted as-is through
+            // nextRoutes (same AIS handles), so only previously committed routes may be removed.
+            if (old.first<0) continue;
             removed.push_back(old.second.ais);
             if (!g_ctx.IsNull()) g_ctx->Remove(old.second.ais,Standard_False);
         }

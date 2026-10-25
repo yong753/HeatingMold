@@ -1662,11 +1662,20 @@ namespace
 
     void SetSelectionRectangleNative(int x0, int y0, int x1, int y1)
     {
-        if (g_ctx.IsNull()) return;
+        if (g_ctx.IsNull() || g_view.IsNull()) return;
         if (g_selectionRubberBand.IsNull())
             g_selectionRubberBand = new AIS_RubberBand(Quantity_Color(0.1, 0.55, 0.95, Quantity_TOC_RGB), Aspect_TOL_SOLID,
                                                        Quantity_Color(0.1, 0.55, 0.95, Quantity_TOC_RGB), 0.8, 1.5);
-        g_selectionRubberBand->SetRectangle(std::min(x0, x1), std::min(y0, y1), std::max(x0, x1), std::max(y0, y1));
+        // AIS_RubberBand is a 2D-persistent object anchored at the window's left-lower
+        // corner with +Y pointing up (Graphic3d_TMF_2d / Aspect_TOTP_LEFT_LOWER), while
+        // the Win32 client coordinates passed here grow downward from the top edge.
+        // Flip Y so the rubber band is anchored at the press point instead of its mirror.
+        Standard_Integer viewWidth = 0, viewHeight = 0;
+        g_view->Window()->Size(viewWidth, viewHeight);
+        const int flippedY0 = viewHeight - y0;
+        const int flippedY1 = viewHeight - y1;
+        g_selectionRubberBand->SetRectangle(std::min(x0, x1), std::min(flippedY0, flippedY1),
+                                            std::max(x0, x1), std::max(flippedY0, flippedY1));
         if (!g_ctx->IsDisplayed(g_selectionRubberBand)) g_ctx->Display(g_selectionRubberBand, Standard_False);
         else g_ctx->Redisplay(g_selectionRubberBand, Standard_False);
         if (!g_view.IsNull()) g_view->Redraw();
