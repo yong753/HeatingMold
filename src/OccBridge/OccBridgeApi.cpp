@@ -264,7 +264,8 @@ namespace
     Handle(WNT_Window) g_window;
     Handle(AIS_Shape) g_aisShape;
     std::set<int> g_selectedFaceIds;
-    std::set<int> g_confirmedFaceIds;   // 확정된 작업(발열)영역 — 사용자가 해제할 때까지 붉은색 유지
+    // 확정된 작업영역 Face → 영역별 색상. 여러 영역을 동시에 유지한다.
+    std::map<int, Quantity_Color> g_confirmedFaceColors;
     std::vector<Handle(AIS_Shape)> g_worldOverlays;
     std::map<int, Handle(AIS_Shape)> g_powerLeads;
     Handle(AIS_Shape) g_powerLeadPreview;
@@ -300,7 +301,7 @@ namespace
     }
 
     const Quantity_Color kSelectedFaceColor(0.12, 0.82, 0.38, Quantity_TOC_RGB);   // 선택 = 초록
-    const Quantity_Color kConfirmedFaceColor(0.90, 0.16, 0.16, Quantity_TOC_RGB);  // 확정 발열면적 = 붉은색
+    const Quantity_Color kConfirmedFaceColor(0.90, 0.16, 0.16, Quantity_TOC_RGB);  // 단일 영역 기본값
 
     void SetFaceColorOverride(int faceId, const Quantity_Color& color)
     {
@@ -333,6 +334,12 @@ namespace
     /// </summary>
     void DropHoverFaceColorNative();
 
+    const Quantity_Color* ConfirmedFaceColor(int faceId)
+    {
+        const auto it = g_confirmedFaceColors.find(faceId);
+        return it == g_confirmedFaceColors.end() ? nullptr : &it->second;
+    }
+
     void UpdateSelectedFaceColors()
     {
         if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
@@ -351,13 +358,15 @@ namespace
         for (int faceId : g_selectedFaceIds)
             if (current.count(faceId) == 0)
             {
-                if (g_confirmedFaceIds.count(faceId) != 0) SetFaceColorOverride(faceId, kConfirmedFaceColor);
+                if (const Quantity_Color* confirmed = ConfirmedFaceColor(faceId)) SetFaceColorOverride(faceId, *confirmed);
                 else ClearFaceColorOverride(faceId);
             }
         for (int faceId : current)
             if (g_selectedFaceIds.count(faceId) == 0)
-                SetFaceColorOverride(faceId, g_confirmedFaceIds.count(faceId) != 0
-                    ? kConfirmedFaceColor : kSelectedFaceColor);
+            {
+                const Quantity_Color* confirmed = ConfirmedFaceColor(faceId);
+                SetFaceColorOverride(faceId, confirmed != nullptr ? *confirmed : kSelectedFaceColor);
+            }
         g_selectedFaceIds.swap(current);
         g_ctx->Redisplay(g_aisShape, Standard_False);
     }
@@ -368,40 +377,36 @@ namespace
         if (!g_view.IsNull()) g_view->Redraw();
     }
 
-    void SetConfirmedFaceHighlightsNative(const std::set<int>& faceIds)
+    void SetConfirmedFaceHighlightColorsNative(const std::map<int, Quantity_Color>& colors)
     {
         if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
         if (Handle(AIS_ColoredShape)::DownCast(g_aisShape).IsNull()) return;
         DropHoverFaceColorNative();
 
-        for (int faceId : g_confirmedFaceIds)
-            if (faceIds.count(faceId) == 0)
+        for (const auto& previous : g_confirmedFaceColors)
+            if (colors.count(previous.first) == 0)
             {
-                if (g_selectedFaceIds.count(faceId) != 0) SetFaceColorOverride(faceId, kSelectedFaceColor);
-                else ClearFaceColorOverride(faceId);
+                if (g_selectedFaceIds.count(previous.first) != 0) SetFaceColorOverride(previous.first, kSelectedFaceColor);
+                else ClearFaceColorOverride(previous.first);
             }
-        for (int faceId : faceIds)
-            SetFaceColorOverride(faceId, kConfirmedFaceColor);
-        g_confirmedFaceIds = faceIds;
-        if (!faceIds.empty()) g_faceHighlightsVisible = true;
+        for (const auto& entry : colors)
+            SetFaceColorOverride(entry.first, entry.second);
+        g_confirmedFaceColors = colors;
+        if (!colors.empty()) g_faceHighlightsVisible = true;
         g_ctx->Redisplay(g_aisShape, Standard_False);
         RedrawFaceHighlights();
     }
 
+    void SetConfirmedFaceHighlightsNative(const std::set<int>& faceIds)
+    {
+        std::map<int, Quantity_Color> colors;
+        for (int faceId : faceIds) colors[faceId] = kConfirmedFaceColor;
+        SetConfirmedFaceHighlightColorsNative(colors);
+    }
+
     void ClearConfirmedFaceHighlightsNative()
     {
-        if (!g_ctx.IsNull() && !g_aisShape.IsNull() &&
-            !Handle(AIS_ColoredShape)::DownCast(g_aisShape).IsNull())
-        {
-            for (int faceId : g_confirmedFaceIds)
-            {
-                if (g_selectedFaceIds.count(faceId) != 0) SetFaceColorOverride(faceId, kSelectedFaceColor);
-                else ClearFaceColorOverride(faceId);
-            }
-            g_ctx->Redisplay(g_aisShape, Standard_False);
-            RedrawFaceHighlights();
-        }
-        g_confirmedFaceIds.clear();
+        SetConfirmedFaceHighlightColorsNative(std::map<int, Quantity_Color>());
     }
 
     void HideFaceHighlightsNative()
@@ -412,14 +417,14 @@ namespace
         // Remove presentation overrides, not selected owners: Ctrl selection and
         // pattern regeneration must retain the current selection.
         for (int faceId : g_selectedFaceIds)
-            if (faceId >= 0 && faceId < static_cast<int>(g_faces.size()) && g_confirmedFaceIds.count(faceId) == 0)
+            if (faceId >= 0 && faceId < static_cast<int>(g_faces.size()) && g_confirmedFaceColors.count(faceId) == 0)
                 colored->UnsetCustomAspects(g_faces[faceId], Standard_True);
         if (g_hoverColorFace >= 0 && g_hoverColorFace < static_cast<int>(g_faces.size()) &&
-            g_confirmedFaceIds.count(g_hoverColorFace) == 0)
+            g_confirmedFaceColors.count(g_hoverColorFace) == 0)
             colored->UnsetCustomAspects(g_faces[g_hoverColorFace], Standard_True);
         g_hoverColorFace = -1;
         g_selectedFaceIds.clear();
-        g_confirmedFaceIds.clear();
+        g_confirmedFaceColors.clear();
         g_faceHighlightsVisible = false;
         g_ctx->UnhilightSelected(Standard_False);
         g_ctx->ClearDetected(Standard_False);
@@ -460,7 +465,7 @@ namespace
         g_ctx->SetToHilightSelected(Standard_False);
         g_ctx->Activate(g_aisShape, TopAbs_FACE, Standard_True);          // W3 — 면 서브셰이프 선택 활성화
         g_selectedFaceIds.clear();
-        g_confirmedFaceIds.clear();
+        g_confirmedFaceColors.clear();
         g_faceHighlightsVisible = true;
     }
 
@@ -477,7 +482,7 @@ namespace
             g_aisShape.Nullify();
         }
         g_selectedFaceIds.clear();
-        g_confirmedFaceIds.clear();
+        g_confirmedFaceColors.clear();
         g_lastHoverFace = -1;
         g_hoverColorFace = -1;
     }
@@ -1744,7 +1749,7 @@ namespace
         if (g_hoverColorFace < 0) return;
         const int faceId = g_hoverColorFace;
         g_hoverColorFace = -1;
-        if (g_selectedFaceIds.count(faceId) == 0 && g_confirmedFaceIds.count(faceId) == 0)
+        if (g_selectedFaceIds.count(faceId) == 0 && g_confirmedFaceColors.count(faceId) == 0)
             ClearFaceColorOverride(faceId);
     }
 
@@ -1816,9 +1821,9 @@ namespace
         g_lastHoverFace = idx;
         if (previous == g_hoverColorFace) g_hoverColorFace = -1;
         // Selected/confirmed faces keep their own colour (SetToHilightSelected(false) semantics).
-        if (previous >= 0 && g_selectedFaceIds.count(previous) == 0 && g_confirmedFaceIds.count(previous) == 0)
+        if (previous >= 0 && g_selectedFaceIds.count(previous) == 0 && g_confirmedFaceColors.count(previous) == 0)
             ClearFaceColorOverride(previous);
-        if (idx >= 0 && g_selectedFaceIds.count(idx) == 0 && g_confirmedFaceIds.count(idx) == 0)
+        if (idx >= 0 && g_selectedFaceIds.count(idx) == 0 && g_confirmedFaceColors.count(idx) == 0)
         {
             SetFaceColorOverride(idx, HoverFaceColorNative());
             g_hoverColorFace = idx;
@@ -1861,7 +1866,7 @@ namespace
             // confirmed. A picker/owner failure must not rewrite the selection.
             g_lastHoverFace = -1;
             DropHoverFaceColorNative();
-            if (status == PickStatusNative::Miss && !toggle && g_confirmedFaceIds.empty())
+            if (status == PickStatusNative::Miss && !toggle && g_confirmedFaceColors.empty())
                 g_ctx->ClearSelected(Standard_False);
             UpdateSelectedFaceColors();
             g_view->Redraw();
@@ -2275,6 +2280,38 @@ RoutePieceResult^ Bridge::StageProjectedWorkingPolyline(long long id,long long r
     try {std::vector<double> xyz;std::vector<int> faces;for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
         double data[7]={};if(!StageProjectedWorkingPolylineNative(id,revision,stageId,xyz,faces,gp_Dir(dx,dy,dz),data))return nullptr;
         auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;}catch(...){return nullptr;}
+}
+FacePickResult^ Bridge::PickFacePoint(int x, int y)
+{
+    try {
+        double point[3] = {}, normal[3] = {}, uv[2] = {};
+        int faceId = -1;
+        const int status = PickFacePointNative(x, y, point, faceId, normal, uv);
+        auto result = gcnew FacePickResult();
+        result->Status = status;
+        result->FaceId = faceId;
+        result->Revision = g_modelRevision;
+        result->Point = gcnew array<double>{point[0], point[1], point[2]};
+        result->Normal = gcnew array<double>{normal[0], normal[1], normal[2]};
+        result->Uv = gcnew array<double>{uv[0], uv[1]};
+        return result;
+    } catch (...) { return nullptr; }
+}
+array<array<double>^>^ Bridge::GetSharedBoundaryEdges(int exitFaceId, array<int>^ heatingFaceIds, double deflection)
+{
+    if (heatingFaceIds == nullptr || heatingFaceIds->Length == 0) return nullptr;
+    try {
+        std::vector<int> ids; for each (int v in heatingFaceIds) ids.push_back(v);
+        std::vector<std::vector<double>> loops;
+        if (!SharedBoundaryNative(exitFaceId, ids, deflection, loops)) return nullptr;
+        auto result = gcnew array<array<double>^>(static_cast<int>(loops.size()));
+        for (int i = 0; i < static_cast<int>(loops.size()); ++i) {
+            auto flat = gcnew array<double>(static_cast<int>(loops[i].size()));
+            for (int k = 0; k < static_cast<int>(loops[i].size()); ++k) flat[k] = loops[i][k];
+            result[i] = flat;
+        }
+        return result;
+    } catch (...) { return nullptr; }
 }
 bool Bridge::CommitWorkingRouteGeometry(long long id,long long revision,array<int>^ stagedRouteIds,array<int>^ finalRouteIds,array<int>^ stagedPolylineIds)
 {
@@ -2709,6 +2746,15 @@ void Bridge::SetConfirmedFaceHighlights(array<int>^ faceIds)
     if (faceIds != nullptr)
         for (int i = 0; i < faceIds->Length; ++i) ids.insert(faceIds[i]);
     SetConfirmedFaceHighlightsNative(ids);
+}
+
+void Bridge::SetConfirmedFaceHighlightColors(array<int>^ faceIds, array<double>^ rgb)
+{
+    std::map<int, Quantity_Color> colors;
+    if (faceIds != nullptr && rgb != nullptr && rgb->Length >= faceIds->Length * 3)
+        for (int i = 0; i < faceIds->Length; ++i)
+            colors[faceIds[i]] = Quantity_Color(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2], Quantity_TOC_RGB);
+    SetConfirmedFaceHighlightColorsNative(colors);
 }
 
 void Bridge::ClearConfirmedFaceHighlights()

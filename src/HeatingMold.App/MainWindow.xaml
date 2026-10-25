@@ -3,82 +3,402 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:HeatingMold.App"
         Title="HeatingMold MVP — S3 통합 데모"
-        Height="800" Width="1200" Left="40" Top="40" WindowStartupLocation="Manual">
+        Height="820" Width="1320" MinWidth="1080" MinHeight="680"
+        Left="40" Top="40" WindowStartupLocation="Manual"
+        Background="#F3F4F6" FontFamily="Malgun Gothic, Segoe UI" FontSize="12" Foreground="#1F2328">
+    <Window.Resources>
+        <SolidColorBrush x:Key="CanvasBrush" Color="#F3F4F6"/>
+        <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="LineBrush" Color="#E1E4E8"/>
+        <SolidColorBrush x:Key="TextPrimaryBrush" Color="#1F2328"/>
+        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#5B636D"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#2563EB"/>
+
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+        </Style>
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+            <Setter Property="Margin" Value="0,0,0,3"/>
+        </Style>
+        <Style x:Key="Hint" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Margin" Value="0,4,0,0"/>
+        </Style>
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="12"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+        </Style>
+        <Style x:Key="CardBody" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="12"/>
+            <Setter Property="Margin" Value="0,6,0,10"/>
+        </Style>
+        <Style x:Key="ValueBox" TargetType="TextBox">
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+        </Style>
+
+        <Style x:Key="FlatButton" TargetType="Button">
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Padding" Value="12,0"/>
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="5" SnapsToDevicePixels="True"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#F0F2F5"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#E4E7EB"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PrimaryButton" TargetType="Button">
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Padding" Value="12,0"/>
+            <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="Foreground" Value="#FFFFFF"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="5" SnapsToDevicePixels="True"
+                                Background="{TemplateBinding Background}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#1D4ED8"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#1E40AF"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="CompactButton" TargetType="Button" BasedOn="{StaticResource FlatButton}">
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="Padding" Value="8,0"/>
+            <Setter Property="FontSize" Value="11.5"/>
+        </Style>
+
+        <Style x:Key="SectionExpander" TargetType="Expander">
+            <Setter Property="Margin" Value="0,0,0,10"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+        </Style>
+    </Window.Resources>
+
     <DockPanel>
-        <ToolBarTray DockPanel.Dock="Top">
-            <ToolBar>
-                <TextBlock Text="작업 방향 N: +Z (고정)" VerticalAlignment="Center"/>
-                <Button Content="작업 정면" Click="WorkingFront_Click"/>
-            </ToolBar>
-            <ToolBar>
-                <Button Content="열기..." Click="Open_Click" Padding="8,2"/>
-            </ToolBar>
-            <ToolBar>
-                <TextBlock Text="마진:" VerticalAlignment="Center" Margin="4,0,2,0"/>
-                <TextBox x:Name="MarginBox" Text="5" Width="44"/>
-                <TextBlock Text="간격:" VerticalAlignment="Center" Margin="4,0,2,0"/>
-                <TextBox x:Name="SpacingBox" Text="10" Width="44"/>
-                <TextBlock Text="선폭:" VerticalAlignment="Center" Margin="4,0,2,0"/>
-                <TextBox x:Name="WidthBox" Text="1" Width="44"/>
-                <TextBlock Text="삽입 깊이 (보류):" VerticalAlignment="Center" Margin="4,0,2,0"/>
-                <TextBox x:Name="InsertionDepthBox" Text="0" Width="48" ToolTip="현재 작업 방향 기하 검증은 깊이 0만 지원. 기존 깊이 이동 알고리즘은 마이그레이션 대기 중입니다."/>
-                <Separator/>
-                <Button Content="패턴 생성" Click="Generate_Click" Padding="8,2"/>
-                <CheckBox x:Name="ConnectorEditModeBox" Content="커넥터 편집" Margin="8,0" VerticalAlignment="Center"
-                          Checked="ConnectorEditMode_Changed" Unchecked="ConnectorEditMode_Changed"/>
-                <Button Content="Undo" Click="ConnectorUndo_Click" Padding="6,2"/>
-                <Button Content="Redo" Click="ConnectorRedo_Click" Padding="6,2"/>
-                <Button Content="전원 연결 위치 지정" Click="PowerSetup_Click" Padding="6,2"/>
-                <Button Content="전원 설정 취소" Click="PowerCancel_Click" Padding="6,2"/>
-                <Button Content="DXF 내보내기" Click="Export_Click" Padding="8,2"/>
-                <Separator/>
-                <Button Content="정면 (−Z)" Click="StandardView_Click" Tag="Front" Padding="6,2"/>
-                <Button Content="후면 (+Z)" Click="StandardView_Click" Tag="Back" Padding="6,2"/>
-                <Button Content="위쪽 (−Y)" Click="StandardView_Click" Tag="Top" Padding="6,2"/>
-                <Button Content="아래쪽 (+Y)" Click="StandardView_Click" Tag="Bottom" Padding="6,2"/>
-                <Button Content="좌측 (−X)" Click="StandardView_Click" Tag="Left" Padding="6,2"/>
-                <Button Content="우측 (+X)" Click="StandardView_Click" Tag="Right" Padding="6,2"/>
-            </ToolBar>
-        </ToolBarTray>
-        <StatusBar DockPanel.Dock="Bottom">
-            <TextBlock x:Name="HoverText" Text="" MinWidth="170" Foreground="#0A6A2F"/>
+        <Border DockPanel.Dock="Top" Background="{StaticResource SurfaceBrush}"
+                BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="16,9">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="HeatingMold" FontSize="14" FontWeight="SemiBold"/>
+                    <Border Background="#EEF2FF" CornerRadius="4" Padding="6,2" Margin="10,0,0,0"
+                            VerticalAlignment="Center">
+                        <TextBlock Text="S3 통합 데모" FontSize="11" Foreground="#3B5BDB"/>
+                    </Border>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
+                    <Button x:Name="OpenButton" Content="STEP 열기…" Click="Open_Click"
+                            Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"/>
+                    <Button x:Name="StandardViewButton" Content="표준 뷰 ▾" Click="StandardViewMenu_Click"
+                            Style="{StaticResource FlatButton}">
+                        <Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="정면 (−Z)" Tag="Front" Click="StandardView_Click"/>
+                                <MenuItem Header="후면 (+Z)" Tag="Back" Click="StandardView_Click"/>
+                                <MenuItem Header="위쪽 (−Y)" Tag="Top" Click="StandardView_Click"/>
+                                <MenuItem Header="아래쪽 (+Y)" Tag="Bottom" Click="StandardView_Click"/>
+                                <MenuItem Header="좌측 (−X)" Tag="Left" Click="StandardView_Click"/>
+                                <MenuItem Header="우측 (+X)" Tag="Right" Click="StandardView_Click"/>
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <StatusBar DockPanel.Dock="Bottom" Background="{StaticResource SurfaceBrush}"
+                   BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0" Padding="12,2">
+            <StatusBarItem>
+                <TextBlock x:Name="HoverText" Text="" MinWidth="170" Foreground="#0A6A2F"/>
+            </StatusBarItem>
             <Separator/>
-            <TextBlock x:Name="StatusText" Text="준비"/>
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText" Text="준비"/>
+            </StatusBarItem>
         </StatusBar>
+
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="250"/>
+                <ColumnDefinition Width="*" MinWidth="480"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="340" MinWidth="300" MaxWidth="420"/>
             </Grid.ColumnDefinitions>
+
             <local:OccViewport x:Name="Viewport" Grid.Column="0"/>
-            <Border Grid.Column="1" BorderBrush="#808080" BorderThickness="1,0,0,0" Padding="10">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <StackPanel>
-                    <TextBlock x:Name="WorkingSideText" Text="작업 방향 미확정 · 패턴 생성 보류" TextWrapping="Wrap"/>
-                    <TextBlock Text="적용 Face" FontWeight="Bold" Margin="0,0,0,6"/>
-                    <TextBlock Text="클릭/Ctrl+클릭 또는 Shift+드래그로 Face 선택 · Enter로 작업영역 확정" TextWrapping="Wrap" Margin="0,0,0,6"/>
-                    <ListBox x:Name="SelectedFacesList" MinHeight="120" MaxHeight="260"/>
-                    <Button Content="확정 영역 삭제" Click="ClearConfirmedArea_Click" Margin="0,5,0,0" Padding="6,3"/>
-                    <Separator Margin="0,10,0,8"/>
-                    <TextBlock Text="제외 영역" FontWeight="Bold"/>
-                    <CheckBox x:Name="ExcludeModeBox" Content="뷰포트에서 사각형 제외영역 그리기" Margin="0,5,0,5"
-                              Checked="ExcludeMode_Changed" Unchecked="ExcludeMode_Changed"/>
-                    <TextBlock Text="선택된 동일 평면 Face 위에서 드래그하세요. 아래는 2D 확인용입니다."
-                               TextWrapping="Wrap" FontSize="11" Margin="0,0,0,4"/>
-                    <Border BorderBrush="#808080" BorderThickness="1" Background="White" HorizontalAlignment="Stretch" Height="200">
-                        <Canvas x:Name="RegionCanvas" Background="Transparent" SizeChanged="RegionCanvas_SizeChanged"/>
-                    </Border>
-                    <Button Content="제외 사각형 초기화" Click="ClearExclusions_Click" Margin="0,5,0,0" Padding="6,3"/>
-                    <TextBlock Text="회로별 길이 (mm)" FontWeight="Bold" Margin="0,10,0,4"/>
-                    <DataGrid x:Name="CircuitLengthGrid" AutoGenerateColumns="False" IsReadOnly="True" Height="140">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="회로" Binding="{Binding Circuit}" Width="*"/>
-                            <DataGridTextColumn Header="발열사" Binding="{Binding HeatingLength, StringFormat=F1}" Width="*"/>
-                            <DataGridTextColumn Header="접속" Binding="{Binding LeadLength, StringFormat=F1}" Width="*"/>
-                            <DataGridTextColumn Header="합계" Binding="{Binding TotalLength, StringFormat=F1}" Width="*"/>
-                        </DataGrid.Columns>
-                    </DataGrid>
-                </StackPanel>
+
+            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                          Background="{StaticResource LineBrush}"
+                          ResizeBehavior="PreviousAndNext" ResizeDirection="Columns"/>
+
+            <Border Grid.Column="2" Background="#F7F8FA"
+                    BorderBrush="{StaticResource LineBrush}" BorderThickness="1,0,0,0">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                              Padding="14,12,14,16">
+                    <StackPanel>
+
+                        <!-- 작업 방향 -->
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="작업 방향" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock x:Name="WorkingSideText" Text="작업 방향 · 모델을 불러오세요"
+                                           Style="{StaticResource Hint}" Margin="0,4,0,8"/>
+                                <Button Content="작업 정면으로 돌아가기" Click="WorkingFront_Click"
+                                        Style="{StaticResource FlatButton}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 1. 작업 영역 -->
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="1 · 작업 영역" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="뷰포트에서 Face를 클릭하거나 Ctrl+클릭으로 추가/제외, Shift+드래그로 여러 Face를 선택합니다. Enter로 새 작업영역이 추가됩니다."/>
+                                <ListBox x:Name="SelectedFacesList" MinHeight="70" MaxHeight="130" Margin="0,8,0,6"
+                                         BorderBrush="{StaticResource LineBrush}" BorderThickness="1"/>
+                                <TextBlock x:Name="SelectionSummaryText" Text="Face를 선택하세요"
+                                           Style="{StaticResource Hint}" Margin="0,0,0,8"/>
+                                <Button x:Name="ConfirmAreaButton" Content="영역 추가 (Enter)"
+                                        Click="ConfirmArea_Click" Style="{StaticResource PrimaryButton}"/>
+                                <TextBlock Text="확정된 작업 영역" Style="{StaticResource FieldLabel}"
+                                           FontWeight="SemiBold" Margin="0,12,0,4"/>
+                                <ListBox x:Name="ConfirmedAreasList" MinHeight="46" MaxHeight="130"
+                                         BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                                         SelectionChanged="ConfirmedAreasList_SelectionChanged">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Border Width="12" Height="12" CornerRadius="2" Margin="0,0,7,0"
+                                                        VerticalAlignment="Center" Background="{Binding Swatch}"/>
+                                                <TextBlock Text="{Binding Label}" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <Button x:Name="ClearConfirmedAreaButton" Content="선택 영역 삭제"
+                                        Click="DeleteSelectedArea_Click" Style="{StaticResource FlatButton}"
+                                        Margin="0,6,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 2. 제외 영역 -->
+                        <Expander Style="{StaticResource SectionExpander}">
+                            <Expander.Header>
+                                <TextBlock Text="2 · 제외 영역" FontSize="13" FontWeight="SemiBold"/>
+                            </Expander.Header>
+                            <Border Style="{StaticResource CardBody}">
+                                <StackPanel>
+                                    <CheckBox x:Name="ExcludeModeBox" Content="뷰포트에서 사각형 제외영역 그리기"
+                                              Margin="0,0,0,5"
+                                              Checked="ExcludeMode_Changed" Unchecked="ExcludeMode_Changed"/>
+                                    <TextBlock Style="{StaticResource Hint}"
+                                               Text="활성 작업영역의 평면에서 뷰포트를 드래그하세요. 제외영역은 활성 영역에만 적용되며, 아래는 2D 확인용 미리보기입니다."/>
+                                    <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                                            Background="White" HorizontalAlignment="Stretch" Height="170"
+                                            Margin="0,8,0,0">
+                                        <Canvas x:Name="RegionCanvas" Background="Transparent"
+                                                Cursor="Cross"
+                                                MouseLeftButtonDown="RegionCanvas_MouseLeftButtonDown"
+                                                SizeChanged="RegionCanvas_SizeChanged"/>
+                                    </Border>
+                                    <Button Content="제외 사각형 초기화" Click="ClearExclusions_Click"
+                                            Style="{StaticResource FlatButton}" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+                        </Expander>
+
+                        <!-- 3. 패턴 생성 -->
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="3 · 패턴 생성" Style="{StaticResource SectionTitle}"/>
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="10"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="배치 방향" Style="{StaticResource FieldLabel}"/>
+                                        <ComboBox x:Name="DirectionBox" SelectedIndex="0"
+                                                  SelectionChanged="DirectionBox_SelectionChanged">
+                                            <ComboBoxItem Content="자동 (장축)"/>
+                                            <ComboBoxItem Content="가로 (Frame X)"/>
+                                            <ComboBoxItem Content="세로 (Frame Y)"/>
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="인출면 · 시작/종료점" Style="{StaticResource FieldLabel}"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button x:Name="PickExitFaceButton" Content="인출면 선택"
+                                                    Click="PickExitFace_Click" Padding="10,3"/>
+                                            <Button x:Name="ClearExitFaceButton" Content="초기화"
+                                                    Click="ClearExitFace_Click" Padding="10,3" Margin="6,0,0,0"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Grid>
+                                <TextBlock x:Name="ExitFaceStatusText" Text="인출면 미지정 — 3D 뷰에서 인출면(측면)을 클릭하세요"
+                                           Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="10"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="마진 (mm)" Style="{StaticResource FieldLabel}"/>
+                                        <TextBox x:Name="MarginBox" Text="5" Style="{StaticResource ValueBox}"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="간격 (mm)" Style="{StaticResource FieldLabel}"/>
+                                        <TextBox x:Name="SpacingBox" Text="10" Style="{StaticResource ValueBox}"/>
+                                    </StackPanel>
+                                </Grid>
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <TextBlock Text="삽입 깊이" Style="{StaticResource FieldLabel}"
+                                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBox x:Name="InsertionDepthBox" Text="0" Width="60"
+                                             IsReadOnly="True" IsTabStop="False" Style="{StaticResource ValueBox}"
+                                             Background="#F3F4F6" Foreground="{StaticResource TextSecondaryBrush}"
+                                             ToolTip="현재 작업 방향 기하 검증은 깊이 0만 지원합니다. 기존 깊이 이동 알고리즘은 마이그레이션 대기 중입니다."/>
+                                    <TextBlock Text="mm · 깊이 0만 지원" Style="{StaticResource Hint}"
+                                               VerticalAlignment="Center" Margin="8,0,0,0"/>
+                                </StackPanel>
+                                <Button x:Name="GenerateButton" Content="패턴 생성" Click="Generate_Click"
+                                        Style="{StaticResource PrimaryButton}" Margin="0,10,0,0"/>
+                                <TextBlock x:Name="GenerateHintText" Text="작업 영역을 확정해야 생성할 수 있습니다."
+                                           Style="{StaticResource Hint}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 4. 회로 구성 -->
+                        <Expander Style="{StaticResource SectionExpander}">
+                            <Expander.Header>
+                                <TextBlock Text="4 · 회로 구성" FontSize="13" FontWeight="SemiBold"/>
+                            </Expander.Header>
+                            <Border Style="{StaticResource CardBody}">
+                                <StackPanel>
+                                    <CheckBox x:Name="ConnectorEditModeBox" Content="커넥터 편집"
+                                              Checked="ConnectorEditMode_Changed"
+                                              Unchecked="ConnectorEditMode_Changed"/>
+                                    <TextBlock Style="{StaticResource Hint}"
+                                               Text="커넥터를 클릭해 회로를 분리/연결합니다. 회로별 길이는 아래 결과에 반영됩니다."/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                        <Button Content="Undo" Click="ConnectorUndo_Click"
+                                                Style="{StaticResource CompactButton}" Margin="0,0,6,0"/>
+                                        <Button Content="Redo" Click="ConnectorRedo_Click"
+                                                Style="{StaticResource CompactButton}"/>
+                                    </StackPanel>
+                                    <Separator Margin="0,10,0,8"/>
+                                    <TextBlock Text="전원 연결" Style="{StaticResource FieldLabel}"
+                                               FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="PowerMigrationHint" Style="{StaticResource Hint}"
+                                               Text="전원 연결 설정은 경로 마이그레이션 완료 후 활성화됩니다 (현재 비활성)."/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                        <Button x:Name="PowerSetupButton" Content="전원 연결 위치 지정"
+                                                Click="PowerSetup_Click" Style="{StaticResource CompactButton}"
+                                                Margin="0,0,6,0"/>
+                                        <Button x:Name="PowerCancelButton" Content="전원 설정 취소"
+                                                Click="PowerCancel_Click" Style="{StaticResource CompactButton}"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </Expander>
+
+                        <!-- 5. 결과 -->
+                        <Expander Style="{StaticResource SectionExpander}" IsExpanded="True">
+                            <Expander.Header>
+                                <TextBlock Text="5 · 결과" FontSize="13" FontWeight="SemiBold"/>
+                            </Expander.Header>
+                            <Border Style="{StaticResource CardBody}">
+                                <StackPanel>
+                                    <TextBlock Text="회로별 길이 (mm)" Style="{StaticResource FieldLabel}"
+                                               FontWeight="SemiBold"/>
+                                    <DataGrid x:Name="CircuitLengthGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                                              Height="150" HeadersVisibility="Column" RowHeaderWidth="0"
+                                              GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#EDEFF2"
+                                              BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                                              Background="White" RowBackground="White"
+                                              AlternatingRowBackground="#FAFBFC">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="회로" Binding="{Binding Circuit}" Width="*"/>
+                                            <DataGridTextColumn Header="발열사" Binding="{Binding HeatingLength, StringFormat=F1}" Width="*"/>
+                                            <DataGridTextColumn Header="접속" Binding="{Binding LeadLength, StringFormat=F1}" Width="*"/>
+                                            <DataGridTextColumn Header="합계" Binding="{Binding TotalLength, StringFormat=F1}" Width="*"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                    <Button Content="DXF 투상도 내보내기" Click="Export_Click"
+                                            Style="{StaticResource FlatButton}" Margin="0,10,0,0"/>
+                                    <TextBlock Style="{StaticResource Hint}"
+                                               Text="금형 4면 투상도(+히든선)를 output\heat_pattern.dxf로 저장합니다. 생성된 발열 경로와 사양표는 아직 포함되지 않습니다."/>
+                                </StackPanel>
+                            </Border>
+                        </Expander>
+
+                    </StackPanel>
                 </ScrollViewer>
             </Border>
         </Grid>

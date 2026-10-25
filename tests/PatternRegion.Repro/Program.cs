@@ -97,7 +97,8 @@ static class Program
         Check(zSpan > 200, "region boundary is strongly non-planar (222 mm), projected onto one datum plane");
         Check(pattern.RoutePieces.Count == 133, "serpentine produces 133 route pieces");
 
-        // ---- Phase 1: goal. Every generated piece must survive the bridge's projection validation ----
+        // ---- Phase 1: raw OCCT behavior. Informational only: BRepProj alone still returns no
+        // wire for the degenerate connectors, which is why the bridge has a sampling fallback. ----
         var failures = new List<(int Index, SerpentineRoutePiece Piece, string Status)>();
         for (int i = 0; i < pattern.RoutePieces.Count; i++)
         {
@@ -107,16 +108,16 @@ static class Program
             bool ok = d != null && d[0] == 1;
             if (!ok) failures.Add((i, piece, d == null ? "null" : $"status={d[4]:F0} wires={d[3]:F0}"));
         }
-        Console.WriteLine($"projection failures: {(failures.Count == 0 ? "none" : string.Join(", ", failures.Select(f => f.Index)))}");
+        Console.WriteLine($"raw BRepProj failures: {(failures.Count == 0 ? "none" : string.Join(", ", failures.Select(f => f.Index)))}");
         foreach (var f in failures)
             Console.WriteLine($"  piece {f.Index} {f.Piece.Kind} lane={f.Piece.LaneIndex} points={f.Piece.Points.Count} {f.Status}");
-        Check(failures.Count == 0, "every route piece projects onto the selected faces");
 
-        // ---- Phase 2: reproduce the reported error through the real staging call ----
+        // ---- Phase 2: goal. The app path (staging) must survive every piece, including the
+        // connectors that raw BRepProj drops. ----
         var firstFailure = failures.Count > 0 ? failures[0].Index : -1;
-        Check(firstFailure == 87, "first failing piece is 87 (the reported symptom)");
+        Check(firstFailure == 87, "raw BRepProj first fails at piece 87 (the reported symptom)");
         Check(failures.Count > 0 && failures.All(f => f.Piece.Kind == SerpentineRoutePieceKind.TurnConnector &&
-            f.Piece.Points.Count == 2), "every failure is a 2-point turn connector (straight fallback)");
+            f.Piece.Points.Count == 2), "every raw failure is a 2-point turn connector (straight fallback)");
 
         HwndSource? source = null;
         try { source = new HwndSource(new HwndSourceParameters("pattern repro") { Width = 640, Height = 480 }); } catch { }
@@ -137,7 +138,9 @@ static class Program
                 if (shown == null) { stagedFailure = i; break; }
                 staged.Add(stageId);
             }
-            Check(stagedFailure == 87, "StageProjectedWorkingRoutePiece fails at piece 87 (exact reported error)");
+            Check(stagedFailure == -1,
+                "all " + pattern.RoutePieces.Count + " route pieces stage onto the selected faces (including piece 87)");
+            Check(staged.Count == pattern.RoutePieces.Count, "staged piece count matches the generated pattern");
             Bridge.DiscardWorkingRouteGeometry(side.Id, side.Revision, staged.ToArray(), Array.Empty<int>());
         }
 
@@ -196,11 +199,8 @@ static class Program
 
         Console.WriteLine();
         Console.WriteLine($"checks passed={passed} failed={failed}");
-        if (failures.Count > 0)
-        {
-            Console.WriteLine("KNOWN DEFECT: the -Z projection of turn connectors over the 4.3 m radius cylinder (face 598)");
-            Console.WriteLine("degenerates; staging aborts at piece 87. See README.md.");
-        }
+        Console.WriteLine("Phase 3 PASS lines document raw OCCT 7.9.3 behavior (BRepProj drops these connectors);");
+        Console.WriteLine("the staged pieces above show the bridge's sampling fallback recovering them.");
         return failed == 0 ? 0 : 1;
     }
 }

@@ -272,6 +272,54 @@ bool StageWorkingPolylineNative(long long id,long long revision,int stageId,cons
     } catch (...) { if (!ais.IsNull() && !g_ctx.IsNull()) { try { g_ctx->Remove(ais,Standard_False); } catch (...) {} } g_stagedWorkingPolylines.erase(stageId); return false; }
 }
 
+// BRepProj_Projection이 교선을 하나도 만들지 못하는 퇴화 케이스(예: 2점 조각의 스윕
+// 평면이 원통 축과 거의 평행)에서, 소스 폴리라인의 표본점을 같은 투영 방향으로
+// 레이캐스트해 표면 위의 점을 얻고 폴리라인 와이어로 재구성한다. 투영 방향을
+// 바꾸지 않으므로 결과가 데이텀 평면에서 벗어나지 않고, 인접 조각과도 끝점이 맞는다.
+bool ProjectWorkingWireBySampling(const TopoDS_Wire& source,const TopoDS_Shape& target,
+    const gp_Dir& direction,TopoDS_Wire& wire)
+{
+    IntCurvesFace_ShapeIntersector intersector;
+    intersector.Load(target,0.01);
+    BRepBuilderAPI_MakePolygon polygon;
+    gp_Pnt firstPoint,lastPoint; bool hasLast=false;
+    auto append=[&](const gp_Pnt& p) {
+        if(hasLast&&lastPoint.Distance(p)<=1e-7) return;
+        polygon.Add(p);
+        if(!hasLast) firstPoint=p;
+        lastPoint=p; hasLast=true;
+    };
+    for(BRepTools_WireExplorer ex(source);ex.More();ex.Next()) {
+        BRepAdaptor_Curve curve(ex.Current());
+        const double u0=curve.FirstParameter(),u1=curve.LastParameter();
+        if(!std::isfinite(u0)||!std::isfinite(u1)||u1<=u0) return false;
+        std::vector<gp_Pnt> samples;
+        if(curve.GetType()==GeomAbs_Line) { samples.push_back(curve.Value(u0)); samples.push_back(curve.Value(u1)); }
+        else {
+            GCPnts_QuasiUniformDeflection sampler(curve,1.0e-3);
+            if(!sampler.IsDone()||sampler.NbPoints()<2) return false;
+            for(Standard_Integer i=1;i<=sampler.NbPoints();++i) samples.push_back(sampler.Value(i));
+        }
+        for(const gp_Pnt& sample:samples) {
+            intersector.Perform(gp_Lin(sample,direction),0.0,1.0e12);
+            if(!intersector.IsDone()||intersector.NbPnt()==0) return false;
+            bool found=false; double nearest=1.0e100; gp_Pnt hit;
+            for(Standard_Integer i=1;i<=intersector.NbPnt();++i) {
+                if(intersector.State(i)!=TopAbs_IN&&intersector.State(i)!=TopAbs_ON) continue;
+                const double t=intersector.WParameter(i);
+                if(!std::isfinite(t)||t<0.0) continue;
+                if(t<nearest) { nearest=t; hit=intersector.Pnt(i); found=true; }
+            }
+            if(!found) return false;
+            append(hit);
+        }
+    }
+    if(!polygon.IsDone()) return false;
+    if(source.Closed()&&lastPoint.Distance(firstPoint)>1e-7) polygon.Close();
+    wire=polygon.Wire();
+    return !wire.IsNull()&&BRepCheck_Analyzer(wire).IsValid();
+}
+
 bool BuildProjectedWorkingWire(long long id,long long revision,const std::vector<double>& xyz,
     const std::vector<int>& faceIds,const gp_Dir& direction,TopoDS_Wire& wire,double* result)
 {
@@ -289,14 +337,11 @@ bool BuildProjectedWorkingWire(long long id,long long revision,const std::vector
         sewing.Perform(); TopoDS_Shape target=sewing.SewedShape(); if(target.IsNull()) return false;
         // Check coverage independently per source segment. A disconnected or
         // partially out-of-domain polyline must not pass on its global endpoints.
+        // (개별 에지의 BRepProj 결과는 검사하지 않는다 — 퇴화 스윕에서는 교선이 0개일 수
+        //  있고, 그 경우는 아래 전체 투영 단계에서 표본점 레이캐스트로 복구한다.)
         IntCurvesFace_ShapeIntersector coverage; coverage.Load(target,0.01);
         size_t sourceEdges=0;
         for(BRepTools_WireExplorer ex(source.Wire());ex.More();ex.Next()) {
-            BRepBuilderAPI_MakeWire oneEdge;
-            oneEdge.Add(ex.Current());
-            if(!oneEdge.IsDone()) return false;
-            BRepProj_Projection edgeProjection(oneEdge.Wire(),target,direction);
-            if(!edgeProjection.IsDone()||!edgeProjection.More()) return false;
             BRepAdaptor_Curve curve(ex.Current());
             const double first=curve.FirstParameter(),last=curve.LastParameter();
             if(!std::isfinite(first)||!std::isfinite(last)||last<=first) return false;
@@ -314,15 +359,20 @@ bool BuildProjectedWorkingWire(long long id,long long revision,const std::vector
         BRepProj_Projection projection(source.Wire(),target,direction);
         std::vector<TopoDS_Wire> wires;
         for(projection.Init();projection.More();projection.Next()) wires.push_back(projection.Current());
-        if(wires.empty()) return false;
-        Handle(TopTools_HSequenceOfShape) projectedEdges=new TopTools_HSequenceOfShape();
-        for(const auto& projectedWire:wires)
-            for(BRepTools_WireExplorer ex(projectedWire);ex.More();ex.Next()) projectedEdges->Append(ex.Current());
-        Handle(TopTools_HSequenceOfShape) connectedWires=new TopTools_HSequenceOfShape();
-        ShapeAnalysis_FreeBounds::ConnectEdgesToWires(projectedEdges,0.01,Standard_False,connectedWires);
-        if(connectedWires->Length()!=1) return false;
-        wire=TopoDS::Wire(connectedWires->Value(1));
-        if(!BRepCheck_Analyzer(wire).IsValid()) return false;
+        if(wires.empty()) {
+            // 스윕 평면이 곡면 룰링과 평행한 퇴화 케이스: BRepProj가 "완료" 상태로
+            // 교선 0개를 반환한다. 방향은 그대로 두고 표본점 레이캐스트로 재구성한다.
+            if(!ProjectWorkingWireBySampling(source.Wire(),target,direction,wire)) return false;
+        } else {
+            Handle(TopTools_HSequenceOfShape) projectedEdges=new TopTools_HSequenceOfShape();
+            for(const auto& projectedWire:wires)
+                for(BRepTools_WireExplorer ex(projectedWire);ex.More();ex.Next()) projectedEdges->Append(ex.Current());
+            Handle(TopTools_HSequenceOfShape) connectedWires=new TopTools_HSequenceOfShape();
+            ShapeAnalysis_FreeBounds::ConnectEdgesToWires(projectedEdges,0.01,Standard_False,connectedWires);
+            if(connectedWires->Length()!=1) return false;
+            wire=TopoDS::Wire(connectedWires->Value(1));
+            if(!BRepCheck_Analyzer(wire).IsValid()) return false;
+        }
         size_t ordered=0,edges=0; for(BRepTools_WireExplorer ex(wire);ex.More();ex.Next()) ++ordered;
         for(TopExp_Explorer ex(wire,TopAbs_EDGE);ex.More();ex.Next()) ++edges;
         if(ordered==0||ordered!=edges) return false;
@@ -348,7 +398,10 @@ bool StageProjectedWorkingRouteNative(long long id,long long revision,int stageI
     try {
         ais=new AIS_Shape(wire); std::string k=kind;
         std::transform(k.begin(),k.end(),k.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
-        bool connector=k=="turnconnector"||k=="turn"; Quantity_Color color=connector?Quantity_Color(0.1,0.65,1.0,Quantity_TOC_RGB):Quantity_Color(0.95,0.15,0.10,Quantity_TOC_RGB);
+        bool connector=k=="turnconnector"||k=="turn";
+        bool lead=k=="exitpiece"||k=="exit";
+        Quantity_Color color=connector?Quantity_Color(0.1,0.65,1.0,Quantity_TOC_RGB)
+            :(lead?Quantity_Color(0.95,0.55,0.10,Quantity_TOC_RGB):Quantity_Color(0.95,0.15,0.10,Quantity_TOC_RGB));
         g_ctx->SetColor(ais,color,Standard_False); if(connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
         g_ctx->Display(ais,Standard_False);g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost);g_ctx->Activate(ais,Standard_False);
         auto inserted=g_routePieces.emplace(stageId,RoutePieceOverlay{ais,connector,true,color,1.0});
@@ -380,8 +433,155 @@ bool StageProjectedWorkingPolylineNative(long long id,long long revision,int sta
     } catch(...) { if(!ais.IsNull()) { try { g_ctx->Remove(ais,Standard_False); } catch(...) {} } g_stagedWorkingPolylines.erase(stageId); return false; }
 }
 
-void DiscardWorkingGeometryNative(long long contextId,long long revision,const std::vector<int>& routes,const std::vector<int>& lines)
+// ---- 인출면 픽: 화면 광선의 최근접 가시면. 선택 상태를 바꾸지 않는 읽기 전용. ----
+// status: 0=hit, 1=miss, 2=tangent, 3=invalid/geometry
+int PickFacePointNative(int x, int y, double* point, int& faceId, double* normal, double* uv)
 {
+    if (g_view.IsNull() || g_shape.IsNull() || !point || !normal || !uv) return 3;
+    try {
+        Standard_Real rx, ry, rz, vx, vy, vz;
+        g_view->ConvertWithProj(x, y, rx, ry, rz, vx, vy, vz);
+        gp_Vec ray(vx, vy, vz);
+        if (ray.SquareMagnitude() < 1e-18) return 3;
+        ray.Normalize();
+        IntCurvesFace_ShapeIntersector hits;
+        hits.Load(g_shape, 1e-7);
+        hits.Perform(gp_Lin(gp_Pnt(rx, ry, rz), gp_Dir(ray)), 0.0, 1e100);
+        if (!hits.IsDone() || hits.NbPnt() == 0) return 1;
+        int best = 0; double nearest = 1e100;
+        for (int i = 1; i <= hits.NbPnt(); ++i) {
+            if (hits.State(i) != TopAbs_IN && hits.State(i) != TopAbs_ON) continue;
+            const double t = hits.WParameter(i);
+            if (!std::isfinite(t) || t < 0) continue;
+            if (t < nearest) { nearest = t; best = i; }
+        }
+        if (!best) return 1;
+        // Never fall through a nearer occluder to a hidden face.
+        const TopoDS_Face face = hits.Face(best);
+        if (face.IsNull() || !g_faceMap.Contains(face)) return 3;
+        const int id = g_faceMap.FindIndex(face) - 1;
+        if (id < 0) return 3;
+        const gp_Pnt p = hits.Pnt(best);
+        const double u = hits.UParameter(best), v = hits.VParameter(best);
+        if (!std::isfinite(u) || !std::isfinite(v)) return 3;
+        BRepAdaptor_Surface surface(face);
+        gp_Vec n;
+        if (surface.GetType() == GeomAbs_Sphere) n = gp_Vec(surface.Sphere().Location(), p);
+        else {
+            gp_Pnt q; gp_Vec du, dv;
+            surface.D1(u, v, q, du, dv);
+            n = du.Crossed(dv);
+        }
+        if (!std::isfinite(n.SquareMagnitude()) || n.SquareMagnitude() < 1e-24) return 2;
+        n.Normalize();
+        if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
+        if (std::fabs(n.Dot(gp_Vec(ray))) < 1e-7) return 2;
+        point[0]=p.X(); point[1]=p.Y(); point[2]=p.Z();
+        normal[0]=n.X(); normal[1]=n.Y(); normal[2]=n.Z();
+        uv[0]=u; uv[1]=v; faceId=id;
+        return 0;
+    } catch (const Standard_Failure&) { return 3; }
+}
+
+// ---- 인출면과 가열면이 공유하는 실제 CAD edge → 3D 폴리라인 ----
+bool SharedBoundaryNative(int exitFaceId, const std::vector<int>& heatingFaces,
+    double deflection, std::vector<std::vector<double>>& out)
+{
+    out.clear();
+    if (exitFaceId < 0 || exitFaceId >= static_cast<int>(g_faces.size()) || heatingFaces.empty()) return false;
+    if (!std::isfinite(deflection) || deflection <= 0) deflection = 0.05;
+    try {
+        TopTools_IndexedMapOfShape exitEdges;
+        for (TopExp_Explorer ex(g_faces[exitFaceId], TopAbs_EDGE); ex.More(); ex.Next())
+            exitEdges.Add(ex.Current());
+        if (exitEdges.IsEmpty()) return false;
+        TopTools_IndexedMapOfShape shared;
+        for (int id : heatingFaces) {
+            if (id < 0 || id >= static_cast<int>(g_faces.size()) || id == exitFaceId) continue;
+            for (TopExp_Explorer ex(g_faces[id], TopAbs_EDGE); ex.More(); ex.Next()) {
+                const int index = exitEdges.FindIndex(ex.Current());
+                if (index) shared.Add(exitEdges(index));
+            }
+        }
+        for (int i = 1; i <= shared.Extent(); ++i) {
+            BRepAdaptor_Curve curve(TopoDS::Edge(shared(i)));
+            std::vector<double> poly;
+            GCPnts_QuasiUniformDeflection samples(curve, deflection);
+            if (samples.IsDone() && samples.NbPoints() >= 2 && samples.NbPoints() <= 20000) {
+                for (int k = 1; k <= samples.NbPoints(); ++k) {
+                    const gp_Pnt p = samples.Value(k);
+                    poly.insert(poly.end(), {p.X(), p.Y(), p.Z()});
+                }
+            } else {
+                const double first = curve.FirstParameter(), last = curve.LastParameter();
+                if (!std::isfinite(first) || !std::isfinite(last) || last < first) continue;
+                for (double t : {first, last}) {
+                    const gp_Pnt p = curve.Value(t);
+                    poly.insert(poly.end(), {p.X(), p.Y(), p.Z()});
+                }
+            }
+            if (poly.size() >= 6) out.push_back(poly);
+        }
+        return !out.empty();
+    } catch (const Standard_Failure&) { return false; }
+}
+
+// ---- 인출 리드(미사용): 2D 프레임 왕복 정확도에 의존하므로 현재 인출 리드는
+//      투영 경로(StageProjectedWorkingRoutePiece)로 스테이징한다. 3D 인출면 리드 구현 시 재검증 필요. ----
+bool StageWorkingExitPieceNative(long long id, long long revision, int stageId,
+    const std::vector<double>& xyz, const std::vector<int>& faces, double* result)
+{
+    if (stageId >= 0 || g_ctx.IsNull() || !FindWorking(id, revision) || xyz.size() < 6 || xyz.size() % 3 ||
+        faces.empty() || !result || g_routePieces.count(stageId) ||
+        g_stagedWorkingRouteOwners.count(stageId) || g_stagedWorkingPolylines.count(stageId)) return false;
+    Handle(AIS_Shape) ais;
+    try {
+        BRepBuilderAPI_Sewing sewing(0.01, Standard_True, Standard_True, Standard_True, Standard_True);
+        std::set<int> unique;
+        for (int face : faces) {
+            if (face < 0 || face >= static_cast<int>(g_faces.size())) return false;
+            if (unique.insert(face).second) sewing.Add(g_faces[face]);
+        }
+        sewing.Perform();
+        const TopoDS_Shape target = sewing.SewedShape();
+        if (target.IsNull()) return false;
+        // 인출 리드는 마진 밴드 안, 즉 선택 면 위에만 놓인다.
+        for (size_t i = 0; i < xyz.size(); i += 3) {
+            if (!std::isfinite(xyz[i]) || !std::isfinite(xyz[i+1]) || !std::isfinite(xyz[i+2])) return false;
+            const gp_Pnt p(xyz[i], xyz[i+1], xyz[i+2]);
+            BRepExtrema_DistShapeShape distance(BRepBuilderAPI_MakeVertex(p).Vertex(), target);
+            if (!distance.IsDone() || distance.Value() > 0.05) return false;
+        }
+        BRepBuilderAPI_MakePolygon poly;
+        for (size_t i = 0; i < xyz.size(); i += 3) poly.Add(gp_Pnt(xyz[i], xyz[i+1], xyz[i+2]));
+        if (!poly.IsDone()) return false;
+        GProp_GProps props; BRepGProp::LinearProperties(poly.Wire(), props);
+        if (!std::isfinite(props.Mass()) || props.Mass() <= Precision::Confusion()) return false;
+        result[0]=props.Mass(); result[1]=xyz[0]; result[2]=xyz[1]; result[3]=xyz[2];
+        result[4]=xyz[xyz.size()-3]; result[5]=xyz[xyz.size()-2]; result[6]=xyz[xyz.size()-1];
+        ais = new AIS_Shape(poly.Wire());
+        const Quantity_Color color(0.95,0.55,0.10,Quantity_TOC_RGB);
+        g_ctx->SetColor(ais,color,Standard_False);
+        g_ctx->Display(ais,Standard_False);
+        g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost);
+        g_ctx->Activate(ais,Standard_False);
+        auto inserted=g_routePieces.emplace(stageId,RoutePieceOverlay{ais,false,true,color,1.0});
+        if(!inserted.second) { g_ctx->Remove(ais,Standard_False); return false; }
+        try { if(!g_stagedWorkingRouteOwners.emplace(stageId,std::make_pair(id,revision)).second)
+                throw std::runtime_error("staged route owner collision"); }
+        catch(...) { g_ctx->Remove(ais,Standard_False); g_routePieces.erase(stageId); throw; }
+        return true;
+    } catch(...) {
+        if(!ais.IsNull()&&!g_ctx.IsNull()) { try { g_ctx->Remove(ais,Standard_False); } catch(...) {} }
+        auto owner=g_stagedWorkingRouteOwners.find(stageId);
+        if(owner!=g_stagedWorkingRouteOwners.end()&&owner->second==std::make_pair(id,revision)) g_stagedWorkingRouteOwners.erase(owner);
+        auto route=g_routePieces.find(stageId);
+        if(route!=g_routePieces.end()&&route->second.ais==ais) g_routePieces.erase(route);
+        return false;
+    }
+}
+
+void DiscardWorkingGeometryNative(long long contextId,long long revision,const std::vector<int>& routes,const std::vector<int>& lines){
     for (int id : routes) {
         auto owner=g_stagedWorkingRouteOwners.find(id);
         if (id>=0 || owner==g_stagedWorkingRouteOwners.end() || owner->second!=std::make_pair(contextId,revision)) continue;

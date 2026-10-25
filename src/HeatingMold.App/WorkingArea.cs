@@ -1,0 +1,59 @@
+using System;
+using System.Collections.Generic;
+using System.Windows.Media;
+using HeatingMold.Core.Geometry;
+using HeatingMold.Core.Model;
+using HeatingMold.OccBridge;
+
+namespace HeatingMold.App;
+
+/// <summary>
+/// 확정된 작업영역 하나. 확정 시점의 Face 집합/투영 프레임과 해당 영역에서
+/// 생성한 발열 경로 상태를 함께 보관해 다른 영역과 독립적으로 유지한다.
+/// </summary>
+internal sealed class WorkingArea
+{
+    public string Name { get; init; } = "";
+    public Color Color { get; init; }
+    public HashSet<int> FaceIdSet { get; } = new();
+    public List<List<Vec2>> Region { get; } = new();
+    public ProjectionFrame Frame { get; init; }
+    public List<(double MinX, double MinY, double MaxX, double MaxY)> Exclusions { get; } = new();
+
+    /// <summary>사행 배치 방향(자동/프레임 X/프레임 Y).</summary>
+    public PatternDirection Direction { get; set; } = PatternDirection.Auto;
+
+    /// <summary>인출면 CAD Face ID. -1이면 미지정.</summary>
+    public int ExitFaceId { get; set; } = -1;
+    public long ExitFaceRevision { get; set; }
+
+    /// <summary>인출면과 가열면의 공유 모서리를 작업영역 2D로 투영한 폴리라인.</summary>
+    public List<Vec2> ExitChain { get; set; } = new();
+
+    /// <summary>인출면 공유 모서리 위의 시작점(=전선 입구)/종료점(=출구).</summary>
+    public Vec2? StartAnchor { get; set; }
+    public Vec2? EndAnchor { get; set; }
+
+    /// <summary>현재 방향에서 같은 인출면으로 양 끝을 맞출 수 있는 후보 쌍.</summary>
+    public List<AnchoredCandidate> AnchorCandidates { get; set; } = new();
+
+    /// <summary>인출면 고정 생성 실패 사유(사용자 표시용).</summary>
+    public string LastExitFailure { get; set; }
+
+    public SerpentineResult Pattern { get; set; }
+    public List<bool> TurnEnabled { get; set; } = new();
+    public List<RoutePieceResult> ProjectedPieces { get; set; } = new();
+    public int[] NativePieceIds { get; set; } = Array.Empty<int>();
+    public double[] RoutePieceLengths { get; set; } = Array.Empty<double>();
+    public double[] LeadLengths { get; set; } = Array.Empty<double>();
+    public List<List<Vec2>> Paths { get; set; } = new();
+    public bool PatternDisplayed { get; set; }
+
+    public bool HasExitAnchors => ExitFaceId >= 0 && StartAnchor.HasValue && EndAnchor.HasValue;
+    public bool HasExitFace => ExitFaceId >= 0 && ExitChain.Count >= 2;
+
+    public string Label => string.Format("{0} · Face {1}", Name, FaceIdSet.Count);
+    public Brush Swatch => new SolidColorBrush(Color);
+
+    public override string ToString() => Label;
+}

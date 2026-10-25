@@ -73,6 +73,18 @@ public:
     property int FaceId;
     property bool IsSelectedFace;
 };
+/// <summary>Camera-ray pick of the nearest visible face. Read-only: never mutates selection.</summary>
+public ref class FacePickResult
+{
+public:
+    property int Status;          // 0=hit, 1=miss, 2=tangent, 3=invalid/geometry
+    property int FaceId;
+    property long long Revision;
+    property array<double>^ Point;   // xyz
+    property array<double>^ Normal;  // outward unit normal
+    property array<double>^ Uv;      // surface (u,v) at hit
+};
+
 /// <summary>Revision-owned presentation/camera savepoint. Release after restore or commit.</summary>
 public ref class WorkingPresentation
 {
@@ -100,6 +112,10 @@ public:
         System::String^ kind, array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);
     static RoutePieceResult^ StageProjectedWorkingPolyline(long long id, long long revision, int stageId,
         array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);
+    /// <summary>Camera-ray nearest visible face hit with face id, point, outward normal and UV.</summary>
+    static FacePickResult^ PickFacePoint(int x, int y);
+    /// <summary>3D polylines of the CAD edges shared by the exit face and the heating faces (empty when not adjacent).</summary>
+    static array<array<double>^>^ GetSharedBoundaryEdges(int exitFaceId, array<int>^ heatingFaceIds, double deflection);
     static bool CommitWorkingRouteGeometry(long long id, long long revision, array<int>^ stagedRouteIds,
         array<int>^ finalRouteIds, array<int>^ stagedPolylineIds);
     static void DiscardWorkingRouteGeometry(long long id, long long revision,
@@ -192,6 +208,8 @@ public:
 
     /// <summary>확정된 작업(발열)영역을 붉은색으로 유지. 선택이 바뀌어도 해제 전까지 남는다.</summary>
     static void SetConfirmedFaceHighlights(array<int>^ faceIds);
+    /// <summary>확정 작업영역을 영역별 색상으로 유지. rgb는 Face별 RGB(0~1) 3개씩.</summary>
+    static void SetConfirmedFaceHighlightColors(array<int>^ faceIds, array<double>^ rgb);
     /// <summary>확정 영역 하이라이트 해제 — 선택된 면은 기존 초록색으로 되돌린다.</summary>
     static void ClearConfirmedFaceHighlights();
     /// <summary>면 선택(초록)만 해제. 확정 영역 하이라이트는 건드리지 않는다.</summary>

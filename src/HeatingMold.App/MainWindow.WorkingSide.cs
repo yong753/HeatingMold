@@ -58,14 +58,12 @@ public partial class MainWindow
             _afterWorkingSideCommit();
             if (old != null) Bridge.ReleaseWorkingContext(old.Id.Value);
 
-            ResetCircuitEditState(true);
-            _pattern = null; _multiFacePatternDisplayed = false;
-            _selectedFaceIds.Clear(); SelectedFacesList.Items.Clear();
-            _selectedRegion.Clear(); _exclusions.Clear(); _multiFaceFrame = frame; _workingAreaConfirmed = false;
-            _confirmedFaceIds.Clear(); _selectionDirty = false;
-            Bridge.HideFaceHighlights(); Bridge.ClearOverlays(); Bridge.ClearExclusionOverlays();
+            // 작업 방향 컨텍스트가 바뀌면 모든 작업영역의 투영 프레임이 무효가 된다.
+            ClearAllAreas(clearNative: true);
+            Bridge.HideFaceHighlights();
             DrawRegionCanvas();
             WorkingSideText.Text = $"작업 방향 N={n} · 모델 r{context.Revision} · 깊이 0";
+            UpdateActionStates();
             StatusText.Text = "작업 방향 적용 완료 · 패턴 생성은 깊이 0만 지원 · 전원 연결 설정은 보류";
             return true;
             }

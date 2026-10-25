@@ -183,7 +183,16 @@ namespace HeatingMold.App
         public event Action<int> ConnectorPicked;
         public event Action<int, int> PowerLocationPicked;
         public event Action<int, int> PowerLocationMoved;
+        public event Action<int, int> ExitFacePicked;
         public event Action EnterPressed;
+
+        private bool _exitFacePickMode;
+        /// <summary>인출면 지정 모드 — 클릭 좌표만 올리고 가열면 선택 상태는 건드리지 않는다.</summary>
+        public bool ExitFacePickMode
+        {
+            get => _exitFacePickMode;
+            set { if (_exitFacePickMode == value) return; _exitFacePickMode = value; }
+        }
 
         public bool RectangleSelectionMode { get; set; }
         public bool ExclusionSketchMode { get; set; }
@@ -415,6 +424,10 @@ namespace HeatingMold.App
                             }
                             else if (_activeDragMode == 2)
                                 ExclusionSketchCompleted?.Invoke(_downX, _downY, x, y);
+                        }
+                        else if (_activeDragMode == 0 && ExitFacePickMode)
+                        {
+                            ExitFacePicked?.Invoke(LoWord(lParam), HiWord(lParam));
                         }
                         else if (_activeDragMode == 0 && PowerLocationMode)
                         {

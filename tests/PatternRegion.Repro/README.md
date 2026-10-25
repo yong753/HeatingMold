@@ -16,8 +16,8 @@ Run from the repository root in PowerShell:
 then runs the harness against `resource/Mold.stp`. The harness needs no visible window; the
 staging check uses an offscreen `HwndSource`/`InitViewer`, like `WorkingSide.Regression`.
 
-The run exits with code 1 while the defect is open. Pass `-Strict` to make a non-zero exit
-throw instead (use that after the fix, and update/remove the characterization checks below).
+The harness exits with code 0 now that the bridge recovers the degenerate pieces (see
+"Implemented fix" below). Pass `-Strict` to turn any remaining check failure into a throw.
 
 ## Scenario
 
@@ -205,7 +205,30 @@ Two contributing factors on the generator side, worth knowing before choosing a 
    4.3 m radius band; any turn connector that follows a ruling edge of that band is degenerate by
    construction.
 
-## Fix directions (not implemented here)
+## Implemented fix
+
+`src/OccBridge/WorkingSideNative.inc`:
+
+1. `BuildProjectedWorkingWire` no longer aborts when the *per-edge* `BRepProj_Projection` returns
+   no wire; that per-edge projection check was removed and coverage is still validated by ray
+   casting (`IntCurvesFace_ShapeIntersector`) at 0 / 0.5 / 1 of every source edge, so a piece that
+   leaves the selected faces still fails.
+2. If the whole-polyline `BRepProj_Projection` also yields zero wires, the new
+   `ProjectWorkingWireBySampling` helper ray-casts sample points of the source polyline along the
+   **original projection direction** and rebuilds the wire as a polyline through those surface
+   hits. Lines use their two endpoints; other curve types are sampled with
+   `GCPnts_QuasiUniformDeflection` at 1 µm.
+3. Because the direction is unchanged, the recovered wire stays on the intended datum projection:
+   for piece 87 both hits lie on the same cylinder ruling, so the fallback chord *is* the exact
+   projected ruling (length 12.15 mm, matching the non-degenerate Y-parallel case). No ~0.1 mm
+   displacement, and the endpoints still line up with the neighbouring pieces within the existing
+   0.01 mm checks.
+
+The app now stages all 133 pieces (harness Phase 2). Phase 1 and Phase 3 still show raw
+`BRepProj_Projection` behavior: the OCCT section still returns zero intersection curves for these
+connectors, which is why the fallback exists.
+
+## Considered alternatives (not implemented)
 
 - Retry a failed piece with a perturbed projection direction (verified to succeed, but it
   displaces the curve off the datum by ~0.1 mm over 12 mm and must be recorded/toleranced).
