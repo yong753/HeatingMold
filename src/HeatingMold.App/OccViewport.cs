@@ -28,6 +28,9 @@ namespace HeatingMold.App
         private static extern bool ReleaseCapture();
 
         [DllImport("user32.dll")]
+        private static extern IntPtr SetFocus(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
         private static extern short GetKeyState(int nVirtKey);
 
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
@@ -125,6 +128,7 @@ namespace HeatingMold.App
         private const int WM_ERASEBKGND = 0x0014;
         private const int WM_PAINT = 0x000F;
         private const int WM_CAPTURECHANGED = 0x0215;
+        private const int WM_KEYDOWN = 0x0100;
 
         private IntPtr _hwnd;
         private bool _ready;
@@ -179,6 +183,7 @@ namespace HeatingMold.App
         public event Action<int> ConnectorPicked;
         public event Action<int, int> PowerLocationPicked;
         public event Action<int, int> PowerLocationMoved;
+        public event Action EnterPressed;
 
         public bool RectangleSelectionMode { get; set; }
         public bool ExclusionSketchMode { get; set; }
@@ -256,8 +261,13 @@ namespace HeatingMold.App
         {
             switch (msg)
             {
+                case WM_KEYDOWN:
+                    if ((int)wParam == 0x0D) { EnterPressed?.Invoke(); handled = true; }
+                    break;
+
                 case WM_LBUTTONDOWN:
                     CancelPowerLeadPreview();
+                    SetFocus(hwnd);   // 키보드 포커스가 없으면 Enter가 뷰포트에 전달되지 않는다
                     SetCapture(hwnd);
                     _dragging = true;
                     _dragStarted = false;
@@ -267,7 +277,8 @@ namespace HeatingMold.App
                     _lastExclusionPreviewY = _downY;
                     _lastSelectionPreviewX = _downX;
                     _lastSelectionPreviewY = _downY;
-                    _activeDragMode = PowerLocationMode ? 0 : (ExclusionSketchMode ? 2 : (RectangleSelectionMode ? 1 : 0));
+                    bool shift = (GetKeyState(0x10) & 0x8000) != 0;
+                    _activeDragMode = PowerLocationMode ? 0 : (ExclusionSketchMode ? 2 : (shift || RectangleSelectionMode ? 1 : 0));
                     handled = true;
                     break;
 

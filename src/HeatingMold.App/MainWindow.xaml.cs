@@ -24,6 +24,7 @@ namespace HeatingMold.App
         private List<List<Vec2>> _selectedRegion = new();
         private ProjectionFrame _multiFaceFrame;
         private string _multiFaceRegionFailure;
+        private bool _workingAreaConfirmed;
         private readonly List<(double MinX, double MinY, double MaxX, double MaxY)> _exclusions = new();
         private bool _multiFacePatternDisplayed;
         private readonly List<bool> _turnEnabled = new();
@@ -52,7 +53,6 @@ namespace HeatingMold.App
         {
             if (ConnectorEditModeBox == null) return;
             ConnectorEditModeBox.IsEnabled = !locked;
-            FaceDragSelectModeBox.IsEnabled = !locked;
             ExcludeModeBox.IsEnabled = !locked;
             FaceCombo.IsEnabled = !locked;
         }
@@ -89,6 +89,7 @@ namespace HeatingMold.App
         {
             InitializeComponent();
             Viewport.FacePicked += OnFacePicked;
+            Viewport.EnterPressed += ConfirmWorkingArea;
             Viewport.FaceHovered += OnFaceHovered;
             Viewport.FacesRectanglePicked += OnFacesRectanglePicked;
             Viewport.ExclusionSketchMoved += OnExclusionSketchMoved;
@@ -99,7 +100,17 @@ namespace HeatingMold.App
             Viewport.PowerLocationMoved += OnPowerLocationMoved;
             Viewport.ConnectorHovered += OnConnectorHovered;
             Viewport.RoutePieceHovered += OnRoutePieceHovered;
+            PreviewKeyDown += OnWindowPreviewKeyDown;
             Loaded += OnLoaded;
+        }
+
+        // 뷰포트 HWND에 포커스가 없는 경우(WPF 쪽 포커스)를 위한 Enter 확정 경로.
+        private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter) return;
+            if (Keyboard.FocusedElement is TextBox || Keyboard.FocusedElement is ComboBox) return;
+            ConfirmWorkingArea();
+            e.Handled = true;
         }
 
         private void OnLoaded(object sender, RoutedEventArgs e)
@@ -125,13 +136,14 @@ namespace HeatingMold.App
                 ResetCircuitEditState(clearNative: true);
                 _pattern = null;
                 _selectedFaceIds.Clear();
+                _workingAreaConfirmed = false;
+                Bridge.ClearConfirmedFaceHighlights();
                 SelectedFacesList.Items.Clear();
                 FaceCombo.Items.Clear();
                 _selectedRegion.Clear();
                 _multiFaceFrame = null;
                 _exclusions.Clear();
                 _multiFacePatternDisplayed = false;
-                FaceDragSelectModeBox.IsChecked = false;
                 ExcludeModeBox.IsChecked = false;
                 Viewport.RectangleSelectionMode = false;
                 Viewport.ExclusionSketchMode = false;
@@ -145,13 +157,15 @@ namespace HeatingMold.App
             ResetCircuitEditState(clearNative: true);
             _pattern = null;
             _selectedFaceIds.Clear();
+            _workingAreaConfirmed = false;
+            // 새 형상에는 이전 확정 하이라이트가 남지 않아야 한다.
+            Bridge.ClearConfirmedFaceHighlights();
             SelectedFacesList.Items.Clear();
             _selectedRegion.Clear();
             _multiFaceFrame = null;
             _multiFaceRegionFailure = null;
             _exclusions.Clear();
             _multiFacePatternDisplayed = false;
-            FaceDragSelectModeBox.IsChecked = false;
             ExcludeModeBox.IsChecked = false;
             Viewport.RectangleSelectionMode = false;
             Viewport.ExclusionSketchMode = false;
@@ -224,13 +238,8 @@ namespace HeatingMold.App
 
         private void Generate_Click(object sender, RoutedEventArgs e)
         {
+            if (!_workingAreaConfirmed) { StatusText.Text = "Face 선택 후 Enter로 작업영역을 확정하세요"; return; }
             if (!WorkingGenerationReady()) return;
-            if (_selectedFaceIds.Count == 0 && FaceCombo.SelectedItem is FaceItem comboFace)
-            {
-                _selectedFaceIds.Add(comboFace.Index);
-                SelectedFacesList.Items.Add(string.Format("#{0} {1}", comboFace.Index, Bridge.GetFaceType(comboFace.Index)));
-                RefreshSelectedRegion();
-            }
             if (_selectedFaceIds.Count == 0)
             {
                 StatusText.Text = "면을 선택하세요";
@@ -250,14 +259,6 @@ namespace HeatingMold.App
             HoverText.Text = string.Format("호버 #{0} ({1})", faceIndex, type);
         }
 
-        private void FaceDragSelectMode_Changed(object sender, RoutedEventArgs e)
-        {
-            bool enabled = FaceDragSelectModeBox.IsChecked == true;
-            if (enabled && ExcludeModeBox.IsChecked == true) ExcludeModeBox.IsChecked = false;
-            Viewport.RectangleSelectionMode = enabled;
-            if (enabled) StatusText.Text = "Face 드래그 선택 모드 — 드래그 박스에 걸친 Face 선택, Ctrl로 추가/토글";
-        }
-
         private void ExcludeMode_Changed(object sender, RoutedEventArgs e)
         {
             bool enabled = ExcludeModeBox.IsChecked == true;
@@ -267,7 +268,6 @@ namespace HeatingMold.App
                 StatusText.Text = "제외영역을 그리려면 먼저 같은 평면의 Face를 선택하세요";
                 return;
             }
-            if (enabled && FaceDragSelectModeBox.IsChecked == true) FaceDragSelectModeBox.IsChecked = false;
             Viewport.ExclusionSketchMode = enabled;
             if (!enabled) Bridge.SetExclusionPreview(null);
             if (enabled) StatusText.Text = "모델 뷰포트에서 사각형 제외영역을 드래그하세요";
@@ -422,6 +422,41 @@ namespace HeatingMold.App
         {
             ResetCircuitEditState(clearNative: true);
             Bridge.ClearOverlays();
+            Bridge.ClearConfirmedFaceHighlights();
+            _pattern = null;
+            _multiFacePatternDisplayed = false;
+            _workingAreaConfirmed = false;
+            _selectedRegion.Clear();
+            _multiFaceFrame = null;
+            _multiFaceRegionFailure = null;
+            DrawRegionCanvas();
+            StatusText.Text = _selectedFaceIds.Count == 0 ? "Face를 선택하세요" : "Face 선택됨 — Enter로 작업영역 확정";
+        }
+
+        private void ConfirmWorkingArea()
+        {
+            if (_selectedFaceIds.Count == 0)
+            {
+                MessageBox.Show(this, "작업영역으로 확정할 Face를 먼저 선택하세요.", "작업영역 확정 실패", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            BuildSelectedRegion();
+            if (_multiFaceRegionFailure != null || _selectedRegion.Count == 0)
+            {
+                MessageBox.Show(this, _multiFaceRegionFailure ?? "통합 적용영역을 구성하지 못했습니다.", "작업영역 확정 실패", MessageBoxButton.OK, MessageBoxImage.Error);
+                _workingAreaConfirmed = false;
+                return;
+            }
+            _workingAreaConfirmed = true;
+            // 확정된 발열면적은 사용자가 해제할 때까지 붉은색으로 유지한다.
+            Bridge.SetConfirmedFaceHighlights(_selectedFaceIds.OrderBy(id => id).ToArray());
+            StatusText.Text = $"작업영역 확정 — {_selectedFaceIds.Count}개 Face";
+        }
+
+        private void BuildSelectedRegion()
+        {
+            ResetCircuitEditState(clearNative: true);
+            Bridge.ClearOverlays();
             _multiFacePatternDisplayed = false;
             _pattern = null;
             _selectedRegion.Clear();
@@ -430,6 +465,7 @@ namespace HeatingMold.App
             if (_selectedFaceIds.Count == 0)
             {
                 DrawRegionCanvas();
+                _multiFaceRegionFailure = "작업영역으로 확정할 Face를 먼저 선택하세요";
                 return;
             }
 
@@ -606,7 +642,9 @@ namespace HeatingMold.App
             _multiFacePatternDisplayed = projectedCount > 0;
             if (_multiFacePatternDisplayed)
             {
-                Bridge.HideFaceHighlights();
+                // 확정 작업영역 하이라이트는 경로 생성 후에도 유지한다.
+                // 경로/제외 오버레이는 Topmost 레이어라 하이라이트 위에 그려진다.
+                Bridge.ClearHover();
                 HoverText.Text = "";
                 if (routePiecesMode)
                 {
@@ -621,10 +659,9 @@ namespace HeatingMold.App
         {
             bool enabled = ConnectorEditModeBox.IsChecked == true && _pattern != null && _pattern.RoutePieces.Count > 0;
             if (ConnectorEditModeBox.IsChecked == true && !enabled) { ConnectorEditModeBox.IsChecked = false; StatusText.Text = "먼저 커넥터가 있는 패턴을 생성하세요"; return; }
-            if (enabled && (ExcludeModeBox.IsChecked == true || FaceDragSelectModeBox.IsChecked == true))
-            { ExcludeModeBox.IsChecked = false; FaceDragSelectModeBox.IsChecked = false; }
+            if (enabled && ExcludeModeBox.IsChecked == true) ExcludeModeBox.IsChecked = false;
             Viewport.ConnectorEditMode = enabled;
-            if (enabled) { Bridge.HideFaceHighlights(); StatusText.Text = "커넥터 편집 — 커넥터를 클릭해 회로를 분리/연결"; }
+            if (enabled) { Bridge.ClearHover(); StatusText.Text = "커넥터 편집 — 커넥터를 클릭해 회로를 분리/연결"; }
         }
 
         private void OnConnectorHovered(int id) { _hoverConnector = id; HoverText.Text = id < 0 ? "" : "커넥터 #" + id; }
@@ -707,11 +744,10 @@ namespace HeatingMold.App
             }
             ConnectorEditModeBox.IsChecked = false;
             ExcludeModeBox.IsChecked = false;
-            FaceDragSelectModeBox.IsChecked = false;
             Viewport.ConnectorEditMode = false;
             Viewport.ExclusionSketchMode = false;
             Viewport.RectangleSelectionMode = false;
-            Bridge.HideFaceHighlights();
+            Bridge.ClearHover();
             HoverText.Text = "";
             Viewport.PowerLocationMode = _pendingLeads.Count > 0;
             Viewport.CircuitHoverMode = false;

@@ -69,9 +69,7 @@
                 <StackPanel>
                     <TextBlock x:Name="WorkingSideText" Text="작업 방향 미확정 · 패턴 생성 보류" TextWrapping="Wrap"/>
                     <TextBlock Text="적용 Face" FontWeight="Bold" Margin="0,0,0,6"/>
-                    <TextBlock Text="뷰포트 클릭으로 선택, Ctrl+클릭으로 토글" TextWrapping="Wrap" Margin="0,0,0,6"/>
-                    <CheckBox x:Name="FaceDragSelectModeBox" Content="드래그로 Face 선택 모드" Margin="0,4,0,4"
-                              Checked="FaceDragSelectMode_Changed" Unchecked="FaceDragSelectMode_Changed"/>
+                    <TextBlock Text="클릭/Ctrl+클릭 또는 Shift+드래그로 Face 선택 · Enter로 작업영역 확정" TextWrapping="Wrap" Margin="0,0,0,6"/>
                     <ListBox x:Name="SelectedFacesList" MinHeight="120" MaxHeight="260"/>
                     <Separator Margin="0,10,0,8"/>
                     <TextBlock Text="제외 영역" FontWeight="Bold"/>

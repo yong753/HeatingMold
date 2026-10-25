@@ -190,6 +190,11 @@ public:
     /// <summary>선택 정보는 보존하고 선택/호버 하이라이트 숨김. 다음 면 선택 시 복원.</summary>
     static void HideFaceHighlights();
 
+    /// <summary>확정된 작업(발열)영역을 붉은색으로 유지. 선택이 바뀌어도 해제 전까지 남는다.</summary>
+    static void SetConfirmedFaceHighlights(array<int>^ faceIds);
+    /// <summary>확정 영역 하이라이트 해제 — 선택된 면은 기존 초록색으로 되돌린다.</summary>
+    static void ClearConfirmedFaceHighlights();
+
     /// <summary>호버 하이라이트 해제 + Redraw (마우스가 창을 벗어날 때)</summary>
     static void ClearHover();
 

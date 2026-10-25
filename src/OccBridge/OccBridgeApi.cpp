@@ -264,6 +264,7 @@ namespace
     Handle(WNT_Window) g_window;
     Handle(AIS_Shape) g_aisShape;
     std::set<int> g_selectedFaceIds;
+    std::set<int> g_confirmedFaceIds;   // 확정된 작업(발열)영역 — 사용자가 해제할 때까지 붉은색 유지
     std::vector<Handle(AIS_Shape)> g_worldOverlays;
     std::map<int, Handle(AIS_Shape)> g_powerLeads;
     Handle(AIS_Shape) g_powerLeadPreview;
@@ -294,12 +295,43 @@ namespace
         }
     }
 
+    const Quantity_Color kSelectedFaceColor(0.12, 0.82, 0.38, Quantity_TOC_RGB);   // 선택 = 초록
+    const Quantity_Color kConfirmedFaceColor(0.90, 0.16, 0.16, Quantity_TOC_RGB);  // 확정 발열면적 = 붉은색
+
+    void SetFaceColorOverride(int faceId, const Quantity_Color& color)
+    {
+        if (g_aisShape.IsNull() || faceId < 0 || faceId >= static_cast<int>(g_faces.size())) return;
+        Handle(AIS_ColoredShape) colored = Handle(AIS_ColoredShape)::DownCast(g_aisShape);
+        if (colored.IsNull()) return;
+        colored->SetCustomColor(g_faces[faceId], color);
+        colored->SetCustomTransparency(g_faces[faceId], 0.0);
+        Handle(AIS_ColoredDrawer) faceStyle = colored->CustomAspects(g_faces[faceId]);
+        faceStyle->SetupOwnShadingAspect();
+        faceStyle->SetDisplayMode(AIS_Shaded);
+        faceStyle->ShadingAspect()->SetColor(color);
+        faceStyle->ShadingAspect()->SetTransparency(0.0);
+        // The colored face is coincident with the model face. Bias its fill
+        // toward the camera to avoid depth-buffer z-fighting.
+        faceStyle->ShadingAspect()->Aspect()->SetPolygonOffsets(Aspect_POM_Fill, -2.0f, -2.0f);
+    }
+
+    void ClearFaceColorOverride(int faceId)
+    {
+        if (g_aisShape.IsNull() || faceId < 0 || faceId >= static_cast<int>(g_faces.size())) return;
+        Handle(AIS_ColoredShape) colored = Handle(AIS_ColoredShape)::DownCast(g_aisShape);
+        if (colored.IsNull()) return;
+        colored->UnsetCustomAspects(g_faces[faceId], Standard_True);
+    }
+
+    /// <summary>
+    /// 선택(초록)과 확정(붉은색)을 함께 반영한다. 확정된 면은 선택이 풀려도
+    /// 사용자가 해제할 때까지 붉은색을 유지한다.
+    /// </summary>
     void UpdateSelectedFaceColors()
     {
         if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
         g_faceHighlightsVisible = true;
-        Handle(AIS_ColoredShape) colored = Handle(AIS_ColoredShape)::DownCast(g_aisShape);
-        if (colored.IsNull()) return;
+        if (Handle(AIS_ColoredShape)::DownCast(g_aisShape).IsNull()) return;
 
         std::set<int> current;
         for (g_ctx->InitSelected(); g_ctx->MoreSelected(); g_ctx->NextSelected())
@@ -310,24 +342,58 @@ namespace
             current.insert(g_faceMap.FindIndex(owner->Shape()) - 1);
         }
         for (int faceId : g_selectedFaceIds)
-            if (current.count(faceId) == 0 && faceId >= 0 && faceId < static_cast<int>(g_faces.size()))
-                colored->UnsetCustomAspects(g_faces[faceId], Standard_True);
-        for (int faceId : current)
-            if (g_selectedFaceIds.count(faceId) == 0 && faceId >= 0 && faceId < static_cast<int>(g_faces.size()))
+            if (current.count(faceId) == 0)
             {
-                colored->SetCustomColor(g_faces[faceId], Quantity_Color(0.12, 0.82, 0.38, Quantity_TOC_RGB));
-                colored->SetCustomTransparency(g_faces[faceId], 0.0);
-                Handle(AIS_ColoredDrawer) faceStyle = colored->CustomAspects(g_faces[faceId]);
-                faceStyle->SetupOwnShadingAspect();
-                faceStyle->SetDisplayMode(AIS_Shaded);
-                faceStyle->ShadingAspect()->SetColor(Quantity_Color(0.12, 0.82, 0.38, Quantity_TOC_RGB));
-                faceStyle->ShadingAspect()->SetTransparency(0.0);
-                // The green face is coincident with the model face. Bias its fill
-                // toward the camera to avoid depth-buffer z-fighting.
-                faceStyle->ShadingAspect()->Aspect()->SetPolygonOffsets(Aspect_POM_Fill, -2.0f, -2.0f);
+                if (g_confirmedFaceIds.count(faceId) != 0) SetFaceColorOverride(faceId, kConfirmedFaceColor);
+                else ClearFaceColorOverride(faceId);
             }
+        for (int faceId : current)
+            if (g_selectedFaceIds.count(faceId) == 0)
+                SetFaceColorOverride(faceId, g_confirmedFaceIds.count(faceId) != 0
+                    ? kConfirmedFaceColor : kSelectedFaceColor);
         g_selectedFaceIds.swap(current);
         g_ctx->Redisplay(g_aisShape, Standard_False);
+    }
+
+    void RedrawFaceHighlights()
+    {
+        if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
+        if (!g_view.IsNull()) g_view->Redraw();
+    }
+
+    void SetConfirmedFaceHighlightsNative(const std::set<int>& faceIds)
+    {
+        if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
+        if (Handle(AIS_ColoredShape)::DownCast(g_aisShape).IsNull()) return;
+
+        for (int faceId : g_confirmedFaceIds)
+            if (faceIds.count(faceId) == 0)
+            {
+                if (g_selectedFaceIds.count(faceId) != 0) SetFaceColorOverride(faceId, kSelectedFaceColor);
+                else ClearFaceColorOverride(faceId);
+            }
+        for (int faceId : faceIds)
+            SetFaceColorOverride(faceId, kConfirmedFaceColor);
+        g_confirmedFaceIds = faceIds;
+        if (!faceIds.empty()) g_faceHighlightsVisible = true;
+        g_ctx->Redisplay(g_aisShape, Standard_False);
+        RedrawFaceHighlights();
+    }
+
+    void ClearConfirmedFaceHighlightsNative()
+    {
+        if (!g_ctx.IsNull() && !g_aisShape.IsNull() &&
+            !Handle(AIS_ColoredShape)::DownCast(g_aisShape).IsNull())
+        {
+            for (int faceId : g_confirmedFaceIds)
+            {
+                if (g_selectedFaceIds.count(faceId) != 0) SetFaceColorOverride(faceId, kSelectedFaceColor);
+                else ClearFaceColorOverride(faceId);
+            }
+            g_ctx->Redisplay(g_aisShape, Standard_False);
+            RedrawFaceHighlights();
+        }
+        g_confirmedFaceIds.clear();
     }
 
     void HideFaceHighlightsNative()
@@ -338,9 +404,10 @@ namespace
         // Remove presentation overrides, not selected owners: Ctrl selection and
         // pattern regeneration must retain the current selection.
         for (int faceId : g_selectedFaceIds)
-            if (faceId >= 0 && faceId < static_cast<int>(g_faces.size()))
+            if (faceId >= 0 && faceId < static_cast<int>(g_faces.size()) && g_confirmedFaceIds.count(faceId) == 0)
                 colored->UnsetCustomAspects(g_faces[faceId], Standard_True);
         g_selectedFaceIds.clear();
+        g_confirmedFaceIds.clear();
         g_faceHighlightsVisible = false;
         g_ctx->UnhilightSelected(Standard_False);
         g_ctx->ClearDetected(Standard_False);
@@ -381,6 +448,7 @@ namespace
         g_ctx->SetToHilightSelected(Standard_False);
         g_ctx->Activate(g_aisShape, TopAbs_FACE, Standard_True);          // W3 — 면 서브셰이프 선택 활성화
         g_selectedFaceIds.clear();
+        g_confirmedFaceIds.clear();
         g_faceHighlightsVisible = true;
     }
 
@@ -397,6 +465,7 @@ namespace
             g_aisShape.Nullify();
         }
         g_selectedFaceIds.clear();
+        g_confirmedFaceIds.clear();
         g_lastHoverFace = -1;
     }
 
@@ -2313,6 +2382,19 @@ int Bridge::HoverFace(int x, int y)
 void Bridge::HideFaceHighlights()
 {
     HideFaceHighlightsNative();
+}
+
+void Bridge::SetConfirmedFaceHighlights(array<int>^ faceIds)
+{
+    std::set<int> ids;
+    if (faceIds != nullptr)
+        for (int i = 0; i < faceIds->Length; ++i) ids.insert(faceIds[i]);
+    SetConfirmedFaceHighlightsNative(ids);
+}
+
+void Bridge::ClearConfirmedFaceHighlights()
+{
+    ClearConfirmedFaceHighlightsNative();
 }
 
 void Bridge::ClearHover()
