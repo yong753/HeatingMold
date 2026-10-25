@@ -71,6 +71,7 @@
                     <TextBlock Text="적용 Face" FontWeight="Bold" Margin="0,0,0,6"/>
                     <TextBlock Text="클릭/Ctrl+클릭 또는 Shift+드래그로 Face 선택 · Enter로 작업영역 확정" TextWrapping="Wrap" Margin="0,0,0,6"/>
                     <ListBox x:Name="SelectedFacesList" MinHeight="120" MaxHeight="260"/>
+                    <Button Content="확정 영역 삭제" Click="ClearConfirmedArea_Click" Margin="0,5,0,0" Padding="6,3"/>
                     <Separator Margin="0,10,0,8"/>
                     <TextBlock Text="제외 영역" FontWeight="Bold"/>
                     <CheckBox x:Name="ExcludeModeBox" Content="뷰포트에서 사각형 제외영역 그리기" Margin="0,5,0,5"

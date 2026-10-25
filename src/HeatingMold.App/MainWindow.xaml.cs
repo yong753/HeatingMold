@@ -21,6 +21,10 @@ namespace HeatingMold.App
     {
         private SerpentineResult _pattern;
         private readonly HashSet<int> _selectedFaceIds = new();
+        // 마지막으로 확정에 성공한 면 집합. 새 선택은 확정 표시를 건드리지 않고
+        // _selectionDirty=true 로만 기록되며, Enter 재확정 성공 시에만 교체된다.
+        private readonly HashSet<int> _confirmedFaceIds = new();
+        private bool _selectionDirty;
         private List<List<Vec2>> _selectedRegion = new();
         private ProjectionFrame _multiFaceFrame;
         private string _multiFaceRegionFailure;
@@ -136,6 +140,8 @@ namespace HeatingMold.App
                 ResetCircuitEditState(clearNative: true);
                 _pattern = null;
                 _selectedFaceIds.Clear();
+                _confirmedFaceIds.Clear();
+                _selectionDirty = false;
                 _workingAreaConfirmed = false;
                 Bridge.ClearConfirmedFaceHighlights();
                 SelectedFacesList.Items.Clear();
@@ -157,6 +163,8 @@ namespace HeatingMold.App
             ResetCircuitEditState(clearNative: true);
             _pattern = null;
             _selectedFaceIds.Clear();
+            _confirmedFaceIds.Clear();
+            _selectionDirty = false;
             _workingAreaConfirmed = false;
             // 새 형상에는 이전 확정 하이라이트가 남지 않아야 한다.
             Bridge.ClearConfirmedFaceHighlights();
@@ -239,6 +247,7 @@ namespace HeatingMold.App
         private void Generate_Click(object sender, RoutedEventArgs e)
         {
             if (!_workingAreaConfirmed) { StatusText.Text = "Face 선택 후 Enter로 작업영역을 확정하세요"; return; }
+            if (_selectionDirty) { StatusText.Text = "Face 선택이 변경되었습니다. Enter로 작업영역을 재확정한 뒤 생성하세요"; return; }
             if (!WorkingGenerationReady()) return;
             if (_selectedFaceIds.Count == 0)
             {
@@ -278,8 +287,11 @@ namespace HeatingMold.App
             if (faceIds == null) return;
             _selectedFaceIds.Clear();
             SelectedFacesList.Items.Clear();
-            _exclusions.Clear();
-            Bridge.ClearExclusionOverlays();
+            if (!_workingAreaConfirmed)
+            {
+                _exclusions.Clear();
+                Bridge.ClearExclusionOverlays();
+            }
             foreach (int faceIndex in faceIds)
             {
                 string type = Bridge.GetFaceType(faceIndex);
@@ -296,7 +308,6 @@ namespace HeatingMold.App
             if (active >= 0)
                 FaceCombo.SelectedItem = FaceCombo.Items.OfType<FaceItem>().FirstOrDefault(f => f.Index == active);
             RefreshSelectedRegion();
-            StatusText.Text = string.Format("드래그 선택 — {0}개 Face", _selectedFaceIds.Count);
         }
 
         private bool TryViewportPointOnFrame(int x, int y, out Vec2 point, out Vec3 world)
@@ -370,7 +381,9 @@ namespace HeatingMold.App
             if (Viewport.PowerLocationMode) return;
             if (faceIndex < 0)
             {
-                if (!toggle)
+                // 확정 영역이 있으면 빈 곳 클릭은 선택/하이라이트를 유지한다.
+                // (사용자가 [확정 영역 삭제]로 해제하기 전까지 유지)
+                if (!toggle && !_workingAreaConfirmed)
                 {
                     _selectedFaceIds.Clear();
                     SelectedFacesList.Items.Clear();
@@ -378,7 +391,9 @@ namespace HeatingMold.App
                     Bridge.ClearExclusionOverlays();
                     RefreshSelectedRegion();
                 }
-                StatusText.Text = "면을 찾지 못했습니다";
+                StatusText.Text = _workingAreaConfirmed
+                    ? "확정 영역 유지 — 선택을 바꾸려면 Face를 클릭하세요"
+                    : "면을 찾지 못했습니다";
                 return;
             }
             string type = Bridge.GetFaceType(faceIndex);
@@ -401,16 +416,22 @@ namespace HeatingMold.App
                     if (SelectedFacesList.Items[i].ToString().StartsWith("#" + faceIndex + " "))
                         SelectedFacesList.Items.RemoveAt(i);
                 StatusText.Text = string.Format("적용면에서 제외 — #{0} ({1})", faceIndex, type);
-                _exclusions.Clear();
-                Bridge.ClearExclusionOverlays();
+                if (!_workingAreaConfirmed)
+                {
+                    _exclusions.Clear();
+                    Bridge.ClearExclusionOverlays();
+                }
             }
             else
             {
                 _selectedFaceIds.Add(faceIndex);
                 SelectedFacesList.Items.Add(string.Format("#{0} {1}", faceIndex, type));
                 StatusText.Text = string.Format("적용면에 추가 — #{0} ({1}) · 총 {2}개", faceIndex, type, _selectedFaceIds.Count);
-                _exclusions.Clear();
-                Bridge.ClearExclusionOverlays();
+                if (!_workingAreaConfirmed)
+                {
+                    _exclusions.Clear();
+                    Bridge.ClearExclusionOverlays();
+                }
             }
             int activeFace = _selectedFaceIds.Contains(faceIndex) ? faceIndex : _selectedFaceIds.FirstOrDefault(-1);
             if (activeFace >= 0)
@@ -420,12 +441,27 @@ namespace HeatingMold.App
 
         private void RefreshSelectedRegion()
         {
+            if (_workingAreaConfirmed)
+            {
+                // 확정된 발열영역·발열경로는 사용자가 삭제할 때까지 유지한다.
+                // 새 선택은 재확정 대기 상태로만 기록한다.
+                _selectionDirty = !_selectedFaceIds.SetEquals(_confirmedFaceIds);
+                Bridge.ClearHover();
+                HoverText.Text = "";
+                StatusText.Text = !_selectionDirty
+                    ? $"확정 영역 유지 — {_confirmedFaceIds.Count}개 Face"
+                    : _selectedFaceIds.Count == 0
+                        ? "확정 영역 유지 — 재확정할 Face를 선택하세요"
+                        : string.Format("Face 선택 {0}개 — Enter로 재확정 (기존 확정 영역·경로 유지)", _selectedFaceIds.Count);
+                return;
+            }
             ResetCircuitEditState(clearNative: true);
             Bridge.ClearOverlays();
             Bridge.ClearConfirmedFaceHighlights();
             _pattern = null;
             _multiFacePatternDisplayed = false;
             _workingAreaConfirmed = false;
+            _selectionDirty = false;
             _selectedRegion.Clear();
             _multiFaceFrame = null;
             _multiFaceRegionFailure = null;
@@ -437,40 +473,58 @@ namespace HeatingMold.App
         {
             if (_selectedFaceIds.Count == 0)
             {
+                if (_workingAreaConfirmed)
+                {
+                    StatusText.Text = "확정 영역 유지 — 재확정할 Face를 선택하세요 ([확정 영역 삭제]로 해제)";
+                    return;
+                }
                 MessageBox.Show(this, "작업영역으로 확정할 Face를 먼저 선택하세요.", "작업영역 확정 실패", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
-            BuildSelectedRegion();
-            if (_multiFaceRegionFailure != null || _selectedRegion.Count == 0)
+            if (!TryBuildSelectedRegion(out List<List<Vec2>> region, out ProjectionFrame frame))
             {
+                // 후보 구성 실패 시 기존 확정 영역·경로·하이라이트를 그대로 둔다.
                 MessageBox.Show(this, _multiFaceRegionFailure ?? "통합 적용영역을 구성하지 못했습니다.", "작업영역 확정 실패", MessageBoxButton.OK, MessageBoxImage.Error);
-                _workingAreaConfirmed = false;
+                StatusText.Text = "작업영역 확정 실패 — 기존 확정 영역과 경로를 유지했습니다";
                 return;
             }
+
+            // 커밋 지점: 이전 영역에 속한 패턴/제외영역/경로를 여기서만 교체한다.
+            ResetCircuitEditState(clearNative: true);
+            Bridge.ClearOverlays();
+            Bridge.ClearExclusionOverlays();
+            _exclusions.Clear();
+            _pattern = null;
+            _multiFacePatternDisplayed = false;
+            Viewport.CircuitHoverMode = false;
+            _selectedRegion = region;
+            _multiFaceFrame = frame;
+            _multiFaceRegionFailure = null;
             _workingAreaConfirmed = true;
+            _selectionDirty = false;
+            _confirmedFaceIds.Clear();
+            _confirmedFaceIds.UnionWith(_selectedFaceIds);
             // 확정된 발열면적은 사용자가 해제할 때까지 붉은색으로 유지한다.
             Bridge.SetConfirmedFaceHighlights(_selectedFaceIds.OrderBy(id => id).ToArray());
+            DrawRegionCanvas();
             StatusText.Text = $"작업영역 확정 — {_selectedFaceIds.Count}개 Face";
         }
 
-        private void BuildSelectedRegion()
+        // 현재 선택으로 확정 후보 영역을 계산만 한다. 성공 시에만 호출자가 게시하고,
+        // 실패해도 기존 확정 표시(하이라이트/경로/2D 영역)는 건드리지 않는다.
+        private bool TryBuildSelectedRegion(out List<List<Vec2>> region, out ProjectionFrame frame)
         {
-            ResetCircuitEditState(clearNative: true);
-            Bridge.ClearOverlays();
-            _multiFacePatternDisplayed = false;
-            _pattern = null;
-            _selectedRegion.Clear();
-            _multiFaceFrame = null;
+            region = new List<List<Vec2>>();
+            frame = null;
             _multiFaceRegionFailure = null;
             if (_selectedFaceIds.Count == 0)
             {
-                DrawRegionCanvas();
                 _multiFaceRegionFailure = "작업영역으로 확정할 Face를 먼저 선택하세요";
-                return;
+                return false;
             }
 
             // Legacy region code is retained behind the migration gate, but must use the confirmed frame.
-            if (_workingSide.Confirmed == null) { _multiFaceRegionFailure = "작업 방향을 먼저 확정하세요"; return; }
+            if (_workingSide.Confirmed == null) { _multiFaceRegionFailure = "작업 방향을 먼저 확정하세요"; return false; }
             var fixedFrame = _workingSide.Confirmed.Frame;
 
             // Build the union boundary from shared source CAD edges first;
@@ -480,16 +534,14 @@ namespace HeatingMold.App
             if (sourceLoops == null || sourceLoops.Length == 0 || sourceLoops.Any(loop => !loop.Closed))
             {
                 _multiFaceRegionFailure = "원본 CAD 위상에서 닫힌 통합 경계를 구성하지 못했습니다. 선택 Face의 공유 Edge 연결을 확인하세요";
-                StatusText.Text = _multiFaceRegionFailure;
-                return;
+                return false;
             }
             if (sourceLoops.Length != 1)
             {
                 _multiFaceRegionFailure = string.Format(
                     "원본 통합 경계가 {0}개 루프로 나뉩니다. 실제 구멍 또는 분리된 적용영역은 현재 경로 모드에서 지원하지 않습니다",
                     sourceLoops.Length);
-                StatusText.Text = _multiFaceRegionFailure;
-                return;
+                return false;
             }
             List<Vec3> firstPts = new();
             for (int k = 0; k + 2 < sourceLoops[0].Points.Length; k += 3)
@@ -497,24 +549,19 @@ namespace HeatingMold.App
             if (firstPts.Count < 3)
             {
                 _multiFaceRegionFailure = "원본 통합 경계의 적응 샘플 점이 부족합니다";
-                StatusText.Text = _multiFaceRegionFailure;
-                return;
+                return false;
             }
 
-            _multiFaceFrame = fixedFrame;
-            List<Vec2> projected = firstPts.Select(_multiFaceFrame.Project).ToList();
+            List<Vec2> projected = firstPts.Select(fixedFrame.Project).ToList();
             if (projected.Count < 3 || Math.Abs(RegionOps.SignedArea(projected)) < 1e-8)
             {
-                _multiFaceFrame = null;
                 _multiFaceRegionFailure = "원본 통합 경계를 작업 평면에 유효하게 투영하지 못했습니다";
-                StatusText.Text = _multiFaceRegionFailure;
-                return;
+                return false;
             }
             if (RegionOps.SignedArea(projected) < 0) projected.Reverse();
-            _selectedRegion.Add(projected);
-            DrawRegionCanvas();
-            StatusText.Text = string.Format("확정 작업 방향 기준 선택 Face 영역 (전체 모델 외곽 아님) — {0}개 Face · 경로 생성 보류",
-                _selectedFaceIds.Count);
+            region.Add(projected);
+            frame = fixedFrame;
+            return true;
         }
 
         private void GenerateMultiFace()
@@ -852,6 +899,33 @@ namespace HeatingMold.App
             Bridge.ClearExclusionOverlays();
             DrawRegionCanvas();
             StatusText.Text = "제외 사각형을 모두 지웠습니다";
+        }
+
+        // 사용자가 명시적으로 확정 영역을 해제하는 유일한 경로.
+        // 빈 곳 클릭/선택 변경으로는 확정 하이라이트와 발열경로가 사라지지 않는다.
+        private void ClearConfirmedArea_Click(object sender, RoutedEventArgs e)
+        {
+            ResetCircuitEditState(clearNative: true);
+            Bridge.ClearOverlays();
+            Bridge.ClearExclusionOverlays();
+            Bridge.ClearFaceSelection();
+            Bridge.ClearConfirmedFaceHighlights();
+            _pattern = null;
+            _multiFacePatternDisplayed = false;
+            _workingAreaConfirmed = false;
+            _selectionDirty = false;
+            _confirmedFaceIds.Clear();
+            _selectedFaceIds.Clear();
+            SelectedFacesList.Items.Clear();
+            _exclusions.Clear();
+            _selectedRegion.Clear();
+            _multiFaceFrame = null;
+            _multiFaceRegionFailure = null;
+            Viewport.CircuitHoverMode = false;
+            Bridge.ClearHover();
+            HoverText.Text = "";
+            DrawRegionCanvas();
+            StatusText.Text = "확정 영역과 발열경로를 삭제했습니다";
         }
 
         private void RegionCanvas_SizeChanged(object sender, SizeChangedEventArgs e) => DrawRegionCanvas();

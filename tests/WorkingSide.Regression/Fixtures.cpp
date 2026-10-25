@@ -52,6 +52,15 @@ int main(int argc,char** argv)
         std::ofstream output(path); output<<text; return output.good();
     };
     BRep_Builder builder;
+    // Two coincident sheets at z=0 with opposite orientations: only the +Z one faces a +Z camera.
+    TopoDS_Compound coincident; builder.MakeCompound(coincident);
+    builder.Add(coincident,Sheet(-30,-30,30,30,0));
+    TopoDS_Face reversedSheet=Sheet(-30,-30,30,30,0); reversedSheet.Reverse();
+    builder.Add(coincident,reversedSheet);
+    // Small front sheet partially covering a larger sheet far behind it.
+    TopoDS_Compound stacked; builder.MakeCompound(stacked);
+    builder.Add(stacked,Sheet(-30,-30,30,30,0));
+    builder.Add(stacked,Sheet(-50,-50,50,50,-50));
     TopoDS_Compound layered; builder.MakeCompound(layered);
     builder.Add(layered,Sheet(-50,-30,50,30,0)); // lower full sheet
     builder.Add(layered,Sheet(-20,-10,20,10,20)); // upper partial occluder
@@ -68,5 +77,6 @@ int main(int argc,char** argv)
     return write("layers",layered) && write("ring",ring) &&
         write("trimmedVisibility",trimmed) &&
         write("tangentBack",tangentBack) && write("threePanels",ThreePanels()) &&
-        write("sphere",BRepPrimAPI_MakeSphere(gp_Pnt(0,0,0),20).Shape()) ? 0 : 2;
+        write("sphere",BRepPrimAPI_MakeSphere(gp_Pnt(0,0,0),20).Shape()) &&
+        write("pickCoincident",coincident) && write("pickStacked",stacked) ? 0 : 2;
 }

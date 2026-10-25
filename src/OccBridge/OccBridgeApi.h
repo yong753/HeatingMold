@@ -194,12 +194,19 @@ public:
     static void SetConfirmedFaceHighlights(array<int>^ faceIds);
     /// <summary>확정 영역 하이라이트 해제 — 선택된 면은 기존 초록색으로 되돌린다.</summary>
     static void ClearConfirmedFaceHighlights();
+    /// <summary>면 선택(초록)만 해제. 확정 영역 하이라이트는 건드리지 않는다.</summary>
+    static void ClearFaceSelection();
 
     /// <summary>호버 하이라이트 해제 + Redraw (마우스가 창을 벗어날 때)</summary>
     static void ClearHover();
 
-    /// <summary>클릭: 커서 아래 면을 선택(하이라이트 유지)하고 faceId 반환 (빈 곳이면 선택 해제 후 -1)</summary>
+    /// <summary>클릭: 커서 아래 면을 선택(하이라이트 유지)하고 faceId 반환 (빈 곳이면 -1; 확정 영역이 있으면 선택 유지)</summary>
     static int SelectFace(int x, int y, bool toggle);
+
+    /// <summary>월드 좌표를 화면 픽셀로 변환 (변환 불가 시 null)</summary>
+    static array<int>^ WorldToScreen(double x, double y, double z);
+    /// <summary>면 ID의 표면 중앙 법선·점 조회 — {nx,ny,nz,px,py,pz} (실패 시 null)</summary>
+    static array<double>^ GetFaceNormal(int faceId);
 
     // ---- 오버레이 (S3 통합 데모) ----
     static void RedrawView();

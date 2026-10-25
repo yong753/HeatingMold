@@ -86,6 +86,7 @@ public partial class MainWindow
             _pattern = null; _multiFacePatternDisplayed = false;
             _selectedFaceIds.Clear(); SelectedFacesList.Items.Clear(); FaceCombo.SelectedIndex = -1;
             _selectedRegion.Clear(); _exclusions.Clear(); _multiFaceFrame = frame; _workingAreaConfirmed = false;
+            _confirmedFaceIds.Clear(); _selectionDirty = false;
             Bridge.HideFaceHighlights(); Bridge.ClearOverlays(); Bridge.ClearExclusionOverlays();
             DrawRegionCanvas();
             WorkingSideText.Text = $"작업 방향 N={n} · 모델 r{context.Revision} · 깊이 0";

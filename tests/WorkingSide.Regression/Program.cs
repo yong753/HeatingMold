@@ -246,6 +246,41 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
         Check(Bridge.StageWorkingPolyline(afterStageReload.Id,afterStageReload.Revision,reloadStage,new[]{0.0,0,0,1,0,0}),
             "model reload removes prior staged polyline handle and frees its ID");
         Bridge.DiscardWorkingRouteGeometry(panels.Id,panels.Revision,Array.Empty<int>(),new[]{reloadStage});
+        Check(Bridge.LoadStep(Path.Combine(args[0],"pickCoincident.stp")),"load coincident sheets with opposite orientations");
+        Bridge.SetViewFrame(0,0,1,0,1,0);
+        int frontFace=-1,backFace=-1;
+        for (int id=0;;++id)
+        {
+            var probe=Bridge.GetFaceNormal(id); if (probe==null) break;
+            if (probe[2]>0.5) frontFace=id; else if (probe[2]<-0.5) backFace=id;
+        }
+        Check(frontFace>=0 && backFace>=0 && frontFace!=backFace,"coincident fixture keeps both opposite-facing faces");
+        var coincidentCenter=Bridge.WorldToScreen(0,0,0);
+        Check(coincidentCenter!=null,"coincident sheet center projects to screen");
+        Check(Bridge.SelectFace(coincidentCenter[0],coincidentCenter[1],false)==frontFace,
+            "click at equal depth selects the camera-facing face");
+        Check(Bridge.HoverFace(coincidentCenter[0],coincidentCenter[1])==frontFace,
+            "hover reports the same camera-facing face");
+        Bridge.ClearHover();
+        var coincidentRectangle=Bridge.SelectFacesInRectangle(
+            coincidentCenter[0]-4,coincidentCenter[1]-4,coincidentCenter[0]+4,coincidentCenter[1]+4,false);
+        Check(coincidentRectangle!=null && coincidentRectangle.Contains(frontFace) && !coincidentRectangle.Contains(backFace),
+            "rectangle pick skips the coincident back-facing face");
+        Bridge.SetViewFrame(0,0,-1,0,1,0);
+        var flippedCenter=Bridge.WorldToScreen(0,0,0);
+        Check(flippedCenter!=null && Bridge.SelectFace(flippedCenter[0],flippedCenter[1],false)==backFace,
+            "opposite camera selects the other coincident face");
+        Check(Bridge.LoadStep(Path.Combine(args[0],"pickStacked.stp")),"load near sheet covering larger far sheet");
+        Bridge.SetViewFrame(0,0,1,0,1,0);
+        var stackedCenter=Bridge.WorldToScreen(0,0,0);
+        var stackedOuter=Bridge.WorldToScreen(40,0,-50);
+        Check(stackedCenter!=null && stackedOuter!=null,"stacked fixture points project to screen");
+        int nearFace=Bridge.SelectFace(stackedCenter[0],stackedCenter[1],false);
+        int farFace=Bridge.SelectFace(stackedOuter[0],stackedOuter[1],false);
+        var nearProbe=nearFace>=0?Bridge.GetFaceNormal(nearFace):null;
+        var farProbe=farFace>=0?Bridge.GetFaceNormal(farFace):null;
+        Check(nearProbe!=null && farProbe!=null && Math.Abs(nearProbe[5])<1e-6 && Math.Abs(farProbe[5]+50)<1e-6 && nearFace!=farFace,
+            "occluded click never falls through to the surface behind the nearest hit");
         Check(!Bridge.LoadStep(Path.Combine(args[0],"absent.stp")),"failed model load");
         Check(Bridge.QueryWorkingSurface(afterStageReload.Id,afterStageReload.Revision,0,0).Status==WorkingQueryStatus.StaleContext,"failed reload also invalidates context");
         Check(Bridge.CreateWorkingContext(0,0,1,1,0,0)==null,"no context available without model");

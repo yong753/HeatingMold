@@ -281,6 +281,10 @@ namespace
     Handle(AIS_RubberBand) g_selectionRubberBand;
     int g_lastHoverFace = -1;      // W5 — 호버 하이라이트 중복 Redraw 억제
     bool g_faceHighlightsVisible = true;
+    // Face currently carrying the hover colour override (-1 = none). Kept apart from
+    // g_lastHoverFace because a click clears the hover colour while the pointer still
+    // stays on the same face.
+    int g_hoverColorFace = -1;
 
     void RebuildFaceCache()
     {
@@ -327,10 +331,13 @@ namespace
     /// 선택(초록)과 확정(붉은색)을 함께 반영한다. 확정된 면은 선택이 풀려도
     /// 사용자가 해제할 때까지 붉은색을 유지한다.
     /// </summary>
+    void DropHoverFaceColorNative();
+
     void UpdateSelectedFaceColors()
     {
         if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
         g_faceHighlightsVisible = true;
+        DropHoverFaceColorNative();
         if (Handle(AIS_ColoredShape)::DownCast(g_aisShape).IsNull()) return;
 
         std::set<int> current;
@@ -365,6 +372,7 @@ namespace
     {
         if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
         if (Handle(AIS_ColoredShape)::DownCast(g_aisShape).IsNull()) return;
+        DropHoverFaceColorNative();
 
         for (int faceId : g_confirmedFaceIds)
             if (faceIds.count(faceId) == 0)
@@ -406,6 +414,10 @@ namespace
         for (int faceId : g_selectedFaceIds)
             if (faceId >= 0 && faceId < static_cast<int>(g_faces.size()) && g_confirmedFaceIds.count(faceId) == 0)
                 colored->UnsetCustomAspects(g_faces[faceId], Standard_True);
+        if (g_hoverColorFace >= 0 && g_hoverColorFace < static_cast<int>(g_faces.size()) &&
+            g_confirmedFaceIds.count(g_hoverColorFace) == 0)
+            colored->UnsetCustomAspects(g_faces[g_hoverColorFace], Standard_True);
+        g_hoverColorFace = -1;
         g_selectedFaceIds.clear();
         g_confirmedFaceIds.clear();
         g_faceHighlightsVisible = false;
@@ -467,6 +479,7 @@ namespace
         g_selectedFaceIds.clear();
         g_confirmedFaceIds.clear();
         g_lastHoverFace = -1;
+        g_hoverColorFace = -1;
     }
 
     bool LoadStepFile(const char* path)
@@ -1531,16 +1544,263 @@ namespace
     // ================= 면 픽킹/선택 (W3·W5) =================
 
     /// <summary>현재 DetectedOwner가 가리키는 면 인덱스 (g_faces와 1:1) — 없으면 -1</summary>
-    int DetectedFaceIndex()
+    // ------------------------------------------------------------------
+    // Pixel picker. A pixel is resolved by a camera ray against the whole
+    // g_shape instead of AIS MoveTo, which resolves depth per sensitive
+    // entity and can report a coplanar or behind face. Click, hover and
+    // rectangle selection all share this single path.
+    // ------------------------------------------------------------------
+
+    enum class PickStatusNative { Ok, Miss, Error };
+
+    std::unique_ptr<IntCurvesFace_ShapeIntersector> g_pickIntersector;
+    long long g_pickRevision = -1;
+    Bnd_Box g_pickBounds;
+    double g_pickModelScale = 0.0;
+
+    bool EnsurePickGeometryNative()
     {
-        if (g_ctx.IsNull()) return -1;
-        const Handle(SelectMgr_EntityOwner)& owner = g_ctx->DetectedOwner();
-        if (owner.IsNull()) return -1;
-        const Handle(StdSelect_BRepOwner) brep = Handle(StdSelect_BRepOwner)::DownCast(owner);
-        if (brep.IsNull() || !brep->HasShape()) return -1;
-        const TopoDS_Shape& sub = brep->Shape();
-        if (!g_faceMap.Contains(sub)) return -1;
-        return g_faceMap.FindIndex(sub) - 1;
+        if (g_shape.IsNull()) return false;
+        if (g_pickIntersector && g_pickRevision == g_modelRevision) return true;
+        g_pickIntersector.reset();
+        g_pickRevision = -1;
+        try
+        {
+            std::unique_ptr<IntCurvesFace_ShapeIntersector> intersector =
+                std::make_unique<IntCurvesFace_ShapeIntersector>();
+            intersector->Load(g_shape, Precision::Confusion());
+            Bnd_Box bounds;
+            BRepBndLib::Add(g_shape, bounds);
+            if (bounds.IsVoid() || bounds.IsOpen()) return false;
+            const double scale = gp_Pnt(bounds.CornerMin()).Distance(bounds.CornerMax());
+            if (!std::isfinite(scale) || !(scale > 0.0)) return false;
+            g_pickBounds = bounds;
+            g_pickModelScale = scale;
+            g_pickIntersector = std::move(intersector);
+            g_pickRevision = g_modelRevision;
+            return true;
+        }
+        catch (const Standard_Failure&) { return false; }
+    }
+
+    // 0 = front facing (normal points back to the camera), 1 = undecidable
+    // (tangent or normal failure), 2 = back facing. Undecidable hits are never
+    // demoted to back facing.
+    int FaceFacingRankNative(const TopoDS_Face& face, Standard_Real u, Standard_Real v,
+                             const gp_Pnt& hit, const gp_Dir& rayDir, double modelScale)
+    {
+        try
+        {
+            BRepAdaptor_Surface surface(face);
+            gp_Pnt p;
+            gp_Vec du, dv;
+            surface.D1(u, v, p, du, dv);
+            if (!std::isfinite(p.X()) || !std::isfinite(p.Y()) || !std::isfinite(p.Z())) return 1;
+            if (p.Distance(hit) > 1e-3 * modelScale) return 1;   // parameter space mismatch
+            gp_Vec normal = du.Crossed(dv);
+            if (normal.SquareMagnitude() < 1e-24) return 1;
+            if (face.Orientation() == TopAbs_REVERSED) normal.Reverse();
+            normal.Normalize();
+            const double facing = normal.Dot(gp_Vec(rayDir));
+            if (!std::isfinite(facing) || std::fabs(facing) < 1e-9) return 1;
+            return facing < 0.0 ? 0 : 2;
+        }
+        catch (const Standard_Failure&) { return 1; }
+    }
+
+    bool BuildPickRayNative(int x, int y, gp_Pnt& origin, gp_Dir& dir, double& tMax)
+    {
+        if (g_view.IsNull()) return false;
+        Standard_Real px = 0.0, py = 0.0, pz = 0.0, vx = 0.0, vy = 0.0, vz = 0.0;
+        try { g_view->ConvertWithProj(x, y, px, py, pz, vx, vy, vz); }
+        catch (const Standard_Failure&) { return false; }
+        if (!std::isfinite(px) || !std::isfinite(py) || !std::isfinite(pz) ||
+            !std::isfinite(vx) || !std::isfinite(vy) || !std::isfinite(vz)) return false;
+        gp_Vec viewRay(vx, vy, vz);
+        if (viewRay.SquareMagnitude() < 1e-18) return false;
+        viewRay.Normalize();
+        const Handle(Graphic3d_Camera) camera = g_view->Camera();
+        if (camera.IsNull()) return false;
+        const gp_Pnt planePoint(px, py, pz);
+        const gp_Pnt lo = g_pickBounds.CornerMin();
+        const gp_Pnt hi = g_pickBounds.CornerMax();
+        const gp_Pnt center((lo.X() + hi.X()) * 0.5, (lo.Y() + hi.Y()) * 0.5, (lo.Z() + hi.Z()) * 0.5);
+        const double halfDiagonal = gp_Vec(lo, hi).Magnitude() * 0.5;
+        if (!(halfDiagonal > 0.0)) return false;
+        if (camera->IsOrthographic())
+        {
+            // Start well behind the model so hits in front of the projection
+            // plane are still on the positive side of the ray.
+            const double span = halfDiagonal * 2.0 + camera->Distance() + 1.0;
+            origin = planePoint.Translated(viewRay * -span);
+            dir = gp_Dir(viewRay);
+        }
+        else
+        {
+            origin = camera->Eye();
+            const gp_Vec eyeToPlane(origin, planePoint);
+            if (eyeToPlane.SquareMagnitude() < 1e-18) return false;
+            dir = gp_Dir(eyeToPlane);
+        }
+        tMax = gp_Vec(origin, center).Dot(gp_Vec(dir)) + halfDiagonal + 1.0;
+        return std::isfinite(tMax) && tMax > 0.0;
+    }
+
+    PickStatusNative PickFaceAtPixelNative(int x, int y, int& faceId)
+    {
+        faceId = -1;
+        if (g_ctx.IsNull() || g_view.IsNull() || g_aisShape.IsNull()) return PickStatusNative::Error;
+        if (!EnsurePickGeometryNative()) return PickStatusNative::Error;
+        gp_Pnt origin;
+        gp_Dir dir(0.0, 0.0, 1.0);
+        double tMax = 0.0;
+        if (!BuildPickRayNative(x, y, origin, dir, tMax)) return PickStatusNative::Error;
+        try
+        {
+            IntCurvesFace_ShapeIntersector& hits = *g_pickIntersector;
+            hits.Perform(gp_Lin(origin, dir), 0.0, tMax);
+            if (!hits.IsDone()) return PickStatusNative::Error;
+
+            // Nearest valid depth first. Only that depth competes, so a nearer
+            // face always wins and a farther face is never searched for.
+            double nearest = 1e100;
+            for (int i = 1; i <= hits.NbPnt(); ++i)
+            {
+                const double t = hits.WParameter(i);
+                if (!std::isfinite(t) || t < 0.0 || t > tMax) continue;
+                const TopAbs_State state = hits.State(i);
+                if (state != TopAbs_IN && state != TopAbs_ON) continue;
+                if (t < nearest) nearest = t;
+            }
+            if (nearest > 1e99) return PickStatusNative::Miss;
+
+            const double depthTolerance = (std::max)(1e-7, 1e-6 * g_pickModelScale);
+            int bestFace = -1;
+            int bestRank = 99;
+            int bestState = 99;
+            double bestDepth = 0.0;
+            for (int i = 1; i <= hits.NbPnt(); ++i)
+            {
+                const double t = hits.WParameter(i);
+                if (!std::isfinite(t) || t < 0.0 || t > tMax) continue;
+                if (t - nearest > depthTolerance) continue;
+                const TopAbs_State state = hits.State(i);
+                if (state != TopAbs_IN && state != TopAbs_ON) continue;
+                const TopoDS_Face& face = hits.Face(i);
+                if (face.IsNull() || !g_faceMap.Contains(face)) continue;
+                const int index = g_faceMap.FindIndex(face) - 1;
+                if (index < 0 || index >= static_cast<int>(g_faces.size())) continue;
+                const int rank = FaceFacingRankNative(face, hits.UParameter(i), hits.VParameter(i),
+                                                      hits.Pnt(i), dir, g_pickModelScale);
+                const int stateRank = (state == TopAbs_IN) ? 0 : 1;
+                bool better = false;
+                if (bestFace < 0) better = true;
+                else if (rank != bestRank) better = rank < bestRank;
+                else if (stateRank != bestState) better = stateRank < bestState;
+                else if (t < bestDepth - 1e-12) better = true;
+                else if (t <= bestDepth + 1e-12 && index < bestFace) better = true;   // deterministic tie break
+                if (!better) continue;
+                bestFace = index;
+                bestRank = rank;
+                bestState = stateRank;
+                bestDepth = t;
+            }
+            if (bestFace < 0) return PickStatusNative::Miss;
+            faceId = bestFace;
+            return PickStatusNative::Ok;
+        }
+        catch (const Standard_Failure&) { return PickStatusNative::Error; }
+    }
+
+    bool BuildFaceOwnerMapNative(std::map<int, Handle(SelectMgr_EntityOwner)>& owners)
+    {
+        owners.clear();
+        if (g_ctx.IsNull() || g_aisShape.IsNull()) return false;
+        const int mode = AIS_Shape::SelectionMode(TopAbs_FACE);
+        if (!g_aisShape->HasSelection(mode)) return false;
+        const Handle(SelectMgr_Selection) selection = g_aisShape->Selection(mode);
+        if (selection.IsNull()) return false;
+        const NCollection_Vector<Handle(SelectMgr_SensitiveEntity)>& entities = selection->Entities();
+        for (Standard_Integer i = 0; i < entities.Length(); ++i)
+        {
+            const Handle(SelectMgr_SensitiveEntity)& entity = entities(i);
+            if (entity.IsNull() || !entity->IsActiveForSelection()) continue;
+            const Handle(Select3D_SensitiveEntity) sensitive = entity->BaseSensitive();
+            if (sensitive.IsNull()) continue;
+            const Handle(StdSelect_BRepOwner) brep =
+                Handle(StdSelect_BRepOwner)::DownCast(sensitive->OwnerId());
+            if (brep.IsNull() || !brep->HasShape()) continue;
+            if (!g_faceMap.Contains(brep->Shape())) continue;
+            const int faceId = g_faceMap.FindIndex(brep->Shape()) - 1;
+            if (faceId < 0) continue;
+            owners.emplace(faceId, sensitive->OwnerId());
+        }
+        return !owners.empty();
+    }
+
+    /// <summary>Drop the hover colour override. Selected/confirmed colours are owned elsewhere.</summary>
+    void DropHoverFaceColorNative()
+    {
+        if (g_hoverColorFace < 0) return;
+        const int faceId = g_hoverColorFace;
+        g_hoverColorFace = -1;
+        if (g_selectedFaceIds.count(faceId) == 0 && g_confirmedFaceIds.count(faceId) == 0)
+            ClearFaceColorOverride(faceId);
+    }
+
+    /// <summary>Hover colour = the AIS dynamic highlight colour, so hover looks unchanged.</summary>
+    Quantity_Color HoverFaceColorNative()
+    {
+        if (!g_ctx.IsNull())
+        {
+            const Handle(Prs3d_Drawer)& style = g_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic);
+            if (!style.IsNull()) return style->Color();
+        }
+        return Quantity_Color(0.0, 1.0, 1.0, Quantity_TOC_RGB);
+    }
+
+    /// <summary>World point to client pixel. Read-only diagnostic used by the regression harness.</summary>
+    bool WorldToScreenNative(double x, double y, double z, int* out)
+    {
+        if (g_view.IsNull() || out == nullptr) return false;
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return false;
+        try
+        {
+            Standard_Integer sx = 0, sy = 0;
+            g_view->Convert(x, y, z, sx, sy);
+            out[0] = sx;
+            out[1] = sy;
+            return true;
+        }
+        catch (const Standard_Failure&) { return false; }
+    }
+
+    /// <summary>
+    /// Oriented face normal [nx,ny,nz] plus a point on the face [px,py,pz]
+    /// (mid-UV surface point). Read-only diagnostic used by the regression harness.
+    /// </summary>
+    bool GetFaceProbeNative(int faceId, double* out)
+    {
+        if (out == nullptr || faceId < 0 || faceId >= static_cast<int>(g_faces.size())) return false;
+        const TopoDS_Face& face = g_faces[faceId];
+        if (face.IsNull()) return false;
+        try
+        {
+            BRepAdaptor_Surface surface(face);
+            const Standard_Real u = (surface.FirstUParameter() + surface.LastUParameter()) * 0.5;
+            const Standard_Real v = (surface.FirstVParameter() + surface.LastVParameter()) * 0.5;
+            gp_Pnt p;
+            gp_Vec du, dv;
+            surface.D1(u, v, p, du, dv);
+            gp_Vec normal = du.Crossed(dv);
+            if (normal.SquareMagnitude() < 1e-24) return false;
+            if (face.Orientation() == TopAbs_REVERSED) normal.Reverse();
+            normal.Normalize();
+            out[0] = normal.X(); out[1] = normal.Y(); out[2] = normal.Z();
+            out[3] = p.X(); out[4] = p.Y(); out[5] = p.Z();
+            return true;
+        }
+        catch (const Standard_Failure&) { return false; }
     }
 
     /// <summary>W5 — 호버: 동적 하이라이트. 면이 바뀔 때만 Redraw (무효화 폭주 방지)</summary>
@@ -1548,40 +1808,89 @@ namespace
     {
         if (g_ctx.IsNull() || g_view.IsNull() || g_aisShape.IsNull()) return -1;
         if (!g_faceHighlightsVisible) return -1;
-        g_ctx->MoveTo(x, y, g_view, Standard_False);
-
-        const int idx = DetectedFaceIndex();
-        if (idx != g_lastHoverFace)
+        int faceId = -1;
+        const PickStatusNative status = PickFaceAtPixelNative(x, y, faceId);
+        const int idx = (status == PickStatusNative::Ok) ? faceId : -1;
+        if (idx == g_lastHoverFace) return idx;
+        const int previous = g_lastHoverFace;
+        g_lastHoverFace = idx;
+        if (previous == g_hoverColorFace) g_hoverColorFace = -1;
+        // Selected/confirmed faces keep their own colour (SetToHilightSelected(false) semantics).
+        if (previous >= 0 && g_selectedFaceIds.count(previous) == 0 && g_confirmedFaceIds.count(previous) == 0)
+            ClearFaceColorOverride(previous);
+        if (idx >= 0 && g_selectedFaceIds.count(idx) == 0 && g_confirmedFaceIds.count(idx) == 0)
         {
-            g_lastHoverFace = idx;
-            g_view->Redraw();
+            SetFaceColorOverride(idx, HoverFaceColorNative());
+            g_hoverColorFace = idx;
         }
+        g_ctx->Redisplay(g_aisShape, Standard_False);
+        g_view->Redraw();
         return idx;
     }
 
     void ClearHoverNative()
     {
         if (g_ctx.IsNull() || g_view.IsNull()) return;
-        if (g_lastHoverFace == -1) return;
+        if (g_lastHoverFace == -1 && g_hoverColorFace == -1) return;
         g_lastHoverFace = -1;
-        g_ctx->ClearDetected(Standard_False);
+        DropHoverFaceColorNative();
+        g_ctx->ClearDetected(Standard_False);   // other modes may have left a detected owner
+        if (!g_aisShape.IsNull()) g_ctx->Redisplay(g_aisShape, Standard_False);
         g_view->Redraw();
     }
 
-    /// <summary>W5 — 클릭: 면 선택(선택 하이라이트 유지). 빈 곳이면 선택 해제 후 -1</summary>
+    /// <summary>W5 — 클릭: 면 선택(선택 하이라이트 유지). 빈 곳이면 -1 (확정 영역이 있으면 선택 유지)</summary>
     int SelectFaceNative(int x, int y, bool toggle)
     {
         if (g_ctx.IsNull() || g_view.IsNull() || g_aisShape.IsNull()) return -1;
-        g_ctx->MoveTo(x, y, g_view, Standard_False);
-        const int idx = DetectedFaceIndex();
-        g_lastHoverFace = idx;
-        if (idx < 0 && !toggle)
+        int faceId = -1;
+        const PickStatusNative status = PickFaceAtPixelNative(x, y, faceId);
+        Handle(SelectMgr_EntityOwner) owner;
+        if (status == PickStatusNative::Ok)
+        {
+            std::map<int, Handle(SelectMgr_EntityOwner)> owners;
+            if (BuildFaceOwnerMapNative(owners))
+            {
+                const auto it = owners.find(faceId);
+                if (it != owners.end()) owner = it->second;
+            }
+        }
+        if (status != PickStatusNative::Ok || owner.IsNull())
+        {
+            // Empty space keeps an existing AIS selection when a working area is
+            // confirmed. A picker/owner failure must not rewrite the selection.
+            g_lastHoverFace = -1;
+            DropHoverFaceColorNative();
+            if (status == PickStatusNative::Miss && !toggle && g_confirmedFaceIds.empty())
+                g_ctx->ClearSelected(Standard_False);
+            UpdateSelectedFaceColors();
+            g_view->Redraw();
+            return -1;
+        }
+        g_lastHoverFace = faceId;
+        if (toggle)
+        {
+            if (owner->IsSelected()) g_ctx->SetSelectedState(owner, Standard_False);
+            else g_ctx->AddSelect(owner);
+        }
+        else
+        {
             g_ctx->ClearSelected(Standard_False);
-        else if (idx >= 0)
-            g_ctx->SelectDetected(toggle ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
+            g_ctx->AddSelect(owner);
+        }
+        g_ctx->HilightSelected(Standard_False);
+        UpdateSelectedFaceColors();   // also drops the hover colour
+        g_view->Redraw();
+        return faceId;
+    }
+
+    /// <summary>명시적 해제 경로(확정 영역 삭제): AIS 선택/선택 하이라이트만 해제한다.</summary>
+    void ClearFaceSelectionNative()
+    {
+        if (g_ctx.IsNull() || g_view.IsNull()) return;
+        g_ctx->ClearSelected(Standard_False);
         UpdateSelectedFaceColors();
         g_view->Redraw();
-        return idx;
     }
 
     std::vector<int> SelectFacesRectangleNative(int x0, int y0, int x1, int y1, bool toggle)
@@ -1610,6 +1919,13 @@ namespace
             previouslySelected.insert(faceId);
             owners[faceId] = owner;
         }
+        {
+            // The picker resolves face IDs, not AIS owners; map the whole mode-4
+            // selection once instead of per probe.
+            std::map<int, Handle(SelectMgr_EntityOwner)> faceOwners;
+            if (BuildFaceOwnerMapNative(faceOwners))
+                for (const auto& entry : faceOwners) owners.emplace(entry.first, entry.second);
+        }
 
         // OCCT rectangle selection includes sensitive faces behind the visible
         // surface. Probe the rectangle and keep only the frontmost detected face
@@ -1625,15 +1941,9 @@ namespace
         {
             for (int x = clippedMinX; ; x = std::min(clippedMaxX, x + step))
             {
-                g_ctx->MoveTo(x, y, g_view, Standard_False);
-                Handle(SelectMgr_EntityOwner) owner = g_ctx->DetectedOwner();
-                const Handle(StdSelect_BRepOwner) brep = Handle(StdSelect_BRepOwner)::DownCast(owner);
-                if (!brep.IsNull() && brep->HasShape() && g_faceMap.Contains(brep->Shape()))
-                {
-                    const int faceId = g_faceMap.FindIndex(brep->Shape()) - 1;
-                    visibleFaces.insert(faceId);
-                    owners[faceId] = owner;
-                }
+                int pickedFace = -1;
+                if (PickFaceAtPixelNative(x, y, pickedFace) == PickStatusNative::Ok)
+                    visibleFaces.insert(pickedFace);
                 if (x == clippedMaxX) break;
             }
             if (y == clippedMaxY) break;
@@ -2406,6 +2716,11 @@ void Bridge::ClearConfirmedFaceHighlights()
     ClearConfirmedFaceHighlightsNative();
 }
 
+void Bridge::ClearFaceSelection()
+{
+    ClearFaceSelectionNative();
+}
+
 void Bridge::ClearHover()
 {
     ClearHoverNative();
@@ -2414,6 +2729,25 @@ void Bridge::ClearHover()
 int Bridge::SelectFace(int x, int y, bool toggle)
 {
     return SelectFaceNative(x, y, toggle);
+}
+
+array<int>^ Bridge::WorldToScreen(double x, double y, double z)
+{
+    int pixel[2] = {0, 0};
+    if (!WorldToScreenNative(x, y, z, pixel)) return nullptr;
+    array<int>^ result = gcnew array<int>(2);
+    result[0] = pixel[0];
+    result[1] = pixel[1];
+    return result;
+}
+
+array<double>^ Bridge::GetFaceNormal(int faceId)
+{
+    double probe[6] = {0, 0, 0, 0, 0, 0};
+    if (!GetFaceProbeNative(faceId, probe)) return nullptr;
+    array<double>^ result = gcnew array<double>(6);
+    for (int i = 0; i < 6; ++i) result[i] = probe[i];
+    return result;
 }
 
 array<HlrPolyline^>^ Bridge::HlrEdges(double nx, double ny, double nz,
