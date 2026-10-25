@@ -233,7 +233,7 @@ public partial class MainWindow
                             -area.Frame.Normal.X, -area.Frame.Normal.Y, -area.Frame.Normal.Z);
                         if (shown == null)
                             throw new InvalidOperationException(
-                                "영역 " + area.Name + " 경로 조각 " + (i + 1) + "/" + count + " (" + piece.Kind + ")를 적용면에 투영하지 못했습니다 — 선택면 경계 밖으로 나갔거나 곡면 투영에 실패했습니다");
+                                "영역 " + area.Name + " 경로 조각 " + (i + 1) + "/" + count + " (" + piece.Kind + ")를 적용면에 투영하지 못했습니다 — 선택면 경계 밖으로 나갔거나 곡면 투영에 실패했습니다 [" + Bridge.GetWorkingStageDiagnostic() + "]");
                         stagedRoutes.Add(stageId);
                         finalIds.Add(area.NativePieceIds[i]);
                         pieces.Add(shown);
@@ -281,6 +281,7 @@ public partial class MainWindow
                 side.Id.Value, side.Revision.Value,
                 stagedRoutes.ToArray(), stagedLines.ToArray());
             StatusText.Text = "표시 생성 실패 — 기존 영역/경로를 유지했습니다: " + ex.Message;
+            ErrorReporter.ShowError("경로 표시 생성 실패 — 기존 영역/경로를 유지했습니다", ex);
             return false;
         }
 

@@ -110,6 +110,8 @@ public:
     static bool StageWorkingPolyline(long long id, long long revision, int stageId, array<double>^ xyzFlat);
     static RoutePieceResult^ StageProjectedWorkingRoutePiece(long long id, long long revision, int stageId,
         System::String^ kind, array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);
+    /// <summary>마지막 경로 조각 스테이징 실패 원인(성공 시 빈 문자열).</summary>
+    static System::String^ GetWorkingStageDiagnostic();
     static RoutePieceResult^ StageProjectedWorkingPolyline(long long id, long long revision, int stageId,
         array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);
     /// <summary>Camera-ray nearest visible face hit with face id, point, outward normal and UV.</summary>

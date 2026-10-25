@@ -2274,6 +2274,10 @@ RoutePieceResult^ Bridge::StageProjectedWorkingRoutePiece(long long id,long long
         auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;
     } catch(...) { return nullptr; }
 }
+String^ Bridge::GetWorkingStageDiagnostic()
+{
+    return gcnew String(GetWorkingStageDiagnosticNative());
+}
 RoutePieceResult^ Bridge::StageProjectedWorkingPolyline(long long id,long long revision,int stageId,array<double>^ flat,array<int>^ faceIds,double dx,double dy,double dz)
 {
     if(flat==nullptr||faceIds==nullptr)return nullptr;

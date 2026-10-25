@@ -212,6 +212,7 @@ public partial class MainWindow
         catch (Exception ex)
         {
             area.LastExitFailure = "시작/종료점 후보 계산 실패: " + ex.Message;
+            ErrorReporter.ShowWarning("시작/종료점 후보 계산 실패", ex);
             return;
         }
 
@@ -244,6 +245,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
+            ErrorReporter.ShowWarning("시작/종료점 후보 없음 — 진단 중 오류", ex);
             return "시작/종료점 후보 없음: " + ex.Message;
         }
     }

@@ -72,6 +72,7 @@ public partial class MainWindow
                 // Publishing is the commit point. Cleanup must never make the caller
                 // treat the committed side as a failed candidate.
                 StatusText.Text = "작업 방향은 적용되었으나 후처리에 실패했습니다: " + ex.Message;
+                ErrorReporter.ShowWarning("작업 방향은 적용되었으나 후처리에 실패했습니다", ex);
                 return true;
             }
         }
@@ -89,6 +90,7 @@ public partial class MainWindow
             if (context != null) Bridge.ReleaseWorkingContext(context.Id);
             if (!restored) ResetWorkingSide();
             StatusText.Text = "작업 방향 적용 실패: " + ex.Message;
+            ErrorReporter.ShowError("작업 방향 적용 실패", ex);
             return false;
         }
         finally

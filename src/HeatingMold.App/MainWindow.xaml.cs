@@ -161,6 +161,9 @@ namespace HeatingMold.App
         {
             if (!Viewport.InitViewer())
             {
+                ErrorReporter.ShowError("뷰어 초기화 실패",
+                    "3D 뷰어(OCCT)를 초기화하지 못했습니다." + Environment.NewLine +
+                    "third_party DLL 경로와 그래픽 드라이버를 확인하세요.");
                 StatusText.Text = "뷰어 초기화 실패";
                 return;
             }
@@ -184,6 +187,9 @@ namespace HeatingMold.App
                 Viewport.ExclusionSketchMode = false;
                 StatusText.Text = "로드 실패: " + path;
                 UpdateActionStates();
+                ErrorReporter.ShowError("STEP 로드 실패",
+                    "파일: " + path + Environment.NewLine + Environment.NewLine +
+                    "파일 형식/경로와 OCCT 로그(occ_viewer_log.txt)를 확인하세요.");
                 return;
             }
             sw.Stop();
@@ -399,7 +405,7 @@ namespace HeatingMold.App
             }
             if (_workingSide.Confirmed == null)
             {
-                MessageBox.Show(this, "작업 방향을 먼저 확정하세요.", "작업영역 확정 실패", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ErrorReporter.ShowWarning("작업영역 확정 실패", "작업 방향을 먼저 확정하세요.");
                 return;
             }
 
@@ -411,10 +417,9 @@ namespace HeatingMold.App
             if (overlap.Length > 0)
             {
                 string owner = string.Join(", ", overlap.Select(id => AreaNameForFace(id) ?? "?").Distinct());
-                MessageBox.Show(this,
+                ErrorReporter.ShowWarning("작업영역 확정 실패",
                     string.Format("선택한 Face 중 {0}개가 이미 다른 작업영역({1})에 속해 있습니다.\n각 Face는 하나의 작업영역에만 포함될 수 있습니다.",
-                        overlap.Length, owner),
-                    "작업영역 확정 실패", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        overlap.Length, owner));
                 StatusText.Text = "작업영역 확정 실패 — 다른 영역과 겹치는 Face가 있습니다";
                 return;
             }
@@ -422,7 +427,8 @@ namespace HeatingMold.App
             if (!TryBuildSelectedRegion(out List<List<Vec2>> region, out ProjectionFrame frame))
             {
                 // 후보 구성 실패 시 기존 확정 영역·경로·하이라이트를 그대로 둔다.
-                MessageBox.Show(this, _multiFaceRegionFailure ?? "통합 적용영역을 구성하지 못했습니다.", "작업영역 확정 실패", MessageBoxButton.OK, MessageBoxImage.Error);
+                ErrorReporter.ShowError("작업영역 확정 실패",
+                    _multiFaceRegionFailure ?? "통합 적용영역을 구성하지 못했습니다.");
                 StatusText.Text = "작업영역 확정 실패 — 기존 확정 영역과 경로를 유지했습니다";
                 return;
             }
@@ -582,6 +588,7 @@ namespace HeatingMold.App
             catch (Exception ex)
             {
                 StatusText.Text = "경로 계산 실패: " + ex.Message;
+                ErrorReporter.ShowError("경로 계산 실패", ex);
                 return;
             }
             if (paths.Count == 0 && (editablePattern == null || editablePattern.RoutePieces.Count == 0))
@@ -1008,6 +1015,7 @@ namespace HeatingMold.App
             catch (Exception ex)
             {
                 StatusText.Text = "DXF 저장 실패: " + ex.Message;
+                ErrorReporter.ShowError("DXF 저장 실패 — " + file, ex);
             }
         }
 

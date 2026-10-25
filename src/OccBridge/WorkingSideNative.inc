@@ -272,6 +272,12 @@ bool StageWorkingPolylineNative(long long id,long long revision,int stageId,cons
     } catch (...) { if (!ais.IsNull() && !g_ctx.IsNull()) { try { g_ctx->Remove(ais,Standard_False); } catch (...) {} } g_stagedWorkingPolylines.erase(stageId); return false; }
 }
 
+// 마지막 경로 조각 투영 실패 원인. 스테이징이 false 하나로 수렴해 원인을 구분할 수
+// 없으므로, 실패 지점마다 짧은 코드를 남겨 UI가 메시지에 첨부할 수 있게 한다.
+std::string g_workingStageDiagnostic;
+bool WorkingStageFail(const std::string& reason) { g_workingStageDiagnostic=reason; return false; }
+const char* GetWorkingStageDiagnosticNative() { return g_workingStageDiagnostic.c_str(); }
+
 // BRepProj_Projection이 교선을 하나도 만들지 못하는 퇴화 케이스(예: 2점 조각의 스윕
 // 평면이 원통 축과 거의 평행)에서, 소스 폴리라인의 표본점을 같은 투영 방향으로
 // 레이캐스트해 표면 위의 점을 얻고 폴리라인 와이어로 재구성한다. 투영 방향을
@@ -292,17 +298,17 @@ bool ProjectWorkingWireBySampling(const TopoDS_Wire& source,const TopoDS_Shape& 
     for(BRepTools_WireExplorer ex(source);ex.More();ex.Next()) {
         BRepAdaptor_Curve curve(ex.Current());
         const double u0=curve.FirstParameter(),u1=curve.LastParameter();
-        if(!std::isfinite(u0)||!std::isfinite(u1)||u1<=u0) return false;
+        if(!std::isfinite(u0)||!std::isfinite(u1)||u1<=u0) return WorkingStageFail("sampling-range");
         std::vector<gp_Pnt> samples;
         if(curve.GetType()==GeomAbs_Line) { samples.push_back(curve.Value(u0)); samples.push_back(curve.Value(u1)); }
         else {
             GCPnts_QuasiUniformDeflection sampler(curve,1.0e-3);
-            if(!sampler.IsDone()||sampler.NbPoints()<2) return false;
+            if(!sampler.IsDone()||sampler.NbPoints()<2) return WorkingStageFail("sampling-deflection");
             for(Standard_Integer i=1;i<=sampler.NbPoints();++i) samples.push_back(sampler.Value(i));
         }
         for(const gp_Pnt& sample:samples) {
             intersector.Perform(gp_Lin(sample,direction),0.0,1.0e12);
-            if(!intersector.IsDone()||intersector.NbPnt()==0) return false;
+            if(!intersector.IsDone()||intersector.NbPnt()==0) return WorkingStageFail("sampling-no-hit");
             bool found=false; double nearest=1.0e100; gp_Pnt hit;
             for(Standard_Integer i=1;i<=intersector.NbPnt();++i) {
                 if(intersector.State(i)!=TopAbs_IN&&intersector.State(i)!=TopAbs_ON) continue;
@@ -310,31 +316,37 @@ bool ProjectWorkingWireBySampling(const TopoDS_Wire& source,const TopoDS_Shape& 
                 if(!std::isfinite(t)||t<0.0) continue;
                 if(t<nearest) { nearest=t; hit=intersector.Pnt(i); found=true; }
             }
-            if(!found) return false;
+            if(!found) return WorkingStageFail("sampling-outside");
             append(hit);
         }
     }
-    if(!polygon.IsDone()) return false;
+    if(!polygon.IsDone()) return WorkingStageFail("sampling-polygon");
     if(source.Closed()&&lastPoint.Distance(firstPoint)>1e-7) polygon.Close();
     wire=polygon.Wire();
-    return !wire.IsNull()&&BRepCheck_Analyzer(wire).IsValid();
+    return !wire.IsNull()&&BRepCheck_Analyzer(wire).IsValid()?true:WorkingStageFail("sampling-invalid-wire");
 }
 
 bool BuildProjectedWorkingWire(long long id,long long revision,const std::vector<double>& xyz,
     const std::vector<int>& faceIds,const gp_Dir& direction,TopoDS_Wire& wire,double* result)
 {
-    if (!FindWorking(id,revision) || xyz.size()<6 || xyz.size()%3 || faceIds.empty() || !result) return false;
+    if(!FindWorking(id,revision))
+        return WorkingStageFail("context "+std::to_string(id)+"@"+std::to_string(revision)
+            +" model@"+std::to_string(g_modelRevision));
+    if(xyz.size()<6||xyz.size()%3) return WorkingStageFail("xyz-size "+std::to_string(xyz.size()));
+    if(faceIds.empty()) return WorkingStageFail("no-faces");
+    if(!result) return WorkingStageFail("no-result");
     try {
         BRepBuilderAPI_MakePolygon source;
         for(size_t i=0;i<xyz.size();i+=3) {
-            if(!std::isfinite(xyz[i])||!std::isfinite(xyz[i+1])||!std::isfinite(xyz[i+2])) return false;
+            if(!std::isfinite(xyz[i])||!std::isfinite(xyz[i+1])||!std::isfinite(xyz[i+2]))
+                return WorkingStageFail("non-finite-xyz "+std::to_string(i/3));
             source.Add(gp_Pnt(xyz[i],xyz[i+1],xyz[i+2]));
         }
-        if(!source.IsDone()) return false;
+        if(!source.IsDone()) return WorkingStageFail("source-polygon");
         BRepBuilderAPI_Sewing sewing(0.01,Standard_True,Standard_True,Standard_True,Standard_True);
         std::set<int> unique;
-        for(int face:faceIds) { if(face<0||face>=static_cast<int>(g_faces.size())) return false; if(unique.insert(face).second) sewing.Add(g_faces[face]); }
-        sewing.Perform(); TopoDS_Shape target=sewing.SewedShape(); if(target.IsNull()) return false;
+        for(int face:faceIds) { if(face<0||face>=static_cast<int>(g_faces.size())) return WorkingStageFail("face-index "+std::to_string(face)); if(unique.insert(face).second) sewing.Add(g_faces[face]); }
+        sewing.Perform(); TopoDS_Shape target=sewing.SewedShape(); if(target.IsNull()) return WorkingStageFail("target-null");
         // Check coverage independently per source segment. A disconnected or
         // partially out-of-domain polyline must not pass on its global endpoints.
         // (개별 에지의 BRepProj 결과는 검사하지 않는다 — 퇴화 스윕에서는 교선이 0개일 수
@@ -344,18 +356,19 @@ bool BuildProjectedWorkingWire(long long id,long long revision,const std::vector
         for(BRepTools_WireExplorer ex(source.Wire());ex.More();ex.Next()) {
             BRepAdaptor_Curve curve(ex.Current());
             const double first=curve.FirstParameter(),last=curve.LastParameter();
-            if(!std::isfinite(first)||!std::isfinite(last)||last<=first) return false;
+            if(!std::isfinite(first)||!std::isfinite(last)||last<=first)
+                return WorkingStageFail("source-range edge "+std::to_string(sourceEdges));
             for(double fraction:{0.0,0.5,1.0}) {
                 const gp_Pnt p=curve.Value(first+(last-first)*fraction);
                 coverage.Perform(gp_Lin(p,direction),0.0,1.0e12);
                 bool hit=false;
                 if(coverage.IsDone()) for(Standard_Integer h=1;h<=coverage.NbPnt();++h)
                     if(coverage.State(h)==TopAbs_IN||coverage.State(h)==TopAbs_ON) { hit=true; break; }
-                if(!hit) return false;
+                if(!hit) return WorkingStageFail("coverage-miss edge "+std::to_string(sourceEdges)+" frac "+std::to_string(fraction));
             }
             ++sourceEdges;
         }
-        if(sourceEdges==0) return false;
+        if(sourceEdges==0) return WorkingStageFail("no-source-edges");
         BRepProj_Projection projection(source.Wire(),target,direction);
         std::vector<TopoDS_Wire> wires;
         for(projection.Init();projection.More();projection.Next()) wires.push_back(projection.Current());
@@ -369,30 +382,38 @@ bool BuildProjectedWorkingWire(long long id,long long revision,const std::vector
                 for(BRepTools_WireExplorer ex(projectedWire);ex.More();ex.Next()) projectedEdges->Append(ex.Current());
             Handle(TopTools_HSequenceOfShape) connectedWires=new TopTools_HSequenceOfShape();
             ShapeAnalysis_FreeBounds::ConnectEdgesToWires(projectedEdges,0.01,Standard_False,connectedWires);
-            if(connectedWires->Length()!=1) return false;
+            if(connectedWires->Length()!=1) return WorkingStageFail("connected-wires "+std::to_string(connectedWires->Length()));
             wire=TopoDS::Wire(connectedWires->Value(1));
-            if(!BRepCheck_Analyzer(wire).IsValid()) return false;
+            if(!BRepCheck_Analyzer(wire).IsValid()) return WorkingStageFail("wire-invalid");
         }
         size_t ordered=0,edges=0; for(BRepTools_WireExplorer ex(wire);ex.More();ex.Next()) ++ordered;
         for(TopExp_Explorer ex(wire,TopAbs_EDGE);ex.More();ex.Next()) ++edges;
-        if(ordered==0||ordered!=edges) return false;
+        if(ordered==0||ordered!=edges) return WorkingStageFail("wire-order "+std::to_string(ordered)+"/"+std::to_string(edges));
         GProp_GProps props; BRepGProp::LinearProperties(wire,props);
-        if(!std::isfinite(props.Mass())||props.Mass()<=Precision::Confusion()) return false;
+        if(!std::isfinite(props.Mass())||props.Mass()<=Precision::Confusion()) return WorkingStageFail("zero-length");
         TopoDS_Vertex first,last;
         for(BRepTools_WireExplorer ex(wire);ex.More();ex.Next()) { TopoDS_Vertex a,b; TopExp::Vertices(ex.Current(),a,b,Standard_True); if(first.IsNull()) first=a; last=b; }
-        if(first.IsNull()||last.IsNull()) return false;
+        if(first.IsNull()||last.IsNull()) return WorkingStageFail("no-end-vertices");
         gp_Pnt a=BRep_Tool::Pnt(first),b=BRep_Tool::Pnt(last),sa(xyz[0],xyz[1],xyz[2]),sb(xyz[xyz.size()-3],xyz[xyz.size()-2],xyz[xyz.size()-1]);
         auto transverse=[&](const gp_Pnt& p,const gp_Pnt& q){gp_Vec v(p,q),d(direction);return (v-d*v.Dot(d)).Magnitude();};
         if(transverse(a,sa)>0.01||transverse(b,sb)>0.01) std::swap(a,b);
-        if(transverse(a,sa)>0.01||transverse(b,sb)>0.01) return false;
+        if(transverse(a,sa)>0.01||transverse(b,sb)>0.01)
+            return WorkingStageFail("endpoint-off-surface "+std::to_string(transverse(a,sa))+"/"+std::to_string(transverse(b,sb)));
         result[0]=props.Mass(); result[1]=a.X();result[2]=a.Y();result[3]=a.Z();result[4]=b.X();result[5]=b.Y();result[6]=b.Z(); return true;
-    } catch(...) { return false; }
+    } catch(const Standard_Failure& failure) {
+        return WorkingStageFail(std::string("exception ")+(failure.GetMessageString()?failure.GetMessageString():""));
+    } catch(...) { return WorkingStageFail("exception"); }
 }
 
 bool StageProjectedWorkingRouteNative(long long id,long long revision,int stageId,const std::string& kind,
     const std::vector<double>& xyz,const std::vector<int>& faces,const gp_Dir& direction,double* result)
 {
-    if(stageId>=0||g_ctx.IsNull()||g_routePieces.count(stageId)||g_stagedWorkingRouteOwners.count(stageId)||g_stagedWorkingPolylines.count(stageId)) return false;
+    if(stageId>=0||g_ctx.IsNull()||g_routePieces.count(stageId)||g_stagedWorkingRouteOwners.count(stageId)||g_stagedWorkingPolylines.count(stageId))
+        return WorkingStageFail("stage-precheck id "+std::to_string(stageId)+" ctx "+std::to_string(g_ctx.IsNull()?0:1)
+            +" route "+std::to_string(g_routePieces.count(stageId))
+            +" owner "+std::to_string(g_stagedWorkingRouteOwners.count(stageId))
+            +" line "+std::to_string(g_stagedWorkingPolylines.count(stageId)));
+    g_workingStageDiagnostic.clear();
     TopoDS_Wire wire; if(!BuildProjectedWorkingWire(id,revision,xyz,faces,direction,wire,result)) return false;
     Handle(AIS_Shape) ais;
     try {
@@ -405,7 +426,7 @@ bool StageProjectedWorkingRouteNative(long long id,long long revision,int stageI
         g_ctx->SetColor(ais,color,Standard_False); if(connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
         g_ctx->Display(ais,Standard_False);g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost);g_ctx->Activate(ais,Standard_False);
         auto inserted=g_routePieces.emplace(stageId,RoutePieceOverlay{ais,connector,true,color,1.0});
-        if(!inserted.second) { g_ctx->Remove(ais,Standard_False); return false; }
+        if(!inserted.second) { g_ctx->Remove(ais,Standard_False); return WorkingStageFail("display-id-collision"); }
         try { if(!g_stagedWorkingRouteOwners.emplace(stageId,std::make_pair(id,revision)).second)
                 throw std::runtime_error("staged route owner collision"); }
         catch(...) { g_ctx->Remove(ais,Standard_False); g_routePieces.erase(stageId); throw; }
@@ -416,7 +437,7 @@ bool StageProjectedWorkingRouteNative(long long id,long long revision,int stageI
         if(owner!=g_stagedWorkingRouteOwners.end()&&owner->second==std::make_pair(id,revision)) g_stagedWorkingRouteOwners.erase(owner);
         auto route=g_routePieces.find(stageId);
         if(route!=g_routePieces.end()&&route->second.ais==ais) g_routePieces.erase(route);
-        return false;
+        return WorkingStageFail("display-exception");
     }
 }
 
@@ -424,6 +445,7 @@ bool StageProjectedWorkingPolylineNative(long long id,long long revision,int sta
     const std::vector<int>& faces,const gp_Dir& direction,double* result)
 {
     if(stageId>=0||g_ctx.IsNull()||g_stagedWorkingPolylines.count(stageId)||g_stagedWorkingRouteOwners.count(stageId)||g_routePieces.count(stageId)) return false;
+    g_workingStageDiagnostic.clear();
     TopoDS_Wire wire; if(!BuildProjectedWorkingWire(id,revision,xyz,faces,direction,wire,result)) return false;
     Handle(AIS_Shape) ais;
     try { ais=new AIS_Shape(wire);g_ctx->SetColor(ais,Quantity_Color(0.95,0.15,0.10,Quantity_TOC_RGB),Standard_False);
