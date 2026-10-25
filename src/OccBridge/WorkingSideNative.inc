@@ -275,7 +275,12 @@ bool StageWorkingPolylineNative(long long id,long long revision,int stageId,cons
 // 마지막 경로 조각 투영 실패 원인. 스테이징이 false 하나로 수렴해 원인을 구분할 수
 // 없으므로, 실패 지점마다 짧은 코드를 남겨 UI가 메시지에 첨부할 수 있게 한다.
 std::string g_workingStageDiagnostic;
-bool WorkingStageFail(const std::string& reason) { g_workingStageDiagnostic=reason; return false; }
+std::string g_workingStageInputs;
+bool WorkingStageFail(const std::string& reason)
+{
+    g_workingStageDiagnostic = g_workingStageInputs.empty() ? reason : reason + " | " + g_workingStageInputs;
+    return false;
+}
 const char* GetWorkingStageDiagnosticNative() { return g_workingStageDiagnostic.c_str(); }
 
 // BRepProj_Projection이 교선을 하나도 만들지 못하는 퇴화 케이스(예: 2점 조각의 스윕
@@ -329,9 +334,11 @@ bool ProjectWorkingWireBySampling(const TopoDS_Wire& source,const TopoDS_Shape& 
 bool BuildProjectedWorkingWire(long long id,long long revision,const std::vector<double>& xyz,
     const std::vector<int>& faceIds,const gp_Dir& direction,TopoDS_Wire& wire,double* result)
 {
-    if(!FindWorking(id,revision))
+    const WorkingNative* context=FindWorking(id,revision);
+    if(!context)
         return WorkingStageFail("context "+std::to_string(id)+"@"+std::to_string(revision)
             +" model@"+std::to_string(g_modelRevision));
+    g_workingStageInputs += " origin=("+std::to_string(context->origin.X())+","+std::to_string(context->origin.Y())+","+std::to_string(context->origin.Z())+")";
     if(xyz.size()<6||xyz.size()%3) return WorkingStageFail("xyz-size "+std::to_string(xyz.size()));
     if(faceIds.empty()) return WorkingStageFail("no-faces");
     if(!result) return WorkingStageFail("no-result");
@@ -351,20 +358,25 @@ bool BuildProjectedWorkingWire(long long id,long long revision,const std::vector
         // partially out-of-domain polyline must not pass on its global endpoints.
         // (개별 에지의 BRepProj 결과는 검사하지 않는다 — 퇴화 스윕에서는 교선이 0개일 수
         //  있고, 그 경우는 아래 전체 투영 단계에서 표본점 레이캐스트로 복구한다.)
-        IntCurvesFace_ShapeIntersector coverage; coverage.Load(target,0.01);
+        // 진단용 스위치: false면 소스 구간의 투영 광선 검사를 건너뛴다. 에지 개수 집계는
+        // 그대로 유지하고, 선택면 밖 경로는 아래 BRepProj·와이어 연결·끝점 검사에서 걸러진다.
+        const bool checkSourceCoverage=false;
+        IntCurvesFace_ShapeIntersector coverage; if(checkSourceCoverage) coverage.Load(target,0.01);
         size_t sourceEdges=0;
         for(BRepTools_WireExplorer ex(source.Wire());ex.More();ex.Next()) {
-            BRepAdaptor_Curve curve(ex.Current());
-            const double first=curve.FirstParameter(),last=curve.LastParameter();
-            if(!std::isfinite(first)||!std::isfinite(last)||last<=first)
-                return WorkingStageFail("source-range edge "+std::to_string(sourceEdges));
-            for(double fraction:{0.0,0.5,1.0}) {
-                const gp_Pnt p=curve.Value(first+(last-first)*fraction);
-                coverage.Perform(gp_Lin(p,direction),0.0,1.0e12);
-                bool hit=false;
-                if(coverage.IsDone()) for(Standard_Integer h=1;h<=coverage.NbPnt();++h)
-                    if(coverage.State(h)==TopAbs_IN||coverage.State(h)==TopAbs_ON) { hit=true; break; }
-                if(!hit) return WorkingStageFail("coverage-miss edge "+std::to_string(sourceEdges)+" frac "+std::to_string(fraction));
+            if(checkSourceCoverage) {
+                BRepAdaptor_Curve curve(ex.Current());
+                const double first=curve.FirstParameter(),last=curve.LastParameter();
+                if(!std::isfinite(first)||!std::isfinite(last)||last<=first)
+                    return WorkingStageFail("source-range edge "+std::to_string(sourceEdges));
+                for(double fraction:{0.0,0.5,1.0}) {
+                    const gp_Pnt p=curve.Value(first+(last-first)*fraction);
+                    coverage.Perform(gp_Lin(p,direction),0.0,1.0e12);
+                    bool hit=false;
+                    if(coverage.IsDone()) for(Standard_Integer h=1;h<=coverage.NbPnt();++h)
+                        if(coverage.State(h)==TopAbs_IN||coverage.State(h)==TopAbs_ON) { hit=true; break; }
+                    if(!hit) return WorkingStageFail("coverage-miss edge "+std::to_string(sourceEdges)+" frac "+std::to_string(fraction));
+                }
             }
             ++sourceEdges;
         }
@@ -408,6 +420,11 @@ bool BuildProjectedWorkingWire(long long id,long long revision,const std::vector
 bool StageProjectedWorkingRouteNative(long long id,long long revision,int stageId,const std::string& kind,
     const std::vector<double>& xyz,const std::vector<int>& faces,const gp_Dir& direction,double* result)
 {
+    std::string faceText;
+    for(size_t i=0;i<faces.size();++i) { if(i) faceText+=","; faceText+=std::to_string(faces[i]); }
+    g_workingStageInputs="dir=("+std::to_string(direction.X())+","+std::to_string(direction.Y())+","+std::to_string(direction.Z())+")"
+        +" pts="+std::to_string(xyz.size()/3)+" faces="+faceText;
+    if(xyz.size()>=3) g_workingStageInputs+=" first=("+std::to_string(xyz[0])+","+std::to_string(xyz[1])+","+std::to_string(xyz[2])+")";
     if(stageId>=0||g_ctx.IsNull()||g_routePieces.count(stageId)||g_stagedWorkingRouteOwners.count(stageId)||g_stagedWorkingPolylines.count(stageId))
         return WorkingStageFail("stage-precheck id "+std::to_string(stageId)+" ctx "+std::to_string(g_ctx.IsNull()?0:1)
             +" route "+std::to_string(g_routePieces.count(stageId))
