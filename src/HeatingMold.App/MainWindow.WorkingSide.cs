@@ -9,33 +9,9 @@ public partial class MainWindow
 {
     private static readonly bool WorkingRouteMigrationComplete = false;
     private readonly WorkingSideSession _workingSide = new();
-    private bool _changingWorkingAxis;
     private Func<long, long, bool> _prepareWorkingFront = Bridge.ReturnToWorkingFront;
     private Action _beforeWorkingSideCommit = () => { };
     private Action _afterWorkingSideCommit = () => { };
-
-    private Vec3 SelectedWorkingNormal() => WorkingAxisBox.SelectedIndex switch
-    {
-        0 => new(1,0,0), 1 => new(-1,0,0), 2 => new(0,1,0),
-        3 => new(0,-1,0), 5 => new(0,0,-1), _ => new(0,0,1)
-    };
-
-    private void WorkingAxis_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
-    {
-        if (_changingWorkingAxis || !IsLoaded || Bridge.GetModelRevision() <= 0) return;
-        int oldIndex = _workingSide.Confirmed == null ? 4 : _workingSide.Confirmed.Frame.Normal switch
-        {
-            { X: 1, Y: 0, Z: 0 } => 0, { X: -1, Y: 0, Z: 0 } => 1,
-            { X: 0, Y: 1, Z: 0 } => 2, { X: 0, Y: -1, Z: 0 } => 3,
-            { X: 0, Y: 0, Z: 1 } => 4, _ => 5
-        };
-        if (!ApplyWorkingSide(SelectedWorkingNormal()))
-        {
-            _changingWorkingAxis = true;
-            WorkingAxisBox.SelectedIndex = oldIndex;
-            _changingWorkingAxis = false;
-        }
-    }
 
     private void ResetWorkingSide()
     {
@@ -84,7 +60,7 @@ public partial class MainWindow
 
             ResetCircuitEditState(true);
             _pattern = null; _multiFacePatternDisplayed = false;
-            _selectedFaceIds.Clear(); SelectedFacesList.Items.Clear(); FaceCombo.SelectedIndex = -1;
+            _selectedFaceIds.Clear(); SelectedFacesList.Items.Clear();
             _selectedRegion.Clear(); _exclusions.Clear(); _multiFaceFrame = frame; _workingAreaConfirmed = false;
             _confirmedFaceIds.Clear(); _selectionDirty = false;
             Bridge.HideFaceHighlights(); Bridge.ClearOverlays(); Bridge.ClearExclusionOverlays();

@@ -163,8 +163,8 @@ static class Program
             "successful side change invalidates dependent selections");
         Check(window.FindName("WorkingPickBox")==null && typeof(OccViewport).GetProperty("WorkingBoundaryPickMode")==null &&
             typeof(OccViewport).GetEvent("WorkingBoundaryPicked")==null,"diagnostic UI and click interception are removed");
-        Check(window.FindName("WorkingBoundaryCanvas")==null && window.FindName("WorkingAxisBox")!=null,
-            "boundary diagnostic canvas removed; direct axis selector remains");
+        Check(window.FindName("WorkingBoundaryCanvas")==null && window.FindName("WorkingAxisBox")==null,
+            "boundary diagnostic canvas removed; axis selector removed because working direction is fixed to +Z");
         Check(typeof(Bridge).GetMethod("HlrProject")==null && typeof(Bridge).GetMethod("HlrEdges")!=null,
             "HLR smoke API removed while exporter HlrEdges remains");
         viewport.RectangleSelectionMode=true;

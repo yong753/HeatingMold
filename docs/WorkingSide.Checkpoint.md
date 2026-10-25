@@ -70,7 +70,8 @@ state; commit-level graphics-system failures remain a documented rollback limita
   and production-scale performance acceleration are not part of this checkpoint.
 - Construction is synchronous and contexts are single-document, UI-thread-owned. Contexts are
   handle/revision checked but not a multi-document or thread-safe geometry service.
-- Only model-axis side choices are exposed. Current-camera-direction capture is not implemented.
+- The working direction is fixed to the model +Z axis; no axis selection UI is exposed and
+  current-camera-direction capture is not implemented.
 - Offscreen automated tests verify representative geometry/UI contracts, not actual viewer appearance
   or high-DPI/multi-monitor interaction. These require manual verification.
 
@@ -86,6 +87,6 @@ state; commit-level graphics-system failures remain a documented rollback limita
   silently re-enabled or treated as current functionality.
 - Required normal MSBuild command compiles native successfully; copying updated DLLs to the running
   app output can fail with MSB3021/MSB3027. The script uses isolated output without stopping processes.
-- Manual: open a real mold and verify automatic +Z; switch each axis and confirm immediate view/state
-  application; verify same-axis no-op, failed-change rollback, camera-independent active front,
-  and reload reset. Verify face/route/connector interactions plus pan/zoom remain unchanged.
+- Manual: open a real mold and verify automatic +Z is applied with no axis selector in the toolbar
+  (Fit and zoom buttons are also gone; wheel zoom remains); verify camera-independent active front
+  and reload reset. Verify face/route/connector interactions plus mouse pan/wheel zoom remain unchanged.

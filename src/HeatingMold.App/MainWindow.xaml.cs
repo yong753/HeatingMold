@@ -58,7 +58,6 @@ namespace HeatingMold.App
             if (ConnectorEditModeBox == null) return;
             ConnectorEditModeBox.IsEnabled = !locked;
             ExcludeModeBox.IsEnabled = !locked;
-            FaceCombo.IsEnabled = !locked;
         }
 
         private string PowerPrompt() => _pendingLeads.Count == 0 ? "전원 연결 완료" :
@@ -80,13 +79,6 @@ namespace HeatingMold.App
             if (Viewport != null) Viewport.PowerLocationMode = false;
             if (CircuitLengthGrid != null) CircuitLengthGrid.ItemsSource = null;
             if (clearNative) Bridge.ClearRoutePieces();
-        }
-
-        private sealed class FaceItem
-        {
-            public int Index;
-            public string Label;
-            public override string ToString() => Label;
         }
 
         public MainWindow()
@@ -145,7 +137,6 @@ namespace HeatingMold.App
                 _workingAreaConfirmed = false;
                 Bridge.ClearConfirmedFaceHighlights();
                 SelectedFacesList.Items.Clear();
-                FaceCombo.Items.Clear();
                 _selectedRegion.Clear();
                 _multiFaceFrame = null;
                 _exclusions.Clear();
@@ -182,58 +173,9 @@ namespace HeatingMold.App
             DrawRegionCanvas();
 
             var info = Bridge.GetShapeInfo();
-            PopulateFaceCombo(info.Faces);
             StatusText.Text = string.Format("{0} — 솔리드 {1} · 셸 {2} · 면 {3} · 평면 {4} · 로드 {5}ms",
                 Path.GetFileName(path), info.Solids, info.Shells, info.Faces, info.Planes, sw.ElapsedMilliseconds);
-            _changingWorkingAxis = true;
-            WorkingAxisBox.SelectedIndex = 4;
-            _changingWorkingAxis = false;
             ApplyWorkingSide(new Vec3(0,0,1));
-        }
-
-        private void PopulateFaceCombo(int faceCount)
-        {
-            FaceCombo.Items.Clear();
-            var candidates = new List<Tuple<int, string, double>>();
-            double[] gx = Bridge.GetAutoAxis(0), gz = Bridge.GetAutoAxis(2);
-            var axisX = gx != null && gx.Length >= 3 ? new Vec3(gx[0], gx[1], gx[2]).Normalized() : new Vec3(1, 0, 0);
-            var axisZ = gz != null && gz.Length >= 3 ? new Vec3(gz[0], gz[1], gz[2]).Normalized() : new Vec3(0, 0, 1);
-            for (int i = 0; i < faceCount; i++)
-            {
-                string type = Bridge.GetFaceType(i);
-                if (type == null) continue;
-                var wires = Bridge.GetFaceUvBoundary(i);
-                if (wires == null || wires.Length == 0) continue;
-
-                // Normalized UV (BSpline etc.) is unrelated to real size -> measure the boundary in 3D (mm)
-                var pts = new List<Vec3>(64);
-                foreach (var w in wires)
-                    for (int k = 0; k + 1 < w.Points.Length; k += 2)
-                    {
-                        var pt = Bridge.SampleUvTo3D(i, w.Points[k], w.Points[k + 1]);
-                        if (pt != null) pts.Add(new Vec3(pt[0], pt[1], pt[2]));
-                    }
-                if (pts.Count < 3) continue;
-
-                var origin = new Vec3(pts.Average(v => v.X), pts.Average(v => v.Y), pts.Average(v => v.Z));
-                var frame = new ProjectionFrame(origin, axisZ, axisX);
-
-                double minX = double.MaxValue, maxX = double.MinValue, minY = double.MaxValue, maxY = double.MinValue;
-                foreach (var vtx in pts)
-                {
-                    Vec2 q = frame.Project(vtx);
-                    if (q.X < minX) minX = q.X;
-                    if (q.X > maxX) maxX = q.X;
-                    if (q.Y < minY) minY = q.Y;
-                    if (q.Y > maxY) maxY = q.Y;
-                }
-                double wd = maxX - minX, ht = maxY - minY;
-                if (wd < 2 || ht < 2) continue;
-                candidates.Add(Tuple.Create(i, string.Format("#{0} {1} {2:F0}×{3:F0}", i, type, wd, ht), wd * ht));
-            }
-            candidates.Sort((a, b) => b.Item3.CompareTo(a.Item3));   // 큰 면 우선
-            foreach (var c in candidates) FaceCombo.Items.Add(new FaceItem { Index = c.Item1, Label = c.Item2 });
-            if (FaceCombo.Items.Count > 0) FaceCombo.SelectedIndex = 0;
         }
 
         private void TryGetParams(out double margin, out double spacing, out double width)
@@ -295,18 +237,9 @@ namespace HeatingMold.App
             foreach (int faceIndex in faceIds)
             {
                 string type = Bridge.GetFaceType(faceIndex);
-                FaceItem item = FaceCombo.Items.OfType<FaceItem>().FirstOrDefault(f => f.Index == faceIndex);
-                if (item == null)
-                {
-                    item = new FaceItem { Index = faceIndex, Label = string.Format("#{0} {1} (picked)", faceIndex, type) };
-                    FaceCombo.Items.Add(item);
-                }
                 _selectedFaceIds.Add(faceIndex);
                 SelectedFacesList.Items.Add(string.Format("#{0} {1}", faceIndex, type));
             }
-            int active = _selectedFaceIds.FirstOrDefault(-1);
-            if (active >= 0)
-                FaceCombo.SelectedItem = FaceCombo.Items.OfType<FaceItem>().FirstOrDefault(f => f.Index == active);
             RefreshSelectedRegion();
         }
 
@@ -397,13 +330,6 @@ namespace HeatingMold.App
                 return;
             }
             string type = Bridge.GetFaceType(faceIndex);
-            FaceItem match = FaceCombo.Items.OfType<FaceItem>().FirstOrDefault(f => f.Index == faceIndex);
-            if (match == null)
-            {
-                // Face missing from combo (filtered by UV size) -> add it so the click selection is honored
-                match = new FaceItem { Index = faceIndex, Label = string.Format("#{0} {1} (picked)", faceIndex, type) };
-                FaceCombo.Items.Add(match);
-            }
             if (!toggle)
             {
                 _selectedFaceIds.Clear();
@@ -433,9 +359,6 @@ namespace HeatingMold.App
                     Bridge.ClearExclusionOverlays();
                 }
             }
-            int activeFace = _selectedFaceIds.Contains(faceIndex) ? faceIndex : _selectedFaceIds.FirstOrDefault(-1);
-            if (activeFace >= 0)
-                FaceCombo.SelectedItem = FaceCombo.Items.OfType<FaceItem>().FirstOrDefault(f => f.Index == activeFace);
             RefreshSelectedRegion();
         }
 
@@ -1021,12 +944,6 @@ namespace HeatingMold.App
             var dlg = new OpenFileDialog { Filter = "STEP (*.stp;*.step)|*.stp;*.step|모든 파일 (*.*)|*.*" };
             if (dlg.ShowDialog(this) == true) LoadFile(dlg.FileName);
         }
-
-        private void Fit_Click(object sender, RoutedEventArgs e) { Viewport.CancelPowerLeadPreview(); Bridge.FitView(); }
-
-        private void ZoomIn_Click(object sender, RoutedEventArgs e) { Viewport.CancelPowerLeadPreview(); Bridge.ZoomView(1.25); }
-
-        private void ZoomOut_Click(object sender, RoutedEventArgs e) { Viewport.CancelPowerLeadPreview(); Bridge.ZoomView(0.8); }
 
     }
 }
