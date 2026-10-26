@@ -1,6 +1,6 @@
 # Phase 1 — Curved-surface route mapping
 
-Status: implemented on branch `new` (uncommitted working tree).
+Status: implemented on branch `feature/phase1-curved-surface-routing`, commit `f4a5444`.
 
 ## Purpose
 
@@ -83,6 +83,7 @@ direction +Z, margin 5, spacing 10.
 | Adjacent piece endpoints | 0.000000 mm worst distance (≤ 0.01) |
 | Lane distortion | 3D/2D chord ratio 1.2151 worst |
 | Adjacent-lane midpoint spacing | 0.01 mm deviation from 10 mm worst |
+| Mapping fallback usage | 0 calls / 117 user-case probes (retained, unexercised) |
 
 Survey of other single-face patches in the same model:
 
@@ -111,6 +112,8 @@ passes 48/48.
    leaf spacing and emits ~4 points per leaf (≈12k points for a 300 mm piece), far too dense
    for display and for per-point `BRepExtrema` validation. `TryMapRoute` refines on chord
    error only (0.05 mm) and keeps the existing `TryMap`/`TryMapWithMetadata` tests intact.
+   Since Phase 1 the app calls only `TryMapRoute`; `TryMap`, `TryMapWithMetadata` and
+   `AreSamplesContinuous` are now library primitives exercised by unit tests only.
 3. **Anchor 3D point computed on demand** by nearest-segment projection onto the 1D
    `ExitChain` with its parallel `ExitChain3D`, instead of storing an arc-length fraction.
    The result is identical and no new anchor state has to be kept consistent.
@@ -118,7 +121,12 @@ passes 48/48.
    deliberately sparse on long leads, so a 3D step cap would reject valid leads.
 5. **Fallback path** may use the whole-model `QueryWorkingSurface` hit and snap it back to
    the selected faces within 0.5 mm; staging still enforces the 0.05 mm on-surface check,
-   so a loose fallback point is rejected rather than displayed off-surface.
+   so a loose fallback point is rejected rather than displayed off-surface. The instrumented
+   harness records every fallback call. The user case (21 pieces, 115 datum probes besides the
+   2 anchor points) and the single-face survey (16 probes) recorded **zero** fallback calls:
+   the filtered ray-cast resolved every probe. The fallback is therefore retained as the only
+   recovery path for curved models that are not covered by this verification, and it remains
+   **unexercised** — do not describe it as verified behaviour.
 
 ## Phase 2 backlog
 

@@ -32,7 +32,17 @@
 
 ## Intentional safety gates
 
-Pattern generation now maps each complete candidate over the confirmed datum using full-model
+> **Superseded for route display (Phase 1, commit `f4a5444`).** The app no longer maps pattern
+> candidates over the whole model at generation time. `GenerateMultiFace` only builds the
+> serpentine; `RebuildNativePatternGeometry` then branches per area: plane-only areas keep the
+> `BRepProj` staging path (`StageProjectedWorkingRoutePiece`), and areas containing any curved
+> face map every datum point against the selected faces only
+> (`MapWorkingPointOntoFaces` + `SurfacePathMapper.TryMapRoute`) and stage the resulting 3D
+> polyline without re-projection. The paragraph below describes the earlier full-model gate; its
+> `TryMap` / `TryMapWithMetadata` / `AreSamplesContinuous` helpers and the 2 mm 3D step cap are
+> now library/test contracts only, not app behaviour. See `Phase1.CurvedSurfaceRouting.md`.
+
+Pattern generation previously mapped each complete candidate over the confirmed datum using full-model
 first-hit queries and bounded adaptive sampling (maximum 0.1 mm planar leaf spacing, 0.05 mm
 chord tolerance, with endpoint/quarter/midpoint probes).
 Face identity is retained on final path-ordered samples, so continuity checks permit valid A→B→C

@@ -12,6 +12,14 @@ static class Program
     static int passed, failed;
     static readonly List<string> failures = new();
 
+    // 폴백 계측: 직접 매핑 실패 시 전역 히트→스냅 경로가 실제로 쓰이는지 센다.
+    static int directHits, snapHits, snapMisses, looseMisses, anchorShortCircuits;
+    static readonly List<string> directFailureStatuses = new();
+    static readonly List<string> snapAdopted = new();
+
+    static string Counters() =>
+        $"direct={directHits} anchor={anchorShortCircuits} snap={snapHits} snapReject={snapMisses} looseMiss={looseMisses}";
+
     static void Check(bool value, string label)
     {
         if (value) { Console.WriteLine("PASS " + label); ++passed; }
@@ -204,17 +212,32 @@ static class Program
         Vec2? anchorDatum, Vec3? anchor3D, int exitFaceId)
     {
         if (anchorDatum.HasValue && anchor3D.HasValue && uv == anchorDatum.Value)
+        {
+            ++anchorShortCircuits;
             return new SurfaceMappedSample(uv, anchor3D.Value, exitFaceId);
+        }
         var direct = Bridge.MapWorkingPointOntoFaces(side.Id.Value, side.Revision.Value, faces, uv.X, uv.Y);
         if (direct != null && direct.Status == WorkingQueryStatus.Hit && direct.Point != null)
+        {
+            ++directHits;
             return new SurfaceMappedSample(uv, new Vec3(direct.Point[0], direct.Point[1], direct.Point[2]), direct.FaceId);
+        }
+        directFailureStatuses.Add($"({uv.X:F4},{uv.Y:F4}) direct={direct?.Status.ToString() ?? "null"}");
         var loose = Bridge.QueryWorkingSurface(side.Id.Value, side.Revision.Value, uv.X, uv.Y);
         if (loose != null && loose.Status == WorkingQueryStatus.Hit && loose.Point != null)
         {
             var snapped = Bridge.SnapWorkingPointToFaces(loose.Point[0], loose.Point[1], loose.Point[2], faces, 0.5);
             if (snapped != null && snapped.Status == WorkingQueryStatus.Hit && snapped.Point != null)
+            {
+                ++snapHits;
+                double dx = snapped.Point[0] - loose.Point[0], dy = snapped.Point[1] - loose.Point[1], dz = snapped.Point[2] - loose.Point[2];
+                snapAdopted.Add($"({uv.X:F4},{uv.Y:F4}) direct={direct?.Status.ToString() ?? "null"} " +
+                    $"shift={Math.Sqrt(dx * dx + dy * dy + dz * dz):F6} face={snapped.FaceId}");
                 return new SurfaceMappedSample(uv, new Vec3(snapped.Point[0], snapped.Point[1], snapped.Point[2]), snapped.FaceId);
+            }
+            ++snapMisses;
         }
+        else ++looseMisses;
         return null;
     }
 
@@ -373,6 +396,13 @@ static class Program
         Console.WriteLine($"worst piece connection: {worstConnection:F6} mm at piece {worstIndex}");
         Check(worstConnection <= 0.01, "adjacent piece endpoints agree within 0.01 mm");
 
+        // ---- 폴백 사용 계측: 21조각 사용자 사례 구간만 집계 ----
+        Console.WriteLine($"mapping fallback [user case 21 pieces]: {Counters()}");
+        foreach (var entry in directFailureStatuses) Console.WriteLine($"  direct-miss {entry}");
+        foreach (var entry in snapAdopted) Console.WriteLine($"  snap-adopted {entry}");
+        directHits = snapHits = snapMisses = looseMisses = anchorShortCircuits = 0;
+        directFailureStatuses.Clear(); snapAdopted.Clear();
+
         // ---- accepted Phase 1 error: 2D spacing is not 3D surface spacing ----
         var lanes = pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun)
             .Select(piece => (Piece: piece,
@@ -401,8 +431,15 @@ static class Program
         double total = results.Sum(r => r.Length);
         Console.WriteLine($"staged total length={total:F1} mm (pattern 2D={pattern.TotalLength:F1} mm)");
 
+        // ---- 폴백 실패/성공 내역을 지우고 다른 곡면 조사 구간을 따로 집계 ----
+        directHits = snapHits = snapMisses = looseMisses = anchorShortCircuits = 0;
+        directFailureStatuses.Clear(); snapAdopted.Clear();
+
         Bridge.DiscardWorkingRouteGeometry(side.Id, side.Revision, staged.ToArray(), Array.Empty<int>());
         Survey(sideDefinition, info.Faces);
+        Console.WriteLine($"mapping fallback [survey of other patches]: {Counters()}");
+        foreach (var entry in directFailureStatuses.Take(20)) Console.WriteLine($"  survey direct-miss {entry}");
+        foreach (var entry in snapAdopted.Take(20)) Console.WriteLine($"  survey snap-adopted {entry}");
         Bridge.ReleaseWorkingContext(side.Id);
         source?.Dispose();
 

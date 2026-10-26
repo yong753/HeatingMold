@@ -502,32 +502,10 @@ bool BuildProjectedWorkingWire(long long id,long long revision,const std::vector
         std::set<int> unique;
         for(int face:faceIds) { if(face<0||face>=static_cast<int>(g_faces.size())) return WorkingStageFail("face-index "+std::to_string(face)); if(unique.insert(face).second) sewing.Add(g_faces[face]); }
         sewing.Perform(); TopoDS_Shape target=sewing.SewedShape(); if(target.IsNull()) return WorkingStageFail("target-null");
-        // Check coverage independently per source segment. A disconnected or
-        // partially out-of-domain polyline must not pass on its global endpoints.
-        // (개별 에지의 BRepProj 결과는 검사하지 않는다 — 퇴화 스윕에서는 교선이 0개일 수
-        //  있고, 그 경우는 아래 전체 투영 단계에서 표본점 레이캐스트로 복구한다.)
-        // 진단용 스위치: false면 소스 구간의 투영 광선 검사를 건너뛴다. 에지 개수 집계는
-        // 그대로 유지하고, 선택면 밖 경로는 아래 BRepProj·와이어 연결·끝점 검사에서 걸러진다.
-        const bool checkSourceCoverage=false;
-        IntCurvesFace_ShapeIntersector coverage; if(checkSourceCoverage) coverage.Load(target,0.01);
+        // 선택면 밖 경로는 아래 BRepProj·와이어 연결·끝점 검사에서 걸러진다.
+        // 여기서는 소스 폴리라인이 최소 1개 에지를 갖는지만 확인한다.
         size_t sourceEdges=0;
-        for(BRepTools_WireExplorer ex(source.Wire());ex.More();ex.Next()) {
-            if(checkSourceCoverage) {
-                BRepAdaptor_Curve curve(ex.Current());
-                const double first=curve.FirstParameter(),last=curve.LastParameter();
-                if(!std::isfinite(first)||!std::isfinite(last)||last<=first)
-                    return WorkingStageFail("source-range edge "+std::to_string(sourceEdges));
-                for(double fraction:{0.0,0.5,1.0}) {
-                    const gp_Pnt p=curve.Value(first+(last-first)*fraction);
-                    coverage.Perform(gp_Lin(p,direction),0.0,1.0e12);
-                    bool hit=false;
-                    if(coverage.IsDone()) for(Standard_Integer h=1;h<=coverage.NbPnt();++h)
-                        if(coverage.State(h)==TopAbs_IN||coverage.State(h)==TopAbs_ON) { hit=true; break; }
-                    if(!hit) return WorkingStageFail("coverage-miss edge "+std::to_string(sourceEdges)+" frac "+std::to_string(fraction));
-                }
-            }
-            ++sourceEdges;
-        }
+        for(BRepTools_WireExplorer ex(source.Wire());ex.More();ex.Next()) ++sourceEdges;
         if(sourceEdges==0) return WorkingStageFail("no-source-edges");
         BRepProj_Projection projection(source.Wire(),target,direction);
         std::vector<TopoDS_Wire> wires;

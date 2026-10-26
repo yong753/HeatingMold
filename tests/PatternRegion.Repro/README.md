@@ -210,9 +210,10 @@ Two contributing factors on the generator side, worth knowing before choosing a 
 `src/OccBridge/WorkingSideNative.inc`:
 
 1. `BuildProjectedWorkingWire` no longer aborts when the *per-edge* `BRepProj_Projection` returns
-   no wire; that per-edge projection check was removed and coverage is still validated by ray
-   casting (`IntCurvesFace_ShapeIntersector`) at 0 / 0.5 / 1 of every source edge, so a piece that
-   leaves the selected faces still fails.
+   no wire. The source-segment ray coverage check that had been added for that step is disabled
+   in the current code (it was a `const false` switch and has been removed), so an out-of-domain
+   piece is caught by the whole-polyline `BRepProj_Projection`, wire-connection and endpoint
+   checks below instead. Only an empty source polyline is rejected up front.
 2. If the whole-polyline `BRepProj_Projection` also yields zero wires, the new
    `ProjectWorkingWireBySampling` helper ray-casts sample points of the source polyline along the
    **original projection direction** and rebuilds the wire as a polyline through those surface
