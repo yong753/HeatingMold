@@ -383,18 +383,20 @@ bool DisplayWorkingRoutePieceNative(long long id,long long revision,int pieceId,
             auto old=g_routePieces.find(pieceId);
             if (old!=g_routePieces.end()) { g_ctx->Remove(old->second.ais,Standard_False); g_routePieces.erase(old); }
             ais=new AIS_Shape(poly.Wire());
-            Quantity_Color color=connector ? Quantity_Color(0.1,0.65,1.0,Quantity_TOC_RGB) : Quantity_Color(0.95,0.15,0.10,Quantity_TOC_RGB);
+            Quantity_Color color=connector ? kConnectorRouteColor : kHeatingRouteColor;
+            const double width=connector ? 1.0 : kHeatingRouteWidth;
             g_ctx->SetColor(ais,color,Standard_False);
+            g_ctx->SetWidth(ais,width,Standard_False);
             if (connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
             g_ctx->Display(ais,Standard_False); g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost); g_ctx->Activate(ais,Standard_False);
             if(pieceId<0) {
-                auto route=g_routePieces.emplace(pieceId,RoutePieceOverlay{ais,connector,true,color,1.0});
+                auto route=g_routePieces.emplace(pieceId,RoutePieceOverlay{ais,connector,true,color,width});
                 if(!route.second) { g_ctx->Remove(ais,Standard_False); return false; }
                 try {
                     auto owner=g_stagedWorkingRouteOwners.emplace(pieceId,std::make_pair(id,revision));
                     if(!owner.second) { g_routePieces.erase(route.first); g_ctx->Remove(ais,Standard_False); return false; }
                 } catch(...) { g_routePieces.erase(pieceId); g_ctx->Remove(ais,Standard_False); throw; }
-            } else g_routePieces[pieceId]={ais,connector,true,color,1.0};
+            } else g_routePieces[pieceId]={ais,connector,true,color,width};
         }
         return true;
     } catch (...) { if (!ais.IsNull() && !g_ctx.IsNull()) g_ctx->Remove(ais,Standard_False); return false; }
@@ -413,7 +415,8 @@ bool StageWorkingPolylineNative(long long id,long long revision,int stageId,cons
         }
         if (!poly.IsDone()) return false;
         ais=new AIS_Shape(poly.Wire());
-        g_ctx->SetColor(ais,Quantity_Color(0.95,0.15,0.10,Quantity_TOC_RGB),Standard_False);
+        g_ctx->SetColor(ais,kHeatingRouteColor,Standard_False);
+        g_ctx->SetWidth(ais,kHeatingRouteWidth,Standard_False);
         g_ctx->Display(ais,Standard_False); g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost); g_ctx->Deactivate(ais,Standard_False);
         if(!g_stagedWorkingPolylines.emplace(stageId,StagedWorkingPolyline{ais,id,revision}).second) { g_ctx->Remove(ais,Standard_False); return false; }
         return true;
@@ -563,12 +566,12 @@ bool StageProjectedWorkingRouteNative(long long id,long long revision,int stageI
         ais=new AIS_Shape(wire); std::string k=kind;
         std::transform(k.begin(),k.end(),k.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
         bool connector=k=="turnconnector"||k=="turn";
-        bool lead=k=="exitpiece"||k=="exit";
-        Quantity_Color color=connector?Quantity_Color(0.1,0.65,1.0,Quantity_TOC_RGB)
-            :(lead?Quantity_Color(0.95,0.55,0.10,Quantity_TOC_RGB):Quantity_Color(0.95,0.15,0.10,Quantity_TOC_RGB));
-        g_ctx->SetColor(ais,color,Standard_False); if(connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
+        Quantity_Color color=connector?kConnectorRouteColor:kHeatingRouteColor;
+        const double width=connector?1.0:kHeatingRouteWidth;
+        g_ctx->SetColor(ais,color,Standard_False); g_ctx->SetWidth(ais,width,Standard_False);
+        if(connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
         g_ctx->Display(ais,Standard_False);g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost);g_ctx->Activate(ais,Standard_False);
-        auto inserted=g_routePieces.emplace(stageId,RoutePieceOverlay{ais,connector,true,color,1.0});
+        auto inserted=g_routePieces.emplace(stageId,RoutePieceOverlay{ais,connector,true,color,width});
         if(!inserted.second) { g_ctx->Remove(ais,Standard_False); return WorkingStageFail("display-id-collision"); }
         try { if(!g_stagedWorkingRouteOwners.emplace(stageId,std::make_pair(id,revision)).second)
                 throw std::runtime_error("staged route owner collision"); }
@@ -591,7 +594,8 @@ bool StageProjectedWorkingPolylineNative(long long id,long long revision,int sta
     g_workingStageDiagnostic.clear();
     TopoDS_Wire wire; if(!BuildProjectedWorkingWire(id,revision,xyz,faces,direction,wire,result)) return false;
     Handle(AIS_Shape) ais;
-    try { ais=new AIS_Shape(wire);g_ctx->SetColor(ais,Quantity_Color(0.95,0.15,0.10,Quantity_TOC_RGB),Standard_False);
+    try { ais=new AIS_Shape(wire);g_ctx->SetColor(ais,kHeatingRouteColor,Standard_False);
+        g_ctx->SetWidth(ais,kHeatingRouteWidth,Standard_False);
         g_ctx->Display(ais,Standard_False);g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost);g_ctx->Deactivate(ais,Standard_False);
         if(!g_stagedWorkingPolylines.emplace(stageId,StagedWorkingPolyline{ais,id,revision}).second) { g_ctx->Remove(ais,Standard_False); return false; }
         return true;
@@ -784,16 +788,15 @@ bool StageSurfaceMappedRoutePieceNative(long long id, long long revision, int st
         std::string k = kind;
         std::transform(k.begin(), k.end(), k.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         const bool connector = k == "turnconnector" || k == "turn";
-        const bool lead = k == "exitpiece" || k == "exit";
-        const Quantity_Color color = connector ? Quantity_Color(0.1, 0.65, 1.0, Quantity_TOC_RGB)
-            : (lead ? Quantity_Color(0.95, 0.55, 0.10, Quantity_TOC_RGB)
-                    : Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB));
+        const Quantity_Color color = connector ? kConnectorRouteColor : kHeatingRouteColor;
+        const double width = connector ? 1.0 : kHeatingRouteWidth;
         g_ctx->SetColor(ais, color, Standard_False);
+        g_ctx->SetWidth(ais, width, Standard_False);
         if (connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
         g_ctx->Display(ais, Standard_False);
         g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
         g_ctx->Activate(ais, Standard_False);
-        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, connector, true, color, 1.0});
+        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, connector, true, color, width});
         if (!inserted.second) { g_ctx->Remove(ais, Standard_False); return WorkingStageFail("display-id-collision"); }
         try { if (!g_stagedWorkingRouteOwners.emplace(stageId, std::make_pair(id, revision)).second)
                 throw std::runtime_error("staged route owner collision"); }

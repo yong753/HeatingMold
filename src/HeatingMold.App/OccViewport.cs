@@ -46,6 +46,9 @@ namespace HeatingMold.App
         private static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
 
         [DllImport("user32.dll")]
+        private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+
+        [DllImport("user32.dll")]
         private static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT lpEventTrack);
 
         [StructLayout(LayoutKind.Sequential)]
@@ -59,6 +62,9 @@ namespace HeatingMold.App
 
         [StructLayout(LayoutKind.Sequential)]
         private struct POINT { public int X; public int Y; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT { public int Left, Top, Right, Bottom; }
 
         private const uint TME_LEAVE = 0x00000002;
 
@@ -125,6 +131,7 @@ namespace HeatingMold.App
         private const int WM_MOUSEMOVE = 0x0200;
         private const int WM_MOUSEWHEEL = 0x020A;
         private const int WM_MOUSELEAVE = 0x02A3;
+        private const int WM_SIZE = 0x0005;
         private const int WM_ERASEBKGND = 0x0014;
         private const int WM_PAINT = 0x000F;
         private const int WM_CAPTURECHANGED = 0x0215;
@@ -132,6 +139,8 @@ namespace HeatingMold.App
 
         private IntPtr _hwnd;
         private bool _ready;
+        private int _syncedWidth = -1, _syncedHeight = -1;   // 마지막으로 OCCT에 반영한 클라이언트 크기(px)
+        private bool _resizePending;
         private bool _dragging;
         private bool _panDragging;
         private bool _dragStarted;
@@ -238,6 +247,7 @@ namespace HeatingMold.App
             _hwnd = CreateWindowEx(0, WindowClassName, "", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
                 0, 0, Math.Max(1, (int)ActualWidth), Math.Max(1, (int)ActualHeight),
                 hwndParent.Handle, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+            _syncedWidth = _syncedHeight = -1;
             return new HandleRef(this, _hwnd);
         }
 
@@ -247,7 +257,43 @@ namespace HeatingMold.App
             _ready = false;
             _dragging = false;
             _dragStarted = false;
+            _syncedWidth = _syncedHeight = -1;
             DestroyWindow(hwnd.Handle);
+        }
+
+        /// <summary>
+        /// 자식 HWND의 실제 클라이언트 크기(px)를 OCCT에 반영한다.
+        /// WPF의 ActualWidth/Height는 DIP이므로 크기 비교·전달에 쓰지 않고 GetClientRect를 정본으로 삼는다.
+        /// 크기가 그대로면 아무것도 하지 않는다(중복 렌더 방지).
+        /// </summary>
+        private bool SyncViewSize()
+        {
+            if (!_ready || _hwnd == IntPtr.Zero) return false;
+            if (!GetClientRect(_hwnd, out RECT rc)) return false;
+
+            int width = Math.Max(1, rc.Right - rc.Left);
+            int height = Math.Max(1, rc.Bottom - rc.Top);
+            if (width == _syncedWidth && height == _syncedHeight) return false;
+
+            _syncedWidth = width;
+            _syncedHeight = height;
+            Bridge.ResizeView(width, height);
+            return true;
+        }
+
+        /// <summary>
+        /// WPF 레이아웃 도중에는 자식 HWND가 아직 옛 크기일 수 있으므로,
+        /// 레이아웃·렌더가 끝난 뒤 한 번 더 실제 크기를 확인한다.
+        /// </summary>
+        private void ScheduleViewSizeSync()
+        {
+            if (_resizePending) return;
+            _resizePending = true;
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+            {
+                _resizePending = false;
+                SyncViewSize();
+            }));
         }
 
         /// <summary>뷰어 초기화 (1회). Loaded 이후에 호출할 것.</summary>
@@ -256,6 +302,7 @@ namespace HeatingMold.App
             if (_ready) return true;
             if (_hwnd == IntPtr.Zero) return false;
             _ready = Bridge.InitViewer(_hwnd, Math.Max(1, (int)ActualWidth), Math.Max(1, (int)ActualHeight));
+            if (_ready) SyncViewSize();
             return _ready;
         }
 
@@ -263,7 +310,18 @@ namespace HeatingMold.App
         {
             base.OnRenderSizeChanged(sizeInfo);
             CancelPowerLeadPreview();
-            if (_ready) Bridge.ResizeView((int)ActualWidth, (int)ActualHeight);
+            // 이 시점의 base 렌더는 자식 HWND 크기를 아직 갱신하지 않았을 수 있다.
+            // 즉시 시도하고, 실제 HWND 크기 기준으로 한 번 더 맞춘다.
+            SyncViewSize();
+            ScheduleViewSizeSync();
+        }
+
+        protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+        {
+            base.OnDpiChanged(oldDpi, newDpi);
+            // DPI가 바뀌면 DIP 크기는 그대로여도 HWND 픽셀 크기가 달라진다.
+            _syncedWidth = _syncedHeight = -1;
+            ScheduleViewSizeSync();
         }
 
         protected override IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -475,15 +533,25 @@ namespace HeatingMold.App
                     break;
                 }
 
+                case WM_SIZE:
+                    // WM_SIZE는 HWND 크기가 실제로 바뀐 뒤에 오므로 여기서 GL 뷰포트까지 맞춘다.
+                    // (WPF 레이아웃 순서에 의존하지 않는 유일한 확실한 시점)
+                    SyncViewSize();
+                    break;
+
                 case WM_ERASEBKGND:
                     handled = true;
                     break;
 
                 case WM_PAINT:
-                    // 배경을 그리지 않고 무효 영역만 검증 — GL 콘텐츠 유지
+                {
+                    // 배경은 그리지 않는다. 다만 뷰포트 크기가 어긋난 채로 새 영역이 노출되면
+                    // 검은 영역이 남으므로, 크기가 다를 때만 다시 렌더한 뒤 무효 영역을 검증한다.
+                    SyncViewSize();
                     ValidateRect(hwnd, IntPtr.Zero);
                     handled = true;
                     break;
+                }
             }
             return IntPtr.Zero;
         }

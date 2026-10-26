@@ -184,6 +184,8 @@ public:
     static int PickConnector(int x, int y);
     static int PickRoutePiece(int x, int y);
     static void HighlightCircuit(array<int>^ pieceIds);
+    /// <summary>발열 경로 인출점/끝점 마커를 다시 그린다. xyzFlat은 [x,y,z,...].</summary>
+    static void SetRouteEndpoints(array<double>^ xyzFlat);
 
     // ---- AIS 뷰어 (S1 항목 1·6) — WPF HwndHost 자식 HWND 임베드 ----
     /// <summary>자식 HWND에 OpenGl 뷰어 초기화 (1회). 이미 로드된 셰이프가 있으면 표시+Fit</summary>

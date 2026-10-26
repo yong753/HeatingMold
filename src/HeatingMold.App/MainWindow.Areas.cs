@@ -418,6 +418,19 @@ public partial class MainWindow
         }
         foreach (var area in _areas) ApplyAreaConnectorStates(area);
 
+        // 발열 경로 인출점/끝점 마커 — 각 영역 첫 조각의 Start, 마지막 조각의 End.
+        var endpointPoints = new List<double>();
+        foreach (var entry in routeResults.Values)
+        {
+            var pieces = entry.Pieces;
+            if (pieces.Count == 0) continue;
+            var first = pieces[0];
+            var last = pieces[^1];
+            if (first?.Start != null) endpointPoints.AddRange(first.Start);
+            if (last?.End != null) endpointPoints.AddRange(last.End);
+        }
+        Bridge.SetRouteEndpoints(endpointPoints.ToArray());
+
         if (_activeArea != null)
         {
             _pattern = _activeArea.Pattern;

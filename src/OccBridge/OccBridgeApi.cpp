@@ -275,8 +275,11 @@ namespace
     struct StagedWorkingPolyline { Handle(AIS_Shape) ais; long long contextId, revision; };
     std::map<int, StagedWorkingPolyline> g_stagedWorkingPolylines;
     std::map<int, std::pair<long long,long long>> g_stagedWorkingRouteOwners;
+    // 발열 경로 인출점/끝점 마커. 경로를 지울 때 함께 제거한다.
+    std::vector<Handle(AIS_Point)> g_routeEndpointMarkers;
     std::set<int> g_hoveredCircuitPieces;
     void HighlightCircuitNative(const std::vector<int>& ids);
+    void ClearRouteEndpointMarkersNative();
     std::vector<Handle(AIS_Shape)> g_exclusionOverlays;
     Handle(AIS_Shape) g_exclusionPreview;
     Handle(AIS_RubberBand) g_selectionRubberBand;
@@ -302,6 +305,10 @@ namespace
 
     const Quantity_Color kSelectedFaceColor(0.12, 0.82, 0.38, Quantity_TOC_RGB);   // 선택 = 초록
     const Quantity_Color kConfirmedFaceColor(0.90, 0.16, 0.16, Quantity_TOC_RGB);  // 단일 영역 기본값
+    const Quantity_Color kHeatingRouteColor(1.00, 0.10, 0.10, Quantity_TOC_RGB);   // 발열 경로 = 두꺼운 빨강
+    const Quantity_Color kConnectorRouteColor(0.10, 0.65, 1.00, Quantity_TOC_RGB); // 턴 커넥터 = 파랑 점선
+    const Quantity_Color kRouteEndpointColor(1.00, 0.05, 0.05, Quantity_TOC_RGB);  // 인출점/끝점 마커
+    const Standard_Real kHeatingRouteWidth = 3.0;
 
     void SetFaceColorOverride(int faceId, const Quantity_Color& color)
     {
@@ -967,13 +974,15 @@ namespace
                 auto old = g_routePieces.find(pieceId);
                 if (old != g_routePieces.end()) { g_ctx->Remove(old->second.ais, Standard_False); g_routePieces.erase(old); }
                 Handle(AIS_Shape) ais = new AIS_Shape(projected);
-                const Quantity_Color color = connector ? Quantity_Color(0.1, 0.65, 1.0, Quantity_TOC_RGB) : Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB);
+                const Quantity_Color color = connector ? kConnectorRouteColor : kHeatingRouteColor;
+                const double width = connector ? 1.0 : kHeatingRouteWidth;
                 g_ctx->SetColor(ais, color, Standard_False);
+                g_ctx->SetWidth(ais, width, Standard_False);
                 if (connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
                 g_ctx->Display(ais, Standard_False); g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
                 // Every run and connector remains selectable for circuit hover.
                 g_ctx->Activate(ais, Standard_False);
-                g_routePieces[pieceId] = { ais, connector, true, color, 1.0 };
+                g_routePieces[pieceId] = { ais, connector, true, color, width };
             }
             return true;
         } catch (const Standard_Failure&) { return false; }
@@ -992,9 +1001,41 @@ namespace
         return true;
     }
 
+    void ClearRouteEndpointMarkersNative()
+    {
+        if (!g_ctx.IsNull())
+            for (const auto& marker : g_routeEndpointMarkers) g_ctx->Remove(marker, Standard_False);
+        g_routeEndpointMarkers.clear();
+    }
+
+    // 인출점/끝점을 눈에 띄는 원형 점으로 표시한다. xyz는 [x,y,z,...] 평면 배열.
+    void SetRouteEndpointsNative(const std::vector<double>& xyz)
+    {
+        ClearRouteEndpointMarkersNative();
+        if (g_ctx.IsNull() || xyz.empty() || xyz.size() % 3 != 0) return;
+        for (size_t i = 0; i < xyz.size(); i += 3) {
+            if (!std::isfinite(xyz[i]) || !std::isfinite(xyz[i + 1]) || !std::isfinite(xyz[i + 2])) continue;
+            Handle(AIS_Point) marker = new AIS_Point(new Geom_CartesianPoint(xyz[i], xyz[i + 1], xyz[i + 2]));
+            marker->SetMarker(Aspect_TOM_O_POINT);
+            marker->SetColor(kRouteEndpointColor);
+            Handle(Prs3d_PointAspect) pointAspect = marker->Attributes()->PointAspect();
+            if (pointAspect.IsNull()) {
+                pointAspect = new Prs3d_PointAspect(Aspect_TOM_O_POINT, kRouteEndpointColor, 6.0);
+                marker->Attributes()->SetPointAspect(pointAspect);
+            } else {
+                pointAspect->SetScale(6.0);
+            }
+            g_ctx->Display(marker, Standard_False);
+            g_ctx->SetZLayer(marker, Graphic3d_ZLayerId_Topmost);
+            g_ctx->Deactivate(marker, Standard_False);
+            g_routeEndpointMarkers.push_back(marker);
+        }
+    }
+
     void ClearRoutePiecesNative()
     {
         HighlightCircuitNative(std::vector<int>());
+        ClearRouteEndpointMarkersNative();
         if (!g_ctx.IsNull()) for (const auto& piece : g_routePieces) g_ctx->Remove(piece.second.ais, Standard_False);
         g_routePieces.clear();
         g_stagedWorkingRouteOwners.clear();
@@ -1215,11 +1256,15 @@ namespace
         if (g_ctx.IsNull() || g_view.IsNull()) return -1;
         g_ctx->MoveTo(x, y, g_view, Standard_False);
         Handle(SelectMgr_EntityOwner) owner = g_ctx->DetectedOwner();
-        if (owner.IsNull()) return -1;
-        Handle(AIS_InteractiveObject) selectable = Handle(AIS_InteractiveObject)::DownCast(owner->Selectable());
-        for (const auto& piece : g_routePieces)
-            if (piece.second.connector && piece.second.ais == selectable) return piece.first;
-        return -1;
+        int found = -1;
+        if (!owner.IsNull()) {
+            Handle(AIS_InteractiveObject) selectable = Handle(AIS_InteractiveObject)::DownCast(owner->Selectable());
+            for (const auto& piece : g_routePieces)
+                if (piece.second.connector && piece.second.ais == selectable) { found = piece.first; break; }
+        }
+        // 발열 경로(런)에는 AIS 동적 하이라이트(청록)를 쓰지 않는다. 커넥터 호버 피드백만 남긴다.
+        if (found < 0) g_ctx->ClearDetected(Standard_False);
+        return found;
     }
 
     void HighlightCircuitNative(const std::vector<int>& ids)
@@ -1532,7 +1577,8 @@ namespace
             if (!g_ctx.IsNull())
             {
                 Handle(AIS_Shape) overlay = new AIS_Shape(displayedRoute);
-                g_ctx->SetColor(overlay, Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB), Standard_False);
+                g_ctx->SetColor(overlay, kHeatingRouteColor, Standard_False);
+                g_ctx->SetWidth(overlay, kHeatingRouteWidth, Standard_False);
                 g_ctx->Display(overlay, Standard_False);
                 g_ctx->SetZLayer(overlay, Graphic3d_ZLayerId_Topmost);
                 g_ctx->Deactivate(overlay, Standard_False);
@@ -2584,6 +2630,18 @@ bool Bridge::SetConnectorEnabled(int pieceId, bool enabled, double r, double g, 
 
 void Bridge::ClearRoutePieces() { ClearRoutePiecesNative(); if (!g_view.IsNull()) g_view->Redraw(); }
 
+void Bridge::SetRouteEndpoints(array<double>^ xyzFlat)
+{
+    std::vector<double> xyz;
+    if (xyzFlat != nullptr)
+    {
+        xyz.resize(xyzFlat->Length);
+        for (int i = 0; i < xyzFlat->Length; ++i) xyz[i] = xyzFlat[i];
+    }
+    SetRouteEndpointsNative(xyz);
+    if (!g_view.IsNull()) g_view->Redraw();
+}
+
 array<double>^ Bridge::ProjectPowerLead(int leadId, array<double>^ sourceAndDestination,
     array<double>^ actualStart, array<int>^ faceIds, double dx, double dy, double dz, double depth)
 {
@@ -2632,10 +2690,15 @@ int Bridge::PickRoutePiece(int x, int y)
     if (g_ctx.IsNull() || g_view.IsNull()) return -1;
     g_ctx->MoveTo(x, y, g_view, Standard_False);
     Handle(SelectMgr_EntityOwner) owner = g_ctx->DetectedOwner();
-    if (owner.IsNull()) return -1;
-    Handle(AIS_InteractiveObject) selectable = Handle(AIS_InteractiveObject)::DownCast(owner->Selectable());
-    for (const auto& piece : g_routePieces) if (piece.second.ais == selectable) return piece.first;
-    return -1;
+    int found = -1;
+    if (!owner.IsNull())
+    {
+        Handle(AIS_InteractiveObject) selectable = Handle(AIS_InteractiveObject)::DownCast(owner->Selectable());
+        for (const auto& piece : g_routePieces) if (piece.second.ais == selectable) { found = piece.first; break; }
+    }
+    // 회로 하이라이트(노랑)만 사용한다 — AIS 동적 하이라이트(청록)는 표시하지 않는다.
+    g_ctx->ClearDetected(Standard_False);
+    return found;
 }
 void Bridge::HighlightCircuit(array<int>^ pieceIds)
 {
