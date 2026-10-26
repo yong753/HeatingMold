@@ -5,6 +5,9 @@ struct WorkingNative
     gp_Pnt origin;
     gp_Dir x, y, n;
     std::unique_ptr<IntCurvesFace_ShapeIntersector> intersector;
+    // 선택 면 집합만 적재한 레이캐스트 대상. key=(revision 내) 정렬된 face id 목록.
+    // 곡면 라우팅은 이 대상으로만 판정하므로 가까운 비선택 벽면이 앞을 가로막지 않는다.
+    std::map<std::string, std::shared_ptr<IntCurvesFace_ShapeIntersector>> faceTargets;
     std::vector<double> triangles;
     double deflection = 0.05;
     double rayLength = 0;
@@ -68,6 +71,57 @@ WorkingNative* FindWorking(long long id, long long revision)
     const auto it = g_working.find(id);
     return revision == g_modelRevision && it != g_working.end() && it->second->revision == revision
         ? it->second.get() : nullptr;
+}
+
+// 선택 면만으로 구성한 레이캐스트 대상. BRep_Builder 복합체는 원래 TopoDS_Face의
+// TShape/Location을 그대로 보존하므로 교차 결과를 g_faceMap으로 정확히 되돌릴 수 있다.
+// (Sewing은 면을 새 TShape로 대체할 수 있어 face id 대응이 깨질 위험이 있다.)
+std::string WorkingFaceKey(const std::vector<int>& normalized)
+{
+    std::string key;
+    for (size_t i = 0; i < normalized.size(); ++i) {
+        if (i) key += ',';
+        key += std::to_string(normalized[i]);
+    }
+    return key;
+}
+
+std::string NormalizeWorkingFaceIds(const std::vector<int>& faces, std::vector<int>& normalized)
+{
+    normalized = faces;
+    std::sort(normalized.begin(), normalized.end());
+    normalized.erase(std::unique(normalized.begin(), normalized.end()), normalized.end());
+    return WorkingFaceKey(normalized);
+}
+
+bool BuildWorkingFaceTargetShape(const std::vector<int>& normalized, TopoDS_Shape& target)
+{
+    if (normalized.empty()) return false;
+    BRep_Builder builder;
+    TopoDS_Compound compound;
+    builder.MakeCompound(compound);
+    for (int faceId : normalized) {
+        if (faceId < 0 || faceId >= static_cast<int>(g_faces.size())) return false;
+        builder.Add(compound, g_faces[faceId]);
+    }
+    target = compound;
+    return !target.IsNull();
+}
+
+IntCurvesFace_ShapeIntersector* GetWorkingFaceTarget(WorkingNative* ctx, const std::vector<int>& normalized)
+{
+    if (!ctx || normalized.empty()) return nullptr;
+    const std::string key = WorkingFaceKey(normalized);
+    const auto found = ctx->faceTargets.find(key);
+    if (found != ctx->faceTargets.end()) return found->second.get();
+    TopoDS_Shape target;
+    if (!BuildWorkingFaceTargetShape(normalized, target)) return nullptr;
+    auto intersector = std::make_shared<IntCurvesFace_ShapeIntersector>();
+    intersector->Load(target, Precision::Confusion());
+    // 라우팅은 영역 단위로 한두 개의 면 집합만 쓴다. 무한히 쌓이지 않게 상한을 둔다.
+    if (ctx->faceTargets.size() >= 8) ctx->faceTargets.clear();
+    ctx->faceTargets.emplace(key, intersector);
+    return intersector.get();
 }
 
 long long CreateWorkingNative(double nx, double ny, double nz, double xx, double xy, double xz)
@@ -156,6 +210,100 @@ WorkingStatusNative QueryWorkingNative(long long id, long long revision, double 
         if (outNormal) { outNormal[0]=normal.X(); outNormal[1]=normal.Y(); outNormal[2]=normal.Z(); }
         return std::fabs(normal.Dot(gp_Vec(d))) < 1e-7 ? WorkingStatusNative::Tangent : WorkingStatusNative::Hit;
     } catch (const Standard_Failure&) { return WorkingStatusNative::GeometryFailure; }
+}
+
+// 곡면 라우팅의 단일 매핑 경로: 2D 데이텀 점 → 선택 면 집합만 대상으로 한 레이캐스트.
+// 레이가 선택 집합의 최근접 IN/ON 교차점에 닿으므로, 전역 모델 레이캐스트에서 가까운
+// 비선택 벽면이 앞을 가로막아 Miss로 판정되던 문제가 없다. 동일한 2D 점은 항상 동일한
+// 3D 점을 돌려주므로 인접 조각의 끝점도 자동으로 일치한다.
+WorkingStatusNative MapWorkingPointOntoFacesNative(long long id, long long revision,
+    const std::vector<int>& faces, double u, double v, double* out, int& faceId, double* outNormal = nullptr)
+{
+    WorkingNative* ctx = FindWorking(id, revision);
+    if (!ctx) return WorkingStatusNative::StaleContext;
+    if (!out || faces.empty() || !std::isfinite(u) || !std::isfinite(v))
+        return WorkingStatusNative::InvalidInput;
+    std::vector<int> normalized;
+    NormalizeWorkingFaceIds(faces, normalized);
+    // 중복 id는 호출 측 버그다. 조용히 합치면 선택 집합 검증이 흐려진다.
+    if (normalized.size() != faces.size()) return WorkingStatusNative::InvalidInput;
+    for (int candidate : normalized)
+        if (candidate < 0 || candidate >= static_cast<int>(g_faces.size()))
+            return WorkingStatusNative::InvalidInput;
+    try {
+        IntCurvesFace_ShapeIntersector* hits = GetWorkingFaceTarget(ctx, normalized);
+        if (!hits) return WorkingStatusNative::GeometryFailure;
+        const gp_Pnt origin = ctx->origin.Translated(gp_Vec(ctx->x) * u + gp_Vec(ctx->y) * v);
+        const gp_Dir d = ctx->n.Reversed();
+        hits->Perform(gp_Lin(origin, d), 0, ctx->rayLength);
+        if (!hits->IsDone()) return WorkingStatusNative::GeometryFailure;
+        int best = 0;
+        double nearest = 1e100;
+        for (int i = 1; i <= hits->NbPnt(); ++i) {
+            const double t = hits->WParameter(i);
+            if (!std::isfinite(t)) return WorkingStatusNative::GeometryFailure;
+            if (t >= 0 && t < nearest && (hits->State(i) == TopAbs_IN || hits->State(i) == TopAbs_ON)) {
+                nearest = t;
+                best = i;
+            }
+        }
+        if (!best) return WorkingStatusNative::Miss;
+        const gp_Pnt p = hits->Pnt(best);
+        if (!std::isfinite(p.X()) || !std::isfinite(p.Y()) || !std::isfinite(p.Z()))
+            return WorkingStatusNative::GeometryFailure;
+        const TopoDS_Face hitFace = hits->Face(best);
+        const int hitId = g_faceMap.FindIndex(hitFace) - 1;
+        if (hitId < 0) return WorkingStatusNative::GeometryFailure;
+        if (std::find(normalized.begin(), normalized.end(), hitId) == normalized.end())
+            return WorkingStatusNative::GeometryFailure;
+        out[0] = p.X(); out[1] = p.Y(); out[2] = p.Z();
+        faceId = hitId;
+        BRepAdaptor_Surface surface(hitFace);
+        gp_Vec normal;
+        if (surface.GetType() == GeomAbs_Sphere) normal = gp_Vec(surface.Sphere().Location(), p);
+        else {
+            gp_Pnt q; gp_Vec du, dv;
+            surface.D1(hits->UParameter(best), hits->VParameter(best), q, du, dv);
+            normal = du.Crossed(dv);
+        }
+        if (outNormal && std::isfinite(normal.SquareMagnitude()) && normal.SquareMagnitude() >= 1e-24) {
+            normal.Normalize();
+            outNormal[0] = normal.X(); outNormal[1] = normal.Y(); outNormal[2] = normal.Z();
+        }
+        return WorkingStatusNative::Hit;
+    } catch (const Standard_Failure&) { return WorkingStatusNative::GeometryFailure; }
+}
+
+// 매핑 실패 시 최후 수단: 대상 면 집합까지의 최근접 점으로 스냅한다. 면 위 점이 아니면
+// (모서리/꼭짓점 지원) faceId=-1로 두고 호출 측이 진단에만 사용한다.
+bool SnapWorkingPointToFacesNative(const std::vector<double>& xyz, const std::vector<int>& faces,
+    double tolerance, double* out, int& faceId)
+{
+    faceId = -1;
+    if (xyz.size() != 3 || faces.empty() || !out || !std::isfinite(tolerance) || tolerance <= 0 ||
+        !std::isfinite(xyz[0]) || !std::isfinite(xyz[1]) || !std::isfinite(xyz[2])) return false;
+    std::vector<int> normalized;
+    NormalizeWorkingFaceIds(faces, normalized);
+    if (normalized.size() != faces.size()) return false;
+    try {
+        TopoDS_Shape target;
+        if (!BuildWorkingFaceTargetShape(normalized, target)) return false;
+        BRepExtrema_DistShapeShape distance(
+            BRepBuilderAPI_MakeVertex(gp_Pnt(xyz[0], xyz[1], xyz[2])).Vertex(), target);
+        if (!distance.IsDone() || distance.NbSolution() < 1 || distance.Value() > tolerance) return false;
+        const gp_Pnt p = distance.PointOnShape2(1);
+        if (!std::isfinite(p.X()) || !std::isfinite(p.Y()) || !std::isfinite(p.Z())) return false;
+        if (distance.SupportTypeShape2(1) == TopAbs_FACE) {
+            const TopoDS_Shape support = distance.SupportOnShape2(1);
+            if (!support.IsNull()) {
+                const int id = g_faceMap.FindIndex(support) - 1;
+                if (id >= 0 && std::find(normalized.begin(), normalized.end(), id) != normalized.end())
+                    faceId = id;
+            }
+        }
+        out[0] = p.X(); out[1] = p.Y(); out[2] = p.Z();
+        return true;
+    } catch (const Standard_Failure&) { return false; }
 }
 
 bool WorkingVisibleNative(long long id, long long revision, double x,double y,double z,double tolerance)
@@ -523,6 +671,53 @@ int PickFacePointNative(int x, int y, double* point, int& faceId, double* normal
 }
 
 // ---- 인출면과 가열면이 공유하는 실제 CAD edge → 3D 폴리라인 ----
+bool FaceRegionIsClosedNative(int faceId)
+{
+    // A face whose boundary is made only of seam/degenerate edges has no free
+    // border to extract a region loop from (full sphere, full lateral torus...).
+    // Seams are traversed twice by TopExp_Explorer while free edges appear once,
+    // so comparing edge occurrences avoids relying on BRep_Tool::IsClosed flags
+    // that depend on the face's internal representation.
+    if (faceId < 0 || faceId >= static_cast<int>(g_faces.size())) return false;
+    try {
+        const TopoDS_Face& face = g_faces[faceId];
+        TopTools_IndexedMapOfShape unique;
+        int occurrences = 0;
+        for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const TopoDS_Edge& edge = TopoDS::Edge(ex.Current());
+            if (BRep_Tool::Degenerated(edge)) continue;
+            ++occurrences;
+            unique.Add(edge);
+        }
+        if (occurrences == 0) {
+            // A complete closed surface (e.g. a full sphere) may have no edges at all.
+            BRepAdaptor_Surface surface(face);
+            return surface.IsUClosed() || surface.IsVClosed();
+        }
+        return unique.Extent() * 2 <= occurrences;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool GetFaceAxisNative(int faceId, double* out)
+{
+    if (faceId < 0 || faceId >= static_cast<int>(g_faces.size()) || out == nullptr) return false;
+    try {
+        BRepAdaptor_Surface surface(g_faces[faceId]);
+        gp_Dir direction;
+        switch (surface.GetType()) {
+        case GeomAbs_Cylinder: direction = surface.Cylinder().Axis().Direction(); break;
+        case GeomAbs_Cone: direction = surface.Cone().Axis().Direction(); break;
+        default: return false;
+        }
+        out[0] = direction.X(); out[1] = direction.Y(); out[2] = direction.Z();
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 bool SharedBoundaryNative(int exitFaceId, const std::vector<int>& heatingFaces,
     double deflection, std::vector<std::vector<double>>& out)
 {
@@ -565,58 +760,83 @@ bool SharedBoundaryNative(int exitFaceId, const std::vector<int>& heatingFaces,
     } catch (const Standard_Failure&) { return false; }
 }
 
-// ---- 인출 리드(미사용): 2D 프레임 왕복 정확도에 의존하므로 현재 인출 리드는
-//      투영 경로(StageProjectedWorkingRoutePiece)로 스테이징한다. 3D 인출면 리드 구현 시 재검증 필요. ----
-bool StageWorkingExitPieceNative(long long id, long long revision, int stageId,
+// ---- 곡면 라우팅: 이미 3D로 매핑된 조각을 재투영 없이 그대로 스테이징한다. ----
+// 점-면 거리(BRepExtrema)로만 검증하고 폴리라인을 직접 표시한다. BRepProj 재투영을
+// 하지 않으므로 데이텀 평면 밖으로 나간 점이 경계 밖으로 밀려나는 문제가 없다.
+bool StageSurfaceMappedRoutePieceNative(long long id, long long revision, int stageId, const std::string& kind,
     const std::vector<double>& xyz, const std::vector<int>& faces, double* result)
 {
+    g_workingStageInputs = "mapped pts=" + std::to_string(xyz.size() / 3);
     if (stageId >= 0 || g_ctx.IsNull() || !FindWorking(id, revision) || xyz.size() < 6 || xyz.size() % 3 ||
         faces.empty() || !result || g_routePieces.count(stageId) ||
-        g_stagedWorkingRouteOwners.count(stageId) || g_stagedWorkingPolylines.count(stageId)) return false;
+        g_stagedWorkingRouteOwners.count(stageId) || g_stagedWorkingPolylines.count(stageId))
+        return WorkingStageFail("stage-precheck");
+    g_workingStageDiagnostic.clear();
     Handle(AIS_Shape) ais;
     try {
-        BRepBuilderAPI_Sewing sewing(0.01, Standard_True, Standard_True, Standard_True, Standard_True);
-        std::set<int> unique;
-        for (int face : faces) {
-            if (face < 0 || face >= static_cast<int>(g_faces.size())) return false;
-            if (unique.insert(face).second) sewing.Add(g_faces[face]);
-        }
-        sewing.Perform();
-        const TopoDS_Shape target = sewing.SewedShape();
-        if (target.IsNull()) return false;
-        // 인출 리드는 마진 밴드 안, 즉 선택 면 위에만 놓인다.
+        std::vector<int> normalized;
+        NormalizeWorkingFaceIds(faces, normalized);
+        if (normalized.size() != faces.size()) return WorkingStageFail("duplicate-faces");
+        TopoDS_Shape target;
+        if (!BuildWorkingFaceTargetShape(normalized, target)) return WorkingStageFail("target-failure");
+        std::vector<gp_Pnt> points;
         for (size_t i = 0; i < xyz.size(); i += 3) {
-            if (!std::isfinite(xyz[i]) || !std::isfinite(xyz[i+1]) || !std::isfinite(xyz[i+2])) return false;
-            const gp_Pnt p(xyz[i], xyz[i+1], xyz[i+2]);
+            if (!std::isfinite(xyz[i]) || !std::isfinite(xyz[i + 1]) || !std::isfinite(xyz[i + 2]))
+                return WorkingStageFail("nonfinite-point");
+            const gp_Pnt p(xyz[i], xyz[i + 1], xyz[i + 2]);
+            if (!points.empty() && points.back().Distance(p) <= Precision::Confusion()) continue;
             BRepExtrema_DistShapeShape distance(BRepBuilderAPI_MakeVertex(p).Vertex(), target);
-            if (!distance.IsDone() || distance.Value() > 0.05) return false;
+            if (!distance.IsDone()) return WorkingStageFail("distance-failure");
+            if (distance.Value() > 0.05)
+                return WorkingStageFail("off-surface " + std::to_string(distance.Value()));
+            points.push_back(p);
         }
+        if (points.size() < 2) return WorkingStageFail("degenerate-polyline");
         BRepBuilderAPI_MakePolygon poly;
-        for (size_t i = 0; i < xyz.size(); i += 3) poly.Add(gp_Pnt(xyz[i], xyz[i+1], xyz[i+2]));
-        if (!poly.IsDone()) return false;
-        GProp_GProps props; BRepGProp::LinearProperties(poly.Wire(), props);
-        if (!std::isfinite(props.Mass()) || props.Mass() <= Precision::Confusion()) return false;
-        result[0]=props.Mass(); result[1]=xyz[0]; result[2]=xyz[1]; result[3]=xyz[2];
-        result[4]=xyz[xyz.size()-3]; result[5]=xyz[xyz.size()-2]; result[6]=xyz[xyz.size()-1];
-        ais = new AIS_Shape(poly.Wire());
-        const Quantity_Color color(0.95,0.55,0.10,Quantity_TOC_RGB);
-        g_ctx->SetColor(ais,color,Standard_False);
-        g_ctx->Display(ais,Standard_False);
-        g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost);
-        g_ctx->Activate(ais,Standard_False);
-        auto inserted=g_routePieces.emplace(stageId,RoutePieceOverlay{ais,false,true,color,1.0});
-        if(!inserted.second) { g_ctx->Remove(ais,Standard_False); return false; }
-        try { if(!g_stagedWorkingRouteOwners.emplace(stageId,std::make_pair(id,revision)).second)
+        for (const gp_Pnt& p : points) poly.Add(p);
+        if (!poly.IsDone()) return WorkingStageFail("polygon-failure");
+        const TopoDS_Wire wire = poly.Wire();
+        GProp_GProps props; BRepGProp::LinearProperties(wire, props);
+        if (!std::isfinite(props.Mass()) || props.Mass() <= Precision::Confusion())
+            return WorkingStageFail("zero-length");
+        result[0] = props.Mass();
+        result[1] = points.front().X(); result[2] = points.front().Y(); result[3] = points.front().Z();
+        result[4] = points.back().X(); result[5] = points.back().Y(); result[6] = points.back().Z();
+        ais = new AIS_Shape(wire);
+        std::string k = kind;
+        std::transform(k.begin(), k.end(), k.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        const bool connector = k == "turnconnector" || k == "turn";
+        const bool lead = k == "exitpiece" || k == "exit";
+        const Quantity_Color color = connector ? Quantity_Color(0.1, 0.65, 1.0, Quantity_TOC_RGB)
+            : (lead ? Quantity_Color(0.95, 0.55, 0.10, Quantity_TOC_RGB)
+                    : Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB));
+        g_ctx->SetColor(ais, color, Standard_False);
+        if (connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
+        g_ctx->Display(ais, Standard_False);
+        g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
+        g_ctx->Activate(ais, Standard_False);
+        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, connector, true, color, 1.0});
+        if (!inserted.second) { g_ctx->Remove(ais, Standard_False); return WorkingStageFail("display-id-collision"); }
+        try { if (!g_stagedWorkingRouteOwners.emplace(stageId, std::make_pair(id, revision)).second)
                 throw std::runtime_error("staged route owner collision"); }
-        catch(...) { g_ctx->Remove(ais,Standard_False); g_routePieces.erase(stageId); throw; }
+        catch (...) { g_ctx->Remove(ais, Standard_False); g_routePieces.erase(stageId); throw; }
         return true;
-    } catch(...) {
-        if(!ais.IsNull()&&!g_ctx.IsNull()) { try { g_ctx->Remove(ais,Standard_False); } catch(...) {} }
-        auto owner=g_stagedWorkingRouteOwners.find(stageId);
-        if(owner!=g_stagedWorkingRouteOwners.end()&&owner->second==std::make_pair(id,revision)) g_stagedWorkingRouteOwners.erase(owner);
-        auto route=g_routePieces.find(stageId);
-        if(route!=g_routePieces.end()&&route->second.ais==ais) g_routePieces.erase(route);
-        return false;
+    } catch (const Standard_Failure& failure) {
+        if (!ais.IsNull() && !g_ctx.IsNull()) { try { g_ctx->Remove(ais, Standard_False); } catch (...) {} }
+        auto owner = g_stagedWorkingRouteOwners.find(stageId);
+        if (owner != g_stagedWorkingRouteOwners.end() && owner->second == std::make_pair(id, revision))
+            g_stagedWorkingRouteOwners.erase(owner);
+        auto route = g_routePieces.find(stageId);
+        if (route != g_routePieces.end() && route->second.ais == ais) g_routePieces.erase(route);
+        return WorkingStageFail(std::string("exception ") + (failure.GetMessageString() ? failure.GetMessageString() : ""));
+    } catch (...) {
+        if (!ais.IsNull() && !g_ctx.IsNull()) { try { g_ctx->Remove(ais, Standard_False); } catch (...) {} }
+        auto owner = g_stagedWorkingRouteOwners.find(stageId);
+        if (owner != g_stagedWorkingRouteOwners.end() && owner->second == std::make_pair(id, revision))
+            g_stagedWorkingRouteOwners.erase(owner);
+        auto route = g_routePieces.find(stageId);
+        if (route != g_routePieces.end() && route->second.ais == ais) g_routePieces.erase(route);
+        return WorkingStageFail("exception");
     }
 }
 

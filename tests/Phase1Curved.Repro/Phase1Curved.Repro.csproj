@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The app references x64/Release/OccBridge.dll; build the native bridge before running. -->
+    <Reference Include="OccBridge"><HintPath>../../x64/Release/OccBridge.dll</HintPath></Reference>
+    <ProjectReference Include="../../src/HeatingMold.Core/HeatingMold.Core.csproj" />
+    <None Include="../../x64/Release/OccBridge.dll" Link="OccBridge.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../x64/Release/Ijwhost.dll" Link="Ijwhost.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

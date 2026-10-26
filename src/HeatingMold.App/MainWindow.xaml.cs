@@ -478,14 +478,18 @@ namespace HeatingMold.App
                 _selectedFaceIds.OrderBy(id => id).ToArray(), 0.05);
             if (sourceLoops == null || sourceLoops.Length == 0 || sourceLoops.Any(loop => !loop.Closed))
             {
-                _multiFaceRegionFailure = "원본 CAD 위상에서 닫힌 통합 경계를 구성하지 못했습니다. 선택 Face의 공유 Edge 연결을 확인하세요";
+                _multiFaceRegionFailure = _selectedFaceIds.Any(id => Bridge.FaceRegionIsClosed(id))
+                    ? "경계가 없는 닫힌 곡면은 Phase 1에서 미지원입니다 — 경계가 있는 열린 곡면 패치를 선택하세요"
+                    : "원본 CAD 위상에서 닫힌 통합 경계를 구성하지 못했습니다. 선택 Face의 공유 Edge 연결을 확인하세요";
                 return false;
             }
             if (sourceLoops.Length != 1)
             {
-                _multiFaceRegionFailure = string.Format(
-                    "원본 통합 경계가 {0}개 루프로 나뉩니다. 실제 구멍 또는 분리된 적용영역은 현재 경로 모드에서 지원하지 않습니다",
-                    sourceLoops.Length);
+                _multiFaceRegionFailure = sourceLoops.Length == 2 && SelectionAxisParallelToWorking()
+                    ? "이 방향에서는 영역을 구성할 수 없습니다 — 원통/원뿔 축이 작업 방향과 평행합니다. 작업 방향을 변경하세요"
+                    : string.Format(
+                        "원본 통합 경계가 {0}개 루프로 나뉩니다. 실제 구멍 또는 분리된 적용영역은 현재 경로 모드에서 지원하지 않습니다",
+                        sourceLoops.Length);
                 return false;
             }
             List<Vec3> firstPts = new();
@@ -506,6 +510,21 @@ namespace HeatingMold.App
             if (RegionOps.SignedArea(projected) < 0) projected.Reverse();
             region.Add(projected);
             frame = fixedFrame;
+            return true;
+        }
+
+        // 선택한 면이 모두 원통/원뿔이고 축이 작업 방향과 평행하면, 그 면은
+        // 전 둘레에 걸쳐 위/아래 두 루프로만 나뉘어 영역을 만들 수 없다.
+        private bool SelectionAxisParallelToWorking()
+        {
+            if (_selectedFaceIds.Count == 0 || _workingSide.Confirmed == null) return false;
+            var n = _workingSide.Confirmed.Frame.Normal;
+            foreach (int id in _selectedFaceIds)
+            {
+                double[] axis = Bridge.GetFaceAxis(id);
+                if (axis == null) return false;
+                if (Math.Abs(Vec3.Dot(new Vec3(axis[0], axis[1], axis[2]), n)) < 0.999) return false;
+            }
             return true;
         }
 

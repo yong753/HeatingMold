@@ -104,12 +104,19 @@ public:
     static WorkingHit^ QueryWorkingSurface(long long id, long long revision, double u, double v);
     /// <summary>Cast against the complete model; succeeds only when its nearest trimmed hit belongs to faceIds.</summary>
     static WorkingHit^ QueryWorkingSurfaceForFaces(long long id, long long revision, array<int>^ faceIds, double u, double v);
+    /// <summary>Cast only against the selected faces (trimmed, nearest IN/ON hit). Deterministic: identical datum → identical 3D point.</summary>
+    static WorkingHit^ MapWorkingPointOntoFaces(long long id, long long revision, array<int>^ faceIds, double u, double v);
+    /// <summary>Nearest point on the selected faces within tolerance, for mapping fallbacks.</summary>
+    static WorkingHit^ SnapWorkingPointToFaces(double x, double y, double z, array<int>^ faceIds, double tolerance);
     static bool AreWorkingFacesAdjacent(long long id, long long revision, int faceA, int faceB);
     static RoutePieceResult^ DisplayWorkingRoutePiece(long long id, long long revision, int pieceId,
         System::String^ kind, array<double>^ xyzFlat);
     static bool StageWorkingPolyline(long long id, long long revision, int stageId, array<double>^ xyzFlat);
     static RoutePieceResult^ StageProjectedWorkingRoutePiece(long long id, long long revision, int stageId,
         System::String^ kind, array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);
+    /// <summary>Stage an already-mapped 3D route piece without re-projection; points are validated against the selected faces.</summary>
+    static RoutePieceResult^ StageSurfaceMappedRoutePiece(long long id, long long revision, int stageId,
+        System::String^ kind, array<double>^ xyzFlat, array<int>^ faceIds);
     /// <summary>마지막 경로 조각 스테이징 실패 원인(성공 시 빈 문자열).</summary>
     static System::String^ GetWorkingStageDiagnostic();
     static RoutePieceResult^ StageProjectedWorkingPolyline(long long id, long long revision, int stageId,
@@ -138,6 +145,12 @@ public:
 
     /// <summary>면 타입 이름 (Plane/Cylinder/Cone/Sphere/Torus/BSplineSurface/...)</summary>
     static System::String^ GetFaceType(int faceIndex);
+
+    /// <summary>면의 경계가 모두 심/퇴화 에지인 닫힌 곡면인지 여부 (영역 경계를 만들 수 없음)</summary>
+    static bool FaceRegionIsClosed(int faceIndex);
+
+    /// <summary>원통/원뿔 면의 축 방향. 그 외 타입은 null</summary>
+    static array<double>^ GetFaceAxis(int faceIndex);
 
     /// <summary>면의 UV 경계 폴리곤 — 외곽 먼저, 이후 홀 (V3)</summary>
     static array<UvWire^>^ GetFaceUvBoundary(int faceIndex);

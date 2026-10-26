@@ -137,6 +137,7 @@ public partial class MainWindow
 
         var edges = Bridge.GetSharedBoundaryEdges(hit.FaceId, SortedFaceIds(area), 0.05);
         List<Vec2> chain = null;
+        List<Vec3> chain3D = null;
         double bestLength = 0;
         if (edges != null)
         {
@@ -144,15 +145,17 @@ public partial class MainWindow
             {
                 if (flat == null || flat.Length < 6) continue;
                 var points = new List<Vec2>();
+                var points3D = new List<Vec3>();
                 for (int i = 0; i + 2 < flat.Length; i += 3)
                 {
-                    var p = area.Frame.Project(new Vec3(flat[i], flat[i + 1], flat[i + 2]));
-                    if (points.Count == 0 || Dist(points[^1], p) > 1e-6) points.Add(p);
+                    var p3 = new Vec3(flat[i], flat[i + 1], flat[i + 2]);
+                    var p = area.Frame.Project(p3);
+                    if (points.Count == 0 || Dist(points[^1], p) > 1e-6) { points.Add(p); points3D.Add(p3); }
                 }
                 if (points.Count < 2) continue;
                 double length = 0;
                 for (int i = 1; i < points.Count; i++) length += Dist(points[i - 1], points[i]);
-                if (length > bestLength) { bestLength = length; chain = points; }
+                if (length > bestLength) { bestLength = length; chain = points; chain3D = points3D; }
             }
         }
         if (chain == null)
@@ -164,6 +167,7 @@ public partial class MainWindow
         area.ExitFaceId = hit.FaceId;
         area.ExitFaceRevision = hit.Revision;
         area.ExitChain = chain;
+        area.ExitChain3D = chain3D ?? new List<Vec3>();
         RecomputeAnchorCandidates(area);
         DrawRegionCanvas();
         SyncExitFaceUi(area);
@@ -183,6 +187,7 @@ public partial class MainWindow
         area.ExitFaceId = -1;
         area.ExitFaceRevision = 0;
         area.ExitChain = new List<Vec2>();
+        area.ExitChain3D = new List<Vec3>();
         area.StartAnchor = null;
         area.EndAnchor = null;
         area.AnchorCandidates.Clear();

@@ -30,6 +30,12 @@ internal sealed class WorkingArea
     /// <summary>인출면과 가열면의 공유 모서리를 작업영역 2D로 투영한 폴리라인.</summary>
     public List<Vec2> ExitChain { get; set; } = new();
 
+    /// <summary>ExitChain과 1:1로 대응하는 실제 CAD 모서리 3D 폴리라인.</summary>
+    public List<Vec3> ExitChain3D { get; set; } = new();
+
+    /// <summary>3D 체인이 2D 체인과 점 개수까지 일치할 때만 곡면 인출 리드 보정에 사용한다.</summary>
+    public bool HasExitChain3D => ExitChain.Count >= 2 && ExitChain3D.Count == ExitChain.Count;
+
     /// <summary>인출면 공유 모서리 위의 시작점(=전선 입구)/종료점(=출구).</summary>
     public Vec2? StartAnchor { get; set; }
     public Vec2? EndAnchor { get; set; }

@@ -192,6 +192,120 @@ public partial class MainWindow
         return xyz;
     }
 
+    /// <summary>곡면이 하나라도 포함된 영역인지. 평면 전용 영역은 기존 투영 경로를 유지한다.</summary>
+    private bool IsCurvedArea(WorkingArea area) =>
+        area.FaceIdSet.Any(id => !string.Equals(Bridge.GetFaceType(id), "Plane", StringComparison.Ordinal));
+
+    private string FaceTypesText(WorkingArea area) =>
+        string.Join(", ", SortedFaceIds(area).Select(id => "Face " + id + "=" + Bridge.GetFaceType(id)));
+
+    /// <summary>
+    /// 곡면 영역의 조각 하나를 데이텀 점 단위로 매핑해 3D 폴리라인으로 스테이징한다.
+    /// 2D 프레임 → 3D 평면 되돌리기와 BRepProj 재투영을 모두 쓰지 않는다.
+    /// </summary>
+    private RoutePieceResult StageCurvedRoutePiece(WorkingArea area, WorkingSideDefinition side,
+        SerpentineRoutePiece piece, int index, int count, int stageId)
+    {
+        int[] faces = SortedFaceIds(area);
+        Vec3? anchor3D = ResolveExitAnchor3D(area, piece, out Vec2? anchorDatum);
+        var hit = BuildCurvedMapDelegate(side, faces, anchorDatum, anchor3D, area.ExitFaceId);
+        if (!SurfacePathMapper.TryMapRoute(piece.Points, hit, out var samples, out string failure))
+            throw new InvalidOperationException(
+                "영역 " + area.Name + " 경로 조각 " + (index + 1) + "/" + count + " (" + piece.Kind + ") 매핑 실패 — "
+                + failure + " [" + FaceTypesText(area) + "]");
+
+        // 결정적 레이캐스트에서는 같은 데이텀 점이 항상 같은 3D 점을 내므로 인접 조각 끝점은
+        // 자동으로 일치한다. 여기서는 비인접 면으로 건너뛴 경우만 잡는다(앞/뒤면 붕괴 방지).
+        for (int i = 1; i < samples.Count; i++)
+        {
+            int previous = samples[i - 1].FaceId, current = samples[i].FaceId;
+            if (previous < 0 || current < 0 || previous == current) continue;
+            if (!Bridge.AreWorkingFacesAdjacent(side.Id.Value, side.Revision.Value, previous, current))
+                throw new InvalidOperationException(
+                    "영역 " + area.Name + " 경로 조각 " + (index + 1) + "/" + count + " (" + piece.Kind + ")가 인접하지 않은 면으로 건너뜁니다 — Face "
+                    + previous + " → Face " + current + " [" + FaceTypesText(area) + "]");
+        }
+
+        var xyz = new double[samples.Count * 3];
+        for (int i = 0; i < samples.Count; i++)
+        {
+            xyz[i * 3] = samples[i].Point.X;
+            xyz[i * 3 + 1] = samples[i].Point.Y;
+            xyz[i * 3 + 2] = samples[i].Point.Z;
+        }
+        var shown = Bridge.StageSurfaceMappedRoutePiece(
+            side.Id.Value, side.Revision.Value, stageId, piece.Kind.ToString(), xyz, faces);
+        if (shown == null)
+            throw new InvalidOperationException(
+                "영역 " + area.Name + " 경로 조각 " + (index + 1) + "/" + count + " (" + piece.Kind + ") 3D 스테이징 실패 ["
+                + FaceTypesText(area) + " | " + Bridge.GetWorkingStageDiagnostic() + "]");
+        return shown;
+    }
+
+    /// <summary>선택 면 집합만 대상으로 하는 매핑 대리자. 실패 시 전역 히트→0.5mm 스냅으로 보정한다.</summary>
+    private static Func<Vec2, SurfaceMappedSample?> BuildCurvedMapDelegate(WorkingSideDefinition side,
+        int[] faces, Vec2? anchorDatum, Vec3? anchor3D, int exitFaceId)
+    {
+        return uv =>
+        {
+            // 인출 리드의 끝점은 실측 CAD 공유 모서리 위 점을 그대로 쓴다(실루엣 붕괴 예외).
+            if (anchorDatum.HasValue && anchor3D.HasValue && uv == anchorDatum.Value)
+                return new SurfaceMappedSample(uv, anchor3D.Value, exitFaceId);
+            var direct = Bridge.MapWorkingPointOntoFaces(side.Id.Value, side.Revision.Value, faces, uv.X, uv.Y);
+            if (direct != null && direct.Status == WorkingQueryStatus.Hit && direct.Point != null)
+                return new SurfaceMappedSample(uv, new Vec3(direct.Point[0], direct.Point[1], direct.Point[2]), direct.FaceId);
+            // 폴백: 전역 레이캐스트 히트를 선택 면까지 0.5mm 이내로 스냅한다. 벽면이 얇아도
+            // 0.5mm를 넘으면 채택하지 않으므로 반대편 면으로 조용히 넘어가지 않는다.
+            var loose = Bridge.QueryWorkingSurface(side.Id.Value, side.Revision.Value, uv.X, uv.Y);
+            if (loose != null && loose.Status == WorkingQueryStatus.Hit && loose.Point != null)
+            {
+                var snapped = Bridge.SnapWorkingPointToFaces(loose.Point[0], loose.Point[1], loose.Point[2], faces, 0.5);
+                if (snapped != null && snapped.Status == WorkingQueryStatus.Hit && snapped.Point != null)
+                    return new SurfaceMappedSample(uv, new Vec3(snapped.Point[0], snapped.Point[1], snapped.Point[2]), snapped.FaceId);
+            }
+            return null;
+        };
+    }
+
+    /// <summary>인출 조각이면 끝점에 대응하는 실제 공유 모서리 3D 점을 찾는다.</summary>
+    private static Vec3? ResolveExitAnchor3D(WorkingArea area, SerpentineRoutePiece piece, out Vec2? datum)
+    {
+        datum = null;
+        if (piece.Kind != SerpentineRoutePieceKind.ExitPiece || !area.HasExitChain3D || piece.Points.Count == 0)
+            return null;
+        Vec2 first = piece.Points[0], last = piece.Points[^1];
+        if (area.StartAnchor.HasValue && (first == area.StartAnchor.Value || last == area.StartAnchor.Value))
+            datum = area.StartAnchor;
+        else if (area.EndAnchor.HasValue && (first == area.EndAnchor.Value || last == area.EndAnchor.Value))
+            datum = area.EndAnchor;
+        if (!datum.HasValue) return null;
+        return PointOnExitChain3D(area, datum.Value);
+    }
+
+    /// <summary>2D 인출 체인에서 가장 가까운 구간을 찾아 같은 구간 파라미터로 3D 점을 보간한다.</summary>
+    private static Vec3 PointOnExitChain3D(WorkingArea area, Vec2 datum)
+    {
+        double bestDistance = double.MaxValue;
+        int bestSegment = 1;
+        double bestT = 0;
+        for (int i = 1; i < area.ExitChain.Count; i++)
+        {
+            Vec2 a = area.ExitChain[i - 1], b = area.ExitChain[i];
+            double dx = b.X - a.X, dy = b.Y - a.Y;
+            double lengthSquared = dx * dx + dy * dy;
+            double t = lengthSquared <= 1e-18
+                ? 0
+                : Math.Clamp(((datum.X - a.X) * dx + (datum.Y - a.Y) * dy) / lengthSquared, 0, 1);
+            double px = a.X + dx * t - datum.X, py = a.Y + dy * t - datum.Y;
+            double distance = px * px + py * py;
+            if (distance < bestDistance) { bestDistance = distance; bestSegment = i; bestT = t; }
+        }
+        Vec3 p0 = area.ExitChain3D[bestSegment - 1], p1 = area.ExitChain3D[bestSegment];
+        return new Vec3(p0.X + (p1.X - p0.X) * bestT,
+                        p0.Y + (p1.Y - p0.Y) * bestT,
+                        p0.Z + (p1.Z - p0.Z) * bestT);
+    }
+
     /// <summary>
     /// 모든 작업영역의 경로를 한 번에 다시 스테이징/커밋한다. 네이티브 커밋은
     /// 기존 커밋 경로를 전부 교체하므로 영역 추가/삭제/재생성 시 이 경로만 사용한다.
@@ -221,19 +335,31 @@ public partial class MainWindow
                         area.NativePieceIds = AllocateNativePieceIds(count);
                     var pieces = new List<RoutePieceResult>();
                     var lengths = new List<double>();
+                    // 평면만 있는 영역은 기존 BRepProj 경로를 그대로 유지한다(회귀 없음).
+                    // 곡면이 하나라도 섞이면 데이텀 점 → 선택면 전용 레이캐스트 → 3D 폴리라인 스테이징.
+                    bool curved = IsCurvedArea(area);
                     for (int i = 0; i < count; i++)
                     {
                         int stageId = _nextStageId--;
                         var piece = area.Pattern.RoutePieces[i];
                         // 인출 리드(ExitPiece)도 다른 조각과 동일하게 작업 방향으로 투영한다.
                         // 2D 프레임 좌표를 3D로 되돌린 점은 평면에서만 정확하므로 절대 근접성 검사로는 판정하지 않는다.
-                        var shown = Bridge.StageProjectedWorkingRoutePiece(
-                            side.Id.Value, side.Revision.Value, stageId, piece.Kind.ToString(),
-                            Flatten(area.Frame, piece.Points), SortedFaceIds(area),
-                            -area.Frame.Normal.X, -area.Frame.Normal.Y, -area.Frame.Normal.Z);
+                        RoutePieceResult shown;
+                        if (curved)
+                        {
+                            shown = StageCurvedRoutePiece(area, side, piece, i, count, stageId);
+                        }
+                        else
+                        {
+                            shown = Bridge.StageProjectedWorkingRoutePiece(
+                                side.Id.Value, side.Revision.Value, stageId, piece.Kind.ToString(),
+                                Flatten(area.Frame, piece.Points), SortedFaceIds(area),
+                                -area.Frame.Normal.X, -area.Frame.Normal.Y, -area.Frame.Normal.Z);
+                        }
                         if (shown == null)
                             throw new InvalidOperationException(
-                                "영역 " + area.Name + " 경로 조각 " + (i + 1) + "/" + count + " (" + piece.Kind + ")를 적용면에 투영하지 못했습니다 — 선택면 경계 밖으로 나갔거나 곡면 투영에 실패했습니다 [" + Bridge.GetWorkingStageDiagnostic() + "]");
+                                "영역 " + area.Name + " 경로 조각 " + (i + 1) + "/" + count + " (" + piece.Kind + ")를 적용면에 투영하지 못했습니다 — 선택면 경계 밖으로 나갔거나 곡면 투영에 실패했습니다 ["
+                                + (curved ? FaceTypesText(area) + " | " : "") + Bridge.GetWorkingStageDiagnostic() + "]");
                         stagedRoutes.Add(stageId);
                         finalIds.Add(area.NativePieceIds[i]);
                         pieces.Add(shown);

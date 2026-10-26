@@ -2245,6 +2245,38 @@ WorkingHit^ Bridge::QueryWorkingSurfaceForFaces(long long id,long long revision,
     }
     return result;
 }
+WorkingHit^ Bridge::MapWorkingPointOntoFaces(long long id,long long revision,array<int>^ faceIds,double u,double v)
+{
+    auto result=gcnew WorkingHit();
+    result->ContextId=id; result->Revision=revision; result->DatumPoint=gcnew array<double>{u,v}; result->FaceId=-1;
+    if(faceIds==nullptr) { result->Status=WorkingQueryStatus::InvalidInput; return result; }
+    try {
+        std::vector<int> faces; for each(int candidate in faceIds) faces.push_back(candidate);
+        double p[3]={}, n[3]={}; int face=-1;
+        const auto status=MapWorkingPointOntoFacesNative(id,revision,faces,u,v,p,face,n);
+        result->Status=static_cast<WorkingQueryStatus>(static_cast<int>(status)); result->FaceId=face;
+        if(status==WorkingStatusNative::Hit||status==WorkingStatusNative::Tangent) {
+            result->Point=gcnew array<double>{p[0],p[1],p[2]};
+            result->Normal=gcnew array<double>{n[0],n[1],n[2]};
+            result->IsSelectedFace=true;
+        }
+        return result;
+    } catch(...) { result->Status=WorkingQueryStatus::GeometryFailure; return result; }
+}
+WorkingHit^ Bridge::SnapWorkingPointToFaces(double x,double y,double z,array<int>^ faceIds,double tolerance)
+{
+    auto result=gcnew WorkingHit(); result->ContextId=0; result->Revision=g_modelRevision; result->FaceId=-1;
+    if(faceIds==nullptr) { result->Status=WorkingQueryStatus::InvalidInput; return result; }
+    try {
+        std::vector<int> faces; for each(int candidate in faceIds) faces.push_back(candidate);
+        std::vector<double> xyz{x,y,z}; double p[3]={}; int face=-1;
+        if(SnapWorkingPointToFacesNative(xyz,faces,tolerance,p,face)) {
+            result->Status=WorkingQueryStatus::Hit; result->FaceId=face;
+            result->Point=gcnew array<double>{p[0],p[1],p[2]}; result->IsSelectedFace=true;
+        } else result->Status=WorkingQueryStatus::Miss;
+        return result;
+    } catch(...) { result->Status=WorkingQueryStatus::GeometryFailure; return result; }
+}
 bool Bridge::AreWorkingFacesAdjacent(long long id,long long revision,int faceA,int faceB)
 { return WorkingFacesAdjacentNative(id,revision,faceA,faceB); }
 RoutePieceResult^ Bridge::DisplayWorkingRoutePiece(long long id,long long revision,int pieceId,String^ kind,array<double>^ flat)
@@ -2271,6 +2303,15 @@ RoutePieceResult^ Bridge::StageProjectedWorkingRoutePiece(long long id,long long
     if(kind==nullptr||flat==nullptr||faceIds==nullptr) return nullptr;
     try { std::vector<double> xyz;std::vector<int> faces;for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
         double data[7]={};if(!StageProjectedWorkingRouteNative(id,revision,stageId,msclr::interop::marshal_as<std::string>(kind),xyz,faces,gp_Dir(dx,dy,dz),data))return nullptr;
+        auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;
+    } catch(...) { return nullptr; }
+}
+RoutePieceResult^ Bridge::StageSurfaceMappedRoutePiece(long long id,long long revision,int stageId,String^ kind,
+    array<double>^ flat,array<int>^ faceIds)
+{
+    if(kind==nullptr||flat==nullptr||faceIds==nullptr) return nullptr;
+    try { std::vector<double> xyz;std::vector<int> faces;for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
+        double data[7]={};if(!StageSurfaceMappedRoutePieceNative(id,revision,stageId,msclr::interop::marshal_as<std::string>(kind),xyz,faces,data))return nullptr;
         auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;
     } catch(...) { return nullptr; }
 }
@@ -2404,6 +2445,23 @@ String^ Bridge::GetFaceType(int faceIndex)
 {
     const char* name = FaceTypeName(faceIndex);
     return name == nullptr ? nullptr : gcnew String(name);
+}
+
+bool Bridge::FaceRegionIsClosed(int faceIndex)
+{
+    try { return FaceRegionIsClosedNative(faceIndex); }
+    catch (...) { return false; }
+}
+
+array<double>^ Bridge::GetFaceAxis(int faceIndex)
+{
+    double axis[3] = {0, 0, 0};
+    try {
+        if (!GetFaceAxisNative(faceIndex, axis)) return nullptr;
+        return gcnew array<double> {axis[0], axis[1], axis[2]};
+    } catch (...) {
+        return nullptr;
+    }
 }
 
 array<UvWire^>^ Bridge::GetFaceUvBoundary(int faceIndex)
