@@ -191,6 +191,183 @@ static class Program
         a == null || b == null ? double.MaxValue :
         Math.Sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]));
 
+    // ---- 면 쌍 진단 (--pairs) ----
+    // 게이트는 0.01mm sewing으로 연결을 판정(GetSelectedRegionBoundary)하고, seam 검사는 원본 Edge
+    // 공유로 판정(AreWorkingFacesAdjacent)한다. 같은 쌍에 대해 두 판정과 실제 최소거리를 같이 찍는다.
+    const int MaxDiagnosticBoundaryPoints = 200;
+
+    static List<Vec3> BoundaryPoints(int faceId)
+    {
+        var points = new List<Vec3>();
+        var loops = Bridge.GetSelectedRegionBoundary(new[] { faceId }, 0.05);
+        if (loops == null) return points;
+        foreach (var loop in loops)
+            for (int i = 0; i + 2 < loop.Points.Length; i += 3)
+                points.Add(new Vec3(loop.Points[i], loop.Points[i + 1], loop.Points[i + 2]));
+        if (points.Count <= MaxDiagnosticBoundaryPoints) return points;
+        int stride = (int)Math.Ceiling(points.Count / (double)MaxDiagnosticBoundaryPoints);
+        return points.Where((_, index) => index % stride == 0).ToList();
+    }
+
+    // 면 A의 경계 샘플을 면 B로 스냅해 최소거리를 구한다(경계→면 근사, BRepExtrema 기반).
+    static double MinBoundaryDistanceToFace(List<Vec3> points, int faceId)
+    {
+        double best = double.MaxValue;
+        foreach (var p in points)
+        {
+            var hit = Bridge.SnapWorkingPointToFaces(p.X, p.Y, p.Z, new[] { faceId }, 1e6);
+            if (hit == null || hit.Status != WorkingQueryStatus.Hit || hit.Point == null) continue;
+            double dx = hit.Point[0] - p.X, dy = hit.Point[1] - p.Y, dz = hit.Point[2] - p.Z;
+            best = Math.Min(best, Math.Sqrt(dx * dx + dy * dy + dz * dz));
+        }
+        return best;
+    }
+
+    static void RunFacePairDiagnostics(WorkingContext side, string spec)
+    {
+        var ids = spec.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(int.Parse).Distinct().ToArray();
+        Console.WriteLine($"=== face pair diagnostics: {string.Join(", ", ids)} ===");
+        var boundary = new Dictionary<int, List<Vec3>>();
+        foreach (int id in ids)
+        {
+            var own = Bridge.GetSelectedRegionBoundary(new[] { id }, 0.05);
+            var points = BoundaryPoints(id);
+            boundary[id] = points;
+            bool ownClosed = own != null && own.Length > 0 && own.All(loop => loop.Closed);
+            Console.WriteLine($"face {id}: type={Bridge.GetFaceType(id)} closedSurface={Bridge.FaceRegionIsClosed(id)} " +
+                $"ownLoops={own?.Length ?? 0} ownClosed={ownClosed} boundaryPts={points.Count}");
+            if (points.Count > 0)
+                Console.WriteLine($"  bbox=({points.Min(p => p.X):F3},{points.Min(p => p.Y):F3},{points.Min(p => p.Z):F3})" +
+                    $"..({points.Max(p => p.X):F3},{points.Max(p => p.Y):F3},{points.Max(p => p.Z):F3})");
+        }
+        for (int i = 0; i < ids.Length; i++)
+            for (int j = i + 1; j < ids.Length; j++)
+            {
+                int a = ids[i], b = ids[j];
+                bool adjacent = Bridge.AreWorkingFacesAdjacent(side.Id, side.Revision, a, b);
+                var union = Bridge.GetSelectedRegionBoundary(new[] { a, b }, 0.05);
+                bool unionClosed = union != null && union.Length > 0 && union.All(loop => loop.Closed);
+                Console.WriteLine($"pair {a}-{b}: topoAdjacent={adjacent} gateLoops={union?.Length ?? 0} gateClosed={unionClosed} " +
+                    $"bdist({a}->{b})={MinBoundaryDistanceToFace(boundary[a], b):F6} " +
+                    $"bdist({b}->{a})={MinBoundaryDistanceToFace(boundary[b], a):F6}");
+            }
+        var all = Bridge.GetSelectedRegionBoundary(ids.OrderBy(id => id).ToArray(), 0.05);
+        Console.WriteLine($"union({string.Join(",", ids.OrderBy(id => id))}): gateLoops={all?.Length ?? 0} " +
+            $"gateClosed={(all != null && all.Length > 0 && all.All(loop => loop.Closed))} " +
+            $"pts={(all == null ? 0 : all.Sum(loop => loop.Points.Length / 3))}");
+    }
+
+    // 선택 면 집합의 영역을 격자로 훑어 이웃 프로브 사이의 Face 전이와 그 3D 거리를 집계한다.
+    // seam 검사가 거부하는 전이가 실제 3D 점프(간극)인지, 접합면(≈0)인지 판정하는 근거다.
+    static void RunFlipScan(WorkingContext side, int[] faces, int grid)
+    {
+        var loops = Bridge.GetSelectedRegionBoundary(faces.OrderBy(id => id).ToArray(), 0.05);
+        if (loops == null || loops.Length == 0) { Console.WriteLine("no region loop"); return; }
+        Console.WriteLine($"regionLoops={loops.Length} closed={loops.All(loop => loop.Closed)} " +
+            $"pts={loops.Sum(loop => loop.Points.Length / 3)}");
+        var frame = Frame(side);
+        var ring = new List<Vec2>();
+        foreach (var loop in loops)
+            for (int i = 0; i + 2 < loop.Points.Length; i += 3)
+                ring.Add(frame.Project(new Vec3(loop.Points[i], loop.Points[i + 1], loop.Points[i + 2])));
+        double u0 = ring.Min(p => p.X), u1 = ring.Max(p => p.X);
+        double v0 = ring.Min(p => p.Y), v1 = ring.Max(p => p.Y);
+        Console.WriteLine($"region2D u=[{u0:F2},{u1:F2}] v=[{v0:F2},{v1:F2}] grid={grid} " +
+            $"step=({(u1 - u0) / grid:F3},{(v1 - v0) / grid:F3})");
+
+        var transitions = new Dictionary<(int, int), List<double>>();
+        var refined = new Dictionary<(int, int), List<double>>();
+        var refinedDatums = new Dictionary<(int, int), List<Vec2>>();
+        int valid = 0, miss = 0;
+        var previousRow = new (int face, Vec3 point, Vec2 datum)?[grid + 1];
+
+        void Register((int face, Vec3 point, Vec2 datum) a, (int face, Vec3 point, Vec2 datum) b)
+        {
+            var key = (a.face, b.face);
+            if (!transitions.TryGetValue(key, out var list)) transitions[key] = list = new List<double>();
+            list.Add((a.point - b.point).Length);
+            // 전이 지점을 이분 탐색으로 좁혀 실제 간극(같은 데이텀에서 양쪽 면까지의 3D 거리)을 잰다.
+            if (!refined.TryGetValue(key, out var gaps)) refined[key] = gaps = new List<double>();
+            if (gaps.Count >= 24) return;
+            double? gap = RefineFlipGap(side, faces, a, b);
+            if (gap.HasValue)
+            {
+                gaps.Add(gap.Value);
+                if (!refinedDatums.TryGetValue(key, out var datums)) refinedDatums[key] = datums = new List<Vec2>();
+                datums.Add(a.datum * 0.5 + b.datum * 0.5);
+            }
+        }
+
+        for (int j = 0; j <= grid; j++)
+        {
+            double v = v0 + (v1 - v0) * j / grid;
+            (int face, Vec3 point, Vec2 datum)? left = null;
+            for (int i = 0; i <= grid; i++)
+            {
+                double u = u0 + (u1 - u0) * i / grid;
+                (int face, Vec3 point, Vec2 datum)? current = null;
+                var hit = Bridge.MapWorkingPointOntoFaces(side.Id, side.Revision, faces, u, v);
+                if (hit != null && hit.Status == WorkingQueryStatus.Hit && hit.Point != null)
+                {
+                    current = (hit.FaceId, new Vec3(hit.Point[0], hit.Point[1], hit.Point[2]), new Vec2(u, v));
+                    ++valid;
+                }
+                else ++miss;
+                if (current.HasValue)
+                {
+                    if (left.HasValue && left.Value.face != current.Value.face)
+                        Register(left.Value, current.Value);
+                    if (previousRow[i].HasValue && previousRow[i].Value.face != current.Value.face)
+                        Register(previousRow[i].Value, current.Value);
+                }
+                left = current;
+                previousRow[i] = current;
+            }
+        }
+        Console.WriteLine($"probes valid={valid} miss={miss} distinctTransitions={transitions.Count}");
+        foreach (var entry in transitions.OrderByDescending(item => item.Value.Count).Take(12))
+        {
+            var distances = entry.Value.OrderBy(distance => distance).ToList();
+            var key = (entry.Key.Item1, entry.Key.Item2);
+            bool adjacent = Bridge.AreWorkingFacesAdjacent(side.Id, side.Revision, key.Item1, key.Item2);
+            double gapText = double.NaN;
+            string gapSummary = "n/a";
+            if (refined.TryGetValue(key, out var gaps) && gaps.Count > 0)
+            {
+                var sorted = gaps.OrderBy(gap => gap).ToList();
+                gapText = sorted[0];
+                gapSummary = $"refinedGap min={sorted[0]:F6} p50={sorted[sorted.Count / 2]:F6} max={sorted[^1]:F6} " +
+                    $"under0.01={sorted.Count(gap => gap < 0.01)}/{sorted.Count}";
+            }
+            Console.WriteLine($"  {key.Item1}->{key.Item2}: n={distances.Count} " +
+                $"gridStep min={distances[0]:F3} p50={distances[distances.Count / 2]:F3} max={distances[^1]:F3} mm " +
+                $"topoAdjacent={adjacent} {gapSummary}");
+            if (refinedDatums.TryGetValue(key, out var datums) && datums.Count > 0)
+                Console.WriteLine($"     gap={gapText:F6} at datum {string.Join(" ", datums.Take(4).Select(d => $"({d.X:F2},{d.Y:F2})"))}");
+        }
+    }
+
+    // a→b 전이를 이분 탐색해 데이텀 간격을 수 µm까지 좁힌 뒤, 같은 데이텀에서 두 면의 3D 점 거리를 반환한다.
+    static double? RefineFlipGap(WorkingContext side, int[] faces,
+        (int face, Vec3 point, Vec2 datum) a, (int face, Vec3 point, Vec2 datum) b)
+    {
+        Vec2 low = a.datum, high = b.datum;
+        int lowFace = a.face;
+        Vec3? lowPoint = a.point, highPoint = b.point;
+        for (int step = 0; step < 40; step++)
+        {
+            Vec2 middle = low * 0.5 + high * 0.5;
+            var hit = Bridge.MapWorkingPointOntoFaces(side.Id, side.Revision, faces, middle.X, middle.Y);
+            if (hit == null || hit.Status != WorkingQueryStatus.Hit || hit.Point == null) return null;
+            var point = new Vec3(hit.Point[0], hit.Point[1], hit.Point[2]);
+            if (hit.FaceId == lowFace) { low = middle; lowPoint = point; }
+            else { high = middle; highPoint = point; }
+        }
+        if (lowPoint == null || highPoint == null) return null;
+        return (lowPoint.Value - highPoint.Value).Length;
+    }
+
     static Vec3 Lerp(Vec3 a, Vec3 b, double t) =>
         new(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t, a.Z + (b.Z - a.Z) * t);
 
@@ -262,6 +439,35 @@ static class Program
         var frame = Frame(side);
         var sideDefinition = new WorkingSideDefinition(new WorkingSideId(side.Id), new ModelRevision(side.Revision), frame);
         int[] faces = { heatingFace };
+
+        // 진단 모드: --pairs 9,18,74,79 → 면 쌍의 위상 인접성/게이트 연결성/최소거리만 출력하고 종료.
+        int pairFlag = Array.FindIndex(args, a => a.Equals("--pairs", StringComparison.OrdinalIgnoreCase));
+        if (pairFlag >= 0)
+        {
+            string spec = pairFlag + 1 < args.Length && !args[pairFlag + 1].StartsWith("--", StringComparison.Ordinal)
+                ? args[pairFlag + 1]
+                : "9,18,74,79";
+            RunFacePairDiagnostics(side, spec);
+            Bridge.ReleaseWorkingContext(side.Id);
+            return 0;
+        }
+
+        // 진단 모드: --flips 9,18,74,79 [grid] → 영역 격자 스캔으로 Face 전이별 3D 거리를 집계하고 종료.
+        int flipFlag = Array.FindIndex(args, a => a.Equals("--flips", StringComparison.OrdinalIgnoreCase));
+        if (flipFlag >= 0)
+        {
+            string spec = flipFlag + 1 < args.Length && !args[flipFlag + 1].StartsWith("--", StringComparison.Ordinal)
+                ? args[flipFlag + 1]
+                : "9,18,74,79";
+            int grid = flipFlag + 2 < args.Length && int.TryParse(args[flipFlag + 2], out int parsed) && parsed > 1
+                ? parsed
+                : 200;
+            var ids = spec.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(int.Parse).Distinct().ToArray();
+            RunFlipScan(side, ids, grid);
+            Bridge.ReleaseWorkingContext(side.Id);
+            return 0;
+        }
 
         var loops = Bridge.GetSelectedRegionBoundary(faces, 0.05);
         Check(loops != null && loops.Length == 1 && loops[0].Closed, "selected region is a single closed loop");
