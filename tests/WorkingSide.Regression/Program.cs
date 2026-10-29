@@ -281,6 +281,59 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
         var farProbe=farFace>=0?Bridge.GetFaceNormal(farFace):null;
         Check(nearProbe!=null && farProbe!=null && Math.Abs(nearProbe[5])<1e-6 && Math.Abs(farProbe[5]+50)<1e-6 && nearFace!=farFace,
             "occluded click never falls through to the surface behind the nearest hit");
+        Check(Bridge.LoadStep(Path.Combine(args[0],"exitSides.stp")),"load exit-side fixture (box plus detached sheet)");
+        int boxTop=-1,boxBottom=-1,boxPlusX=-1,boxMinusX=-1,boxPlusY=-1,boxMinusY=-1,nakedSheet=-1;
+        for (int id=0;;++id)
+        {
+            var probe=Bridge.GetFaceNormal(id); if (probe==null) break;
+            if (probe[2]>0.9) { if (Math.Abs(probe[5]-20)<1e-6) boxTop=id; else if (Math.Abs(probe[5])<1e-6) nakedSheet=id; }
+            else if (probe[2]<-0.9 && Math.Abs(probe[5])<1e-6) boxBottom=id;
+            if (probe[0]>0.9 && Math.Abs(probe[3]-60)<1e-6) boxPlusX=id;
+            if (probe[0]<-0.9 && Math.Abs(probe[3])<1e-6) boxMinusX=id;
+            if (probe[1]>0.9 && Math.Abs(probe[4]-40)<1e-6) boxPlusY=id;
+            if (probe[1]<-0.9 && Math.Abs(probe[4])<1e-6) boxMinusY=id;
+        }
+        Check(boxTop>=0 && boxBottom>=0 && boxPlusX>=0 && boxMinusX>=0 && boxPlusY>=0 && boxMinusY>=0 && nakedSheet>=0,
+            "exit-side fixture exposes all six box faces and the detached sheet");
+        var topNeighbours=new HashSet<int>{boxPlusX,boxMinusX,boxPlusY,boxMinusY};
+        var exitSides=Bridge.GetBoundaryExitSides(new[]{boxTop},0.05);
+        Check(exitSides!=null && exitSides.Length==4,"box top boundary yields four side candidates");
+        double exitPerimeter=0; bool exitTopOnly=exitSides!=null; var exitFaceIds=new HashSet<int>();
+        if (exitSides!=null) foreach (var side in exitSides)
+        {
+            Check(side.Points!=null && side.Points.Length>=6 && side.FaceId!=boxTop,"exit-side candidate carries face id and polyline");
+            exitFaceIds.Add(side.FaceId);
+            for (int i=0;i+2<side.Points.Length;i+=3)
+            {
+                if (Math.Abs(side.Points[i+2]-20)>1e-3) exitTopOnly=false;
+                if (i>=3)
+                {
+                    double dx=side.Points[i]-side.Points[i-3],dy=side.Points[i+1]-side.Points[i-2],dz=side.Points[i+2]-side.Points[i-1];
+                    exitPerimeter+=Math.Sqrt(dx*dx+dy*dy+dz*dz);
+                }
+            }
+        }
+        Check(exitFaceIds.SetEquals(topNeighbours),"top-face boundary maps to the four neighbouring side faces");
+        Check(Math.Abs(exitPerimeter-200)<0.5 && exitTopOnly,"side candidates trace the exact top perimeter on the boundary plane");
+        var mergedNeighbours=new HashSet<int>{boxMinusX,boxPlusY,boxMinusY,boxBottom};
+        var mergedSides=Bridge.GetBoundaryExitSides(new[]{boxTop,boxPlusX},0.05);
+        double mergedLength=0; var mergedFaces=new HashSet<int>(); bool mergedPolyline=true;
+        if (mergedSides!=null) foreach (var side in mergedSides)
+        {
+            mergedPolyline&=side.Points!=null && side.Points.Length>=6;
+            mergedFaces.Add(side.FaceId);
+            for (int i=3;i+2<side.Points.Length;i+=3)
+            {
+                double dx=side.Points[i]-side.Points[i-3],dy=side.Points[i+1]-side.Points[i-2],dz=side.Points[i+2]-side.Points[i-1];
+                mergedLength+=Math.Sqrt(dx*dx+dy*dy+dz*dz);
+            }
+        }
+        Check(mergedSides!=null && mergedPolyline && mergedFaces.SetEquals(mergedNeighbours) && Math.Abs(mergedLength-240)<0.5,
+            "two-face region drops its seam and keeps the four remaining neighbours as boundary runs");
+        var nakedSides=Bridge.GetBoundaryExitSides(new[]{nakedSheet},0.05);
+        Check(nakedSides==null || nakedSides.Length==0,"detached sheet naked edges yield no exit-side candidate");
+        Check(Bridge.GetBoundaryExitSides(new[]{-1},0.05)==null && Bridge.GetBoundaryExitSides(Array.Empty<int>(),0.05)==null,
+            "invalid exit-side input is rejected");
         Check(!Bridge.LoadStep(Path.Combine(args[0],"absent.stp")),"failed model load");
         Check(Bridge.QueryWorkingSurface(afterStageReload.Id,afterStageReload.Revision,0,0).Status==WorkingQueryStatus.StaleContext,"failed reload also invalidates context");
         Check(Bridge.CreateWorkingContext(0,0,1,1,0,0)==null,"no context available without model");

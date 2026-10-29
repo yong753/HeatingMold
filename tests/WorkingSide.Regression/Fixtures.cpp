@@ -5,6 +5,7 @@
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS.hxx>
@@ -74,7 +75,12 @@ int main(int argc,char** argv)
     BRepBuilderAPI_MakeFace top(Rectangle(-50,-30,50,30,20));
     auto hole=Rectangle(-10,-10,10,10,20); hole.Reverse(); top.Add(hole);
     builder.Add(trimmed,top.Face()); builder.Add(trimmed,Sheet(-70,-50,70,50,0));
-    return write("layers",layered) && write("ring",ring) &&
+    // Solid box plus a detached sheet: the sheet has only naked boundary edges,
+    // so it must never produce an exit-side candidate.
+    TopoDS_Compound exitSides; builder.MakeCompound(exitSides);
+    builder.Add(exitSides,BRepPrimAPI_MakeBox(gp_Pnt(0,0,0),60,40,20).Shape());
+    builder.Add(exitSides,Sheet(100,0,140,40,0));
+    return write("exitSides",exitSides) && write("layers",layered) && write("ring",ring) &&
         write("trimmedVisibility",trimmed) &&
         write("tangentBack",tangentBack) && write("threePanels",ThreePanels()) &&
         write("sphere",BRepPrimAPI_MakeSphere(gp_Pnt(0,0,0),20).Shape()) &&

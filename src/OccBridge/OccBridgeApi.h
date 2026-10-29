@@ -31,6 +31,17 @@ public:
     property bool Closed;
 };
 
+/// <summary>
+/// 확정 영역 외곽 경계에서 도출한 인출 측면 후보 (연속 경계 Edge의 묶음).
+/// faceId는 경계 반대편 원본 모델 Face이며, Points는 그 구간의 3D polyline이다.
+/// </summary>
+public ref class ExitSideCandidate
+{
+public:
+    property int FaceId;
+    property array<double>^ Points; // flat: x0,y0,z0,...
+};
+
 public ref class HlrPolyline
 {
 public:
@@ -156,6 +167,17 @@ public:
     static array<UvWire^>^ GetFaceUvBoundary(int faceIndex);
     /// <summary>임시 0.01mm Sewing 후 공유 내부 Edge를 제거하고 외곽 루프를 3D 적응 샘플링해 반환.</summary>
     static array<RegionBoundaryLoop^>^ GetSelectedRegionBoundary(array<int>^ faceIds, double deflection);
+    /// <summary>
+    /// 확정 영역 외곽 경계 Edge의 반대편 인접면을 인출 측면 후보로 반환한다.
+    /// 연속 경계 Edge가 같은 면을 공유하면 하나의 후보(run)로 묶인다.
+    /// 나체 Edge(인접면 없음)는 후보에서 제외한다. 후보가 없으면 null/빈 배열.
+    /// </summary>
+    static array<ExitSideCandidate^>^ GetBoundaryExitSides(array<int>^ faceIds, double deflection);
+    /// <summary>인출 측면 후보를 임시 강조 표시한다 (이전 강조는 지운다).</summary>
+    static void ShowExitCandidates(array<array<double>^>^ polylines);
+    static void ClearExitCandidates();
+    /// <summary>화면 픽셀 거리 기준으로 가장 가까운 인출 측면 후보 인덱스를 반환한다. 없으면 -1.</summary>
+    static int PickExitCandidate(array<array<double>^>^ polylines, int x, int y, double pixelTolerance);
     /// <summary>UV → 3D 매핑 (V5)</summary>
     static array<double>^ SampleUvTo3D(int faceIndex, double u, double v);
     /// <summary>Pick the nearest visible point on the selected faces only when it is on their trim boundary.</summary>

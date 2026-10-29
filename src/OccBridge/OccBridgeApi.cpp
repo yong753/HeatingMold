@@ -47,6 +47,8 @@
 #include <Geom2d_Curve.hxx>
 #include <GeomAbs_CurveType.hxx>
 #include <GeomAbs_SurfaceType.hxx>
+#include <Geom_Curve.hxx>
+#include <GeomAPI_ProjectPointOnCurve.hxx>
 #include <IntCurvesFace_ShapeIntersector.hxx>
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
@@ -282,6 +284,8 @@ namespace
     void ClearRouteEndpointMarkersNative();
     std::vector<Handle(AIS_Shape)> g_exclusionOverlays;
     Handle(AIS_Shape) g_exclusionPreview;
+    // 인출 측면 후보 강조 (인출면 선택 모드에서만 표시)
+    std::vector<Handle(AIS_Shape)> g_exitCandidateOverlays;
     Handle(AIS_RubberBand) g_selectionRubberBand;
     int g_lastHoverFace = -1;      // W5 — 호버 하이라이트 중복 Redraw 억제
     bool g_faceHighlightsVisible = true;
@@ -755,9 +759,373 @@ namespace
         return !loops.empty();
     }
 
-    bool SamplePoint(int faceIndex, double u, double v, double* out)
+    // ---- 인출 측면 후보: 외곽 경계 Edge의 반대편 인접면 ----
+    // 연속 경계 Edge가 같은 원본 면을 공유하면 하나의 run(인출 측면)이 된다.
+
+    struct NativeExitSide
     {
-        if (faceIndex < 0 || faceIndex >= (int)g_faces.size()) return false;
+        int faceId = -1;
+        std::vector<double> xyz;
+    };
+
+    double EdgeLengthNative(const TopoDS_Edge& edge)
+    {
+        if (edge.IsNull()) return 0.0;
+        GProp_GProps props;
+        BRepGProp::LinearProperties(edge, props);
+        const double length = props.Mass();
+        return std::isfinite(length) ? length : 0.0;
+    }
+
+    /// <summary>
+    /// Sewing 사본의 경계 Edge와 기하학적으로 일치하는 원본(비선택) 면을 찾는다.
+    /// 토폴로지 동일성(IsSame)을 우선하고, 없으면 길이 + 3점 투영 거리로 판정한다.
+    /// 일치하는 면이 없으면 -1 (모델 끝의 나체 Edge).
+    /// </summary>
+    int FindAdjacentOriginalFace(const TopoDS_Edge& boundaryEdge, const std::set<int>& selected,
+                                 double tolerance)
+    {
+        if (boundaryEdge.IsNull()) return -1;
+        const double targetLength = EdgeLengthNative(boundaryEdge);
+        if (targetLength <= 0.0) return -1;
+        double first = 0.0, last = 0.0;
+        Handle(Geom_Curve) boundaryCurve;
+        try { boundaryCurve = BRep_Tool::Curve(boundaryEdge, first, last); }
+        catch (const Standard_Failure&) { return -1; }
+        if (boundaryCurve.IsNull() || !std::isfinite(first) || !std::isfinite(last) || last <= first)
+            return -1;
+
+        int bestFace = -1;
+        double bestDistance = tolerance;
+        for (int faceId = 0; faceId < static_cast<int>(g_faces.size()); ++faceId)
+        {
+            if (selected.count(faceId) != 0) continue;
+            for (TopExp_Explorer ex(g_faces[faceId], TopAbs_EDGE); ex.More(); ex.Next())
+            {
+                const TopoDS_Edge candidate = TopoDS::Edge(ex.Current());
+                if (candidate.IsNull()) continue;
+                // Sewing 사본이 원본 Edge를 그대로 재사용한 경우: 위상 동일성으로 즉시 확정.
+                if (candidate.IsSame(boundaryEdge)) return faceId;
+                const double candidateLength = EdgeLengthNative(candidate);
+                if (candidateLength <= 0.0 || std::fabs(candidateLength - targetLength) > tolerance) continue;
+                double cf = 0.0, cl = 0.0;
+                Handle(Geom_Curve) candidateCurve;
+                try { candidateCurve = BRep_Tool::Curve(candidate, cf, cl); }
+                catch (const Standard_Failure&) { continue; }
+                if (candidateCurve.IsNull() || !std::isfinite(cf) || !std::isfinite(cl) || cl <= cf) continue;
+
+                double maxDistance = 0.0;
+                bool matched = true;
+                for (int k = 1; k <= 3; ++k)
+                {
+                    const gp_Pnt sample = boundaryCurve->Value(first + (last - first) * (k / 4.0));
+                    GeomAPI_ProjectPointOnCurve projector(sample, candidateCurve, cf, cl);
+                    if (projector.NbPoints() == 0) { matched = false; break; }
+                    maxDistance = std::max(maxDistance, projector.LowerDistance());
+                }
+                if (matched && maxDistance <= tolerance && maxDistance < bestDistance)
+                {
+                    bestDistance = maxDistance;
+                    bestFace = faceId;
+                }
+            }
+        }
+        return bestFace;
+    }
+
+    /// <summary>
+    /// 확정 영역 외곽 경계를 따라 인출 측면 후보(run)를 만든다.
+    /// 영역 경계 추출과 동일한 0.01mm Sewing 공차/경계 분류를 사용한다.
+    /// </summary>
+    bool ExtractBoundaryExitSides(const std::vector<int>& faceIds, double deflection,
+                                  std::vector<NativeExitSide>& sides)
+    {
+        sides.clear();
+        if (faceIds.empty() || !std::isfinite(deflection) || deflection <= 0.0) return false;
+        std::set<int> selected;
+        for (int id : faceIds)
+        {
+            if (id < 0 || id >= static_cast<int>(g_faces.size())) return false;
+            selected.insert(id);
+        }
+
+        try
+        {
+            const double sewingTolerance = 0.01;
+            BRepBuilderAPI_Sewing sewing(sewingTolerance, Standard_True, Standard_True, Standard_True, Standard_True);
+            for (int faceId : selected) sewing.Add(g_faces[faceId]);
+            sewing.Perform();
+            const TopoDS_Shape workingShape = sewing.SewedShape();
+            if (workingShape.IsNull()) return false;
+
+            std::vector<TopoDS_Face> workingFaces;
+            for (TopExp_Explorer ex(workingShape, TopAbs_FACE); ex.More(); ex.Next())
+                workingFaces.push_back(TopoDS::Face(ex.Current()));
+            if (workingFaces.empty()) return false;
+
+            TopTools_IndexedMapOfShape edgeMap;
+            std::vector<int> uses;
+            for (const TopoDS_Face& face : workingFaces)
+                for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next())
+                {
+                    const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+                    int index = edgeMap.FindIndex(edge);
+                    if (index == 0)
+                    {
+                        edgeMap.Add(edge);
+                        uses.push_back(0);
+                        index = edgeMap.Extent();
+                    }
+                    ++uses[index - 1];
+                }
+
+            std::vector<int> boundaryIndices; // edgeMap의 1-based 인덱스
+            for (int count : uses) if (count > 2) return false; // 비다양체 선택 거부
+            for (int i = 1; i <= edgeMap.Extent(); ++i)
+                if (uses[i - 1] == 1) boundaryIndices.push_back(i);
+            if (boundaryIndices.empty()) return false;
+            std::vector<TopoDS_Edge> boundaryEdges;
+            for (int index : boundaryIndices) boundaryEdges.push_back(TopoDS::Edge(edgeMap(index)));
+
+            // 각 경계 Edge 반대편의 원본 면 (-1 = 나체 Edge). 봉합선(use==2)이 인덱스를
+            // 밀지 않도록 edgeMap 인덱스로 직접 보관한다.
+            std::vector<int> adjacent(edgeMap.Extent(), -1);
+            for (size_t i = 0; i < boundaryEdges.size(); ++i)
+                adjacent[boundaryIndices[i] - 1] =
+                    FindAdjacentOriginalFace(boundaryEdges[i], selected, sewingTolerance);
+
+            TopTools_IndexedMapOfShape vertexMap;
+            std::vector<std::vector<int>> incident;
+            auto addVertexEdge = [&](const TopoDS_Vertex& vertex, int edgeIndex)
+            {
+                if (vertex.IsNull()) return;
+                int index = vertexMap.FindIndex(vertex);
+                if (index == 0)
+                {
+                    vertexMap.Add(vertex);
+                    incident.emplace_back();
+                    index = vertexMap.Extent();
+                }
+                incident[index - 1].push_back(edgeIndex);
+            };
+            for (int i = 0; i < static_cast<int>(boundaryEdges.size()); ++i)
+            {
+                TopoDS_Vertex first, last;
+                TopExp::Vertices(boundaryEdges[i], first, last, Standard_True);
+                addVertexEdge(first, i);
+                addVertexEdge(last, i);
+            }
+            for (const auto& edgesAtVertex : incident)
+                if (edgesAtVertex.size() != 2) return false; // 분기/접촉 루프 거부
+
+            std::vector<bool> seen(boundaryEdges.size(), false);
+            for (int seed = 0; seed < static_cast<int>(boundaryEdges.size()); ++seed)
+            {
+                if (seen[seed]) continue;
+                std::vector<int> component, stack{ seed };
+                seen[seed] = true;
+                while (!stack.empty())
+                {
+                    int edgeIndex = stack.back(); stack.pop_back();
+                    component.push_back(edgeIndex);
+                    TopoDS_Vertex ends[2];
+                    TopExp::Vertices(boundaryEdges[edgeIndex], ends[0], ends[1], Standard_True);
+                    for (const TopoDS_Vertex& vertex : ends)
+                    {
+                        const int vi = vertexMap.FindIndex(vertex);
+                        if (vi <= 0) continue;
+                        for (int next : incident[vi - 1])
+                            if (!seen[next]) { seen[next] = true; stack.push_back(next); }
+                    }
+                }
+
+                BRepBuilderAPI_MakeWire wireBuilder;
+                for (int edgeIndex : component) wireBuilder.Add(boundaryEdges[edgeIndex]);
+                if (!wireBuilder.IsDone()) continue;
+                const TopoDS_Wire wire = wireBuilder.Wire();
+                if (!BRep_Tool::IsClosed(wire)) continue;
+                size_t orderedCount = 0;
+                for (BRepTools_WireExplorer check(wire); check.More(); check.Next()) ++orderedCount;
+                if (orderedCount != component.size()) continue;
+
+                // 와이어 순서로 같은 인접면의 연속 Edge를 하나의 run으로 누적한다.
+                std::vector<NativeExitSide> runs;
+                NativeExitSide current;
+                for (BRepTools_WireExplorer we(wire); we.More(); we.Next())
+                {
+                    const TopoDS_Edge edge = we.Current();
+                    const int mapIndex = edgeMap.FindIndex(edge);
+                    const int faceId = (mapIndex > 0 && mapIndex <= static_cast<int>(adjacent.size()))
+                        ? adjacent[mapIndex - 1] : -1;
+
+                    std::vector<gp_Pnt> points;
+                    bool sampled = false;
+                    try
+                    {
+                        BRepAdaptor_Curve curve(edge);
+                        GCPnts_QuasiUniformDeflection sampler(curve, deflection);
+                        if (sampler.IsDone() && sampler.NbPoints() >= 2 && sampler.NbPoints() <= 100000)
+                        {
+                            sampled = true;
+                            const bool reverse = edge.Orientation() == TopAbs_REVERSED;
+                            const int count = sampler.NbPoints();
+                            for (int k = 1; k <= count; ++k)
+                            {
+                                const gp_Pnt p = sampler.Value(reverse ? count - k + 1 : k);
+                                if (!std::isfinite(p.X()) || !std::isfinite(p.Y()) || !std::isfinite(p.Z()))
+                                { sampled = false; break; }
+                                points.push_back(p);
+                            }
+                        }
+                    }
+                    catch (const Standard_Failure&) { sampled = false; }
+
+                    if (faceId < 0 || !sampled)
+                    {
+                        // 반대편 면을 찾지 못한 구간(나체 Edge)은 후보 run을 끊는다.
+                        if (current.faceId >= 0 && current.xyz.size() >= 6) runs.push_back(std::move(current));
+                        current = NativeExitSide();
+                        continue;
+                    }
+                    if (current.faceId != faceId)
+                    {
+                        if (current.faceId >= 0 && current.xyz.size() >= 6) runs.push_back(std::move(current));
+                        current = NativeExitSide();
+                        current.faceId = faceId;
+                    }
+                    for (const gp_Pnt& p : points)
+                    {
+                        if (current.xyz.size() >= 3)
+                        {
+                            const size_t n = current.xyz.size();
+                            const gp_Pnt previous(current.xyz[n - 3], current.xyz[n - 2], current.xyz[n - 1]);
+                            if (previous.Distance(p) <= Precision::Confusion()) continue;
+                        }
+                        current.xyz.push_back(p.X());
+                        current.xyz.push_back(p.Y());
+                        current.xyz.push_back(p.Z());
+                    }
+                }
+                if (current.faceId >= 0 && current.xyz.size() >= 6) runs.push_back(std::move(current));
+
+                // 닫힌 루프: 마지막 run과 첫 run이 같은 면이면 하나로 합친다.
+                if (runs.size() >= 2 && runs.front().faceId == runs.back().faceId)
+                {
+                    NativeExitSide& tail = runs.back();
+                    for (size_t k = 0; k + 2 < runs.front().xyz.size(); k += 3)
+                    {
+                        const gp_Pnt p(runs.front().xyz[k], runs.front().xyz[k + 1], runs.front().xyz[k + 2]);
+                        if (tail.xyz.size() >= 3)
+                        {
+                            const size_t n = tail.xyz.size();
+                            const gp_Pnt previous(tail.xyz[n - 3], tail.xyz[n - 2], tail.xyz[n - 1]);
+                            if (previous.Distance(p) <= Precision::Confusion()) continue;
+                        }
+                        tail.xyz.push_back(p.X());
+                        tail.xyz.push_back(p.Y());
+                        tail.xyz.push_back(p.Z());
+                    }
+                    runs.erase(runs.begin());
+                }
+                for (auto& run : runs) sides.push_back(std::move(run));
+            }
+            return !sides.empty();
+        }
+        catch (const Standard_Failure&) { sides.clear(); return false; }
+    }
+
+    // ---- 인출 측면 후보 표시/픽 ----
+
+    void ClearExitCandidatesNative()
+    {
+        if (!g_ctx.IsNull())
+            for (const auto& overlay : g_exitCandidateOverlays)
+                g_ctx->Remove(overlay, Standard_False);
+        g_exitCandidateOverlays.clear();
+        if (!g_view.IsNull()) g_view->Redraw();
+    }
+
+    void ShowExitCandidatesNative(const std::vector<std::vector<double>>& polylines)
+    {
+        ClearExitCandidatesNative();
+        if (g_ctx.IsNull() || g_view.IsNull()) return;
+        try
+        {
+            for (const auto& pts : polylines)
+            {
+                if (pts.size() < 6 || pts.size() % 3 != 0) continue;
+                BRepBuilderAPI_MakePolygon polygon;
+                bool valid = true;
+                for (size_t i = 0; i + 2 < pts.size(); i += 3)
+                {
+                    if (!std::isfinite(pts[i]) || !std::isfinite(pts[i + 1]) || !std::isfinite(pts[i + 2]))
+                    { valid = false; break; }
+                    polygon.Add(gp_Pnt(pts[i], pts[i + 1], pts[i + 2]));
+                }
+                if (!valid || !polygon.IsDone()) continue;
+                Handle(AIS_Shape) overlay = new AIS_Shape(polygon.Wire());
+                g_ctx->SetColor(overlay, Quantity_Color(0.1, 0.9, 1.0, Quantity_TOC_RGB), Standard_False);
+                g_ctx->SetWidth(overlay, 4.0, Standard_False);
+                g_ctx->Display(overlay, Standard_False);
+                g_ctx->SetZLayer(overlay, Graphic3d_ZLayerId_Topmost);
+                g_ctx->Deactivate(overlay, Standard_False);
+                g_exitCandidateOverlays.push_back(overlay);
+            }
+            g_view->Redraw();
+        }
+        catch (const Standard_Failure&) { }
+    }
+
+    double ScreenDistanceToSegment(double px, double py, double ax, double ay, double bx, double by)
+    {
+        const double dx = bx - ax, dy = by - ay;
+        const double lengthSquared = dx * dx + dy * dy;
+        double t = 0.0;
+        if (lengthSquared > 1e-12) t = ((px - ax) * dx + (py - ay) * dy) / lengthSquared;
+        t = std::max(0.0, std::min(1.0, t));
+        const double qx = ax + t * dx - px, qy = ay + t * dy - py;
+        return std::sqrt(qx * qx + qy * qy);
+    }
+
+    int PickExitCandidateNative(const std::vector<std::vector<double>>& polylines, int x, int y,
+                                double pixelTolerance)
+    {
+        if (g_view.IsNull() || polylines.empty()) return -1;
+        if (!std::isfinite(pixelTolerance) || pixelTolerance <= 0.0) pixelTolerance = 12.0;
+        int bestIndex = -1;
+        double bestDistance = pixelTolerance;
+        try
+        {
+            for (size_t i = 0; i < polylines.size(); ++i)
+            {
+                const std::vector<double>& pts = polylines[i];
+                if (pts.size() < 6) continue;
+                std::vector<std::pair<double, double>> screen;
+                screen.reserve(pts.size() / 3);
+                bool valid = true;
+                for (size_t k = 0; k + 2 < pts.size(); k += 3)
+                {
+                    if (!std::isfinite(pts[k]) || !std::isfinite(pts[k + 1]) || !std::isfinite(pts[k + 2]))
+                    { valid = false; break; }
+                    Standard_Integer sx = 0, sy = 0;
+                    g_view->Convert(pts[k], pts[k + 1], pts[k + 2], sx, sy);
+                    screen.emplace_back(static_cast<double>(sx), static_cast<double>(sy));
+                }
+                if (!valid || screen.size() < 2) continue;
+                for (size_t k = 1; k < screen.size(); ++k)
+                {
+                    const double d = ScreenDistanceToSegment(x, y, screen[k - 1].first, screen[k - 1].second,
+                                                             screen[k].first, screen[k].second);
+                    if (d < bestDistance) { bestDistance = d; bestIndex = static_cast<int>(i); }
+                }
+            }
+        }
+        catch (const Standard_Failure&) { return -1; }
+        return bestIndex;
+    }
+
+    bool SamplePoint(int faceIndex, double u, double v, double* out)
+    {        if (faceIndex < 0 || faceIndex >= (int)g_faces.size()) return false;
         BRepAdaptor_Surface surf(g_faces[faceIndex]);
         const gp_Pnt p = surf.Value(u, v);
         out[0] = p.X(); out[1] = p.Y(); out[2] = p.Z();
@@ -2556,6 +2924,78 @@ array<RegionBoundaryLoop^>^ Bridge::GetSelectedRegionBoundary(array<int>^ faceId
         result[i] = loop;
     }
     return result;
+}
+
+array<ExitSideCandidate^>^ Bridge::GetBoundaryExitSides(array<int>^ faceIds, double deflection)
+{
+    if (faceIds == nullptr || faceIds->Length == 0) return nullptr;
+    std::vector<int> ids(faceIds->Length);
+    for (int i = 0; i < faceIds->Length; ++i) ids[(size_t)i] = faceIds[i];
+    std::vector<NativeExitSide> nativeSides;
+    try
+    {
+        if (!ExtractBoundaryExitSides(ids, deflection, nativeSides)) return nullptr;
+    }
+    catch (const Standard_Failure&)
+    {
+        return nullptr;
+    }
+    auto result = gcnew array<ExitSideCandidate^>((int)nativeSides.size());
+    for (int i = 0; i < result->Length; ++i)
+    {
+        ExitSideCandidate^ side = gcnew ExitSideCandidate();
+        side->FaceId = nativeSides[(size_t)i].faceId;
+        auto points = gcnew array<double>((int)nativeSides[(size_t)i].xyz.size());
+        for (int k = 0; k < points->Length; ++k) points[k] = nativeSides[(size_t)i].xyz[(size_t)k];
+        side->Points = points;
+        result[i] = side;
+    }
+    return result;
+}
+
+void Bridge::ShowExitCandidates(array<array<double>^>^ polylines)
+{
+    std::vector<std::vector<double>> native;
+    if (polylines != nullptr)
+    {
+        native.reserve((size_t)polylines->Length);
+        for (int i = 0; i < polylines->Length; ++i)
+        {
+            array<double>^ flat = polylines[i];
+            if (flat == nullptr || flat->Length < 6) continue;
+            std::vector<double> points((size_t)flat->Length);
+            for (int k = 0; k < flat->Length; ++k) points[(size_t)k] = flat[k];
+            native.push_back(std::move(points));
+        }
+    }
+    try { ShowExitCandidatesNative(native); }
+    catch (const Standard_Failure&) { }
+}
+
+void Bridge::ClearExitCandidates()
+{
+    try { ClearExitCandidatesNative(); }
+    catch (const Standard_Failure&) { }
+}
+
+int Bridge::PickExitCandidate(array<array<double>^>^ polylines, int x, int y, double pixelTolerance)
+{
+    std::vector<std::vector<double>> native;
+    if (polylines != nullptr)
+    {
+        native.reserve((size_t)polylines->Length);
+        for (int i = 0; i < polylines->Length; ++i)
+        {
+            array<double>^ flat = polylines[i];
+            if (flat == nullptr || flat->Length < 6) { native.emplace_back(); continue; }
+            std::vector<double> points((size_t)flat->Length);
+            for (int k = 0; k < flat->Length; ++k) points[(size_t)k] = flat[k];
+            native.push_back(std::move(points));
+        }
+    }
+    if (native.empty()) return -1;
+    try { return PickExitCandidateNative(native, x, y, pixelTolerance); }
+    catch (const Standard_Failure&) { return -1; }
 }
 
 array<double>^ Bridge::SampleUvTo3D(int faceIndex, double u, double v)

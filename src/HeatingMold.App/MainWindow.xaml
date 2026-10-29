@@ -296,7 +296,7 @@
                                         </StackPanel>
                                     </StackPanel>
                                 </Grid>
-                                <TextBlock x:Name="ExitFaceStatusText" Text="인출면 미지정 — 3D 뷰에서 인출면(측면)을 클릭하세요"
+                                <TextBlock x:Name="ExitFaceStatusText" Text="인출면 미지정 — 인출면 선택 후 외곽선에 강조된 인출 측면을 클릭하세요"
                                            Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,6,0,0"/>
                                 <Grid Margin="0,8,0,0">
                                     <Grid.ColumnDefinitions>
@@ -310,7 +310,7 @@
                                     </StackPanel>
                                     <StackPanel Grid.Column="2">
                                         <TextBlock Text="간격 (mm)" Style="{StaticResource FieldLabel}"/>
-                                        <TextBox x:Name="SpacingBox" Text="10" Style="{StaticResource ValueBox}"/>
+                                        <TextBox x:Name="SpacingBox" Text="50" Style="{StaticResource ValueBox}"/>
                                     </StackPanel>
                                 </Grid>
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">

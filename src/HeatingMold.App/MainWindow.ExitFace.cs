@@ -19,6 +19,7 @@ namespace HeatingMold.App;
 public partial class MainWindow
 {
     private bool _suppressDirectionChange;
+    private readonly List<ExitSideCandidate> _exitCandidates = new();
 
     private static double Dist(Vec2 a, Vec2 b)
     {
@@ -48,7 +49,7 @@ public partial class MainWindow
     {
         if (area == null) return "작업영역을 먼저 선택하세요";
         if (!string.IsNullOrEmpty(area.LastExitFailure)) return area.LastExitFailure;
-        if (!area.HasExitFace) return "인출면 미지정 — 3D 뷰에서 인출면(측면)을 클릭하세요";
+        if (!area.HasExitFace) return "인출면 미지정 — 인출면 선택 후 외곽선에 강조된 인출 측면을 클릭하세요";
         if (!area.HasExitAnchors)
             return area.AnchorCandidates.Count == 0
                 ? "인출면은 지정됐지만 사행 경로 양 끝이 이 면에 닿지 않습니다"
@@ -93,88 +94,85 @@ public partial class MainWindow
         }
         if (Viewport == null || !Viewport.IsReady) return;
         CancelExitFacePick();
+
+        // 인출면은 확정 영역 외곽선의 반대편 면에서만 고른다 (근접 면 클릭 방식 대체).
+        var sides = Bridge.GetBoundaryExitSides(SortedFaceIds(area), 0.05);
+        if (sides == null || sides.Length == 0)
+        {
+            StatusText.Text = "인출 측면 후보가 없습니다 — 적용영역 외곽선에 인접한 면이 없거나 경계 매칭에 실패했습니다";
+            return;
+        }
+        foreach (var side in sides)
+        {
+            if (side == null || side.FaceId < 0 || side.Points == null || side.Points.Length < 6) continue;
+            _exitCandidates.Add(side);
+        }
+        if (_exitCandidates.Count == 0)
+        {
+            StatusText.Text = "인출 측면 후보가 없습니다 — 적용영역 외곽선에 인접한 면이 없거나 경계 매칭에 실패했습니다";
+            return;
+        }
+
+        Bridge.ShowExitCandidates(_exitCandidates.Select(c => c.Points).ToArray());
         Viewport.ExitFacePickMode = true;
-        StatusText.Text = "인출면으로 사용할 3D 면(측면)을 클릭하세요 — Esc 취소";
+        StatusText.Text = string.Format("외곽선에 강조된 인출 측면 후보 {0}개 — 하나를 클릭하세요 (Esc 취소)",
+            _exitCandidates.Count);
     }
 
     private void CancelExitFacePick()
     {
         if (Viewport != null) Viewport.ExitFacePickMode = false;
+        Bridge.ClearExitCandidates();
+        _exitCandidates.Clear();
     }
 
     private void OnExitFacePicked(int x, int y)
     {
-        CancelExitFacePick();
         var area = _activeArea;
-        if (area == null) return;
-
-        var hit = Bridge.PickFacePoint(x, y);
-        if (hit == null)
+        if (area == null || _exitCandidates.Count == 0)
         {
-            StatusText.Text = "인출면 선택 실패 — 모델/뷰 상태를 확인하세요";
-            return;
-        }
-        if (hit.Status == 1)
-        {
-            StatusText.Text = "인출면 선택 실패 — 해당 위치에 면이 없습니다";
-            return;
-        }
-        if (hit.Status == 2)
-        {
-            StatusText.Text = "인출면 선택 실패 — 시선과 거의 평행한 면은 선택할 수 없습니다. 시점을 돌려 다시 클릭하세요";
-            return;
-        }
-        if (hit.Status != 0 || hit.FaceId < 0)
-        {
-            StatusText.Text = "인출면 선택 실패 — 면 정보를 읽을 수 없습니다";
-            return;
-        }
-        if (area.FaceIdSet.Contains(hit.FaceId))
-        {
-            StatusText.Text = "이 면은 발열 적용면입니다. 전선이 빠져나갈 인출면(측면)을 선택하세요";
+            CancelExitFacePick();
             return;
         }
 
-        var edges = Bridge.GetSharedBoundaryEdges(hit.FaceId, SortedFaceIds(area), 0.05);
-        List<Vec2> chain = null;
-        List<Vec3> chain3D = null;
-        double bestLength = 0;
-        if (edges != null)
+        // 후보 목록은 CancelExitFacePick에서 비워지므로 픽을 먼저 수행한다.
+        int index = Bridge.PickExitCandidate(_exitCandidates.Select(c => c.Points).ToArray(), x, y, 12.0);
+        if (index < 0)
         {
-            foreach (var flat in edges)
-            {
-                if (flat == null || flat.Length < 6) continue;
-                var points = new List<Vec2>();
-                var points3D = new List<Vec3>();
-                for (int i = 0; i + 2 < flat.Length; i += 3)
-                {
-                    var p3 = new Vec3(flat[i], flat[i + 1], flat[i + 2]);
-                    var p = area.Frame.Project(p3);
-                    if (points.Count == 0 || Dist(points[^1], p) > 1e-6) { points.Add(p); points3D.Add(p3); }
-                }
-                if (points.Count < 2) continue;
-                double length = 0;
-                for (int i = 1; i < points.Count; i++) length += Dist(points[i - 1], points[i]);
-                if (length > bestLength) { bestLength = length; chain = points; chain3D = points3D; }
-            }
+            StatusText.Text = "강조된 외곽선 구간을 클릭하세요 — Esc로 취소할 수 있습니다";
+            return; // 선택 모드 유지
         }
-        if (chain == null)
+
+        var chosen = _exitCandidates[index];
+        List<Vec2> chain = new();
+        List<Vec3> chain3D = new();
+        for (int i = 0; i + 2 < chosen.Points.Length; i += 3)
         {
-            StatusText.Text = "선택한 면이 발열 적용면과 접하지 않습니다 — 공유 모서리가 있는 인출면을 선택하세요";
+            var p3 = new Vec3(chosen.Points[i], chosen.Points[i + 1], chosen.Points[i + 2]);
+            var p = area.Frame.Project(p3);
+            if (chain.Count == 0 || Dist(chain[^1], p) > 1e-6) { chain.Add(p); chain3D.Add(p3); }
+        }
+        double length = 0;
+        for (int i = 1; i < chain.Count; i++) length += Dist(chain[i - 1], chain[i]);
+
+        CancelExitFacePick();
+        if (chain.Count < 2)
+        {
+            StatusText.Text = "선택한 인출 측면의 경계선을 투영하지 못했습니다 — 다른 구간을 선택하세요";
             return;
         }
 
-        area.ExitFaceId = hit.FaceId;
-        area.ExitFaceRevision = hit.Revision;
+        area.ExitFaceId = chosen.FaceId;
+        area.ExitFaceRevision = Bridge.GetModelRevision();
         area.ExitChain = chain;
-        area.ExitChain3D = chain3D ?? new List<Vec3>();
+        area.ExitChain3D = chain3D;
         RecomputeAnchorCandidates(area);
         DrawRegionCanvas();
         SyncExitFaceUi(area);
 
         if (area.HasExitAnchors)
             StatusText.Text = string.Format("{0} 영역 인출면 Face {1} · 길이 {2:F1}mm — 시작/종료점이 2D 미리보기에 표시됩니다",
-                area.Name, hit.FaceId, bestLength);
+                area.Name, chosen.FaceId, length);
         else
             StatusText.Text = area.LastExitFailure ?? "인출면은 지정됐지만 사용 가능한 시작/종료점 후보가 없습니다";
     }
