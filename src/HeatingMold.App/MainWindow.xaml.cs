@@ -210,9 +210,9 @@ namespace HeatingMold.App
 
         private void TryGetParams(out double margin, out double spacing)
         {
-            margin = 5; spacing = 10;
+            margin = 5; spacing = 50;
             if (!double.TryParse(MarginBox.Text, out margin) || margin < 0) margin = 5;
-            if (!double.TryParse(SpacingBox.Text, out spacing) || spacing <= 0) spacing = 10;
+            if (!double.TryParse(SpacingBox.Text, out spacing) || spacing <= 0) spacing = 50;
         }
 
         private void Generate_Click(object sender, RoutedEventArgs e)

@@ -10,7 +10,7 @@ public sealed record PatternParams
     public double Margin { get; init; } = 5.0;
 
     /// <summary>레인 중심 간격 (mm).</summary>
-    public double Spacing { get; init; } = 10.0;
+    public double Spacing { get; init; } = 50.0;
 
     /// <summary>레인 진행축. Auto는 영역 bbox 장축을 따른다.</summary>
     public PatternDirection Direction { get; init; } = PatternDirection.Auto;
