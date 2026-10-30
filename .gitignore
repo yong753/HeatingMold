@@ -27,3 +27,6 @@ artifacts/
 # 기타
 Thumbs.db
 Desktop.ini
+
+# WPF 임시 프로젝트(중단된 빌드 잔여물)
+*_wpftmp.csproj
