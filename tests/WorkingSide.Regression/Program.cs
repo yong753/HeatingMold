@@ -334,6 +334,101 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
         Check(nakedSides==null || nakedSides.Length==0,"detached sheet naked edges yield no exit-side candidate");
         Check(Bridge.GetBoundaryExitSides(new[]{-1},0.05)==null && Bridge.GetBoundaryExitSides(Array.Empty<int>(),0.05)==null,
             "invalid exit-side input is rejected");
+        Check(Bridge.LoadStep(Path.Combine(args[0],"exitSplit.stp")),"load split long-side fixture");
+        int splitTopA=-1,splitTopB=-1,splitSideA=-1,splitSideB=-1;
+        for (int id=0;;++id)
+        {
+            var probe=Bridge.GetFaceNormal(id); if (probe==null) break;
+            if (Math.Abs(probe[2])>0.9 && Math.Abs(probe[5]-20)<1e-6)
+            {
+                if (Math.Abs(probe[3]-15)<1e-6) splitTopA=id;
+                else if (Math.Abs(probe[3]-45)<1e-6) splitTopB=id;
+            }
+            if (Math.Abs(probe[1])>0.9 && Math.Abs(probe[4])<1e-6)
+            {
+                if (Math.Abs(probe[3]-15)<1e-6) splitSideA=id;
+                else if (Math.Abs(probe[3]-45)<1e-6) splitSideB=id;
+            }
+        }
+        Check(splitTopA>=0 && splitTopB>=0 && splitSideA>=0 && splitSideB>=0,
+            "split long-side fixture exposes both top halves and both -Y neighbours");
+        var splitSides=Bridge.GetBoundaryExitSides(new[]{splitTopA,splitTopB},0.05);
+        Check(splitSides!=null && splitSides.Length==4,
+            "split long side merges its two half runs into one side candidate");
+        int mergedSideIndex=-1; double mergedSideLength=0; bool mergedSegments=false;
+        if (splitSides!=null) for (int i=0;i<splitSides.Length;i++)
+        {
+            var side=splitSides[i];
+            if (side?.Points==null || side.Points.Length<6) continue;
+            bool onMinusY=true; double length=0;
+            for (int k=0;k+2<side.Points.Length;k+=3)
+            {
+                if (Math.Abs(side.Points[k+1])>1e-3 || Math.Abs(side.Points[k+2]-20)>1e-3) { onMinusY=false; break; }
+                if (k>=3)
+                {
+                    double dx=side.Points[k]-side.Points[k-3],dy=side.Points[k+1]-side.Points[k-2],dz=side.Points[k+2]-side.Points[k-1];
+                    length+=Math.Sqrt(dx*dx+dy*dy+dz*dz);
+                }
+            }
+            if (!onMinusY) continue;
+            mergedSideIndex=i; mergedSideLength=length;
+            var ids=new HashSet<int>(side.SegmentFaceIds ?? Array.Empty<int>());
+            mergedSegments=side.SegmentFaceIds!=null && side.SegmentFaceIds.Length==side.Points.Length/3-1
+                && ids.SetEquals(new HashSet<int>{splitSideA,splitSideB});
+        }
+        Check(mergedSideIndex>=0 && Math.Abs(mergedSideLength-60)<0.5 && mergedSegments,
+            "merged candidate spans the whole long side with per-segment neighbour face ids");
+        int singleFaceCandidates=0;
+        if (splitSides!=null) foreach (var side in splitSides)
+        {
+            if (side?.SegmentFaceIds==null || side.Points==null) continue;
+            if (side.SegmentFaceIds.Length!=side.Points.Length/3-1) continue;
+            if (side.SegmentFaceIds.Distinct().Count()==1) singleFaceCandidates++;
+        }
+        Check(singleFaceCandidates==3,"the three unmerged boundaries keep a single neighbour face");
+        Check(Bridge.LoadStep(Path.Combine(args[0],"exitSplitThree.stp")),"load three-way split fixture");
+        int threeTopA=-1,threeTopB=-1,threeTopC=-1,threeSideA=-1,threeSideB=-1,threeSideC=-1;
+        for (int id=0;;++id)
+        {
+            var probe=Bridge.GetFaceNormal(id); if (probe==null) break;
+            if (Math.Abs(probe[2])>0.9 && Math.Abs(probe[5]-20)<1e-6)
+            {
+                if (Math.Abs(probe[3]-10)<1e-6) threeTopA=id;
+                else if (Math.Abs(probe[3]-30)<1e-6) threeTopB=id;
+                else if (Math.Abs(probe[3]-50)<1e-6) threeTopC=id;
+            }
+            if (Math.Abs(probe[1])>0.9 && Math.Abs(probe[4])<1e-6)
+            {
+                if (Math.Abs(probe[3]-10)<1e-6) threeSideA=id;
+                else if (Math.Abs(probe[3]-30)<1e-6) threeSideB=id;
+                else if (Math.Abs(probe[3]-50)<1e-6) threeSideC=id;
+            }
+        }
+        Check(threeTopA>=0 && threeTopB>=0 && threeTopC>=0 && threeSideA>=0 && threeSideB>=0 && threeSideC>=0,
+            "three-way split fixture exposes every top third and every -Y neighbour");
+        var threeSides=Bridge.GetBoundaryExitSides(new[]{threeTopA,threeTopB,threeTopC},0.05);
+        Check(threeSides!=null && threeSides.Length==4,
+            "three-way split long side merges into one side candidate");
+        bool threeMerged=false;
+        if (threeSides!=null) foreach (var side in threeSides)
+        {
+            if (side?.Points==null || side.Points.Length<6) continue;
+            bool onMinusY=true; double length=0;
+            for (int k=0;k+2<side.Points.Length;k+=3)
+            {
+                if (Math.Abs(side.Points[k+1])>1e-3 || Math.Abs(side.Points[k+2]-20)>1e-3) { onMinusY=false; break; }
+                if (k>=3)
+                {
+                    double dx=side.Points[k]-side.Points[k-3],dy=side.Points[k+1]-side.Points[k-2],dz=side.Points[k+2]-side.Points[k-1];
+                    length+=Math.Sqrt(dx*dx+dy*dy+dz*dz);
+                }
+            }
+            if (!onMinusY || Math.Abs(length-60)>=0.5) continue;
+            var ids=new HashSet<int>(side.SegmentFaceIds ?? Array.Empty<int>());
+            threeMerged=side.SegmentFaceIds!=null && side.SegmentFaceIds.Length==side.Points.Length/3-1
+                && ids.SetEquals(new HashSet<int>{threeSideA,threeSideB,threeSideC});
+        }
+        Check(threeMerged,"merged candidate crosses the middle sliver and keeps all three neighbour ids");
         Check(!Bridge.LoadStep(Path.Combine(args[0],"absent.stp")),"failed model load");
         Check(Bridge.QueryWorkingSurface(afterStageReload.Id,afterStageReload.Revision,0,0).Status==WorkingQueryStatus.StaleContext,"failed reload also invalidates context");
         Check(Bridge.CreateWorkingContext(0,0,1,1,0,0)==null,"no context available without model");

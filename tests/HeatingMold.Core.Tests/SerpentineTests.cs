@@ -438,6 +438,37 @@ public class SerpentineTests
         Assert.False(pattern.LaneCountAdjusted);
     }
 
+    // T24: 인출면이 두 면으로 쪼개져 긴 변의 절반만 덮으면 경로 양 끝을 동시에 지나지 못해 후보가 없다.
+    [Fact]
+    public void T24_SplitExitChainCoversHalfSide_NoCandidate()
+    {
+        var outer = Rect(0, 0, 100, 70);
+        var p = new PatternParams { Margin = 5, Spacing = 10 };
+        var halfExit = new List<Vec2> { new(95, 5), new(95, 35) };
+
+        Assert.Empty(Serpentine.ComputeCandidates(outer, null, p, halfExit, PatternDirection.FrameX));
+    }
+
+    // T25: 반대편 면이 달라 중간에서 끊긴 두 반쪽을 이어붙인 체인(중간 꼭짓점 포함)은 후보를 만든다.
+    [Fact]
+    public void T25_MergedSplitExitChainSpansBothEnds()
+    {
+        var outer = Rect(0, 0, 100, 70);
+        var p = new PatternParams { Margin = 5, Spacing = 10 };
+        var mergedExit = new List<Vec2> { new(95, 5), new(95, 35), new(95, 65) };
+
+        var candidate = Assert.Single(
+            Serpentine.ComputeCandidates(outer, null, p, mergedExit, PatternDirection.FrameX));
+        Assert.Equal(new Vec2(95, 10), candidate.Start);
+        Assert.Equal(new Vec2(95, 60), candidate.End);
+
+        var r = Serpentine.GenerateAnchored(outer, null, p, mergedExit, candidate.Start, candidate.End,
+            PatternDirection.FrameX);
+        Assert.True(r.Succeeded);
+        Assert.Equal(candidate.Start, r.Pattern!.RoutePieces[0].Points[0]);
+        Assert.Equal(candidate.End, r.Pattern!.RoutePieces[^1].Points[^1]);
+    }
+
     private static bool InsideOrOn(IReadOnlyList<Vec2> ring, Vec2 p)
     {
         for (int i = 0; i < ring.Count; i++)

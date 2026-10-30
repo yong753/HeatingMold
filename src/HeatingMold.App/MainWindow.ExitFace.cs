@@ -160,13 +160,40 @@ public partial class MainWindow
         }
 
         var chosen = _exitCandidates[index];
+        int pointCount = chosen.Points.Length / 3;
+        int[] segmentFaceIds = chosen.SegmentFaceIds;
+        if (segmentFaceIds == null || segmentFaceIds.Length != Math.Max(0, pointCount - 1))
+        {
+            // 구간별 면 정보가 없거나 어긋나면 대표 면 id로 대체한다 (구(舊) 브리지 호환).
+            segmentFaceIds = new int[Math.Max(0, pointCount - 1)];
+            for (int k = 0; k < segmentFaceIds.Length; k++) segmentFaceIds[k] = chosen.FaceId;
+        }
+
         List<Vec2> chain = new();
         List<Vec3> chain3D = new();
-        for (int i = 0; i + 2 < chosen.Points.Length; i += 3)
+        List<int> chainFaceIds = new();
+        int lastKept = 0;
+        for (int k = 0; k < pointCount; k++)
         {
-            var p3 = new Vec3(chosen.Points[i], chosen.Points[i + 1], chosen.Points[i + 2]);
+            var p3 = new Vec3(chosen.Points[k * 3], chosen.Points[k * 3 + 1], chosen.Points[k * 3 + 2]);
             var p = area.Frame.Project(p3);
-            if (chain.Count == 0 || Dist(chain[^1], p) > 1e-6) { chain.Add(p); chain3D.Add(p3); }
+            if (chain.Count == 0) { chain.Add(p); chain3D.Add(p3); continue; }
+            if (Dist(chain[^1], p) <= 1e-6) continue;
+            // 중복점 제거로 압축되는 구간의 면 id가 서로 다르면 라벨이 모호하므로 선택을 거부한다.
+            int segment = segmentFaceIds[k - 1];
+            bool consistent = true;
+            for (int t = lastKept; t < k; t++)
+                if (segmentFaceIds[t] != segment) { consistent = false; break; }
+            if (!consistent)
+            {
+                CancelExitFacePick();
+                StatusText.Text = "선택한 인출 측면의 구간 면 정보가 일관되지 않습니다 — 다른 구간을 선택하세요";
+                return;
+            }
+            chain.Add(p);
+            chain3D.Add(p3);
+            chainFaceIds.Add(segment);
+            lastKept = k;
         }
         double length = 0;
         for (int i = 1; i < chain.Count; i++) length += Dist(chain[i - 1], chain[i]);
@@ -182,6 +209,7 @@ public partial class MainWindow
         area.ExitFaceRevision = Bridge.GetModelRevision();
         area.ExitChain = chain;
         area.ExitChain3D = chain3D;
+        area.ExitChainFaceIds = chainFaceIds;
         RecomputeAnchorCandidates(area);
         DrawRegionCanvas();
         SyncExitFaceUi(area);
@@ -202,6 +230,7 @@ public partial class MainWindow
         area.ExitFaceRevision = 0;
         area.ExitChain = new List<Vec2>();
         area.ExitChain3D = new List<Vec3>();
+        area.ExitChainFaceIds = new List<int>();
         area.StartAnchor = null;
         area.EndAnchor = null;
         area.AnchorCandidates.Clear();

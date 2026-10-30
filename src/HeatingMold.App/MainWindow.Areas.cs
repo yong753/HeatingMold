@@ -210,8 +210,8 @@ public partial class MainWindow
         SerpentineRoutePiece piece, int index, int count, int stageId)
     {
         int[] faces = SortedFaceIds(area);
-        Vec3? anchor3D = ResolveExitAnchor3D(area, piece, out Vec2? anchorDatum);
-        var hit = BuildCurvedMapDelegate(side, faces, anchorDatum, anchor3D, area.ExitFaceId);
+        Vec3? anchor3D = ResolveExitAnchor3D(area, piece, out Vec2? anchorDatum, out int anchorFaceId);
+        var hit = BuildCurvedMapDelegate(side, faces, anchorDatum, anchor3D, anchorFaceId);
         if (!SurfacePathMapper.TryMapRoute(piece.Points, hit, out var samples, out string failure))
             throw new InvalidOperationException(
                 "영역 " + area.Name + " 경로 조각 " + (index + 1) + "/" + count + " (" + piece.Kind + ") 매핑 실패 — "
@@ -275,13 +275,13 @@ public partial class MainWindow
 
     /// <summary>선택 면 집합만 대상으로 하는 매핑 대리자. 실패 시 전역 히트→0.5mm 스냅으로 보정한다.</summary>
     private static Func<Vec2, SurfaceMappedSample?> BuildCurvedMapDelegate(WorkingSideDefinition side,
-        int[] faces, Vec2? anchorDatum, Vec3? anchor3D, int exitFaceId)
+        int[] faces, Vec2? anchorDatum, Vec3? anchor3D, int anchorFaceId)
     {
         return uv =>
         {
             // 인출 리드의 끝점은 실측 CAD 공유 모서리 위 점을 그대로 쓴다(실루엣 붕괴 예외).
             if (anchorDatum.HasValue && anchor3D.HasValue && uv == anchorDatum.Value)
-                return new SurfaceMappedSample(uv, anchor3D.Value, exitFaceId);
+                return new SurfaceMappedSample(uv, anchor3D.Value, anchorFaceId);
             var direct = Bridge.MapWorkingPointOntoFaces(side.Id.Value, side.Revision.Value, faces, uv.X, uv.Y);
             if (direct != null && direct.Status == WorkingQueryStatus.Hit && direct.Point != null)
                 return new SurfaceMappedSample(uv, new Vec3(direct.Point[0], direct.Point[1], direct.Point[2]), direct.FaceId);
@@ -298,10 +298,12 @@ public partial class MainWindow
         };
     }
 
-    /// <summary>인출 조각이면 끝점에 대응하는 실제 공유 모서리 3D 점을 찾는다.</summary>
-    private static Vec3? ResolveExitAnchor3D(WorkingArea area, SerpentineRoutePiece piece, out Vec2? datum)
+    /// <summary>인출 조각이면 끝점에 대응하는 실제 공유 모서리 3D 점과 그 구간의 인출 Face id를 찾는다.</summary>
+    private static Vec3? ResolveExitAnchor3D(WorkingArea area, SerpentineRoutePiece piece,
+        out Vec2? datum, out int anchorFaceId)
     {
         datum = null;
+        anchorFaceId = area.ExitFaceId;
         if (piece.Kind != SerpentineRoutePieceKind.ExitPiece || !area.HasExitChain3D || piece.Points.Count == 0)
             return null;
         Vec2 first = piece.Points[0], last = piece.Points[^1];
@@ -310,11 +312,15 @@ public partial class MainWindow
         else if (area.EndAnchor.HasValue && (first == area.EndAnchor.Value || last == area.EndAnchor.Value))
             datum = area.EndAnchor;
         if (!datum.HasValue) return null;
-        return PointOnExitChain3D(area, datum.Value);
+        Vec3 point = PointOnExitChain3D(area, datum.Value, out int segmentIndex);
+        // 병합된 인출면은 구간마다 실제 Face가 다를 수 있으므로 앵커가 놓인 구간의 id를 쓴다.
+        if (segmentIndex >= 1 && segmentIndex - 1 < area.ExitChainFaceIds.Count)
+            anchorFaceId = area.ExitChainFaceIds[segmentIndex - 1];
+        return point;
     }
 
     /// <summary>2D 인출 체인에서 가장 가까운 구간을 찾아 같은 구간 파라미터로 3D 점을 보간한다.</summary>
-    private static Vec3 PointOnExitChain3D(WorkingArea area, Vec2 datum)
+    private static Vec3 PointOnExitChain3D(WorkingArea area, Vec2 datum, out int segmentIndex)
     {
         double bestDistance = double.MaxValue;
         int bestSegment = 1;
@@ -331,6 +337,7 @@ public partial class MainWindow
             double distance = px * px + py * py;
             if (distance < bestDistance) { bestDistance = distance; bestSegment = i; bestT = t; }
         }
+        segmentIndex = bestSegment;
         Vec3 p0 = area.ExitChain3D[bestSegment - 1], p1 = area.ExitChain3D[bestSegment];
         return new Vec3(p0.X + (p1.X - p0.X) * bestT,
                         p0.Y + (p1.Y - p0.Y) * bestT,

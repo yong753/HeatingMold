@@ -38,6 +38,50 @@ static TopoDS_Compound ThreePanels()
     TopoDS_Compound shape; BRep_Builder builder; builder.MakeCompound(shape); builder.Add(shape,sewing.SewedShape());
     return shape;
 }
+// Box (60x40x20) whose top and -Y wall are split at x=30: the long boundary edge has
+// different neighbours on each half, so the exit-side run breaks in the middle.
+static TopoDS_Compound ExitSplit()
+{
+    auto quad=[](gp_Pnt a,gp_Pnt b,gp_Pnt c,gp_Pnt d) {
+        BRepBuilderAPI_MakePolygon p; p.Add(a); p.Add(b); p.Add(c); p.Add(d); p.Close();
+        return BRepBuilderAPI_MakeFace(p.Wire()).Face();
+    };
+    BRepBuilderAPI_Sewing sewing(1e-6);
+    sewing.Add(quad(gp_Pnt(0,0,20),gp_Pnt(30,0,20),gp_Pnt(30,40,20),gp_Pnt(0,40,20)));   // top A
+    sewing.Add(quad(gp_Pnt(30,0,20),gp_Pnt(60,0,20),gp_Pnt(60,40,20),gp_Pnt(30,40,20))); // top B
+    sewing.Add(quad(gp_Pnt(0,0,0),gp_Pnt(60,0,0),gp_Pnt(60,40,0),gp_Pnt(0,40,0)));       // bottom
+    sewing.Add(quad(gp_Pnt(0,0,0),gp_Pnt(0,40,0),gp_Pnt(0,40,20),gp_Pnt(0,0,20)));       // x=0
+    sewing.Add(quad(gp_Pnt(60,0,0),gp_Pnt(60,40,0),gp_Pnt(60,40,20),gp_Pnt(60,0,20)));   // x=60
+    sewing.Add(quad(gp_Pnt(0,40,0),gp_Pnt(60,40,0),gp_Pnt(60,40,20),gp_Pnt(0,40,20)));   // y=40
+    sewing.Add(quad(gp_Pnt(0,0,0),gp_Pnt(30,0,0),gp_Pnt(30,0,20),gp_Pnt(0,0,20)));       // y=0 A
+    sewing.Add(quad(gp_Pnt(30,0,0),gp_Pnt(60,0,0),gp_Pnt(60,0,20),gp_Pnt(30,0,20)));     // y=0 B
+    sewing.Perform();
+    TopoDS_Compound shape; BRep_Builder builder; builder.MakeCompound(shape); builder.Add(shape,sewing.SewedShape());
+    return shape;
+}
+// Same box with the top and -Y wall split twice (x=20 and x=40): the long side is covered
+// by three neighbour faces, so joining has to survive a short middle face.
+static TopoDS_Compound ExitSplitThree()
+{
+    auto quad=[](gp_Pnt a,gp_Pnt b,gp_Pnt c,gp_Pnt d) {
+        BRepBuilderAPI_MakePolygon p; p.Add(a); p.Add(b); p.Add(c); p.Add(d); p.Close();
+        return BRepBuilderAPI_MakeFace(p.Wire()).Face();
+    };
+    BRepBuilderAPI_Sewing sewing(1e-6);
+    sewing.Add(quad(gp_Pnt(0,0,20),gp_Pnt(20,0,20),gp_Pnt(20,40,20),gp_Pnt(0,40,20)));   // top A
+    sewing.Add(quad(gp_Pnt(20,0,20),gp_Pnt(40,0,20),gp_Pnt(40,40,20),gp_Pnt(20,40,20))); // top B
+    sewing.Add(quad(gp_Pnt(40,0,20),gp_Pnt(60,0,20),gp_Pnt(60,40,20),gp_Pnt(40,40,20))); // top C
+    sewing.Add(quad(gp_Pnt(0,0,0),gp_Pnt(60,0,0),gp_Pnt(60,40,0),gp_Pnt(0,40,0)));       // bottom
+    sewing.Add(quad(gp_Pnt(0,0,0),gp_Pnt(0,40,0),gp_Pnt(0,40,20),gp_Pnt(0,0,20)));       // x=0
+    sewing.Add(quad(gp_Pnt(60,0,0),gp_Pnt(60,40,0),gp_Pnt(60,40,20),gp_Pnt(60,0,20)));   // x=60
+    sewing.Add(quad(gp_Pnt(0,40,0),gp_Pnt(60,40,0),gp_Pnt(60,40,20),gp_Pnt(0,40,20)));   // y=40
+    sewing.Add(quad(gp_Pnt(0,0,0),gp_Pnt(20,0,0),gp_Pnt(20,0,20),gp_Pnt(0,0,20)));       // y=0 A
+    sewing.Add(quad(gp_Pnt(20,0,0),gp_Pnt(40,0,0),gp_Pnt(40,0,20),gp_Pnt(20,0,20)));     // y=0 B
+    sewing.Add(quad(gp_Pnt(40,0,0),gp_Pnt(60,0,0),gp_Pnt(60,0,20),gp_Pnt(40,0,20)));     // y=0 C
+    sewing.Perform();
+    TopoDS_Compound shape; BRep_Builder builder; builder.MakeCompound(shape); builder.Add(shape,sewing.SewedShape());
+    return shape;
+}
 int main(int argc,char** argv)
 {
     if (argc!=2) return 1;
@@ -84,5 +128,6 @@ int main(int argc,char** argv)
         write("trimmedVisibility",trimmed) &&
         write("tangentBack",tangentBack) && write("threePanels",ThreePanels()) &&
         write("sphere",BRepPrimAPI_MakeSphere(gp_Pnt(0,0,0),20).Shape()) &&
-        write("pickCoincident",coincident) && write("pickStacked",stacked) ? 0 : 2;
+        write("pickCoincident",coincident) && write("pickStacked",stacked) &&
+        write("exitSplit",ExitSplit()) && write("exitSplitThree",ExitSplitThree()) ? 0 : 2;
 }

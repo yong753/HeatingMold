@@ -768,10 +768,18 @@ namespace
     // ---- 인출 측면 후보: 외곽 경계 Edge의 반대편 인접면 ----
     // 연속 경계 Edge가 같은 원본 면을 공유하면 하나의 run(인출 측면)이 된다.
 
+    /// <summary>run 안의 구간 하나가 시작하는 점 인덱스(0-based)와 그 구간의 반대편 면.</summary>
+    struct NativeExitSegmentStart
+    {
+        int faceId = -1;
+        int startIndex = 0;
+    };
+
     struct NativeExitSide
     {
         int faceId = -1;
         std::vector<double> xyz;
+        std::vector<NativeExitSegmentStart> segmentStarts; // 점 N개 → 구간 N-1개
     };
 
     double EdgeLengthNative(const TopoDS_Edge& edge)
@@ -837,6 +845,148 @@ namespace
             }
         }
         return bestFace;
+    }
+
+    /// <summary>run에 점을 추가한다. 좌표는 중복 제거해 xyz에, 면 id는 구간 시작 인덱스로 기록한다.</summary>
+    void AppendExitPoint(NativeExitSide& run, int faceId, const gp_Pnt& point)
+    {
+        bool duplicate = false;
+        if (run.xyz.size() >= 3)
+        {
+            const size_t n = run.xyz.size();
+            const gp_Pnt previous(run.xyz[n - 3], run.xyz[n - 2], run.xyz[n - 1]);
+            duplicate = previous.Distance(point) <= Precision::Confusion();
+        }
+        if (!duplicate)
+        {
+            run.xyz.push_back(point.X());
+            run.xyz.push_back(point.Y());
+            run.xyz.push_back(point.Z());
+        }
+        if (run.segmentStarts.empty() || run.segmentStarts.back().faceId != faceId)
+        {
+            NativeExitSegmentStart start;
+            start.faceId = faceId;
+            start.startIndex = static_cast<int>(run.xyz.size() / 3) - 1;
+            run.segmentStarts.push_back(start);
+        }
+    }
+
+    /// <summary>source의 점/구간 정보를 target 끝에 이어붙인다(접촉점 중복 제거, 같은 면 구간 병합).</summary>
+    void AppendExitRun(NativeExitSide& target, const NativeExitSide& source)
+    {
+        const int sourcePoints = static_cast<int>(source.xyz.size() / 3);
+        for (size_t s = 0; s < source.segmentStarts.size(); ++s)
+        {
+            const int faceId = source.segmentStarts[s].faceId;
+            const int from = source.segmentStarts[s].startIndex;
+            const int to = (s + 1 < source.segmentStarts.size())
+                ? source.segmentStarts[s + 1].startIndex
+                : sourcePoints - 1;
+            for (int i = from; i <= to; ++i)
+                AppendExitPoint(target, faceId,
+                    gp_Pnt(source.xyz[i * 3], source.xyz[i * 3 + 1], source.xyz[i * 3 + 2]));
+        }
+    }
+
+    /// <summary>run의 점/구간 순서를 역전한 사본을 만든다.</summary>
+    NativeExitSide ReverseExitRun(const NativeExitSide& run)
+    {
+        NativeExitSide reversed;
+        reversed.faceId = run.faceId;
+        const int points = static_cast<int>(run.xyz.size() / 3);
+        reversed.xyz.resize(run.xyz.size());
+        for (int i = 0; i < points; ++i)
+        {
+            const int source = points - 1 - i;
+            reversed.xyz[i * 3] = run.xyz[source * 3];
+            reversed.xyz[i * 3 + 1] = run.xyz[source * 3 + 1];
+            reversed.xyz[i * 3 + 2] = run.xyz[source * 3 + 2];
+        }
+        const int segments = static_cast<int>(run.segmentStarts.size());
+        for (int s = segments - 1; s >= 0; --s)
+        {
+            const int end = (s + 1 < segments) ? run.segmentStarts[s + 1].startIndex : points - 1;
+            NativeExitSegmentStart start;
+            start.faceId = run.segmentStarts[s].faceId;
+            start.startIndex = points - 1 - end;
+            reversed.segmentStarts.push_back(start);
+        }
+        return reversed;
+    }
+
+    /// <summary>run의 진행 방향(시작쪽 첫 유효 구간)을 반환한다.</summary>
+    bool ExitFirstSegmentDirection(const NativeExitSide& run, gp_Vec& direction)
+    {
+        const int count = static_cast<int>(run.xyz.size() / 3);
+        if (count < 2) return false;
+        const gp_Pnt origin(run.xyz[0], run.xyz[1], run.xyz[2]);
+        for (int i = 1; i < count; ++i)
+        {
+            const gp_Pnt point(run.xyz[i * 3], run.xyz[i * 3 + 1], run.xyz[i * 3 + 2]);
+            if (origin.Distance(point) > 1e-9)
+            {
+                direction = gp_Vec(origin, point);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>run의 진행 방향(끝쪽 마지막 유효 구간)을 반환한다.</summary>
+    bool ExitLastSegmentDirection(const NativeExitSide& run, gp_Vec& direction)
+    {
+        const int count = static_cast<int>(run.xyz.size() / 3);
+        if (count < 2) return false;
+        const gp_Pnt end(run.xyz[(count - 1) * 3], run.xyz[(count - 1) * 3 + 1], run.xyz[(count - 1) * 3 + 2]);
+        for (int i = count - 2; i >= 0; --i)
+        {
+            const gp_Pnt point(run.xyz[i * 3], run.xyz[i * 3 + 1], run.xyz[i * 3 + 2]);
+            if (point.Distance(end) > 1e-9)
+            {
+                direction = gp_Vec(point, end);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 와이어 순서상 연속된 두 run이 같은 인출 측면의 연속인지 판정한다.
+    /// 접합점이 정확히 일치하고, 접합부의 국소 진행 방향 변화가 작아야 한다.
+    /// STEP 모델은 같은 측면이 여러 인접면(슬리버 포함)으로 쪼개져 Edge가 끊기고 원본 커브도
+    /// BSpline으로 근사되므로 완전 공선을 요구하지 않고 꺾임 각도로 판정한다.
+    /// 모서리(코너)와 되돌이는 병합하지 않는다.
+    /// </summary>
+    bool CanJoinExitRuns(const NativeExitSide& first, const NativeExitSide& second, bool& flipped)
+    {
+        flipped = false;
+        if (first.xyz.size() < 6 || second.xyz.size() < 6) return false;
+        const double contactTolerance = 0.01;
+        const double angleToleranceDegrees = 8.0;
+
+        const size_t firstCount = first.xyz.size();
+        const gp_Pnt firstEnd(first.xyz[firstCount - 3], first.xyz[firstCount - 2], first.xyz[firstCount - 1]);
+        const gp_Pnt secondStart(second.xyz[0], second.xyz[1], second.xyz[2]);
+        const size_t secondCount = second.xyz.size();
+        const gp_Pnt secondEnd(second.xyz[secondCount - 3], second.xyz[secondCount - 2],
+                               second.xyz[secondCount - 1]);
+        const bool forward = firstEnd.Distance(secondStart) <= contactTolerance;
+        const bool backward = firstEnd.Distance(secondEnd) <= contactTolerance;
+        if (!forward && !backward) return false;
+        flipped = backward && !forward;
+
+        gp_Vec directionFirst, directionSecond;
+        if (!ExitLastSegmentDirection(first, directionFirst)) return false;
+        if (!ExitFirstSegmentDirection(second, directionSecond)) return false;
+        if (flipped) directionSecond.Reverse();
+        const double lengthFirst = directionFirst.Magnitude();
+        const double lengthSecond = directionSecond.Magnitude();
+        if (lengthFirst <= 1e-9 || lengthSecond <= 1e-9) return false;
+        const gp_Vec unitFirst = directionFirst / lengthFirst;
+        const gp_Vec unitSecond = directionSecond / lengthSecond;
+        const double limit = std::cos(angleToleranceDegrees * 3.141592653589793 / 180.0);
+        return (unitFirst * unitSecond) >= limit;
     }
 
     /// <summary>
@@ -999,39 +1149,46 @@ namespace
                         current = NativeExitSide();
                         current.faceId = faceId;
                     }
-                    for (const gp_Pnt& p : points)
-                    {
-                        if (current.xyz.size() >= 3)
-                        {
-                            const size_t n = current.xyz.size();
-                            const gp_Pnt previous(current.xyz[n - 3], current.xyz[n - 2], current.xyz[n - 1]);
-                            if (previous.Distance(p) <= Precision::Confusion()) continue;
-                        }
-                        current.xyz.push_back(p.X());
-                        current.xyz.push_back(p.Y());
-                        current.xyz.push_back(p.Z());
-                    }
+                    for (const gp_Pnt& p : points) AppendExitPoint(current, faceId, p);
                 }
                 if (current.faceId >= 0 && current.xyz.size() >= 6) runs.push_back(std::move(current));
 
                 // 닫힌 루프: 마지막 run과 첫 run이 같은 면이면 하나로 합친다.
                 if (runs.size() >= 2 && runs.front().faceId == runs.back().faceId)
                 {
-                    NativeExitSide& tail = runs.back();
-                    for (size_t k = 0; k + 2 < runs.front().xyz.size(); k += 3)
-                    {
-                        const gp_Pnt p(runs.front().xyz[k], runs.front().xyz[k + 1], runs.front().xyz[k + 2]);
-                        if (tail.xyz.size() >= 3)
-                        {
-                            const size_t n = tail.xyz.size();
-                            const gp_Pnt previous(tail.xyz[n - 3], tail.xyz[n - 2], tail.xyz[n - 1]);
-                            if (previous.Distance(p) <= Precision::Confusion()) continue;
-                        }
-                        tail.xyz.push_back(p.X());
-                        tail.xyz.push_back(p.Y());
-                        tail.xyz.push_back(p.Z());
-                    }
+                    const NativeExitSide head = runs.front();
+                    AppendExitRun(runs.back(), head);
                     runs.erase(runs.begin());
+                }
+
+                // 같은 루프 안에서 와이어 순서상 연속된 run을 하나의 인출 측면으로 병합한다.
+                // (STEP에서 반대편 면이 달라 중간에 끊긴 긴 변 복원. 구간별 면 id는 segmentStarts에 보존.)
+                {
+                    std::vector<NativeExitSide> joined;
+                    for (auto& run : runs)
+                    {
+                        bool flipped = false;
+                        if (!joined.empty() && CanJoinExitRuns(joined.back(), run, flipped))
+                        {
+                            const NativeExitSide tail = flipped ? ReverseExitRun(run) : run;
+                            AppendExitRun(joined.back(), tail);
+                        }
+                        else
+                        {
+                            joined.push_back(std::move(run));
+                        }
+                    }
+                    if (joined.size() >= 2)
+                    {
+                        bool flipped = false;
+                        if (CanJoinExitRuns(joined.back(), joined.front(), flipped))
+                        {
+                            const NativeExitSide head = flipped ? ReverseExitRun(joined.front()) : joined.front();
+                            AppendExitRun(joined.back(), head);
+                            joined.erase(joined.begin());
+                        }
+                    }
+                    runs.swap(joined);
                 }
                 for (auto& run : runs) sides.push_back(std::move(run));
             }
@@ -2979,11 +3136,27 @@ array<ExitSideCandidate^>^ Bridge::GetBoundaryExitSides(array<int>^ faceIds, dou
     auto result = gcnew array<ExitSideCandidate^>((int)nativeSides.size());
     for (int i = 0; i < result->Length; ++i)
     {
+        const NativeExitSide& run = nativeSides[(size_t)i];
         ExitSideCandidate^ side = gcnew ExitSideCandidate();
-        side->FaceId = nativeSides[(size_t)i].faceId;
-        auto points = gcnew array<double>((int)nativeSides[(size_t)i].xyz.size());
-        for (int k = 0; k < points->Length; ++k) points[k] = nativeSides[(size_t)i].xyz[(size_t)k];
+        side->FaceId = run.faceId;
+        auto points = gcnew array<double>((int)run.xyz.size());
+        for (int k = 0; k < points->Length; ++k) points[k] = run.xyz[(size_t)k];
         side->Points = points;
+
+        // 구간별 면 id: 점 N개 → 구간 N-1개. 값이 비는 구간은 대표 면 id로 채운다.
+        const int pointCount = points->Length / 3;
+        auto segmentFaceIds = gcnew array<int>(pointCount > 1 ? pointCount - 1 : 0);
+        for (int k = 0; k < segmentFaceIds->Length; ++k) segmentFaceIds[k] = run.faceId;
+        for (size_t s = 0; s < run.segmentStarts.size(); ++s)
+        {
+            const int from = run.segmentStarts[s].startIndex;
+            const int to = (s + 1 < run.segmentStarts.size())
+                ? run.segmentStarts[s + 1].startIndex
+                : pointCount - 1;
+            for (int k = from; k < to && k < segmentFaceIds->Length; ++k)
+                segmentFaceIds[k] = run.segmentStarts[s].faceId;
+        }
+        side->SegmentFaceIds = segmentFaceIds;
         result[i] = side;
     }
     return result;

@@ -40,6 +40,8 @@ public ref class ExitSideCandidate
 public:
     property int FaceId;
     property array<double>^ Points; // flat: x0,y0,z0,...
+    // Points 구간별(점 N개 → N-1개) 반대편 면 id. 병합된 후보에서 구간마다 면이 다를 수 있다.
+    property array<int>^ SegmentFaceIds;
 };
 
 public ref class HlrPolyline

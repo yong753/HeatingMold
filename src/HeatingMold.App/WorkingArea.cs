@@ -33,6 +33,9 @@ internal sealed class WorkingArea
     /// <summary>ExitChain과 1:1로 대응하는 실제 CAD 모서리 3D 폴리라인.</summary>
     public List<Vec3> ExitChain3D { get; set; } = new();
 
+    /// <summary>ExitChain의 점 사이 구간별 실제 인출 Face ID (개수 = ExitChain.Count - 1).</summary>
+    public List<int> ExitChainFaceIds { get; set; } = new();
+
     /// <summary>3D 체인이 2D 체인과 점 개수까지 일치할 때만 곡면 인출 리드 보정에 사용한다.</summary>
     public bool HasExitChain3D => ExitChain.Count >= 2 && ExitChain3D.Count == ExitChain.Count;
 
