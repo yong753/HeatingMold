@@ -194,6 +194,26 @@ public static class SurfacePathMapper
     public static bool TryMapRoute(IReadOnlyList<Vec2> path, Func<Vec2, SurfaceMappedSample?> hit,
         out List<SurfaceMappedSample> mapped, out string failure, int maxProbes = DefaultMaxProbes)
     {
+        return TryMapRouteCore(path, hit, 0, out mapped, out failure, maxProbes);
+    }
+
+    /// <summary>
+    /// 편집 검증용 변형: 채택된 리프 구간 내부를 <paramref name="gapSpacing"/>(mm) 간격으로
+    /// 추가 표본화해, 끝점/사분점 사이에 숨은 홀·도메인 이탈을 걸러낸다. 이 간격보다 좁은
+    /// 결함은 여전히 보장하지 않는다(표본 한계). gapSpacing ≤ 0이면 일반 경로와 동일하다.
+    /// </summary>
+    public static bool TryMapRouteStrict(IReadOnlyList<Vec2> path, Func<Vec2, SurfaceMappedSample?> hit,
+        out List<SurfaceMappedSample> mapped, out string failure,
+        double gapSpacing = 0.1, int maxProbes = DefaultMaxProbes)
+    {
+        if (!double.IsFinite(gapSpacing) || gapSpacing < 0)
+            throw new ArgumentOutOfRangeException(nameof(gapSpacing));
+        return TryMapRouteCore(path, hit, gapSpacing, out mapped, out failure, maxProbes);
+    }
+
+    private static bool TryMapRouteCore(IReadOnlyList<Vec2> path, Func<Vec2, SurfaceMappedSample?> hit,
+        double gapSpacing, out List<SurfaceMappedSample> mapped, out string failure, int maxProbes)
+    {
         ArgumentNullException.ThrowIfNull(path); ArgumentNullException.ThrowIfNull(hit);
         mapped = new(); failure = string.Empty;
         if (maxProbes < 1) throw new ArgumentOutOfRangeException(nameof(maxProbes));
@@ -213,6 +233,20 @@ public static class SurfacePathMapper
         }
         void Append(SurfaceMappedSample sample)
         { if (result.Count == 0 || result[^1].DatumPoint != sample.DatumPoint) result.Add(sample); }
+        // 리프 내부의 표본화되지 않은 긴 구간을 gapSpacing 간격으로 확인한다.
+        bool ProbeLeafGaps(Vec2 a, Vec2 b)
+        {
+            if (gapSpacing <= 0) return true;
+            double length = a.DistanceTo(b);
+            if (length <= gapSpacing) return true;
+            int steps = (int)Math.Ceiling(length / gapSpacing);
+            for (int step = 1; step < steps; step++)
+            {
+                Vec2 uv = a + (b - a) * (step / (double)steps);
+                if (!Probe(uv, out _)) return false;
+            }
+            return true;
+        }
         bool Refine(Vec2 a, SurfaceMappedSample ma, Vec2 b, SurfaceMappedSample mb, int depth)
         {
             Vec2 mid=a*0.5+b*0.5, q1=a*0.75+b*0.25, q3=a*0.25+b*0.75;
@@ -220,7 +254,10 @@ public static class SurfacePathMapper
             Vec3 chordMid=ma.Point*0.5+mb.Point*0.5, chord1=ma.Point*0.75+mb.Point*0.25, chord3=ma.Point*0.25+mb.Point*0.75;
             if ((mm.Point-chordMid).Length<=MaxChordError &&
                 (m1.Point-chord1).Length<=MaxChordError && (m3.Point-chord3).Length<=MaxChordError)
-            { Append(m1); Append(mm); Append(m3); Append(mb); return true; }
+            {
+                if (!ProbeLeafGaps(a, b)) return false;
+                Append(m1); Append(mm); Append(m3); Append(mb); return true;
+            }
             if (depth>=MaxDepth || mid==a || mid==b) { error="Surface mapping could not resolve a discontinuity within depth 18."; return false; }
             return Refine(a,ma,mid,mm,depth+1) && Refine(mid,mm,b,mb,depth+1);
         }

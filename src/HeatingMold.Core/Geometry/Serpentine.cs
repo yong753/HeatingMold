@@ -311,8 +311,8 @@ public static class Serpentine
                 if (DistanceToChain(exitChain, end) > reach) continue;
                 // 마진 인셋 때문에 경로 끝점은 인출면 경계보다 margin 만큼 안쪽에 있다.
                 // 경계 위로 직교 투영한 점을 앵커로 쓰고, 그 연결 구간은 ExitPiece가 된다.
-                Vec2 startAnchor = NearestOnChain(exitChain, start);
-                Vec2 endAnchor = NearestOnChain(exitChain, end);
+                Vec2 startAnchor = SnapOnChain(exitChain, start);
+                Vec2 endAnchor = SnapOnChain(exitChain, end);
                 if (startAnchor.DistanceTo(endAnchor) <= AnchorMatchTolerance) continue;
                 if (candidates.Any(c => c.Start.DistanceTo(startAnchor) <= AnchorMatchTolerance
                         && c.End.DistanceTo(endAnchor) <= AnchorMatchTolerance)) continue;
@@ -354,8 +354,8 @@ public static class Serpentine
                 double reach = ChainReach(p);
                 if (DistanceToChain(exitChain, start) > reach) continue;
                 if (DistanceToChain(exitChain, end) > reach) continue;
-                if (!Near(NearestOnChain(exitChain, start), startAnchor)) continue;
-                if (!Near(NearestOnChain(exitChain, end), endAnchor)) continue;
+                if (!Near(SnapOnChain(exitChain, start), startAnchor)) continue;
+                if (!Near(SnapOnChain(exitChain, end), endAnchor)) continue;
                 return AnchoredResult.Ok(WithExitPieces(ToWorld(route, rad, angleDeg),
                     startAnchor, endAnchor));
             }
@@ -371,7 +371,7 @@ public static class Serpentine
     /// 사행 경로는 마진만큼 안쪽으로 인셋되므로 그 거리까지 허용하고, 경계 위로 투영해 앵커로 쓴다.</summary>
     private static double ChainReach(PatternParams p) => Math.Max(0.0, p.Margin) + ChainTolerance;
 
-    private static Vec2 NearestOnChain(IReadOnlyList<Vec2> chain, Vec2 p)
+    public static Vec2 SnapOnChain(IReadOnlyList<Vec2> chain, Vec2 p)
     {
         Vec2 best = chain[0];
         double bestDistance = double.MaxValue;
@@ -503,8 +503,8 @@ public static class Serpentine
                     if (chainParallelToLanes) anyParallelChain = true;
                 }
                 if (startOn && endOn) anyChainPair = true;
-                Vec2 projectedStart = NearestOnChain(exitChain, start);
-                Vec2 projectedEnd = NearestOnChain(exitChain, end);
+                Vec2 projectedStart = SnapOnChain(exitChain, start);
+                Vec2 projectedEnd = SnapOnChain(exitChain, end);
                 if ((Near(projectedStart, startAnchor) && Near(projectedEnd, endAnchor))
                     || (Near(projectedStart, endAnchor) && Near(projectedEnd, startAnchor)))
                     parityLike = true;
@@ -523,7 +523,7 @@ public static class Serpentine
 
     private static bool Near(Vec2 a, Vec2 b) => a.DistanceTo(b) <= 1e-3;
 
-    private static double DistanceToChain(IReadOnlyList<Vec2> chain, Vec2 p)
+    public static double DistanceToChain(IReadOnlyList<Vec2> chain, Vec2 p)
     {
         double best = double.MaxValue;
         for (int i = 0; i + 1 < chain.Count; i++)
@@ -693,7 +693,7 @@ public static class Serpentine
         return best <= 1e-3;
     }
 
-    private static double DistanceToRing(IReadOnlyList<Vec2> ring, Vec2 p)
+    internal static double DistanceToRing(IReadOnlyList<Vec2> ring, Vec2 p)
     {
         double best = double.MaxValue;
         for (int i = 0; i < ring.Count; i++)
@@ -701,7 +701,7 @@ public static class Serpentine
         return best;
     }
 
-    private static double DistanceToSegment(Vec2 p, Vec2 a, Vec2 b)
+    internal static double DistanceToSegment(Vec2 p, Vec2 a, Vec2 b)
     {
         double abx = b.X - a.X, aby = b.Y - a.Y;
         double len2 = abx * abx + aby * aby;
@@ -710,7 +710,7 @@ public static class Serpentine
         return p.DistanceTo(new Vec2(a.X + t * abx, a.Y + t * aby));
     }
 
-    private static bool PointInRing(IReadOnlyList<Vec2> ring, Vec2 p)
+    internal static bool PointInRing(IReadOnlyList<Vec2> ring, Vec2 p)
     {
         bool inside = false;
         for (int i = 0, j = ring.Count - 1; i < ring.Count; j = i++)
