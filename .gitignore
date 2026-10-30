@@ -21,6 +21,9 @@ third_party/
 # 산출물 (DXF 등)
 output/
 
+# 빌드 검증 산출물 (verify-build 등)
+artifacts/
+
 # 기타
 Thumbs.db
 Desktop.ini
