@@ -112,6 +112,46 @@ public class RouteVertexEditTests
     }
 
     [Fact]
+    public void PreviewApply_CopiesOnlyAffectedPieces_AndMatchesFullEdit()
+    {
+        var source = TwoLaneRoute();
+        var edits = new List<(RouteVertexOccurrence At, Vec2 Value)>
+        {
+            (new RouteVertexOccurrence(0, 1), new Vec2(11, 0)),
+            (new RouteVertexOccurrence(1, 0), new Vec2(11, 0)),
+        };
+
+        Assert.True(SerpentineVertexPreview.TryApplyAffected(source, edits,
+            out var affected, out var changed, out string failure), failure);
+
+        Assert.Equal(2, affected.Count);                    // 조각 0, 1만
+        Assert.False(affected.ContainsKey(2));              // 마지막 조각은 복사하지 않음
+        Assert.Equal(new Vec2(11, 0), affected[0][1]);
+        Assert.Equal(new Vec2(11, 0), affected[1][0]);
+        // 마지막 점(0,1)은 앞 선분만, 첫 점(1,0)은 뒤 선분만 → 2개
+        Assert.Equal(2, changed.Count);
+
+        var full = SerpentineVertexEdit.ApplyVertexEdits(source, edits);
+        foreach (var entry in affected)
+            Assert.Equal(full.RoutePieces[entry.Key].Points, entry.Value);
+        Assert.Equal(new Vec2(10, 0), source.RoutePieces[0].Points[1]);   // 원본 불변
+    }
+
+    [Fact]
+    public void PreviewApply_RejectsSplitSharedVertex()
+    {
+        var source = TwoLaneRoute();
+        var edits = new List<(RouteVertexOccurrence At, Vec2 Value)>
+        {
+            (new RouteVertexOccurrence(0, 1), new Vec2(11, 0)),
+        };
+
+        Assert.False(SerpentineVertexPreview.TryApplyAffected(source, edits,
+            out _, out _, out string failure));
+        Assert.Contains("공유", failure);
+    }
+
+    [Fact]
     public void Validator_AcceptsInsideAndRejectsOutside()
     {
         var region = new List<IReadOnlyList<Vec2>>

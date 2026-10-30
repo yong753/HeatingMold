@@ -232,6 +232,7 @@ namespace HeatingMold.App
 
         private bool _vertexEditMode;
         private bool _vertexDragging;
+        private int _lastVertexHover = -2;   // 같은 핸들 반복 이벤트 억제
         // 꼭지점 드래그 이동은 최신 위치만 주기적으로 전달한다(느린 매핑 중 이벤트 폭주 방지).
         private DispatcherTimer _vertexDragTimer;
         private (int X, int Y)? _pendingVertexDrag;
@@ -243,7 +244,9 @@ namespace HeatingMold.App
             {
                 if (_vertexEditMode == value) return;
                 _vertexEditMode = value;
+                _lastVertexHover = -2;
                 if (value) return;
+                StopVertexDragTimer();
                 if (_vertexDragging)
                 {
                     _vertexDragging = false;
@@ -523,7 +526,15 @@ namespace HeatingMold.App
                     }
                     if (VertexEditMode)
                     {
-                        if (_ready) VertexHovered?.Invoke(Bridge.PickVertexHandle(x, y, 10.0));
+                        if (_ready)
+                        {
+                            int hover = Bridge.PickVertexHandle(x, y, 10.0);
+                            if (hover != _lastVertexHover)
+                            {
+                                _lastVertexHover = hover;
+                                VertexHovered?.Invoke(hover);
+                            }
+                        }
                         handled = true;
                         break;
                     }
@@ -606,7 +617,11 @@ namespace HeatingMold.App
                     Bridge.ClearHover();
                     ConnectorHovered?.Invoke(-1);
                     RoutePieceHovered?.Invoke(-1);
-                    if (VertexEditMode) VertexHovered?.Invoke(-1);
+                    if (VertexEditMode)
+                    {
+                        _lastVertexHover = -2;
+                        VertexHovered?.Invoke(-1);
+                    }
                     if (ExitFacePickMode) ExitFacePickMoved?.Invoke(-1, -1);
                     if (_lastHover != -1)
                     {

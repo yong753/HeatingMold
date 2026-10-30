@@ -1552,7 +1552,7 @@ namespace
         } catch (const Standard_Failure&) { return false; }
     }
 
-    bool SetConnectorNative(int id, bool enabled, double r, double g, double b)
+    bool SetConnectorNative(int id, bool enabled, double r, double g, double b, bool redraw = true)
     {
         auto it = g_routePieces.find(id);
         if (it == g_routePieces.end() || !it->second.connector || g_ctx.IsNull()) return false;
@@ -1561,7 +1561,7 @@ namespace
         g_ctx->SetColor(it->second.ais, it->second.color, Standard_False);
         it->second.ais->Attributes()->LineAspect()->SetTypeOfLine(enabled ? Aspect_TOL_SOLID : Aspect_TOL_DASH);
         g_ctx->Redisplay(it->second.ais, Standard_False);
-        if (!g_view.IsNull()) g_view->Redraw();
+        if (redraw && !g_view.IsNull()) g_view->Redraw();
         return true;
     }
 
@@ -3285,9 +3285,9 @@ RoutePieceResult^ Bridge::ProjectRoutePiece(int pieceId, String^ kind, array<dou
     return result;
 }
 
-bool Bridge::SetConnectorEnabled(int pieceId, bool enabled, double r, double g, double b)
+bool Bridge::SetConnectorEnabled(int pieceId, bool enabled, double r, double g, double b, bool redraw)
 {
-    return SetConnectorNative(pieceId, enabled, r, g, b);
+    return SetConnectorNative(pieceId, enabled, r, g, b, redraw);
 }
 
 void Bridge::ClearRoutePieces() { ClearRoutePiecesNative(); if (!g_view.IsNull()) g_view->Redraw(); }

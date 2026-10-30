@@ -29,6 +29,8 @@ struct VertexHandleNative { Handle(AIS_Point) marker; gp_Pnt point; };
 std::map<int, VertexHandleNative> g_vertexHandles;
 std::map<int, Handle(AIS_Shape)> g_routePreviews;
 long long g_vertexOverlayContext = 0, g_vertexOverlayRevision = 0;
+// 마지막으로 강조한 핸들 — 같은 인덱스 반복 시 전체 재색칠/Redraw를 생략한다.
+int g_lastVertexHighlight = -2;
 const Quantity_Color kVertexHandleColor(1.0, 0.85, 0.1, Quantity_TOC_RGB);
 const Quantity_Color kVertexHandleActiveColor(0.1, 0.95, 0.6, Quantity_TOC_RGB);
 const Quantity_Color kRoutePreviewColor(0.1, 0.9, 0.5, Quantity_TOC_RGB);
@@ -40,6 +42,7 @@ void ClearVertexHandlesNative()
     g_vertexHandles.clear();
     g_vertexOverlayContext = 0;
     g_vertexOverlayRevision = 0;
+    g_lastVertexHighlight = -2;
 }
 
 void ClearRoutePreviewNative()
@@ -89,9 +92,16 @@ bool SetVertexHandlesNative(long long id, long long revision, const std::vector<
 void HighlightVertexHandleNative(int index)
 {
     if (g_ctx.IsNull()) return;
+    if (index == g_lastVertexHighlight) return;   // 같은 핸들 반복 — 재색칠/Redraw 생략
     try {
-        for (const auto& entry : g_vertexHandles)
-            g_ctx->SetColor(entry.second.marker, entry.first == index ? kVertexHandleActiveColor : kVertexHandleColor, Standard_False);
+        // 이전/새 핸들만 색을 바꾼다(전체 순회 제거).
+        auto previous = g_vertexHandles.find(g_lastVertexHighlight);
+        if (previous != g_vertexHandles.end())
+            g_ctx->SetColor(previous->second.marker, kVertexHandleColor, Standard_False);
+        auto current = g_vertexHandles.find(index);
+        if (current != g_vertexHandles.end())
+            g_ctx->SetColor(current->second.marker, kVertexHandleActiveColor, Standard_False);
+        g_lastVertexHighlight = index;
         if (!g_view.IsNull()) g_view->Redraw();
     } catch (const Standard_Failure&) {}
 }
@@ -137,7 +147,7 @@ bool ShowRoutePreviewNative(int pieceIndex, const std::vector<double>& xyz, bool
         g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
         g_ctx->Deactivate(ais, Standard_False);
         g_routePreviews[pieceIndex] = ais;
-        if (!g_view.IsNull()) g_view->Redraw();
+        // Redraw는 호출측이 조각 묶음을 모두 갱신한 뒤 한 번만 수행한다.
         return true;
     } catch (const Standard_Failure&) { return false; }
 }

@@ -758,6 +758,7 @@ namespace HeatingMold.App
             var area = _activeArea;
             if (area?.Pattern == null) return;
             ApplyAreaConnectorStates(area);
+            Bridge.RedrawView();
             var circuits = SerpentineTopology.Compute(area.Pattern.RoutePieces, area.TurnEnabled);
             var turns = area.Pattern.RoutePieces.Select((p, i) => (p, i)).Where(x => x.p.Kind == SerpentineRoutePieceKind.TurnConnector).ToList();
             double length = area.Pattern.RoutePieces.Select((p, i) => (p, i))

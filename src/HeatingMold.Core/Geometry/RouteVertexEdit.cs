@@ -128,6 +128,101 @@ public static class SerpentineVertexEdit
     }
 }
 
+/// <summary>
+/// 드래그 미리보기용 경량 적용. 변경된 조각의 점 목록만 복사하고 Path/Segments/길이는
+/// 재구성하지 않는다. 확정 시에는 <see cref="SerpentineVertexEdit.ApplyVertexEdits"/>를 쓴다.
+/// </summary>
+public static class SerpentineVertexPreview
+{
+    public static bool TryApplyAffected(SerpentineResult source,
+        IReadOnlyList<(RouteVertexOccurrence At, Vec2 Value)> edits,
+        out Dictionary<int, IReadOnlyList<Vec2>> affectedPoints,
+        out List<(Vec2 A, Vec2 B)> changedSegments,
+        out string failure)
+    {
+        affectedPoints = new Dictionary<int, IReadOnlyList<Vec2>>();
+        changedSegments = new List<(Vec2 A, Vec2 B)>();
+        failure = string.Empty;
+        ArgumentNullException.ThrowIfNull(source);
+        if (edits == null || edits.Count == 0)
+        {
+            failure = "이동할 꼭지점이 없습니다.";
+            return false;
+        }
+        IReadOnlyList<SerpentineRoutePiece> pieces = source.RoutePieces;
+        if (pieces.Count == 0)
+        {
+            failure = "편집할 경로 조각이 없습니다.";
+            return false;
+        }
+
+        var copies = new Dictionary<int, List<Vec2>>();
+        foreach ((RouteVertexOccurrence at, Vec2 value) in edits)
+        {
+            if (at.Piece < 0 || at.Piece >= pieces.Count)
+            {
+                failure = "조각 인덱스가 범위를 벗어났습니다.";
+                return false;
+            }
+            if (!double.IsFinite(value.X) || !double.IsFinite(value.Y))
+            {
+                failure = "꼭지점 좌표가 유한하지 않습니다.";
+                return false;
+            }
+            copies.TryGetValue(at.Piece, out List<Vec2>? points);
+            if (points == null)
+            {
+                points = new List<Vec2>(pieces[at.Piece].Points);
+                copies[at.Piece] = points;
+            }
+            if (at.Point < 0 || at.Point >= points.Count)
+            {
+                failure = "점 인덱스가 범위를 벗어났습니다.";
+                return false;
+            }
+            points[at.Point] = value;
+        }
+
+        // 영향을 받은 조각의 인접 경계만 검사한다(공유점이 한쪽만 움직이면 경로가 끊긴다).
+        foreach (int pieceIndex in copies.Keys)
+        {
+            if (pieceIndex > 0 && copies[pieceIndex].Count > 0)
+            {
+                IReadOnlyList<Vec2> previous = copies.TryGetValue(pieceIndex - 1, out List<Vec2>? before) && before != null
+                    ? before
+                    : pieces[pieceIndex - 1].Points;
+                if (previous.Count > 0 && copies[pieceIndex][0] != previous[^1])
+                {
+                    failure = "공유 꼭지점이 한쪽만 갱신되었습니다.";
+                    return false;
+                }
+            }
+            if (pieceIndex + 1 < pieces.Count && copies[pieceIndex].Count > 0)
+            {
+                IReadOnlyList<Vec2> next = copies.TryGetValue(pieceIndex + 1, out List<Vec2>? after) && after != null
+                    ? after
+                    : pieces[pieceIndex + 1].Points;
+                if (next.Count > 0 && next[0] != copies[pieceIndex][^1])
+                {
+                    failure = "공유 꼭지점이 한쪽만 갱신되었습니다.";
+                    return false;
+                }
+            }
+        }
+
+        foreach ((RouteVertexOccurrence at, _) in edits)
+        {
+            IReadOnlyList<Vec2> points = copies[at.Piece];
+            if (at.Point > 0) changedSegments.Add((points[at.Point - 1], points[at.Point]));
+            if (at.Point + 1 < points.Count) changedSegments.Add((points[at.Point], points[at.Point + 1]));
+        }
+
+        foreach (KeyValuePair<int, List<Vec2>> entry in copies)
+            affectedPoints[entry.Key] = entry.Value;
+        return true;
+    }
+}
+
 /// <summary>편집된 구간이 적용영역(외곽+홀) 안에 남는지 검사한다.</summary>
 public static class RouteVertexValidator
 {

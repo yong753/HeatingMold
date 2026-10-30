@@ -193,7 +193,8 @@ public:
     static RoutePieceResult^ ProjectRoutePiece(int pieceId, System::String^ kind, array<double>^ xyzFlat,
                                                array<int>^ faceIds, double dx, double dy, double dz, double depth);
     /// <summary>Toggle connector presentation; disabled connectors are shown as dashed guides.</summary>
-    static bool SetConnectorEnabled(int pieceId, bool enabled, double r, double g, double b);
+    /// <summary>redraw=false면 호출측이 여러 커넥터를 갱신한 뒤 한 번만 Redraw한다.</summary>
+    static bool SetConnectorEnabled(int pieceId, bool enabled, double r, double g, double b, bool redraw);
     static void ClearRoutePieces();
     /// <summary>Project datum start-to-destination onto heating faces, then continue externally.
     /// Returns [status (1=success; negative=failure), total, surface, external] lengths in mm.</summary>

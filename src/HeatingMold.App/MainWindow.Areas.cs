@@ -523,7 +523,8 @@ public partial class MainWindow
         {
             if (area.Pattern.RoutePieces[i].Kind != SerpentineRoutePieceKind.TurnConnector) continue;
             bool enabled = turn < area.TurnEnabled.Count ? area.TurnEnabled[turn] : true;
-            Bridge.SetConnectorEnabled(area.NativePieceIds[i], enabled, 0.2, 0.8, 0.3);
+            // Rebuild 끝의 RedrawView가 일괄 반영한다 — 커넥터마다 Redraw하지 않는다.
+            Bridge.SetConnectorEnabled(area.NativePieceIds[i], enabled, 0.2, 0.8, 0.3, false);
             turn++;
         }
     }
