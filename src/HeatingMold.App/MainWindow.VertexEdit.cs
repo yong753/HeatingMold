@@ -294,14 +294,14 @@ public partial class MainWindow
 
     private void UpdateVertexPreview(Vec2 datum)
     {
-        if (!TryBuildVertexCandidate(datum, out SerpentineResult candidate, out Vec2 applied,
-                out string failure, out bool anchor, out bool isStart))
+        if (!TryBuildVertexCandidate(datum, strict: false, out SerpentineResult candidate, out Vec2 applied,
+                out string failure, out bool anchor, out bool isStart, out var mappedPieces))
         {
             Bridge.ClearRoutePreview();
             StatusText.Text = "이동 불가 — " + failure;
             return;
         }
-        if (ShowVertexPreview(candidate, anchor ? applied : (Vec2?)null))
+        if (ShowVertexPreview(candidate, mappedPieces))
             StatusText.Text = string.Format("꼭지점 → ({0:F2}, {1:F2})mm{2}",
                 applied.X, applied.Y, anchor ? " · 인출 경계 위" : "");
         else
@@ -311,14 +311,21 @@ public partial class MainWindow
         }
     }
 
-    private bool TryBuildVertexCandidate(Vec2 datum, out SerpentineResult candidate, out Vec2 applied,
-        out string failure, out bool anchor, out bool isStart)
+    /// <summary>
+    /// 후보 패턴을 만들고 검증한다. strict=false면 미리보기용 느슨 매핑(코드 오차만,
+    /// 조각당 수십 표본)이고, strict=true면 확정용 밀집 표본화(0.1mm 간격)다.
+    /// 곡면 영역에서 매핑에 성공한 조각의 3D 표본은 mappedPieces로 반환해 미리보기에 재사용한다.
+    /// </summary>
+    private bool TryBuildVertexCandidate(Vec2 datum, bool strict, out SerpentineResult candidate, out Vec2 applied,
+        out string failure, out bool anchor, out bool isStart,
+        out Dictionary<int, List<SurfaceMappedSample>> mappedPieces)
     {
         candidate = null;
         applied = datum;
         failure = string.Empty;
         anchor = false;
         isStart = false;
+        mappedPieces = new Dictionary<int, List<SurfaceMappedSample>>();
         var area = _activeArea;
         if (area?.Pattern == null || _vertexDragGroup < 0 || _vertexDragGroup >= _vertexGroups.Count)
         {
@@ -351,8 +358,12 @@ public partial class MainWindow
             {
                 SerpentineRoutePiece piece = candidate.RoutePieces[pieceIndex];
                 if (piece.Points.Count < 2) continue;
-                if (!SurfacePathMapper.TryMapRouteStrict(piece.Points, hit, out _, out string mapFailure, 0.1))
-                { failure = "곡면 매핑 실패 — " + mapFailure; return false; }
+                bool ok = strict
+                    ? SurfacePathMapper.TryMapRouteStrict(piece.Points, hit, out var samples,
+                        out string mapFailure, 0.1)
+                    : SurfacePathMapper.TryMapRoute(piece.Points, hit, out samples, out mapFailure);
+                if (!ok) { failure = "곡면 매핑 실패 — " + mapFailure; return false; }
+                mappedPieces[pieceIndex] = samples;
             }
         }
         return true;
@@ -368,13 +379,13 @@ public partial class MainWindow
         if (occurrence.Point + 1 < points.Count) segments.Add((points[occurrence.Point], points[occurrence.Point + 1]));
     }
 
-    private bool ShowVertexPreview(SerpentineResult candidate, Vec2? movedAnchorDatum)
+    /// <summary>검증 단계에서 이미 계산한 매핑을 재사용해 미리보기 폴리라인을 그린다.</summary>
+    private bool ShowVertexPreview(SerpentineResult candidate,
+        Dictionary<int, List<SurfaceMappedSample>> mappedPieces)
     {
         var area = _activeArea;
-        var side = _workingSide.Confirmed;
-        if (area == null || side == null || _vertexDragGroup < 0) return false;
+        if (area == null || _vertexDragGroup < 0) return false;
         bool curved = IsCurvedArea(area);
-        var hit = BuildVertexMapDelegate(area, side, movedAnchorDatum);
         foreach (int pieceIndex in _vertexGroups[_vertexDragGroup].Occurrences.Select(o => o.Piece).Distinct())
         {
             SerpentineRoutePiece piece = candidate.RoutePieces[pieceIndex];
@@ -382,9 +393,7 @@ public partial class MainWindow
             double[] xyz;
             if (curved)
             {
-                if (!SurfacePathMapper.TryMapRouteStrict(piece.Points, hit, out var samples,
-                        out _, 0.1) || samples.Count < 2)
-                    return false;
+                if (!mappedPieces.TryGetValue(pieceIndex, out var samples) || samples.Count < 2) return false;
                 xyz = new double[samples.Count * 3];
                 for (int i = 0; i < samples.Count; i++)
                 {
@@ -406,8 +415,9 @@ public partial class MainWindow
     {
         var area = _activeArea;
         if (area == null) return;
-        if (!TryBuildVertexCandidate(datum, out SerpentineResult candidate, out Vec2 applied,
-                out string failure, out bool anchor, out bool isStart))
+        // 확정 시에만 밀집 표본화(0.1mm 간격)로 엄격 검증한다.
+        if (!TryBuildVertexCandidate(datum, strict: true, out SerpentineResult candidate, out Vec2 applied,
+                out string failure, out bool anchor, out bool isStart, out _))
         {
             StatusText.Text = "이동할 수 없습니다 — " + failure;
             return;

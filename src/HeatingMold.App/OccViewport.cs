@@ -232,6 +232,9 @@ namespace HeatingMold.App
 
         private bool _vertexEditMode;
         private bool _vertexDragging;
+        // 꼭지점 드래그 이동은 최신 위치만 주기적으로 전달한다(느린 매핑 중 이벤트 폭주 방지).
+        private DispatcherTimer _vertexDragTimer;
+        private (int X, int Y)? _pendingVertexDrag;
         /// <summary>꼭지점 편집 모드 — 회전/팬/줌/면 선택을 막고 핸들 드래그만 허용한다.</summary>
         public bool VertexEditMode
         {
@@ -288,9 +291,38 @@ namespace HeatingMold.App
         /// <summary>진행 중인 꼭지점 드래그를 취소하고 완료 이벤트를 올리지 않는다.</summary>
         private void CancelVertexDrag()
         {
+            StopVertexDragTimer();
             if (!_vertexDragging) return;
             _vertexDragging = false;
             VertexDragCancelled?.Invoke();
+        }
+
+        private void StopVertexDragTimer()
+        {
+            _vertexDragTimer?.Stop();
+            _pendingVertexDrag = null;
+        }
+
+        /// <summary>마지막 커서 위치를 백그라운드 우선순위 타이머로 한 번만 올린다.</summary>
+        private void QueueVertexDragMoved(int x, int y)
+        {
+            _pendingVertexDrag = (X: x, Y: y);
+            if (_vertexDragTimer == null)
+            {
+                _vertexDragTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+                    { Interval = TimeSpan.FromMilliseconds(33) };
+                _vertexDragTimer.Tick += FlushVertexDrag;
+            }
+            if (!_vertexDragTimer.IsEnabled) _vertexDragTimer.Start();
+        }
+
+        private void FlushVertexDrag(object sender, EventArgs e)
+        {
+            _vertexDragTimer?.Stop();
+            var point = _pendingVertexDrag;
+            _pendingVertexDrag = null;
+            if (!_vertexDragging || point == null) return;
+            VertexDragMoved?.Invoke(point.Value.X, point.Value.Y);
         }
 
         protected override HandleRef BuildWindowCore(HandleRef hwndParent)
@@ -310,6 +342,7 @@ namespace HeatingMold.App
             _dragging = false;
             _dragStarted = false;
             _vertexDragging = false;
+            StopVertexDragTimer();
             _syncedWidth = _syncedHeight = -1;
             DestroyWindow(hwnd.Handle);
         }
@@ -389,6 +422,7 @@ namespace HeatingMold.App
                         if (_vertexDragging)
                         {
                             _vertexDragging = false;
+                            StopVertexDragTimer();
                             VertexDragCancelled?.Invoke();
                             ReleaseCapture();
                             handled = true;
@@ -419,6 +453,7 @@ namespace HeatingMold.App
                         SetCapture(hwnd);
                         _dragging = false;
                         _dragStarted = false;
+                        _pendingVertexDrag = null;
                         _vertexDragging = true;
                         VertexDragStarted?.Invoke(handle, hx, hy);
                         handled = true;
@@ -482,7 +517,7 @@ namespace HeatingMold.App
                     }
                     if (_vertexDragging)
                     {
-                        VertexDragMoved?.Invoke(x, y);
+                        QueueVertexDragMoved(x, y);
                         handled = true;
                         break;
                     }
@@ -587,6 +622,7 @@ namespace HeatingMold.App
                         int hx = LoWord(lParam), hy = HiWord(lParam);
                         // ReleaseCapture가 WM_CAPTURECHANGED를 유발하므로 종료 상태를 먼저 확정한다.
                         _vertexDragging = false;
+                        StopVertexDragTimer();
                         VertexDragCompleted?.Invoke(hx, hy);
                         ReleaseCapture();
                         handled = true;
