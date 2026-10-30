@@ -68,6 +68,8 @@ public partial class MainWindow
         if (area == null) return;
         var direction = (PatternDirection)Math.Max(0, DirectionBox.SelectedIndex);
         if (area.Direction == direction) return;
+        if (!ConfirmDiscardRouteEdits(area, "배치 방향 변경")) return;
+        if (area.Direction == direction) return;
 
         area.Direction = direction;
         if (area.HasExitFace) RecomputeAnchorCandidates(area);
@@ -94,6 +96,7 @@ public partial class MainWindow
             StatusText.Text = "하나로 연결된 적용영역에서만 인출면을 지정할 수 있습니다";
             return;
         }
+        if (!ConfirmDiscardRouteEdits(area, "인출면 변경")) return;
         if (Viewport == null || !Viewport.IsReady) return;
         CancelExitFacePick();
 
@@ -225,6 +228,7 @@ public partial class MainWindow
     {
         var area = _activeArea;
         if (area == null) return;
+        if (!ConfirmDiscardRouteEdits(area, "인출면 초기화")) return;
         CancelExitFacePick();
         area.ExitFaceId = -1;
         area.ExitFaceRevision = 0;

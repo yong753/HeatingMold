@@ -197,6 +197,16 @@ namespace HeatingMold.App
         public event Action<int, int> ExitFacePickMoved;
         public event Action EnterPressed;
 
+        // ---- 꼭지점 편집 모드 ----
+        /// <summary>호버 중인 꼭지점 표시 인덱스 (없으면 -1).</summary>
+        public event Action<int> VertexHovered;
+        public event Action<int, int, int> VertexDragStarted;
+        public event Action<int, int> VertexDragMoved;
+        public event Action<int, int> VertexDragCompleted;
+        public event Action VertexDragCancelled;
+        /// <summary>드래그 중이 아닐 때 Esc — 편집 모드 종료 요청.</summary>
+        public event Action VertexEscape;
+
         private bool _exitFacePickMode;
         /// <summary>인출면 지정 모드 — 클릭 좌표만 올리고 가열면 선택 상태는 건드리지 않는다.</summary>
         public bool ExitFacePickMode
@@ -219,6 +229,26 @@ namespace HeatingMold.App
 
         public bool RectangleSelectionMode { get; set; }
         public bool ExclusionSketchMode { get; set; }
+
+        private bool _vertexEditMode;
+        private bool _vertexDragging;
+        /// <summary>꼭지점 편집 모드 — 회전/팬/줌/면 선택을 막고 핸들 드래그만 허용한다.</summary>
+        public bool VertexEditMode
+        {
+            get => _vertexEditMode;
+            set
+            {
+                if (_vertexEditMode == value) return;
+                _vertexEditMode = value;
+                if (value) return;
+                if (_vertexDragging)
+                {
+                    _vertexDragging = false;
+                    VertexDragCancelled?.Invoke();
+                }
+                VertexHovered?.Invoke(-1);
+            }
+        }
 
         public bool IsReady => _ready;
 
@@ -255,6 +285,14 @@ namespace HeatingMold.App
             Bridge.ClearPowerLeadPreview();
         }
 
+        /// <summary>진행 중인 꼭지점 드래그를 취소하고 완료 이벤트를 올리지 않는다.</summary>
+        private void CancelVertexDrag()
+        {
+            if (!_vertexDragging) return;
+            _vertexDragging = false;
+            VertexDragCancelled?.Invoke();
+        }
+
         protected override HandleRef BuildWindowCore(HandleRef hwndParent)
         {
             EnsureClassRegistered();
@@ -271,6 +309,7 @@ namespace HeatingMold.App
             _ready = false;
             _dragging = false;
             _dragStarted = false;
+            _vertexDragging = false;
             _syncedWidth = _syncedHeight = -1;
             DestroyWindow(hwnd.Handle);
         }
@@ -324,6 +363,7 @@ namespace HeatingMold.App
         {
             base.OnRenderSizeChanged(sizeInfo);
             CancelPowerLeadPreview();
+            CancelVertexDrag();
             // 이 시점의 base 렌더는 자식 HWND 크기를 아직 갱신하지 않았을 수 있다.
             // 즉시 시도하고, 실제 HWND 크기 기준으로 한 번 더 맞춘다.
             SyncViewSize();
@@ -333,6 +373,7 @@ namespace HeatingMold.App
         protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
         {
             base.OnDpiChanged(oldDpi, newDpi);
+            CancelVertexDrag();
             // DPI가 바뀌면 DIP 크기는 그대로여도 HWND 픽셀 크기가 달라진다.
             _syncedWidth = _syncedHeight = -1;
             ScheduleViewSizeSync();
@@ -343,12 +384,46 @@ namespace HeatingMold.App
             switch (msg)
             {
                 case WM_KEYDOWN:
-                    if ((int)wParam == 0x0D) { EnterPressed?.Invoke(); handled = true; }
+                    if ((int)wParam == 0x1B)   // VK_ESCAPE
+                    {
+                        if (_vertexDragging)
+                        {
+                            _vertexDragging = false;
+                            VertexDragCancelled?.Invoke();
+                            ReleaseCapture();
+                            handled = true;
+                        }
+                        else if (VertexEditMode)
+                        {
+                            VertexEscape?.Invoke();
+                            handled = true;
+                        }
+                        break;
+                    }
+                    if ((int)wParam == 0x0D)
+                    {
+                        if (VertexEditMode) { handled = true; break; }   // 편집 중 Enter는 영역 확정으로 새지 않는다
+                        EnterPressed?.Invoke();
+                        handled = true;
+                    }
                     break;
 
                 case WM_LBUTTONDOWN:
                     CancelPowerLeadPreview();
-                    SetFocus(hwnd);   // 키보드 포커스가 없으면 Enter가 뷰포트에 전달되지 않는다
+                    SetFocus(hwnd);   // 키보드 포커스가 없으면 Enter가 뷰포트에 전달된다
+                    if (VertexEditMode)
+                    {
+                        int hx = LoWord(lParam), hy = HiWord(lParam);
+                        int handle = _ready ? Bridge.PickVertexHandle(hx, hy, 12.0) : -1;
+                        if (handle < 0) { handled = true; break; }   // 빈 곳 클릭은 회전/면 선택으로 대체하지 않는다
+                        SetCapture(hwnd);
+                        _dragging = false;
+                        _dragStarted = false;
+                        _vertexDragging = true;
+                        VertexDragStarted?.Invoke(handle, hx, hy);
+                        handled = true;
+                        break;
+                    }
                     SetCapture(hwnd);
                     _dragging = true;
                     _dragStarted = false;
@@ -364,6 +439,7 @@ namespace HeatingMold.App
                     break;
 
                 case WM_RBUTTONDOWN:
+                    if (VertexEditMode || _vertexDragging) { handled = true; break; }
                     CancelPowerLeadPreview();
                     SetCapture(hwnd);
                     _panDragging = true;
@@ -401,6 +477,18 @@ namespace HeatingMold.App
                     if (_panDragging)
                     {
                         if (_ready) Bridge.PanMove(x, y);
+                        handled = true;
+                        break;
+                    }
+                    if (_vertexDragging)
+                    {
+                        VertexDragMoved?.Invoke(x, y);
+                        handled = true;
+                        break;
+                    }
+                    if (VertexEditMode)
+                    {
+                        if (_ready) VertexHovered?.Invoke(Bridge.PickVertexHandle(x, y, 10.0));
                         handled = true;
                         break;
                     }
@@ -483,6 +571,7 @@ namespace HeatingMold.App
                     Bridge.ClearHover();
                     ConnectorHovered?.Invoke(-1);
                     RoutePieceHovered?.Invoke(-1);
+                    if (VertexEditMode) VertexHovered?.Invoke(-1);
                     if (ExitFacePickMode) ExitFacePickMoved?.Invoke(-1, -1);
                     if (_lastHover != -1)
                     {
@@ -493,6 +582,16 @@ namespace HeatingMold.App
                     break;
 
                 case WM_LBUTTONUP:
+                    if (_vertexDragging)
+                    {
+                        int hx = LoWord(lParam), hy = HiWord(lParam);
+                        // ReleaseCapture가 WM_CAPTURECHANGED를 유발하므로 종료 상태를 먼저 확정한다.
+                        _vertexDragging = false;
+                        VertexDragCompleted?.Invoke(hx, hy);
+                        ReleaseCapture();
+                        handled = true;
+                        break;
+                    }
                     if (_dragging)
                     {
                         _dragging = false;
@@ -537,6 +636,7 @@ namespace HeatingMold.App
 
                 case WM_CAPTURECHANGED:
                     CancelPowerLeadPreview();
+                    CancelVertexDrag();
                     _dragging = false;
                     if (_panDragging && _ready) Bridge.PanEnd();
                     _panDragging = false;
@@ -547,6 +647,7 @@ namespace HeatingMold.App
 
                 case WM_MOUSEWHEEL:
                 {
+                    if (VertexEditMode || _vertexDragging) { handled = true; break; }
                     int delta = (short)(((long)wParam >> 16) & 0xFFFF);
                     var point = new POINT
                     {

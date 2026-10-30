@@ -58,6 +58,9 @@ internal sealed class WorkingArea
     public List<List<Vec2>> Paths { get; set; } = new();
     public bool PatternDisplayed { get; set; }
 
+    /// <summary>생성 후 꼭지점 편집으로 경로가 수정되었는지. 재생성 시 삭제 경고에 사용한다.</summary>
+    public bool RouteEdited { get; set; }
+
     public bool HasExitAnchors => ExitFaceId >= 0 && StartAnchor.HasValue && EndAnchor.HasValue;
     public bool HasExitFace => ExitFaceId >= 0 && ExitChain.Count >= 2;
 

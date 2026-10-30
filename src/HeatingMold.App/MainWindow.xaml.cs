@@ -95,6 +95,12 @@ namespace HeatingMold.App
             Viewport.PowerLocationMoved += OnPowerLocationMoved;
             Viewport.ConnectorHovered += OnConnectorHovered;
             Viewport.RoutePieceHovered += OnRoutePieceHovered;
+            Viewport.VertexHovered += OnVertexHovered;
+            Viewport.VertexDragStarted += OnVertexDragStarted;
+            Viewport.VertexDragMoved += OnVertexDragMoved;
+            Viewport.VertexDragCompleted += OnVertexDragCompleted;
+            Viewport.VertexDragCancelled += OnVertexDragCancelled;
+            Viewport.VertexEscape += VertexEscape;
             PreviewKeyDown += OnWindowPreviewKeyDown;
             Loaded += OnLoaded;
             ApplyPowerMigrationState();
@@ -130,6 +136,14 @@ namespace HeatingMold.App
                 GenerateHintText.Text = _activeArea == null
                     ? "작업 영역을 확정해야 생성할 수 있습니다."
                     : string.Format("{0} 영역에 발열 경로를 생성합니다.", _activeArea.Name);
+
+            bool vertexEligible = _activeArea?.Pattern != null
+                && _activeArea.Pattern.RoutePieces.Count > 0
+                && _activeArea.Paths.Count == 0;
+            bool vertexActive = Viewport != null && Viewport.VertexEditMode;
+            if (VertexEditModeBox != null) VertexEditModeBox.IsEnabled = vertexEligible || vertexActive;
+            if (VertexUndoButton != null) VertexUndoButton.IsEnabled = vertexActive && _vertexUndo.Count > 0;
+            if (VertexRedoButton != null) VertexRedoButton.IsEnabled = vertexActive && _vertexRedo.Count > 0;
         }
 
         private void ConfirmArea_Click(object sender, RoutedEventArgs e) => ConfirmWorkingArea();
@@ -149,6 +163,12 @@ namespace HeatingMold.App
             {
                 CancelExitFacePick();
                 StatusText.Text = "인출면 선택을 취소했습니다";
+                e.Handled = true;
+                return;
+            }
+            if (e.Key == Key.Escape && Viewport != null && Viewport.VertexEditMode)
+            {
+                if (!_vertexDragging) ExitVertexEdit();
                 e.Handled = true;
                 return;
             }
@@ -176,6 +196,8 @@ namespace HeatingMold.App
 
         private void LoadFile(string path)
         {
+            if (!ConfirmDiscardAllRouteEdits("모델 열기")) return;
+            ExitVertexEdit();
             ResetWorkingSide();
             CancelPowerSetup();
             var sw = Stopwatch.StartNew();
@@ -322,6 +344,7 @@ namespace HeatingMold.App
                 StatusText.Text = "제외영역을 추가하려면 먼저 작업영역을 확정하세요";
                 return;
             }
+            if (!ConfirmDiscardRouteEdits(_activeArea, "제외영역 추가")) return;
             var rect = (minX, minY, maxX, maxY);
             _activeArea.Exclusions.Add(rect);
             // 제외영역이 바뀌면 이 영역의 기존 경로만 무효화하고 다시 생성한다.
@@ -531,6 +554,7 @@ namespace HeatingMold.App
 
         private void GenerateMultiFace()
         {
+            if (_activeArea != null && !ConfirmDiscardRouteEdits(_activeArea, "패턴 재생성")) return;
             CancelPowerSetup();
             if (!WorkingGenerationReady()) return;
             var area = _activeArea;
@@ -962,6 +986,7 @@ namespace HeatingMold.App
         {
             var area = _activeArea;
             if (area == null) { StatusText.Text = "작업영역이 없습니다"; return; }
+            if (!ConfirmDiscardRouteEdits(area, "제외영역 지우기")) return;
             area.Exclusions.Clear();
             area.Pattern = null;
             area.Paths = new List<List<Vec2>>();

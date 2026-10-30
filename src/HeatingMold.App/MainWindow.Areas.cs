@@ -15,6 +15,7 @@ public partial class MainWindow
 
     private void ResetCircuitEditingUi()
     {
+        ExitVertexEdit();
         CancelPowerSetup();
         CancelExitFacePick();
         if (Viewport != null)
@@ -117,6 +118,7 @@ public partial class MainWindow
             return;
         }
 
+        if (!ConfirmDiscardRouteEdits(area, "작업영역 삭제")) return;
         bool wasActive = ReferenceEquals(area, _activeArea);
         _areas.Remove(area);
         if (wasActive) ActivateArea(_areas.FirstOrDefault());
@@ -298,19 +300,29 @@ public partial class MainWindow
         };
     }
 
-    /// <summary>인출 조각이면 끝점에 대응하는 실제 공유 모서리 3D 점과 그 구간의 인출 Face id를 찾는다.</summary>
+    /// <summary>
+    /// 조각의 끝점이 이 영역 경로의 시작/종료 역할이고 인출 체인 위에 있으면
+    /// 실제 공유 모서리 3D 점과 그 구간의 인출 Face id를 찾는다.
+    /// ExitPiece 종류가 아니라 경로 시작/종료 역할로 판정하므로, 앵커와 레인 끝이
+    /// 일치해 ExitPiece가 없는 경우에도 동작한다.
+    /// </summary>
     private static Vec3? ResolveExitAnchor3D(WorkingArea area, SerpentineRoutePiece piece,
         out Vec2? datum, out int anchorFaceId)
     {
         datum = null;
         anchorFaceId = area.ExitFaceId;
-        if (piece.Kind != SerpentineRoutePieceKind.ExitPiece || !area.HasExitChain3D || piece.Points.Count == 0)
-            return null;
+        if (!area.HasExitChain3D || piece.Points.Count == 0) return null;
+        var pieces = area.Pattern?.RoutePieces;
+        if (pieces == null || pieces.Count == 0) return null;
+        if (pieces[0].Points.Count == 0 || pieces[^1].Points.Count == 0) return null;
+
+        Vec2 start = pieces[0].Points[0];
+        Vec2 end = pieces[^1].Points[^1];
         Vec2 first = piece.Points[0], last = piece.Points[^1];
-        if (area.StartAnchor.HasValue && (first == area.StartAnchor.Value || last == area.StartAnchor.Value))
-            datum = area.StartAnchor;
-        else if (area.EndAnchor.HasValue && (first == area.EndAnchor.Value || last == area.EndAnchor.Value))
-            datum = area.EndAnchor;
+        if (Serpentine.DistanceToChain(area.ExitChain, start) <= 0.05 && (first == start || last == start))
+            datum = start;
+        else if (Serpentine.DistanceToChain(area.ExitChain, end) <= 0.05 && (first == end || last == end))
+            datum = end;
         if (!datum.HasValue) return null;
         Vec3 point = PointOnExitChain3D(area, datum.Value, out int segmentIndex);
         // 병합된 인출면은 구간마다 실제 Face가 다를 수 있으므로 앵커가 놓인 구간의 id를 쓴다.
@@ -449,42 +461,54 @@ public partial class MainWindow
             return false;
         }
 
-        foreach (var entry in routeResults)
+        // 네이티브 커밋은 이미 성공했다. 아래 갱신이 실패해도 되돌리지 않고(표시와 상태가
+        // 어긋난 채 남는 것보다 낫다) 오류만 보고한다. 되돌리기는 커밋 전 단계에서만 한다.
+        try
         {
-            entry.Key.ProjectedPieces = entry.Value.Pieces;
-            entry.Key.RoutePieceLengths = entry.Value.Lengths;
-        }
-        foreach (var area in _areas) ApplyAreaConnectorStates(area);
-
-        // 발열 경로 인출점/끝점 마커 — 각 영역 첫 조각의 Start, 마지막 조각의 End.
-        var endpointPoints = new List<double>();
-        foreach (var entry in routeResults.Values)
-        {
-            var pieces = entry.Pieces;
-            if (pieces.Count == 0) continue;
-            var first = pieces[0];
-            var last = pieces[^1];
-            if (first?.Start != null) endpointPoints.AddRange(first.Start);
-            if (last?.End != null) endpointPoints.AddRange(last.End);
-        }
-        Bridge.SetRouteEndpoints(endpointPoints.ToArray());
-
-        if (_activeArea != null)
-        {
-            _pattern = _activeArea.Pattern;
-            _turnEnabled = _activeArea.TurnEnabled;
-            _routePieceLengths = _activeArea.RoutePieceLengths;
-            _projectedPieces = _activeArea.ProjectedPieces;
-            _leadLengths = _activeArea.LeadLengths;
-            if (_activeArea.Pattern != null)
+            foreach (var entry in routeResults)
             {
-                activeCount = _activeArea.Pattern.RoutePieces.Count;
-                activeLength = _activeArea.RoutePieceLengths.Sum();
+                entry.Key.ProjectedPieces = entry.Value.Pieces;
+                entry.Key.RoutePieceLengths = entry.Value.Lengths;
             }
-            else if (lineLengths.TryGetValue(_activeArea, out double lineLength))
+            foreach (var area in _areas) ApplyAreaConnectorStates(area);
+
+            // 발열 경로 인출점/끝점 마커 — 각 영역 첫 조각의 Start, 마지막 조각의 End.
+            var endpointPoints = new List<double>();
+            foreach (var entry in routeResults.Values)
             {
-                activeLength = lineLength;
+                var pieces = entry.Pieces;
+                if (pieces.Count == 0) continue;
+                var first = pieces[0];
+                var last = pieces[^1];
+                if (first?.Start != null) endpointPoints.AddRange(first.Start);
+                if (last?.End != null) endpointPoints.AddRange(last.End);
             }
+            Bridge.SetRouteEndpoints(endpointPoints.ToArray());
+
+            if (_activeArea != null)
+            {
+                _pattern = _activeArea.Pattern;
+                _turnEnabled = _activeArea.TurnEnabled;
+                _routePieceLengths = _activeArea.RoutePieceLengths;
+                _projectedPieces = _activeArea.ProjectedPieces;
+                _leadLengths = _activeArea.LeadLengths;
+                if (_activeArea.Pattern != null)
+                {
+                    activeCount = _activeArea.Pattern.RoutePieces.Count;
+                    activeLength = _activeArea.RoutePieceLengths.Sum();
+                }
+                else if (lineLengths.TryGetValue(_activeArea, out double lineLength))
+                {
+                    activeLength = lineLength;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "경로는 적용되었지만 표시 상태 갱신에 실패했습니다: " + ex.Message;
+            ErrorReporter.ShowWarning("경로 표시 상태 갱신 실패", ex);
+            Bridge.RedrawView();
+            return true;
         }
 
         Bridge.RedrawView();
