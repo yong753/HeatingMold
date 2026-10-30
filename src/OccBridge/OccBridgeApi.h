@@ -178,6 +178,8 @@ public:
     static void ClearExitCandidates();
     /// <summary>화면 픽셀 거리 기준으로 가장 가까운 인출 측면 후보 인덱스를 반환한다. 없으면 -1.</summary>
     static int PickExitCandidate(array<array<double>^>^ polylines, int x, int y, double pixelTolerance);
+    /// <summary>후보 하나만 강조한다 (호버). index &lt; 0 이면 모든 후보를 기본 표시로 되돌린다.</summary>
+    static void HighlightExitCandidate(int index);
     /// <summary>UV → 3D 매핑 (V5)</summary>
     static array<double>^ SampleUvTo3D(int faceIndex, double u, double v);
     /// <summary>Pick the nearest visible point on the selected faces only when it is on their trim boundary.</summary>

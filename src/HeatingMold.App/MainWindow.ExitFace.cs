@@ -20,6 +20,8 @@ public partial class MainWindow
 {
     private bool _suppressDirectionChange;
     private readonly List<ExitSideCandidate> _exitCandidates = new();
+    private double[][] _exitCandidatePolylines = Array.Empty<double[]>();
+    private int _exitCandidateHover = -1;
 
     private static double Dist(Vec2 a, Vec2 b)
     {
@@ -113,9 +115,9 @@ public partial class MainWindow
             return;
         }
 
-        Bridge.ShowExitCandidates(_exitCandidates.Select(c => c.Points).ToArray());
+        Bridge.ShowExitCandidates(_exitCandidatePolylines = _exitCandidates.Select(c => c.Points).ToArray());
         Viewport.ExitFacePickMode = true;
-        StatusText.Text = string.Format("외곽선에 강조된 인출 측면 후보 {0}개 — 하나를 클릭하세요 (Esc 취소)",
+        StatusText.Text = string.Format("외곽선을 따라 표시된 인출 측면 후보 {0}개 — 후보 위로 마우스를 올리면 강조됩니다. 클릭하세요 (Esc 취소)",
             _exitCandidates.Count);
     }
 
@@ -124,6 +126,20 @@ public partial class MainWindow
         if (Viewport != null) Viewport.ExitFacePickMode = false;
         Bridge.ClearExitCandidates();
         _exitCandidates.Clear();
+        _exitCandidatePolylines = Array.Empty<double[]>();
+        _exitCandidateHover = -1;
+    }
+
+    /// <summary>인출면 선택 중 커서 이동 — 커서 아래 후보만 강조한다.</summary>
+    private void OnExitFacePickMoved(int x, int y)
+    {
+        if (_exitCandidatePolylines.Length == 0) return;
+        int index = x < 0 || y < 0
+            ? -1
+            : Bridge.PickExitCandidate(_exitCandidatePolylines, x, y, 12.0);
+        if (index == _exitCandidateHover) return;
+        _exitCandidateHover = index;
+        Bridge.HighlightExitCandidate(index);
     }
 
     private void OnExitFacePicked(int x, int y)
@@ -136,10 +152,10 @@ public partial class MainWindow
         }
 
         // 후보 목록은 CancelExitFacePick에서 비워지므로 픽을 먼저 수행한다.
-        int index = Bridge.PickExitCandidate(_exitCandidates.Select(c => c.Points).ToArray(), x, y, 12.0);
+        int index = Bridge.PickExitCandidate(_exitCandidatePolylines, x, y, 12.0);
         if (index < 0)
         {
-            StatusText.Text = "강조된 외곽선 구간을 클릭하세요 — Esc로 취소할 수 있습니다";
+            StatusText.Text = "인출 측면 후보 위에서 클릭하세요 — Esc로 취소할 수 있습니다";
             return; // 선택 모드 유지
         }
 

@@ -286,6 +286,12 @@ namespace
     Handle(AIS_Shape) g_exclusionPreview;
     // 인출 측면 후보 강조 (인출면 선택 모드에서만 표시)
     std::vector<Handle(AIS_Shape)> g_exitCandidateOverlays;
+    // 후보 기본 표시는 일반 모델 외곽선처럼 보이게 두고, 호버한 후보만 강조한다.
+    const Quantity_Color kExitCandidateColor(0.85, 0.85, 0.85, Quantity_TOC_RGB);
+    const Quantity_Color kExitCandidateHoverColor(0.10, 0.90, 1.00, Quantity_TOC_RGB);
+    const Standard_Real kExitCandidateWidth = 2.0;
+    const Standard_Real kExitCandidateHoverWidth = 4.0;
+    int g_exitCandidateHighlighted = -1;
     Handle(AIS_RubberBand) g_selectionRubberBand;
     int g_lastHoverFace = -1;      // W5 — 호버 하이라이트 중복 Redraw 억제
     bool g_faceHighlightsVisible = true;
@@ -1040,8 +1046,9 @@ namespace
     {
         if (!g_ctx.IsNull())
             for (const auto& overlay : g_exitCandidateOverlays)
-                g_ctx->Remove(overlay, Standard_False);
+                if (!overlay.IsNull()) g_ctx->Remove(overlay, Standard_False);
         g_exitCandidateOverlays.clear();
+        g_exitCandidateHighlighted = -1;
         if (!g_view.IsNull()) g_view->Redraw();
     }
 
@@ -1053,7 +1060,12 @@ namespace
         {
             for (const auto& pts : polylines)
             {
-                if (pts.size() < 6 || pts.size() % 3 != 0) continue;
+                // Keep one slot per candidate so hover indexes stay aligned with the caller's list.
+                if (pts.size() < 6 || pts.size() % 3 != 0)
+                {
+                    g_exitCandidateOverlays.push_back(Handle(AIS_Shape)());
+                    continue;
+                }
                 BRepBuilderAPI_MakePolygon polygon;
                 bool valid = true;
                 for (size_t i = 0; i + 2 < pts.size(); i += 3)
@@ -1062,18 +1074,42 @@ namespace
                     { valid = false; break; }
                     polygon.Add(gp_Pnt(pts[i], pts[i + 1], pts[i + 2]));
                 }
-                if (!valid || !polygon.IsDone()) continue;
+                if (!valid || !polygon.IsDone())
+                {
+                    g_exitCandidateOverlays.push_back(Handle(AIS_Shape)());
+                    continue;
+                }
                 Handle(AIS_Shape) overlay = new AIS_Shape(polygon.Wire());
-                g_ctx->SetColor(overlay, Quantity_Color(0.1, 0.9, 1.0, Quantity_TOC_RGB), Standard_False);
-                g_ctx->SetWidth(overlay, 4.0, Standard_False);
+                g_ctx->SetColor(overlay, kExitCandidateColor, Standard_False);
+                g_ctx->SetWidth(overlay, kExitCandidateWidth, Standard_False);
                 g_ctx->Display(overlay, Standard_False);
                 g_ctx->SetZLayer(overlay, Graphic3d_ZLayerId_Topmost);
                 g_ctx->Deactivate(overlay, Standard_False);
                 g_exitCandidateOverlays.push_back(overlay);
             }
+            g_exitCandidateHighlighted = -1;
             g_view->Redraw();
         }
         catch (const Standard_Failure&) { }
+    }
+
+    /// <summary>호버한 후보만 강조하고 나머지는 기본 표시로 되돌린다.</summary>
+    void HighlightExitCandidateNative(int index)
+    {
+        if (g_ctx.IsNull() || g_view.IsNull()) return;
+        if (index < 0 || index >= static_cast<int>(g_exitCandidateOverlays.size())) index = -1;
+        if (index == g_exitCandidateHighlighted) return;
+        g_exitCandidateHighlighted = index;
+        for (size_t i = 0; i < g_exitCandidateOverlays.size(); ++i)
+        {
+            if (g_exitCandidateOverlays[i].IsNull()) continue;
+            const bool hovered = static_cast<int>(i) == index;
+            g_ctx->SetColor(g_exitCandidateOverlays[i],
+                            hovered ? kExitCandidateHoverColor : kExitCandidateColor, Standard_False);
+            g_ctx->SetWidth(g_exitCandidateOverlays[i],
+                            hovered ? kExitCandidateHoverWidth : kExitCandidateWidth, Standard_False);
+        }
+        g_view->Redraw();
     }
 
     double ScreenDistanceToSegment(double px, double py, double ax, double ay, double bx, double by)
@@ -2975,6 +3011,12 @@ void Bridge::ShowExitCandidates(array<array<double>^>^ polylines)
 void Bridge::ClearExitCandidates()
 {
     try { ClearExitCandidatesNative(); }
+    catch (const Standard_Failure&) { }
+}
+
+void Bridge::HighlightExitCandidate(int index)
+{
+    try { HighlightExitCandidateNative(index); }
     catch (const Standard_Failure&) { }
 }
 

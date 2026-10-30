@@ -193,6 +193,8 @@ namespace HeatingMold.App
         public event Action<int, int> PowerLocationPicked;
         public event Action<int, int> PowerLocationMoved;
         public event Action<int, int> ExitFacePicked;
+        /// <summary>인출면 선택 모드에서 커서가 움직일 때 (x, y). 뷰포트를 벗어나면 (-1, -1).</summary>
+        public event Action<int, int> ExitFacePickMoved;
         public event Action EnterPressed;
 
         private bool _exitFacePickMode;
@@ -200,7 +202,19 @@ namespace HeatingMold.App
         public bool ExitFacePickMode
         {
             get => _exitFacePickMode;
-            set { if (_exitFacePickMode == value) return; _exitFacePickMode = value; }
+            set
+            {
+                if (_exitFacePickMode == value) return;
+                _exitFacePickMode = value;
+                if (!value) return;
+                // 선택 중에는 면 하이라이트를 쓰지 않으므로 진입 시 기존 호버를 지운다.
+                Bridge.ClearHover();
+                if (_lastHover != -1)
+                {
+                    _lastHover = -1;
+                    FaceHovered?.Invoke(-1);
+                }
+            }
         }
 
         public bool RectangleSelectionMode { get; set; }
@@ -401,6 +415,7 @@ namespace HeatingMold.App
                                 if (_activeDragMode == 0)
                                 {
                                     Bridge.ClearHover();          // 회전 중 잔상 방지
+                                    if (ExitFacePickMode) ExitFacePickMoved?.Invoke(-1, -1);
                                     CancelPowerLeadPreview();
                                     Bridge.RotateStart(_downX, _downY);
                                 }
@@ -439,6 +454,17 @@ namespace HeatingMold.App
                     {
                         RoutePieceHovered?.Invoke(Bridge.PickRoutePiece(x, y));
                     }
+                    else if (_ready && ExitFacePickMode)
+                    {
+                        // 인출면 선택 중에는 면 하이라이트 없이 Edge 후보만 강조한다.
+                        ExitFacePickMoved?.Invoke(x, y);
+                        Bridge.ClearHover();
+                        if (_lastHover != -1)
+                        {
+                            _lastHover = -1;
+                            FaceHovered?.Invoke(-1);
+                        }
+                    }
                     else if (_ready)
                     {
                         int hover = Bridge.HoverFace(x, y);   // W5 — 호버 면 하이라이트
@@ -457,6 +483,7 @@ namespace HeatingMold.App
                     Bridge.ClearHover();
                     ConnectorHovered?.Invoke(-1);
                     RoutePieceHovered?.Invoke(-1);
+                    if (ExitFacePickMode) ExitFacePickMoved?.Invoke(-1, -1);
                     if (_lastHover != -1)
                     {
                         _lastHover = -1;

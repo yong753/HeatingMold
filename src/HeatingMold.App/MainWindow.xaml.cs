@@ -91,6 +91,7 @@ namespace HeatingMold.App
             Viewport.ConnectorPicked += OnConnectorPicked;
             Viewport.PowerLocationPicked += OnPowerLocationPicked;
             Viewport.ExitFacePicked += OnExitFacePicked;
+            Viewport.ExitFacePickMoved += OnExitFacePickMoved;
             Viewport.PowerLocationMoved += OnPowerLocationMoved;
             Viewport.ConnectorHovered += OnConnectorHovered;
             Viewport.RoutePieceHovered += OnRoutePieceHovered;
