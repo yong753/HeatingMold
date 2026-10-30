@@ -282,6 +282,9 @@ namespace
     std::set<int> g_hoveredCircuitPieces;
     void HighlightCircuitNative(const std::vector<int>& ids);
     void ClearRouteEndpointMarkersNative();
+    // 꼭지점 편집 오버레이 (WorkingSideNative.inc에서 정의, 이 파일 뒤쪽에 include됨)
+    void ClearVertexHandlesNative();
+    void ClearRoutePreviewNative();
     std::vector<Handle(AIS_Shape)> g_exclusionOverlays;
     Handle(AIS_Shape) g_exclusionPreview;
     // 인출 측면 후보 강조 (인출면 선택 모드에서만 표시)
@@ -1597,6 +1600,8 @@ namespace
     {
         HighlightCircuitNative(std::vector<int>());
         ClearRouteEndpointMarkersNative();
+        ClearVertexHandlesNative();
+        ClearRoutePreviewNative();
         if (!g_ctx.IsNull()) for (const auto& piece : g_routePieces) g_ctx->Remove(piece.second.ais, Standard_False);
         g_routePieces.clear();
         g_stagedWorkingRouteOwners.clear();
@@ -1904,6 +1909,8 @@ namespace
     {
         ClearPowerLeadsNative();
         ClearRoutePiecesNative();
+        ClearVertexHandlesNative();
+        ClearRoutePreviewNative();
         if (!g_ctx.IsNull())
         {
             for (const auto& overlay : g_worldOverlays)
@@ -3284,6 +3291,50 @@ bool Bridge::SetConnectorEnabled(int pieceId, bool enabled, double r, double g, 
 }
 
 void Bridge::ClearRoutePieces() { ClearRoutePiecesNative(); if (!g_view.IsNull()) g_view->Redraw(); }
+
+bool Bridge::SetVertexHandles(long long id, long long revision, array<double>^ xyzFlat)
+{
+    std::vector<double> xyz;
+    if (xyzFlat != nullptr)
+    {
+        xyz.resize((size_t)xyzFlat->Length);
+        for (int i = 0; i < xyzFlat->Length; ++i) xyz[(size_t)i] = xyzFlat[i];
+    }
+    return SetVertexHandlesNative(id, revision, xyz);
+}
+
+void Bridge::ClearVertexHandles()
+{
+    ClearVertexHandlesNative();
+    if (!g_view.IsNull()) g_view->Redraw();
+}
+
+void Bridge::HighlightVertexHandle(int index)
+{
+    HighlightVertexHandleNative(index);
+}
+
+int Bridge::PickVertexHandle(int x, int y, double pixelTolerance)
+{
+    return PickVertexHandleNative(x, y, pixelTolerance);
+}
+
+bool Bridge::ShowRoutePreview(int pieceIndex, array<double>^ xyzFlat, bool invalid)
+{
+    std::vector<double> xyz;
+    if (xyzFlat != nullptr)
+    {
+        xyz.resize((size_t)xyzFlat->Length);
+        for (int i = 0; i < xyzFlat->Length; ++i) xyz[(size_t)i] = xyzFlat[i];
+    }
+    return ShowRoutePreviewNative(pieceIndex, xyz, invalid);
+}
+
+void Bridge::ClearRoutePreview()
+{
+    ClearRoutePreviewNative();
+    if (!g_view.IsNull()) g_view->Redraw();
+}
 
 void Bridge::SetRouteEndpoints(array<double>^ xyzFlat)
 {

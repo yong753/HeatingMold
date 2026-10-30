@@ -213,6 +213,18 @@ public:
     /// <summary>발열 경로 인출점/끝점 마커를 다시 그린다. xyzFlat은 [x,y,z,...].</summary>
     static void SetRouteEndpoints(array<double>^ xyzFlat);
 
+    // ---- 꼭지점 편집 오버레이 ----
+    /// <summary>편집 핸들을 표시한다. 좌표는 표시 인덱스 순서의 flat xyz.</summary>
+    static bool SetVertexHandles(long long id, long long revision, array<double>^ xyzFlat);
+    static void ClearVertexHandles();
+    /// <summary>지정 인덱스 핸들만 활성 색으로 강조한다 (index &lt; 0이면 기본색).</summary>
+    static void HighlightVertexHandle(int index);
+    /// <summary>화면 픽셀 거리 기준 가장 가까운 핸들 표시 인덱스, 없으면 -1.</summary>
+    static int PickVertexHandle(int x, int y, double pixelTolerance);
+    /// <summary>드래그 중인 조각 하나의 미리보기. invalid=true면 빨간색.</summary>
+    static bool ShowRoutePreview(int pieceIndex, array<double>^ xyzFlat, bool invalid);
+    static void ClearRoutePreview();
+
     // ---- AIS 뷰어 (S1 항목 1·6) — WPF HwndHost 자식 HWND 임베드 ----
     /// <summary>자식 HWND에 OpenGl 뷰어 초기화 (1회). 이미 로드된 셰이프가 있으면 표시+Fit</summary>
     static bool InitViewer(System::IntPtr hwnd, int width, int height);

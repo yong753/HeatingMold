@@ -24,6 +24,124 @@ struct WorkingPresentationNative
 std::map<long long, WorkingPresentationNative> g_workingPresentations;
 long long g_nextWorkingPresentation = 1;
 
+// ---- 꼭지점 편집 오버레이: 핸들(AIS_Point)과 드래그 미리보기 ----
+struct VertexHandleNative { Handle(AIS_Point) marker; gp_Pnt point; };
+std::map<int, VertexHandleNative> g_vertexHandles;
+std::map<int, Handle(AIS_Shape)> g_routePreviews;
+long long g_vertexOverlayContext = 0, g_vertexOverlayRevision = 0;
+const Quantity_Color kVertexHandleColor(1.0, 0.85, 0.1, Quantity_TOC_RGB);
+const Quantity_Color kVertexHandleActiveColor(0.1, 0.95, 0.6, Quantity_TOC_RGB);
+const Quantity_Color kRoutePreviewColor(0.1, 0.9, 0.5, Quantity_TOC_RGB);
+const Quantity_Color kRoutePreviewInvalidColor(1.0, 0.2, 0.2, Quantity_TOC_RGB);
+
+void ClearVertexHandlesNative()
+{
+    if (!g_ctx.IsNull()) for (const auto& entry : g_vertexHandles) g_ctx->Remove(entry.second.marker, Standard_False);
+    g_vertexHandles.clear();
+    g_vertexOverlayContext = 0;
+    g_vertexOverlayRevision = 0;
+}
+
+void ClearRoutePreviewNative()
+{
+    if (!g_ctx.IsNull()) for (const auto& entry : g_routePreviews) g_ctx->Remove(entry.second, Standard_False);
+    g_routePreviews.clear();
+}
+
+bool SetVertexHandlesNative(long long id, long long revision, const std::vector<double>& xyz)
+{
+    const auto context = g_working.find(id);
+    if (context == g_working.end() || context->second->revision != revision) return false;
+    if (xyz.size() % 3 != 0) return false;
+    ClearVertexHandlesNative();
+    if (g_ctx.IsNull() || xyz.empty()) return false;
+    try {
+        for (size_t i = 0; i + 2 < xyz.size(); i += 3) {
+            if (!std::isfinite(xyz[i]) || !std::isfinite(xyz[i + 1]) || !std::isfinite(xyz[i + 2])) {
+                ClearVertexHandlesNative();
+                return false;
+            }
+            Handle(AIS_Point) marker = new AIS_Point(new Geom_CartesianPoint(xyz[i], xyz[i + 1], xyz[i + 2]));
+            marker->SetMarker(Aspect_TOM_O_POINT);
+            marker->SetColor(kVertexHandleColor);
+            Handle(Prs3d_PointAspect) aspect = marker->Attributes()->PointAspect();
+            if (aspect.IsNull()) {
+                aspect = new Prs3d_PointAspect(Aspect_TOM_O_POINT, kVertexHandleColor, 8.0);
+                marker->Attributes()->SetPointAspect(aspect);
+            } else {
+                aspect->SetScale(8.0);
+            }
+            g_ctx->Display(marker, Standard_False);
+            g_ctx->SetZLayer(marker, Graphic3d_ZLayerId_Topmost);
+            g_ctx->Deactivate(marker, Standard_False);
+            g_vertexHandles[static_cast<int>(i / 3)] = VertexHandleNative{marker, gp_Pnt(xyz[i], xyz[i + 1], xyz[i + 2])};
+        }
+        g_vertexOverlayContext = id;
+        g_vertexOverlayRevision = revision;
+        if (!g_view.IsNull()) g_view->Redraw();
+        return !g_vertexHandles.empty();
+    } catch (const Standard_Failure&) {
+        ClearVertexHandlesNative();
+        return false;
+    }
+}
+
+void HighlightVertexHandleNative(int index)
+{
+    if (g_ctx.IsNull()) return;
+    try {
+        for (const auto& entry : g_vertexHandles)
+            g_ctx->SetColor(entry.second.marker, entry.first == index ? kVertexHandleActiveColor : kVertexHandleColor, Standard_False);
+        if (!g_view.IsNull()) g_view->Redraw();
+    } catch (const Standard_Failure&) {}
+}
+
+int PickVertexHandleNative(int x, int y, double pixelTolerance)
+{
+    if (g_view.IsNull() || g_vertexHandles.empty()) return -1;
+    if (!std::isfinite(pixelTolerance) || pixelTolerance <= 0.0) pixelTolerance = 12.0;
+    int best = -1;
+    double bestDistance = pixelTolerance;
+    try {
+        for (const auto& entry : g_vertexHandles) {
+            const gp_Pnt& point = entry.second.point;
+            Standard_Integer sx = 0, sy = 0;
+            g_view->Convert(point.X(), point.Y(), point.Z(), sx, sy);
+            const double dx = static_cast<double>(sx) - x, dy = static_cast<double>(sy) - y;
+            const double distance = std::sqrt(dx * dx + dy * dy);
+            if (distance < bestDistance) { bestDistance = distance; best = entry.first; }
+        }
+    } catch (const Standard_Failure&) { return -1; }
+    return best;
+}
+
+bool ShowRoutePreviewNative(int pieceIndex, const std::vector<double>& xyz, bool invalid)
+{
+    if (g_ctx.IsNull() || xyz.size() < 6 || xyz.size() % 3 != 0) return false;
+    auto existing = g_routePreviews.find(pieceIndex);
+    if (existing != g_routePreviews.end()) {
+        g_ctx->Remove(existing->second, Standard_False);
+        g_routePreviews.erase(existing);
+    }
+    try {
+        BRepBuilderAPI_MakePolygon polygon;
+        for (size_t i = 0; i + 2 < xyz.size(); i += 3) {
+            if (!std::isfinite(xyz[i]) || !std::isfinite(xyz[i + 1]) || !std::isfinite(xyz[i + 2])) return false;
+            polygon.Add(gp_Pnt(xyz[i], xyz[i + 1], xyz[i + 2]));
+        }
+        if (!polygon.IsDone()) return false;
+        Handle(AIS_Shape) ais = new AIS_Shape(polygon.Wire());
+        g_ctx->SetColor(ais, invalid ? kRoutePreviewInvalidColor : kRoutePreviewColor, Standard_False);
+        g_ctx->SetWidth(ais, 3.0, Standard_False);
+        g_ctx->Display(ais, Standard_False);
+        g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
+        g_ctx->Deactivate(ais, Standard_False);
+        g_routePreviews[pieceIndex] = ais;
+        if (!g_view.IsNull()) g_view->Redraw();
+        return true;
+    } catch (const Standard_Failure&) { return false; }
+}
+
 void ClearWorkingBoundaryNative()
 {
     if (!g_ctx.IsNull()) for (auto& shape : g_workingBoundaries) g_ctx->Remove(shape,Standard_False);
@@ -36,6 +154,8 @@ void InvalidateWorkingContexts()
         if (!g_ctx.IsNull()) g_ctx->Remove(staged.second.ais,Standard_False);
     g_stagedWorkingPolylines.clear();
     g_stagedWorkingRouteOwners.clear();
+    ClearVertexHandlesNative();
+    ClearRoutePreviewNative();
     g_working.clear();
     g_workingPresentations.clear();
     ClearWorkingBoundaryNative();
@@ -46,6 +166,8 @@ void ReleaseWorkingNative(long long id)
     const auto context=g_working.find(id);
     if (context==g_working.end()) return;
     const long long revision=context->second->revision;
+    if (g_vertexOverlayContext==id && g_vertexOverlayRevision==revision) ClearVertexHandlesNative();
+    ClearRoutePreviewNative();
     bool removedRoute=false;
     for (auto it=g_stagedWorkingPolylines.begin();it!=g_stagedWorkingPolylines.end();) {
         if (it->second.contextId!=id || it->second.revision!=revision) { ++it; continue; }
