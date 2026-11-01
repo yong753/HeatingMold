@@ -42,12 +42,11 @@ public partial class MainWindow
         if (!_sidebarInitialized) return;
 
         int next = ActiveSidebarTab;
-        if (next == _activeSidebarTabIndex)
-        {
-            RefreshSidebarSummary();
-            return;
-        }
+        if (next == _activeSidebarTabIndex) return;
         int previous = _activeSidebarTabIndex;
+        // 발열경로 편집은 특정 탭 소유가 아니므로 어느 탭으로 이동하든 종료한다.
+        // 진행 중 드래그는 뷰포트가 확정 없이 취소하고, 완료된 편집·이력은 그대로 둔다.
+        ExitVertexEdit();
         ExitTransientModeForTab(previous);
         ApplySidebarTabState(next, previous);
     }
@@ -61,15 +60,7 @@ public partial class MainWindow
         if (Viewport != null)
             Viewport.FaceSelectionEnabled = tabIndex == AreaTabIndex;
 
-        // 공유 2D 미리보기는 제외영역 확인과 패턴 시작점 선택에만 필요하다.
-        if (RegionPreviewPanel != null)
-            RegionPreviewPanel.Visibility = tabIndex == ExcludeTabIndex || tabIndex == PatternTabIndex
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-
-        RefreshSidebarSummary();
         UpdateActionStates();
-        ScheduleRegionCanvasRedraw();
     }
 
     /// <summary>탭을 떠날 때 그 탭의 일시적 입력 모드만 종료한다.
@@ -92,29 +83,12 @@ public partial class MainWindow
                 break;
 
             case EditTabIndex:
-                // 진행 중 드래그는 뷰포트가 확정 없이 취소하고, 완료된 편집·이력은 그대로 둔다.
-                ExitVertexEdit();
                 if (Viewport != null) Viewport.ConnectorEditMode = false;
                 if (ConnectorEditModeBox != null && ConnectorEditModeBox.IsChecked == true)
                     ConnectorEditModeBox.IsChecked = false;
                 break;
         }
     }
-
-    private void RefreshSidebarSummary()
-    {
-        if (ActiveAreaSummaryText != null)
-            ActiveAreaSummaryText.Text = _activeArea == null
-                ? "활성 영역 없음 — 영역 탭에서 Face를 선택하세요"
-                : string.Format("{0} · Face {1}개", _activeArea.Name, _activeArea.FaceIdSet.Count);
-
-        if (RegionPreviewHintText != null)
-            RegionPreviewHintText.Text = ActiveSidebarTab == PatternTabIndex
-                ? "시작/종료점 후보를 클릭해 선택"
-                : "활성 영역의 제외영역과 2D 외곽";
-    }
-
-    private void ShowAreaTab_Click(object sender, RoutedEventArgs e) => ReturnToAreaTab();
 
     /// <summary>모델을 새로 열어 작업 상태가 실제로 초기화된 뒤 영역 탭으로 되돌린다.</summary>
     private void ReturnToAreaTab()
@@ -123,14 +97,5 @@ public partial class MainWindow
             SidebarTabs.SelectedIndex = AreaTabIndex;
         if (_activeSidebarTabIndex != AreaTabIndex)
             ApplySidebarTabState(AreaTabIndex, _activeSidebarTabIndex);
-        else
-            RefreshSidebarSummary();
-    }
-
-    /// <summary>숨겨진 동안 크기가 0이었던 캔버스가 다시 보일 때 레이아웃 완료 후 한 번 그린다.</summary>
-    private void ScheduleRegionCanvasRedraw()
-    {
-        if (RegionPreviewPanel == null || RegionPreviewPanel.Visibility != Visibility.Visible) return;
-        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(DrawRegionCanvas));
     }
 }

@@ -23,6 +23,10 @@ public partial class MainWindow
     private double[][] _exitCandidatePolylines = Array.Empty<double[]>();
     private int _exitCandidateHover = -1;
 
+    /// <summary>패턴 탭 후보 목록의 표시 행. 후보 목록이 재계산돼도 선택값이 어긋나지 않도록 좌표를 함께 보관한다.</summary>
+    private sealed record AnchorCandidateRow(int Index, string Label, Vec2 Start, Vec2 End, double AngleDeg);
+    private bool _suppressAnchorSelection;
+
     private static double Dist(Vec2 a, Vec2 b)
     {
         double dx = a.X - b.X, dy = a.Y - b.Y;
@@ -45,6 +49,53 @@ public partial class MainWindow
         }
         if (ClearExitFaceButton != null) ClearExitFaceButton.IsEnabled = area != null && area.HasExitFace;
         if (ExitFaceStatusText != null) ExitFaceStatusText.Text = DescribeExitState(area);
+        SyncAnchorCandidateList(area);
+    }
+
+    /// <summary>시작/종료점 후보 목록을 현재 영역 후보와 선택 상태에 맞춰 다시 만든다.</summary>
+    private void SyncAnchorCandidateList(WorkingArea area)
+    {
+        if (AnchorCandidateList == null) return;
+        _suppressAnchorSelection = true;
+        try
+        {
+            AnchorCandidateList.Items.Clear();
+            AnchorCandidateList.IsEnabled = area != null && area.AnchorCandidates.Count > 0;
+            if (area == null) return;
+            for (int i = 0; i < area.AnchorCandidates.Count; i++)
+            {
+                var c = area.AnchorCandidates[i];
+                AnchorCandidateList.Items.Add(new AnchorCandidateRow(i,
+                    string.Format("후보 {0}: ({1:F1}, {2:F1}) → ({3:F1}, {4:F1}) · 각도 {5:F0}°",
+                        i + 1, c.Start.X, c.Start.Y, c.End.X, c.End.Y, c.AngleDeg),
+                    c.Start, c.End, c.AngleDeg));
+            }
+            if (!area.StartAnchor.HasValue || !area.EndAnchor.HasValue) return;
+            foreach (AnchorCandidateRow row in AnchorCandidateList.Items)
+            {
+                if (Dist(row.Start, area.StartAnchor.Value) < 1e-6 &&
+                    Dist(row.End, area.EndAnchor.Value) < 1e-6)
+                {
+                    AnchorCandidateList.SelectedItem = row;
+                    break;
+                }
+            }
+        }
+        finally { _suppressAnchorSelection = false; }
+    }
+
+    private void AnchorCandidateList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressAnchorSelection) return;
+        var area = _activeArea;
+        if (area == null || AnchorCandidateList?.SelectedItem is not AnchorCandidateRow row) return;
+        area.StartAnchor = row.Start;
+        area.EndAnchor = row.End;
+        area.LastExitFailure = null;
+        SyncExitFaceUi(area);
+        UpdateActionStates();
+        StatusText.Text = string.Format("시작 ({0:F1}, {1:F1}) → 종료 ({2:F1}, {3:F1}) · 각도 {4:F0}° — 반대쪽 끝은 레인 위상으로 결정됩니다",
+            row.Start.X, row.Start.Y, row.End.X, row.End.Y, row.AngleDeg);
     }
 
     private string DescribeExitState(WorkingArea area)
@@ -55,7 +106,7 @@ public partial class MainWindow
         if (!area.HasExitAnchors)
             return area.AnchorCandidates.Count == 0
                 ? "인출면은 지정됐지만 사행 경로 양 끝이 이 면에 닿지 않습니다"
-                : "2D 미리보기에서 시작점을 클릭하세요";
+                : "후보 목록에서 시작/종료점 쌍을 선택하세요";
         Vec2 s = area.StartAnchor.Value, t = area.EndAnchor.Value;
         return string.Format("인출면 Face {0} · 시작 ({1:F1}, {2:F1}) → 종료 ({3:F1}, {4:F1})",
             area.ExitFaceId, s.X, s.Y, t.X, t.Y);
@@ -83,7 +134,6 @@ public partial class MainWindow
         if (area.HasExitFace) RecomputeAnchorCandidates(area);
         // 인출 후보가 재계산되어 기존 앵커가 사라졌으므로 편집 상태도 함께 정리한다.
         ClearRouteEditState(area);
-        DrawRegionCanvas();
         SyncExitFaceUi(area);
         if (area.Pattern != null && GenerateHintText != null)
             GenerateHintText.Text = "배치 방향이 바뀌었습니다 — 패턴을 다시 생성해야 반영됩니다.";
@@ -227,11 +277,10 @@ public partial class MainWindow
         RecomputeAnchorCandidates(area);
         // 인출면이 실제로 바뀐 뒤에만 편집 상태를 지운다(피킹 취소 시에는 보존).
         ClearRouteEditState(area);
-        DrawRegionCanvas();
         SyncExitFaceUi(area);
 
         if (area.HasExitAnchors)
-            StatusText.Text = string.Format("{0} 영역 인출면 Face {1} · 길이 {2:F1}mm — 시작/종료점이 2D 미리보기에 표시됩니다",
+            StatusText.Text = string.Format("{0} 영역 인출면 Face {1} · 길이 {2:F1}mm — 시작/종료점 후보가 목록에 표시됩니다",
                 area.Name, chosen.FaceId, length);
         else
             StatusText.Text = area.LastExitFailure ?? "인출면은 지정됐지만 사용 가능한 시작/종료점 후보가 없습니다";
@@ -254,7 +303,6 @@ public partial class MainWindow
         area.AnchorCandidates.Clear();
         area.LastExitFailure = null;
         ClearRouteEditState(area);
-        DrawRegionCanvas();
         SyncExitFaceUi(area);
         StatusText.Text = "인출면 지정을 초기화했습니다 — 패턴은 다시 생성해야 합니다";
     }
@@ -289,7 +337,7 @@ public partial class MainWindow
             area.LastExitFailure = ExplainNoCandidate(area, margin, spacing);
             return;
         }
-        // 후보가 한 쌍뿐이면 그 쌍이 유일해다. 여러 쌍이면 사용자가 2D 미리보기에서 고른다.
+        // 후보가 한 쌍뿐이면 그 쌍이 유일해다. 여러 쌍이면 사용자가 패턴 탭의 후보 목록에서 고른다.
         if (candidates.Count == 1)
         {
             area.StartAnchor = candidates[0].Start;
@@ -317,39 +365,6 @@ public partial class MainWindow
         }
     }
 
-    private void RegionCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        // 시작점 선택은 패턴 탭의 후보 표시와 함께 움직여야 한다. 제외 탭에서는 확인용으로만 쓴다.
-        if (ActiveSidebarTab != PatternTabIndex) return;
-        var area = _activeArea;
-        if (area == null || area.AnchorCandidates.Count == 0 || RegionCanvas == null) return;
-        Vec2 p = CanvasToWorld(e.GetPosition(RegionCanvas));
-
-        int best = -1;
-        double bestDistance = 5.0;  // mm — 화면 클릭 허용 오차
-        for (int i = 0; i < area.AnchorCandidates.Count; i++)
-        {
-            var c = area.AnchorCandidates[i];
-            double d = Math.Min(Dist(c.Start, p), Dist(c.End, p));
-            if (d < bestDistance) { bestDistance = d; best = i; }
-        }
-        if (best < 0)
-        {
-            StatusText.Text = "시작점 표시 근처를 클릭하세요";
-            return;
-        }
-
-        var chosen = area.AnchorCandidates[best];
-        area.StartAnchor = chosen.Start;
-        area.EndAnchor = chosen.End;
-        area.LastExitFailure = null;
-        DrawRegionCanvas();
-        SyncExitFaceUi(area);
-        StatusText.Text = string.Format("시작 ({0:F1}, {1:F1}) → 종료 ({2:F1}, {3:F1}) · 각도 {4:F0}° — 반대쪽 끝은 레인 위상으로 결정됩니다",
-            chosen.Start.X, chosen.Start.Y, chosen.End.X, chosen.End.Y, chosen.AngleDeg);
-        e.Handled = true;
-    }
-
     private static string LaneNote(SerpentineResult pattern) =>
         pattern != null && pattern.LaneCountAdjusted
             ? string.Format(" · 같은 면 인출을 위해 레인 {0}→{1}개로 조정",
@@ -363,7 +378,7 @@ public partial class MainWindow
         AnchoredFailureReason.ParityConflict =>
             "레인을 2개 이상 확보하면서 양 끝을 같은 인출면에 놓을 수 없습니다 — 간격을 줄이거나 인출면 방향을 바꾸세요",
         AnchoredFailureReason.AnchorNotOnExitChain =>
-            "선택한 시작/종료점이 인출면 위에 있지 않습니다 — 2D 미리보기에서 다시 선택하세요",
+            "선택한 시작/종료점이 인출면 위에 있지 않습니다 — 후보 목록에서 다시 선택하세요",
         AnchoredFailureReason.AnchorNotAtLaneEnd =>
             "선택한 점이 사행 레인 끝점이 아닙니다 — 후보 위치 중에서 선택하세요",
         AnchoredFailureReason.RegionSplit =>
@@ -397,17 +412,5 @@ public partial class MainWindow
         }
         area.LeadLengths = leads;
         if (ReferenceEquals(area, _activeArea)) _leadLengths = leads;
-    }
-
-    /// <summary>2D 미리보기 캔버스 좌표를 영역 평면 좌표로 되돌린다 (WorldToCanvas의 역변환).</summary>
-    private Vec2 CanvasToWorld(Point p)
-    {
-        var b = RegionBounds();
-        double sx = Math.Max(1e-9, b.MaxX - b.MinX), sy = Math.Max(1e-9, b.MaxY - b.MinY);
-        double scale = Math.Min((RegionCanvas.ActualWidth - 16) / sx, (RegionCanvas.ActualHeight - 16) / sy);
-        if (scale <= 0 || !double.IsFinite(scale)) return new Vec2(b.MinX, b.MinY);
-        double originX = (RegionCanvas.ActualWidth - sx * scale) / 2;
-        double originY = (RegionCanvas.ActualHeight - sy * scale) / 2;
-        return new Vec2(b.MinX + (p.X - originX) / scale, b.MaxY - (p.Y - originY) / scale);
     }
 }

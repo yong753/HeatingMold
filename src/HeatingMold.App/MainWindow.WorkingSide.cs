@@ -62,7 +62,6 @@ public partial class MainWindow
             // 작업 방향 컨텍스트가 바뀌면 모든 작업영역의 투영 프레임이 무효가 된다.
             ClearAllAreas(clearNative: true);
             Bridge.HideFaceHighlights();
-            DrawRegionCanvas();
             WorkingSideText.Text = $"작업 방향 N={n} · 모델 r{context.Revision} · 깊이 0";
             UpdateActionStates();
             StatusText.Text = "작업 방향 적용 완료 · 패턴 생성은 깊이 0만 지원 · 전원 연결 설정은 보류";
@@ -104,7 +103,7 @@ public partial class MainWindow
     {
         if (Viewport != null && Viewport.VertexEditMode)
         {
-            StatusText.Text = "꼭지점 편집 중에는 뷰를 바꿀 수 없습니다 — 편집을 종료한 뒤 다시 시도하세요";
+            StatusText.Text = "발열경로 편집 중에는 뷰를 바꿀 수 없습니다 — 편집을 종료한 뒤 다시 시도하세요";
             return;
         }
         var side = _workingSide.Confirmed;

@@ -134,26 +134,33 @@
             <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
         </Style>
 
-        <!-- 사이드바 탭 머리글: 좁은 폭(300~420px)에서 5개 탭이 한 줄에 들어가도록 최소 여백만 쓴다. -->
+        <!-- 사이드바 탭 머리글: 좁은 폭(300~420px)에서 5개 탭이 한 줄에 들어가되,
+             선택된 탭이 버튼처럼 분명히 보이도록 세그먼트형 칩으로 그린다. -->
         <Style x:Key="SidebarTabItem" TargetType="TabItem">
-            <Setter Property="Padding" Value="9,5"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="Margin" Value="0,0,4,0"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+            <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TabItem">
-                        <Border x:Name="Bd" Background="Transparent" BorderThickness="0,0,0,2"
-                                BorderBrush="Transparent" Padding="{TemplateBinding Padding}">
+                        <Border x:Name="Bd" CornerRadius="6" BorderThickness="1"
+                                BorderBrush="{StaticResource LineBrush}" Background="#EEF1F5"
+                                Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
                             <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsSelected" Value="True">
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#E2E8F0"/>
                                 <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
                                 <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
-                                <Setter Property="FontWeight" Value="SemiBold"/>
                             </Trigger>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#F0F2F5"/>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource AccentBrush}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                                <Setter Property="Foreground" Value="White"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -212,7 +219,30 @@
                 <ColumnDefinition Width="340" MinWidth="300" MaxWidth="420"/>
             </Grid.ColumnDefinitions>
 
-            <local:OccViewport x:Name="Viewport" Grid.Column="0"/>
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}"
+                        BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="8,4">
+                    <StackPanel Orientation="Horizontal">
+                        <CheckBox x:Name="VertexEditModeBox" Content="발열경로 편집"
+                                  VerticalAlignment="Center"
+                                  Checked="VertexEditMode_Changed" Unchecked="VertexEditMode_Changed"/>
+                        <Button x:Name="VertexUndoButton" Content="경로 Undo"
+                                Click="VertexUndo_Click" Style="{StaticResource CompactButton}"
+                                Margin="10,0,4,0" VerticalAlignment="Center"/>
+                        <Button x:Name="VertexRedoButton" Content="경로 Redo"
+                                Click="VertexRedo_Click" Style="{StaticResource CompactButton}"
+                                VerticalAlignment="Center"/>
+                        <TextBlock Text="작업 정면에서 발열경로의 꼭지점을 드래그해 수정합니다. 편집 후 패턴을 다시 생성하면 편집 내용은 사라집니다."
+                                   Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0"
+                                   TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                </Border>
+                <local:OccViewport x:Name="Viewport" Grid.Row="1"/>
+            </Grid>
 
             <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                           Background="{StaticResource LineBrush}"
@@ -223,9 +253,7 @@
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <!-- 공통: 작업 방향 -->
@@ -239,25 +267,7 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- 공통: 활성 작업영역 -->
-                    <Border Grid.Row="1" Style="{StaticResource CardBody}" Margin="14,8,14,0">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel VerticalAlignment="Center">
-                                <TextBlock Text="활성 작업영역" Style="{StaticResource FieldLabel}" Margin="0"/>
-                                <TextBlock x:Name="ActiveAreaSummaryText" Text="활성 영역 없음"
-                                           FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                            </StackPanel>
-                            <Button x:Name="ShowAreaTabButton" Grid.Column="1" Content="변경"
-                                    Click="ShowAreaTab_Click" Style="{StaticResource CompactButton}"
-                                    VerticalAlignment="Center" Margin="8,0,0,0"/>
-                        </Grid>
-                    </Border>
-
-                    <TabControl x:Name="SidebarTabs" Grid.Row="2" Margin="10,8,6,0"
+                    <TabControl x:Name="SidebarTabs" Grid.Row="1" Margin="10,10,6,0"
                                 Background="Transparent" BorderThickness="0"
                                 SelectionChanged="SidebarTabs_SelectionChanged">
                         <!-- 1. 작업 영역 -->
@@ -307,7 +317,7 @@
                                                   Margin="0,0,0,5"
                                                   Checked="ExcludeMode_Changed" Unchecked="ExcludeMode_Changed"/>
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="활성 작업영역의 평면에서 뷰포트를 드래그하세요. 제외영역은 활성 영역에만 적용되며, 아래 2D 미리보기는 확인용입니다."/>
+                                                   Text="활성 작업영역의 평면에서 뷰포트를 드래그하세요. 제외영역은 활성 영역에만 적용되며 3D로 표시됩니다."/>
                                         <Button Content="제외 사각형 초기화" Click="ClearExclusions_Click"
                                                 Style="{StaticResource FlatButton}" Margin="0,10,0,0"/>
                                     </StackPanel>
@@ -348,6 +358,18 @@
                                         </Grid>
                                         <TextBlock x:Name="ExitFaceStatusText" Text="인출면 미지정 — 인출면 선택 후 외곽선에 강조된 인출 측면을 클릭하세요"
                                                    Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                        <TextBlock Text="시작/종료점 후보" Style="{StaticResource FieldLabel}"
+                                                   FontWeight="SemiBold" Margin="0,8,0,2"/>
+                                        <ListBox x:Name="AnchorCandidateList" MinHeight="26" MaxHeight="120"
+                                                 BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                                                 Background="White"
+                                                 SelectionChanged="AnchorCandidateList_SelectionChanged">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis"/>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
                                         <Grid Margin="0,8,0,0">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
@@ -388,29 +410,15 @@
                                           Padding="4,8,10,12">
                                 <Border Style="{StaticResource Card}">
                                     <StackPanel>
-                                        <CheckBox x:Name="ConnectorEditModeBox" Content="커넥터 편집"
+                                        <CheckBox x:Name="ConnectorEditModeBox" Content="회로 분할"
                                                   Checked="ConnectorEditMode_Changed"
                                                   Unchecked="ConnectorEditMode_Changed"/>
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="커넥터를 클릭해 회로를 분리/연결합니다. 회로별 길이는 결과 탭에 반영됩니다."/>
+                                                   Text="연결 구간을 클릭해 회로를 분할하거나 다시 연결합니다. 회로별 길이는 결과 탭에 반영됩니다."/>
                                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                             <Button Content="Undo" Click="ConnectorUndo_Click"
                                                     Style="{StaticResource CompactButton}" Margin="0,0,6,0"/>
                                             <Button Content="Redo" Click="ConnectorRedo_Click"
-                                                    Style="{StaticResource CompactButton}"/>
-                                        </StackPanel>
-                                        <Separator Margin="0,10,0,8"/>
-                                        <CheckBox x:Name="VertexEditModeBox" Content="꼭지점 편집"
-                                                  Checked="VertexEditMode_Changed"
-                                                  Unchecked="VertexEditMode_Changed"/>
-                                        <TextBlock Style="{StaticResource Hint}"
-                                                   Text="작업 정면에서 경로 꼭지점을 드래그해 수정합니다. 편집 후 패턴을 다시 생성하면 편집 내용은 사라집니다."/>
-                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                            <Button x:Name="VertexUndoButton" Content="꼭지점 Undo"
-                                                    Click="VertexUndo_Click"
-                                                    Style="{StaticResource CompactButton}" Margin="0,0,6,0"/>
-                                            <Button x:Name="VertexRedoButton" Content="꼭지점 Redo"
-                                                    Click="VertexRedo_Click"
                                                     Style="{StaticResource CompactButton}"/>
                                         </StackPanel>
                                         <Separator Margin="0,10,0,8"/>
@@ -460,26 +468,6 @@
                             </ScrollViewer>
                         </TabItem>
                     </TabControl>
-
-                    <!-- 공유 2D 미리보기: 제외영역 확인과 패턴 시작점 선택에 함께 쓴다. -->
-                    <Border x:Name="RegionPreviewPanel" Grid.Row="3" Style="{StaticResource CardBody}"
-                            Margin="14,6,14,12">
-                        <StackPanel>
-                            <Grid>
-                                <TextBlock Text="2D 미리보기" Style="{StaticResource FieldLabel}" Margin="0"/>
-                                <TextBlock x:Name="RegionPreviewHintText" Text="활성 영역의 제외영역과 2D 외곽"
-                                           HorizontalAlignment="Right" Style="{StaticResource Hint}" Margin="0"/>
-                            </Grid>
-                            <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
-                                    Background="White" HorizontalAlignment="Stretch" Height="170"
-                                    Margin="0,4,0,0">
-                                <Canvas x:Name="RegionCanvas" Background="Transparent"
-                                        Cursor="Cross"
-                                        MouseLeftButtonDown="RegionCanvas_MouseLeftButtonDown"
-                                        SizeChanged="RegionCanvas_SizeChanged"/>
-                            </Border>
-                        </StackPanel>
-                    </Border>
                 </Grid>
             </Border>
         </Grid>

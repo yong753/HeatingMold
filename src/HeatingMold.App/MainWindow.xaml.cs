@@ -146,8 +146,6 @@ namespace HeatingMold.App
             if (VertexEditModeBox != null) VertexEditModeBox.IsEnabled = vertexEligible || vertexActive;
             if (VertexUndoButton != null) VertexUndoButton.IsEnabled = vertexActive && VertexUndoCount(_activeArea) > 0;
             if (VertexRedoButton != null) VertexRedoButton.IsEnabled = vertexActive && VertexRedoCount(_activeArea) > 0;
-
-            RefreshSidebarSummary();
         }
 
         private void ConfirmArea_Click(object sender, RoutedEventArgs e) => ConfirmWorkingArea();
@@ -373,7 +371,6 @@ namespace HeatingMold.App
             if (!RebuildNativePatternGeometry(out _, out _)) return;
             ClearRouteEditState(_activeArea);
             ShowActiveExclusionOverlays();
-            DrawRegionCanvas();
             StatusText.Text = string.Format("모델 뷰포트 제외영역 추가 — {0}개", _activeArea.Exclusions.Count);
         }
 
@@ -491,7 +488,6 @@ namespace HeatingMold.App
             ClearFaceSelectionOnly();
             ActivateArea(area);
             RefreshAreaList();
-            DrawRegionCanvas();
             StatusText.Text = string.Format("작업영역 {0} 추가 — {1}개 Face · 총 {2}개 영역",
                 area.Name, area.FaceIdSet.Count, _areas.Count);
             UpdateActionStates();
@@ -605,7 +601,7 @@ namespace HeatingMold.App
             if (area.HasExitFace && !area.HasExitAnchors)
             {
                 StatusText.Text = area.LastExitFailure
-                    ?? "인출면의 시작/종료점이 지정되지 않았습니다 — 2D 미리보기에서 시작점을 선택하세요";
+                    ?? "인출면의 시작/종료점이 지정되지 않았습니다 — 후보 목록에서 시작/종료점을 선택하세요";
                 return;
             }
             if (area.HasExitAnchors && area.Exclusions.Count > 0)
@@ -733,7 +729,7 @@ namespace HeatingMold.App
             StatusText.Text = projectedCount == 0
                 ? "생성 가능한 경로가 없습니다. 마진/간격 또는 선택 영역을 확인하세요"
                 : string.Format(routePiecesMode
-                    ? "{0} 영역 — {1}개 경로 · 길이 {2:F1}mm · 회로 {3}개 · 커넥터 편집 가능"
+                    ? "{0} 영역 — {1}개 경로 · 길이 {2:F1}mm · 회로 {3}개 · 회로 분할 가능"
                     : "{0} 영역 제외경로 — {1}개 독립 경로 · 길이 {2:F1}mm · 깊이 0",
                     area.Name, projectedCount, total,
                     routePiecesMode ? SerpentineTopology.Compute(area.Pattern.RoutePieces, area.TurnEnabled).Count : 0)
@@ -744,13 +740,15 @@ namespace HeatingMold.App
         private void ConnectorEditMode_Changed(object sender, RoutedEventArgs e)
         {
             bool enabled = ConnectorEditModeBox.IsChecked == true && _pattern != null && _pattern.RoutePieces.Count > 0;
-            if (ConnectorEditModeBox.IsChecked == true && !enabled) { ConnectorEditModeBox.IsChecked = false; StatusText.Text = "먼저 커넥터가 있는 패턴을 생성하세요"; return; }
+            if (ConnectorEditModeBox.IsChecked == true && !enabled) { ConnectorEditModeBox.IsChecked = false; StatusText.Text = "먼저 턴 커넥터가 있는 패턴을 생성하세요"; return; }
+            // 꼭지점 편집과 회로 분할은 상호 배타 — 편집 중에는 뷰포트가 꼭지점 입력을 우선 처리한다.
+            if (enabled && Viewport.VertexEditMode) ExitVertexEdit();
             if (enabled && ExcludeModeBox.IsChecked == true) ExcludeModeBox.IsChecked = false;
             Viewport.ConnectorEditMode = enabled;
-            if (enabled) { Bridge.ClearHover(); StatusText.Text = "커넥터 편집 — 커넥터를 클릭해 회로를 분리/연결"; }
+            if (enabled) { Bridge.ClearHover(); StatusText.Text = "회로 분할 — 연결 구간을 클릭해 회로를 분할하거나 다시 연결합니다"; }
         }
 
-        private void OnConnectorHovered(int id) { _hoverConnector = id; HoverText.Text = id < 0 ? "" : "커넥??#" + id; }
+        private void OnConnectorHovered(int id) { _hoverConnector = id; HoverText.Text = id < 0 ? "" : "커넥터 #" + id; }
         private void OnRoutePieceHovered(int id)
         {
             var area = _areas.FirstOrDefault(a => a.NativePieceIds.Contains(id));
@@ -844,7 +842,7 @@ namespace HeatingMold.App
             if (_workingSide.Confirmed == null) { WorkingGenerationReady(); return; }
             if (!WorkingRouteMigrationComplete) { StatusText.Text = "생성 보류: 전원 경로는 아직 작업 방향 첫 충돌 경로로 마이그레이션되지 않았습니다"; return; }
             if (!WorkingGenerationReady()) return;
-            if (_pattern == null || _multiFaceFrame == null) { StatusText.Text = "먼저 커넥터 편집 가능한 패턴을 생성하세요"; return; }
+            if (_pattern == null || _multiFaceFrame == null) { StatusText.Text = "먼저 회로 분할 가능한 패턴을 생성하세요"; return; }
             CancelPowerSetup();
             if (_projectedPieces.Count != _pattern.RoutePieces.Count) { StatusText.Text = "3D 경로 끝점이 없습니다. 패턴을 다시 생성하세요"; return; }
             var groups = CircuitPieceGroups();
@@ -936,75 +934,6 @@ namespace HeatingMold.App
             ApplyConnectorStates();
         }
 
-        private void DrawRegionCanvas()
-        {
-            if (RegionCanvas == null) return;
-            RegionCanvas.Children.Clear();
-            if (_selectedRegion.Count == 0 || RegionCanvas.ActualWidth < 2 || RegionCanvas.ActualHeight < 2) return;
-            foreach (var ring in _selectedRegion)
-            {
-                var poly = new Polyline { Stroke = Brushes.SteelBlue, StrokeThickness = 2 };
-                foreach (Vec2 p in ring) poly.Points.Add(WorldToCanvas(p));
-                if (poly.Points.Count > 0) poly.Points.Add(poly.Points[0]);
-                RegionCanvas.Children.Add(poly);
-            }
-            foreach (var r in _exclusions)
-            {
-                Point a = WorldToCanvas(new Vec2(r.MinX, r.MinY));
-                Point b = WorldToCanvas(new Vec2(r.MaxX, r.MaxY));
-                var rect = new Rectangle { Width = Math.Abs(b.X - a.X), Height = Math.Abs(b.Y - a.Y),
-                    Stroke = Brushes.Red, StrokeThickness = 2, Fill = new SolidColorBrush(Color.FromArgb(45, 255, 0, 0)) };
-                Canvas.SetLeft(rect, Math.Min(a.X, b.X)); Canvas.SetTop(rect, Math.Min(a.Y, b.Y));
-                RegionCanvas.Children.Add(rect);
-            }
-
-            var area = _activeArea;
-            if (area != null)
-            {
-                if (area.ExitChain.Count >= 2)
-                {
-                    var chain = new Polyline { Stroke = Brushes.DarkOrange, StrokeThickness = 2 };
-                    foreach (Vec2 p in area.ExitChain) chain.Points.Add(WorldToCanvas(p));
-                    RegionCanvas.Children.Add(chain);
-                }
-                foreach (var candidate in area.AnchorCandidates)
-                {
-                    AddAnchorDot(WorldToCanvas(candidate.Start), Brushes.Gold, 3);
-                    AddAnchorDot(WorldToCanvas(candidate.End), Brushes.Gold, 3);
-                }
-                if (area.StartAnchor.HasValue) AddAnchorDot(WorldToCanvas(area.StartAnchor.Value), Brushes.LimeGreen, 5);
-                if (area.EndAnchor.HasValue) AddAnchorDot(WorldToCanvas(area.EndAnchor.Value), Brushes.OrangeRed, 5);
-            }
-        }
-
-        private void AddAnchorDot(Point p, Brush brush, double radius)
-        {
-            var dot = new System.Windows.Shapes.Ellipse
-            {
-                Width = radius * 2, Height = radius * 2, Fill = brush,
-                Stroke = Brushes.Black, StrokeThickness = 1
-            };
-            Canvas.SetLeft(dot, p.X - radius);
-            Canvas.SetTop(dot, p.Y - radius);
-            RegionCanvas.Children.Add(dot);
-        }
-
-        private (double MinX, double MinY, double MaxX, double MaxY) RegionBounds()
-        {
-            var points = _selectedRegion.SelectMany(r => r).ToList();
-            return (points.Min(p => p.X), points.Min(p => p.Y), points.Max(p => p.X), points.Max(p => p.Y));
-        }
-
-        private Point WorldToCanvas(Vec2 p)
-        {
-            var b = RegionBounds();
-            double sx = Math.Max(1e-9, b.MaxX - b.MinX), sy = Math.Max(1e-9, b.MaxY - b.MinY);
-            double scale = Math.Min((RegionCanvas.ActualWidth - 16) / sx, (RegionCanvas.ActualHeight - 16) / sy);
-            double x = (RegionCanvas.ActualWidth - sx * scale) / 2 + (p.X - b.MinX) * scale;
-            double y = (RegionCanvas.ActualHeight - sy * scale) / 2 + (b.MaxY - p.Y) * scale;
-            return new Point(x, y);
-        }
-
         private void ClearExclusions_Click(object sender, RoutedEventArgs e)
         {
             var area = _activeArea;
@@ -1024,12 +953,9 @@ namespace HeatingMold.App
             if (!RebuildNativePatternGeometry(out _, out _)) return;
             ClearRouteEditState(area);
             if (CircuitLengthGrid != null) CircuitLengthGrid.ItemsSource = null;
-            DrawRegionCanvas();
             UpdateActionStates();
             StatusText.Text = string.Format("{0} 영역의 제외 사각형을 모두 지웠습니다", area.Name);
         }
-
-        private void RegionCanvas_SizeChanged(object sender, SizeChangedEventArgs e) => DrawRegionCanvas();
 
         private List<DxfView> BuildViews()
         {
@@ -1093,7 +1019,7 @@ namespace HeatingMold.App
         {
             if (Viewport != null && Viewport.VertexEditMode)
             {
-                StatusText.Text = "꼭지점 편집 중에는 뷰를 바꿀 수 없습니다 — 편집을 종료한 뒤 다시 시도하세요";
+                StatusText.Text = "발열경로 편집 중에는 뷰를 바꿀 수 없습니다 — 편집을 종료한 뒤 다시 시도하세요";
                 return;
             }
             Viewport.CancelPowerLeadPreview();

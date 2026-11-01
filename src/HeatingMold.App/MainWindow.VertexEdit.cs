@@ -57,7 +57,7 @@ public partial class MainWindow
         if (area.Pattern == null || area.Pattern.RoutePieces.Count == 0)
         { RejectVertexEdit("먼저 발열 경로를 생성하세요"); return; }
         if (area.Paths.Count > 0)
-        { RejectVertexEdit("제외영역 경로는 꼭지점 편집을 지원하지 않습니다 — 제외영역을 지우고 다시 생성하세요"); return; }
+        { RejectVertexEdit("제외영역 경로는 발열경로 편집을 지원하지 않습니다 — 제외영역을 지우고 다시 생성하세요"); return; }
         if (!WorkingGenerationReady()) { RejectVertexEdit("작업면/모델 상태가 준비되지 않았습니다"); return; }
         var side = _workingSide.Confirmed;
         if (side == null) { RejectVertexEdit("작업면이 확정되지 않았습니다"); return; }
@@ -100,7 +100,7 @@ public partial class MainWindow
         Viewport.VertexEditMode = true;
         RefreshVertexHandles();
         UpdateActionStates();
-        StatusText.Text = "꼭지점 편집 — 점을 드래그해 경로를 수정합니다 (Esc: 드래그 취소/편집 종료)";
+        StatusText.Text = "발열경로 편집 — 점을 드래그해 경로를 수정합니다 (Esc: 드래그 취소/편집 종료)";
     }
 
     private void RejectVertexEdit(string reason)
@@ -142,7 +142,7 @@ public partial class MainWindow
     {
         if (_vertexDragging) return;   // 드래그 취소는 뷰포트가 처리한다
         ExitVertexEdit();
-        StatusText.Text = "꼭지점 편집을 종료했습니다";
+        StatusText.Text = "발열경로 편집을 종료했습니다";
     }
 
     /// <summary>각 꼭지점 데이텀을 현재 표시 3D 점으로 매핑해 핸들을 다시 그린다.</summary>
@@ -505,7 +505,7 @@ public partial class MainWindow
         if (area.Pattern != null)
             UpdateCircuitTable(SerpentineTopology.Compute(area.Pattern.RoutePieces, area.TurnEnabled));
         RefreshVertexHandles();
-        StatusText.Text = undo ? "꼭지점 편집 Undo" : "꼭지점 편집 Redo";
+        StatusText.Text = undo ? "발열경로 편집 Undo" : "발열경로 편집 Redo";
         UpdateActionStates();
     }
 
@@ -532,9 +532,9 @@ public partial class MainWindow
     {
         if (area == null || !area.RouteEdited) return true;
         MessageBoxResult result = MessageBox.Show(this,
-            action + " 작업을 계속하면 " + area.Name + " 영역의 꼭지점 편집 내용이 삭제됩니다."
+            action + " 작업을 계속하면 " + area.Name + " 영역의 발열경로 편집 내용이 삭제됩니다."
             + Environment.NewLine + "계속할까요?",
-            "꼭지점 편집 내용 삭제", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            "발열경로 편집 내용 삭제", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
         return result == MessageBoxResult.Yes;
     }
 
@@ -552,8 +552,8 @@ public partial class MainWindow
         if (edited.Count == 0) return true;
         MessageBoxResult result = MessageBox.Show(this,
             action + " 작업을 계속하면 " + string.Join(", ", edited.Select(a => a.Name))
-            + " 영역의 꼭지점 편집 내용이 삭제됩니다." + Environment.NewLine + "계속할까요?",
-            "꼭지점 편집 내용 삭제", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            + " 영역의 발열경로 편집 내용이 삭제됩니다." + Environment.NewLine + "계속할까요?",
+            "발열경로 편집 내용 삭제", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
         return result == MessageBoxResult.Yes;
     }
 

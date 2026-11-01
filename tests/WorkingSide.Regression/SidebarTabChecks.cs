@@ -27,23 +27,30 @@ static class SidebarTabChecks
     {
         var tabs = (TabControl)window.FindName("SidebarTabs")!;
         var viewport = (OccViewport)window.FindName("Viewport")!;
-        var preview = (FrameworkElement)window.FindName("RegionPreviewPanel")!;
         var faceList = (ListBox)window.FindName("SelectedFacesList")!;
         var excludeBox = (CheckBox)window.FindName("ExcludeModeBox")!;
         var selected = Field<HashSet<int>>(window, "_selectedFaceIds");
         var areas = (IList)Field<object>(window, "_areas");
 
+        Check(window.FindName("VertexEditModeBox") is CheckBox vertexBox &&
+              vertexBox.Content as string == "발열경로 편집" &&
+              window.FindName("VertexUndoButton") is Button &&
+              window.FindName("VertexRedoButton") is Button,
+            "vertex edit controls live in the viewport toolbar under the heating-path name");
         Check(tabs.Items.Count == 5 && tabs.SelectedIndex == 0,
             "sidebar exposes five tabs and starts on the area tab");
-        Check(viewport.FaceSelectionEnabled && preview.Visibility == Visibility.Collapsed,
-            "area tab enables face selection and hides the shared preview");
+        Check(window.FindName("ActiveAreaSummaryText") == null &&
+              tabs.Items.Cast<TabItem>().Select(t => t.Header as string)
+                  .SequenceEqual(new[] { "영역", "제외", "패턴", "편집", "결과" }),
+            "sidebar drops the active-area summary card and keeps labelled tabs");
+        Check(viewport.FaceSelectionEnabled && window.FindName("RegionPreviewPanel") == null,
+            "area tab enables face selection and the shared 2D preview is removed");
 
         selected.Add(11);
         faceList.Items.Add("seed");
         tabs.SelectedIndex = 4;
 
         Check(!viewport.FaceSelectionEnabled, "results tab disables viewport face selection");
-        Check(preview.Visibility == Visibility.Collapsed, "results tab hides the shared preview");
         Check(selected.Contains(11) && faceList.Items.Count == 1, "tab switch preserves pending face selection");
 
         int areaCount = areas.Count;
@@ -53,7 +60,7 @@ static class SidebarTabChecks
         Check(selected.Count == 1 && !selected.Contains(12), "face picks are ignored outside the area tab");
 
         tabs.SelectedIndex = 1;
-        Check(preview.Visibility == Visibility.Visible, "exclude tab shows the shared preview");
+        Check(window.FindName("RegionPreviewPanel") == null, "exclude tab no longer hosts a shared 2D preview");
         SetField(window, "_multiFaceFrame",
             new ProjectionFrame(new Vec3(0, 0, 100), new Vec3(0, 0, 1), new Vec3(1, 0, 0)));
         excludeBox.IsChecked = true;
@@ -61,7 +68,7 @@ static class SidebarTabChecks
         tabs.SelectedIndex = 2;
         Check(!viewport.ExclusionSketchMode && excludeBox.IsChecked != true,
             "leaving the exclude tab cancels sketch mode");
-        Check(preview.Visibility == Visibility.Visible, "pattern tab keeps the shared preview visible");
+        Check(window.FindName("AnchorCandidateList") is ListBox, "pattern tab exposes the anchor candidate list");
 
         tabs.SelectedIndex = 3;
         viewport.VertexEditMode = true;
@@ -69,8 +76,12 @@ static class SidebarTabChecks
         tabs.SelectedIndex = 0;
         Check(!viewport.VertexEditMode && !viewport.ConnectorEditMode,
             "leaving the edit tab exits transient vertex/connector modes");
-        Check(viewport.FaceSelectionEnabled && preview.Visibility == Visibility.Collapsed,
-            "returning to the area tab restores face selection and hides the preview");
+        Check(viewport.FaceSelectionEnabled,
+            "returning to the area tab restores face selection");
+        tabs.SelectedIndex = 2;
+        viewport.VertexEditMode = true;
+        tabs.SelectedIndex = 4;
+        Check(!viewport.VertexEditMode, "vertex edit started outside the edit tab also exits on any tab switch");
 
         var undo = Field<Stack<bool[]>>(window, "_connectorUndo");
         undo.Push(new[] { true });

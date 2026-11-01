@@ -80,7 +80,6 @@ public partial class MainWindow
                 UpdateCircuitTable(SerpentineTopology.Compute(area.Pattern.RoutePieces, area.TurnEnabled));
         }
 
-        DrawRegionCanvas();
         ShowActiveExclusionOverlays();
         SyncExitFaceUi(area);
         UpdateActionStates();
@@ -490,7 +489,6 @@ public partial class MainWindow
         _multiFacePatternDisplayed = false;
         if (Viewport != null) Viewport.CircuitHoverMode = false;
         RefreshAreaList();
-        DrawRegionCanvas();
         SyncExitFaceUi(null);
         if (clearNative)
         {
@@ -498,7 +496,6 @@ public partial class MainWindow
             Bridge.ClearExclusionOverlays();
             Bridge.ClearConfirmedFaceHighlights();
         }
-        RefreshSidebarSummary();
     }
 
     private void ShowActiveExclusionOverlays()
