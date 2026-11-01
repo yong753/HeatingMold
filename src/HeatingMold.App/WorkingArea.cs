@@ -61,6 +61,10 @@ internal sealed class WorkingArea
     /// <summary>생성 후 꼭지점 편집으로 경로가 수정되었는지. 재생성 시 삭제 경고에 사용한다.</summary>
     public bool RouteEdited { get; set; }
 
+    /// <summary>제외영역을 반영한 실제 발열영역(프레임 2D). 제외가 없으면 원본 Region을 그대로 돌려준다.</summary>
+    public List<List<Vec2>> EffectiveRegion() =>
+        Exclusions.Count == 0 ? Region : RegionOps.SubtractRectangles(Region, Exclusions);
+
     public bool HasExitAnchors => ExitFaceId >= 0 && StartAnchor.HasValue && EndAnchor.HasValue;
     public bool HasExitFace => ExitFaceId >= 0 && ExitChain.Count >= 2;
 

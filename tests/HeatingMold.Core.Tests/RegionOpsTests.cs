@@ -25,6 +25,40 @@ public class RegionOpsTests
     }
 
     [Fact]
+    public void SubtractRectanglesSplitsRegionIntoTwoRings()
+    {
+        // 제외가 영역 높이를 완전히 가로지르면 남은 발열영역은 두 조각으로 분리된다.
+        var remaining = RegionOps.SubtractRectangles(new IReadOnlyList<Vec2>[] { Rect(0, 0, 20, 10) },
+            new[] { (8d, -1d, 12d, 11d) });
+        Assert.Equal(2, remaining.Count);
+        Assert.Equal(160, remaining.Sum(r => RegionOps.SignedArea(r)), 6);
+    }
+
+    [Fact]
+    public void SubtractRectanglesUnionsOverlappingExclusions()
+    {
+        var remaining = RegionOps.SubtractRectangles(new IReadOnlyList<Vec2>[] { Rect(0, 0, 20, 10) },
+            new[] { (2d, 2d, 8d, 8d), (6d, 2d, 12d, 8d) });
+        Assert.Equal(140, remaining.Sum(r => RegionOps.SignedArea(r)), 6);
+    }
+
+    [Fact]
+    public void SubtractRectanglesOutsideRegionKeepsArea()
+    {
+        var remaining = RegionOps.SubtractRectangles(new IReadOnlyList<Vec2>[] { Rect(0, 0, 20, 10) },
+            new[] { (30d, 30d, 40d, 40d) });
+        Assert.Equal(200, remaining.Sum(r => RegionOps.SignedArea(r)), 6);
+    }
+
+    [Fact]
+    public void SubtractRectanglesCoveringRegionReturnsEmpty()
+    {
+        var remaining = RegionOps.SubtractRectangles(new IReadOnlyList<Vec2>[] { Rect(0, 0, 20, 10) },
+            new[] { (-1d, -1d, 21d, 11d) });
+        Assert.Empty(remaining);
+    }
+
+    [Fact]
     public void SerpentineComponentsNeverBridgeExcludedGap()
     {
         var paths = Serpentine.GenerateComponents(Rect(0,0,100,40), new[] { (40d, 0d, 60d, 40d) },

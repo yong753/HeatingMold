@@ -226,19 +226,32 @@
                 </Grid.RowDefinitions>
                 <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}"
                         BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="8,4">
-                    <StackPanel Orientation="Horizontal">
-                        <CheckBox x:Name="VertexEditModeBox" Content="발열경로 편집"
-                                  VerticalAlignment="Center"
-                                  Checked="VertexEditMode_Changed" Unchecked="VertexEditMode_Changed"/>
-                        <Button x:Name="VertexUndoButton" Content="경로 Undo"
-                                Click="VertexUndo_Click" Style="{StaticResource CompactButton}"
-                                Margin="10,0,4,0" VerticalAlignment="Center"/>
-                        <Button x:Name="VertexRedoButton" Content="경로 Redo"
-                                Click="VertexRedo_Click" Style="{StaticResource CompactButton}"
-                                VerticalAlignment="Center"/>
-                        <TextBlock Text="작업 정면에서 발열경로의 꼭지점을 드래그해 수정합니다. 편집 후 패턴을 다시 생성하면 편집 내용은 사라집니다."
-                                   Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0"
-                                   TextTrimming="CharacterEllipsis"/>
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <CheckBox x:Name="VertexEditModeBox" Content="발열경로 편집"
+                                      VerticalAlignment="Center"
+                                      Checked="VertexEditMode_Changed" Unchecked="VertexEditMode_Changed"/>
+                            <Button x:Name="VertexUndoButton" Content="경로 Undo"
+                                    Click="VertexUndo_Click" Style="{StaticResource CompactButton}"
+                                    Margin="10,0,4,0" VerticalAlignment="Center"/>
+                            <Button x:Name="VertexRedoButton" Content="경로 Redo"
+                                    Click="VertexRedo_Click" Style="{StaticResource CompactButton}"
+                                    VerticalAlignment="Center"/>
+                            <TextBlock Text="작업 정면에서 발열경로의 꼭지점을 드래그해 수정합니다. 편집 후 패턴을 다시 생성하면 편집 내용은 사라집니다."
+                                       Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0"
+                                       TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                            <CheckBox x:Name="ExcludeModeBox" Content="영역 제외"
+                                      VerticalAlignment="Center" IsEnabled="False"
+                                      Checked="ExcludeMode_Changed" Unchecked="ExcludeMode_Changed"/>
+                            <Button x:Name="ClearExclusionsButton" Content="제외 초기화"
+                                    Click="ClearExclusions_Click" Style="{StaticResource CompactButton}"
+                                    Margin="10,0,4,0" VerticalAlignment="Center" IsEnabled="False"/>
+                            <TextBlock Text="활성 작업영역 평면에서 드래그해 제외영역을 그립니다. Esc로 진행 중인 드래그를 취소합니다."
+                                       Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0"
+                                       TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
                 <local:OccViewport x:Name="Viewport" Grid.Row="1"/>
@@ -307,25 +320,7 @@
                             </ScrollViewer>
                         </TabItem>
 
-                        <!-- 2. 제외 영역 -->
-                        <TabItem Header="제외" Style="{StaticResource SidebarTabItem}">
-                            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                                          Padding="4,8,10,12">
-                                <Border Style="{StaticResource Card}">
-                                    <StackPanel>
-                                        <CheckBox x:Name="ExcludeModeBox" Content="뷰포트에서 사각형 제외영역 그리기"
-                                                  Margin="0,0,0,5"
-                                                  Checked="ExcludeMode_Changed" Unchecked="ExcludeMode_Changed"/>
-                                        <TextBlock Style="{StaticResource Hint}"
-                                                   Text="활성 작업영역의 평면에서 뷰포트를 드래그하세요. 제외영역은 활성 영역에만 적용되며 3D로 표시됩니다."/>
-                                        <Button Content="제외 사각형 초기화" Click="ClearExclusions_Click"
-                                                Style="{StaticResource FlatButton}" Margin="0,10,0,0"/>
-                                    </StackPanel>
-                                </Border>
-                            </ScrollViewer>
-                        </TabItem>
-
-                        <!-- 3. 패턴 생성 -->
+                        <!-- 2. 패턴 생성 -->
                         <TabItem Header="패턴" Style="{StaticResource SidebarTabItem}">
                             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                                           Padding="4,8,10,12">
@@ -404,7 +399,7 @@
                             </ScrollViewer>
                         </TabItem>
 
-                        <!-- 4. 회로·경로 편집 -->
+                        <!-- 3. 회로·경로 편집 -->
                         <TabItem Header="편집" Style="{StaticResource SidebarTabItem}">
                             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                                           Padding="4,8,10,12">
@@ -438,7 +433,7 @@
                             </ScrollViewer>
                         </TabItem>
 
-                        <!-- 5. 결과 -->
+                        <!-- 4. 결과 -->
                         <TabItem Header="결과" Style="{StaticResource SidebarTabItem}">
                             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                                           Padding="4,8,10,12">

@@ -57,6 +57,11 @@ namespace HeatingMold.App
         private double[] _leadLengths = Array.Empty<double>();
         private double _insertionDepth;
 
+        // 제외 체크박스의 프로그램적 해제가 ExcludeMode_Changed를 다시 타지 않게 한다.
+        private bool _suppressExcludeToggle;
+        // 전원 연결 대기 중에는 제외영역 입력도 잠근다.
+        private bool _powerEditingLocked;
+
         private void CancelPowerSetup()
         {
             _pendingLeads.Clear();
@@ -70,9 +75,9 @@ namespace HeatingMold.App
 
         private void SetPowerEditingLock(bool locked)
         {
-            if (ConnectorEditModeBox == null) return;
-            ConnectorEditModeBox.IsEnabled = !locked;
-            ExcludeModeBox.IsEnabled = !locked;
+            _powerEditingLocked = locked;
+            if (ConnectorEditModeBox != null) ConnectorEditModeBox.IsEnabled = !locked;
+            UpdateActionStates();
         }
 
         private string PowerPrompt() => _pendingLeads.Count == 0 ? "전원 연결 완료" :
@@ -146,6 +151,14 @@ namespace HeatingMold.App
             if (VertexEditModeBox != null) VertexEditModeBox.IsEnabled = vertexEligible || vertexActive;
             if (VertexUndoButton != null) VertexUndoButton.IsEnabled = vertexActive && VertexUndoCount(_activeArea) > 0;
             if (VertexRedoButton != null) VertexRedoButton.IsEnabled = vertexActive && VertexRedoCount(_activeArea) > 0;
+
+            // 제외 도구는 확정 작업영역이 있을 때만, 다른 편집/전원 대기 중에는 비활성화한다.
+            bool exclusionEligible = ExclusionEligible() && !vertexActive && !_powerEditingLocked;
+            if (ExcludeModeBox != null) ExcludeModeBox.IsEnabled = exclusionEligible;
+            if (ClearExclusionsButton != null)
+                ClearExclusionsButton.IsEnabled = _activeArea != null
+                    && _activeArea.Exclusions.Count > 0
+                    && !_powerEditingLocked;
         }
 
         private void ConfirmArea_Click(object sender, RoutedEventArgs e) => ConfirmWorkingArea();
@@ -210,9 +223,8 @@ namespace HeatingMold.App
             {
                 ClearAllAreas(clearNative: true);
                 _multiFaceRegionFailure = null;
-                ExcludeModeBox.IsChecked = false;
+                ExitExclusionSketch();
                 Viewport.RectangleSelectionMode = false;
-                Viewport.ExclusionSketchMode = false;
                 StatusText.Text = "로드 실패: " + path;
                 UpdateActionStates();
                 ReturnToAreaTab();
@@ -228,9 +240,8 @@ namespace HeatingMold.App
             Bridge.SetShapeColor(0.55, 0.65, 0.85);   // 고정 표시색 (스틸 블루)
             ClearAllAreas(clearNative: true);
             _multiFaceRegionFailure = null;
-            ExcludeModeBox.IsChecked = false;
+            ExitExclusionSketch();
             Viewport.RectangleSelectionMode = false;
-            Viewport.ExclusionSketchMode = false;
 
             var info = Bridge.GetShapeInfo();
             StatusText.Text = string.Format("{0} — 솔리드 {1} · 셸 {2} · 면 {3} · 평면 {4} · 로드 {5}ms",
@@ -265,17 +276,26 @@ namespace HeatingMold.App
             HoverText.Text = string.Format("호버 #{0} ({1})", faceIndex, type);
         }
 
+        private bool ExclusionEligible() => _activeArea != null && _multiFaceFrame != null;
+
         private void ExcludeMode_Changed(object sender, RoutedEventArgs e)
         {
+            if (_suppressExcludeToggle) return;
             bool enabled = ExcludeModeBox.IsChecked == true;
-            if (enabled && _multiFaceFrame == null)
+            if (enabled && !ExclusionEligible())
             {
-                ExcludeModeBox.IsChecked = false;
+                _suppressExcludeToggle = true;
+                try { ExcludeModeBox.IsChecked = false; }
+                finally { _suppressExcludeToggle = false; }
                 StatusText.Text = "제외영역을 그리려면 먼저 작업영역을 확정하세요";
                 return;
             }
             Viewport.ExclusionSketchMode = enabled;
-            if (!enabled) Bridge.SetExclusionPreview(null);
+            if (!enabled)
+            {
+                Viewport.CancelExclusionSketch();
+                Bridge.SetExclusionPreview(null);
+            }
             if (enabled) StatusText.Text = "모델 뷰포트에서 사각형 제외영역을 드래그하세요";
         }
 
@@ -370,7 +390,7 @@ namespace HeatingMold.App
             Bridge.ClearExclusionOverlays();
             if (!RebuildNativePatternGeometry(out _, out _)) return;
             ClearRouteEditState(_activeArea);
-            ShowActiveExclusionOverlays();
+            ShowActiveRegionOutline();
             StatusText.Text = string.Format("모델 뷰포트 제외영역 추가 — {0}개", _activeArea.Exclusions.Count);
         }
 
@@ -435,6 +455,11 @@ namespace HeatingMold.App
         {
             // WPF 키 경로와 네이티브 뷰포트 Enter가 모두 이 지점을 지나므로 탭 게이트를 한 곳에 둔다.
             if (ActiveSidebarTab != AreaTabIndex) return;
+            if (Viewport != null && Viewport.ExclusionSketchMode)
+            {
+                StatusText.Text = "제외영역 그리기 중에는 영역을 확정할 수 없습니다";
+                return;
+            }
             if (_selectedFaceIds.Count == 0)
             {
                 StatusText.Text = _activeArea == null
@@ -857,9 +882,8 @@ namespace HeatingMold.App
                 _pendingLeads.Add(new PendingLead(i, false, new Vec3(b[0], b[1], b[2])));
             }
             ConnectorEditModeBox.IsChecked = false;
-            ExcludeModeBox.IsChecked = false;
             Viewport.ConnectorEditMode = false;
-            Viewport.ExclusionSketchMode = false;
+            ExitExclusionSketch();
             Viewport.RectangleSelectionMode = false;
             Bridge.ClearHover();
             HoverText.Text = "";

@@ -69,8 +69,7 @@ public partial class MainWindow
         Viewport.ConnectorEditMode = false;
         if (ConnectorEditModeBox != null) ConnectorEditModeBox.IsChecked = false;
         CancelExitFacePick();
-        Viewport.ExclusionSketchMode = false;
-        if (ExcludeModeBox != null) ExcludeModeBox.IsChecked = false;
+        ExitExclusionSketch();
         Viewport.RectangleSelectionMode = false;
         Viewport.PowerLocationMode = false;
         Viewport.CircuitHoverMode = false;

@@ -230,6 +230,14 @@ namespace HeatingMold.App
         public bool RectangleSelectionMode { get; set; }
         public bool ExclusionSketchMode { get; set; }
 
+        /// <summary>진행 중인 제외영역 사각형 드래그를 확정 없이 취소한다.
+        /// 캡처 해제가 WM_CAPTURECHANGED 경로로 취소 통지와 미리보기 정리를 수행한다.</summary>
+        public void CancelExclusionSketch()
+        {
+            if (_dragging && _activeDragMode == 2 && _dragStarted)
+                ReleaseCapture();
+        }
+
         /// <summary>
         /// 영역 탭에서만 Face 클릭/사각형 선택을 허용한다. 네이티브 선택은 이벤트보다 먼저
         /// 일어나므로 창 쪽에서 이벤트만 막아서는 부족하다.
@@ -439,6 +447,11 @@ namespace HeatingMold.App
                         else if (VertexEditMode)
                         {
                             VertexEscape?.Invoke();
+                            handled = true;
+                        }
+                        else if (_dragging && _activeDragMode == 2 && _dragStarted)
+                        {
+                            ReleaseCapture();
                             handled = true;
                         }
                         break;

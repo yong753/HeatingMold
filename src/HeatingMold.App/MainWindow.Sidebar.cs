@@ -14,10 +14,9 @@ namespace HeatingMold.App;
 public partial class MainWindow
 {
     private const int AreaTabIndex = 0;
-    private const int ExcludeTabIndex = 1;
-    private const int PatternTabIndex = 2;
-    private const int EditTabIndex = 3;
-    private const int ResultsTabIndex = 4;
+    private const int PatternTabIndex = 1;
+    private const int EditTabIndex = 2;
+    private const int ResultsTabIndex = 3;
 
     private bool _sidebarInitialized;
     private int _activeSidebarTabIndex = AreaTabIndex;
@@ -53,6 +52,8 @@ public partial class MainWindow
 
     private void ApplySidebarTabState(int tabIndex, int previousTab)
     {
+        // 제외 그리기는 탭과 무관한 뷰포트 입력 모드이므로 어떤 탭으로든 이동하면 종료한다.
+        ExitExclusionSketch();
         _activeSidebarTabIndex = tabIndex;
 
         // Face 선택은 영역 탭에서만 허용한다. 뷰포트가 자체적으로 선택을 막으므로
@@ -63,20 +64,29 @@ public partial class MainWindow
         UpdateActionStates();
     }
 
+    /// <summary>제외영역 그리기 상태를 체크박스 표시까지 포함해 확정 없이 종료한다.</summary>
+    private void ExitExclusionSketch()
+    {
+        if (Viewport != null)
+        {
+            Viewport.ExclusionSketchMode = false;
+            Viewport.CancelExclusionSketch();
+        }
+        Bridge.SetExclusionPreview(null);
+        if (ExcludeModeBox != null && ExcludeModeBox.IsChecked == true)
+        {
+            _suppressExcludeToggle = true;
+            try { ExcludeModeBox.IsChecked = false; }
+            finally { _suppressExcludeToggle = false; }
+        }
+    }
+
     /// <summary>탭을 떠날 때 그 탭의 일시적 입력 모드만 종료한다.
     /// 확정 데이터(패턴·경로·Undo/Redo·접속 길이)는 건드리지 않는다.</summary>
     private void ExitTransientModeForTab(int tabIndex)
     {
         switch (tabIndex)
         {
-            case ExcludeTabIndex:
-                // ExcludeMode_Changed는 프레임이 없으면 조기 반환하므로 뷰포트 플래그를 직접 내린다.
-                if (Viewport != null) Viewport.ExclusionSketchMode = false;
-                Bridge.SetExclusionPreview(null);
-                if (ExcludeModeBox != null && ExcludeModeBox.IsChecked == true)
-                    ExcludeModeBox.IsChecked = false;
-                break;
-
             case PatternTabIndex:
                 // 인출면 후보 강조/선택 모드만 종료한다. 확정된 인출면과 시작점은 유지된다.
                 CancelExitFacePick();

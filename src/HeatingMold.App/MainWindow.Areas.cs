@@ -53,6 +53,8 @@ public partial class MainWindow
 
     private void ActivateArea(WorkingArea area)
     {
+        // 영역이 바뀌면 이전 영역의 2D 제외 도구를 새 영역에 이어 쓰지 않는다.
+        ExitExclusionSketch();
         if (ReferenceEquals(_activeArea, area)) return;
         ResetCircuitEditingUi();
         _activeArea = area;
@@ -80,7 +82,7 @@ public partial class MainWindow
                 UpdateCircuitTable(SerpentineTopology.Compute(area.Pattern.RoutePieces, area.TurnEnabled));
         }
 
-        ShowActiveExclusionOverlays();
+        ShowActiveRegionOutline();
         SyncExitFaceUi(area);
         UpdateActionStates();
     }
@@ -129,7 +131,7 @@ public partial class MainWindow
         ApplyAreaColors();
         if (!RebuildNativePatternGeometry(out _, out _)) return;
 
-        if (!wasActive) ShowActiveExclusionOverlays();
+        if (!wasActive) ShowActiveRegionOutline();
         RefreshAreaList();
         ClearFaceSelectionOnly();
         StatusText.Text = string.Format("{0} 작업영역을 삭제했습니다 — 남은 영역 {1}개", area.Name, _areas.Count);
@@ -465,6 +467,7 @@ public partial class MainWindow
 
     private void ClearAllAreas(bool clearNative)
     {
+        ExitExclusionSketch();
         ResetCircuitEditingUi();
         _areas.Clear();
         _activeArea = null;
@@ -498,26 +501,36 @@ public partial class MainWindow
         }
     }
 
-    private void ShowActiveExclusionOverlays()
+    /// <summary>
+    /// 활성 영역의 "제외된 발열영역" 경계를 다시 그린다. 제외 사각형을 별도 박스로
+    /// 덧그리지 않고, 제외를 뺀 실제 영역 링(외곽·분리 조각·홀)을 폐루프 와이어로 표시한다.
+    /// 제외가 없으면 아무것도 덧그리지 않는다(영역 자체는 Face 색칠로 표시된다).
+    /// </summary>
+    private void ShowActiveRegionOutline()
     {
         Bridge.ClearExclusionOverlays();
-        if (_activeArea == null) return;
-        foreach (var rect in _activeArea.Exclusions)
-            Bridge.AddExclusionOverlay(ExclusionRectangleWire(_activeArea.Frame, rect));
+        if (_activeArea == null || _activeArea.Frame == null || _activeArea.Exclusions.Count == 0) return;
+        foreach (var ring in _activeArea.EffectiveRegion())
+        {
+            double[] wire = RegionRingWire(_activeArea.Frame, ring);
+            if (wire.Length > 0) Bridge.AddExclusionOverlay(wire);
+        }
     }
 
-    private double[] ExclusionRectangleWire(ProjectionFrame frame, (double MinX, double MinY, double MaxX, double MaxY) r)
+    private static double[] RegionRingWire(ProjectionFrame frame, IReadOnlyList<Vec2> ring)
     {
-        Vec2[] corners =
+        if (ring.Count < 3) return Array.Empty<double>();
+        int count = ring.Count;
+        var xyz = new double[(count + 1) * 3];
+        for (int i = 0; i < count; i++)
         {
-            new(r.MinX, r.MinY), new(r.MaxX, r.MinY), new(r.MaxX, r.MaxY), new(r.MinX, r.MaxY), new(r.MinX, r.MinY)
-        };
-        var xyz = new double[corners.Length * 3];
-        for (int i = 0; i < corners.Length; i++)
-        {
-            Vec3 p = frame.Unproject(corners[i]);
+            Vec3 p = frame.Unproject(ring[i]);
             xyz[i * 3] = p.X; xyz[i * 3 + 1] = p.Y; xyz[i * 3 + 2] = p.Z;
         }
+        // 와이어를 닫기 위해 첫 점을 끝에 반복한다.
+        xyz[count * 3] = xyz[0];
+        xyz[count * 3 + 1] = xyz[1];
+        xyz[count * 3 + 2] = xyz[2];
         return xyz;
     }
 }

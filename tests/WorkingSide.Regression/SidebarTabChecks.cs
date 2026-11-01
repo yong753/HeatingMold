@@ -9,6 +9,7 @@ using HeatingMold.OccBridge;
 /// <summary>
 /// 사이드바 탭 분리 회귀 검사.
 /// 탭 이동이 작업 데이터를 지우지 않고, 입력 모드만 탭에 맞게 켜고 끄는지 확인한다.
+/// 제외 도구는 확정 작업영역이 있을 때만 뷰포트 툴바에서 활성화되어야 한다.
 /// </summary>
 static class SidebarTabChecks
 {
@@ -29,6 +30,7 @@ static class SidebarTabChecks
         var viewport = (OccViewport)window.FindName("Viewport")!;
         var faceList = (ListBox)window.FindName("SelectedFacesList")!;
         var excludeBox = (CheckBox)window.FindName("ExcludeModeBox")!;
+        var clearExclusions = (Button)window.FindName("ClearExclusionsButton")!;
         var selected = Field<HashSet<int>>(window, "_selectedFaceIds");
         var areas = (IList)Field<object>(window, "_areas");
 
@@ -37,18 +39,20 @@ static class SidebarTabChecks
               window.FindName("VertexUndoButton") is Button &&
               window.FindName("VertexRedoButton") is Button,
             "vertex edit controls live in the viewport toolbar under the heating-path name");
-        Check(tabs.Items.Count == 5 && tabs.SelectedIndex == 0,
-            "sidebar exposes five tabs and starts on the area tab");
+        Check(tabs.Items.Count == 4 && tabs.SelectedIndex == 0,
+            "sidebar exposes four tabs and starts on the area tab");
         Check(window.FindName("ActiveAreaSummaryText") == null &&
               tabs.Items.Cast<TabItem>().Select(t => t.Header as string)
-                  .SequenceEqual(new[] { "영역", "제외", "패턴", "편집", "결과" }),
+                  .SequenceEqual(new[] { "영역", "패턴", "편집", "결과" }),
             "sidebar drops the active-area summary card and keeps labelled tabs");
+        Check(excludeBox.IsChecked != true && !excludeBox.IsEnabled && !clearExclusions.IsEnabled,
+            "exclude controls start disabled in the viewport toolbar");
         Check(viewport.FaceSelectionEnabled && window.FindName("RegionPreviewPanel") == null,
             "area tab enables face selection and the shared 2D preview is removed");
 
         selected.Add(11);
         faceList.Items.Add("seed");
-        tabs.SelectedIndex = 4;
+        tabs.SelectedIndex = 3;
 
         Check(!viewport.FaceSelectionEnabled, "results tab disables viewport face selection");
         Check(selected.Contains(11) && faceList.Items.Count == 1, "tab switch preserves pending face selection");
@@ -59,33 +63,59 @@ static class SidebarTabChecks
         Invoke(window, "OnFacePicked", 12, false);
         Check(selected.Count == 1 && !selected.Contains(12), "face picks are ignored outside the area tab");
 
-        tabs.SelectedIndex = 1;
-        Check(window.FindName("RegionPreviewPanel") == null, "exclude tab no longer hosts a shared 2D preview");
-        SetField(window, "_multiFaceFrame",
+        // 확정 작업영역을 하나 만들어 제외 도구의 활성 조건을 검사한다.
+        var areaType = typeof(MainWindow).Assembly.GetType("HeatingMold.App.WorkingArea")!;
+        var area = Activator.CreateInstance(areaType, nonPublic: true)!;
+        areaType.GetProperty("Frame")!.SetValue(area,
             new ProjectionFrame(new Vec3(0, 0, 100), new Vec3(0, 0, 1), new Vec3(1, 0, 0)));
+        areas.Add(area);
+        Invoke(window, "ActivateArea", area);
+        Check(ReferenceEquals(Field<object>(window, "_activeArea"), area) &&
+              excludeBox.IsEnabled,
+            "exclude control enables for a confirmed working area");
+
+        tabs.SelectedIndex = 0;
         excludeBox.IsChecked = true;
-        Check(viewport.ExclusionSketchMode, "exclude sketch mode can be enabled on the exclude tab");
-        tabs.SelectedIndex = 2;
+        Check(viewport.ExclusionSketchMode,
+            "exclude sketch mode can be enabled from the viewport toolbar");
+
+        selected.Add(21);
+        areaCount = areas.Count;
+        Invoke(window, "ConfirmWorkingArea");
+        Check(areas.Count == areaCount,
+            "working area confirmation is blocked while exclusion sketch is active");
+        selected.Remove(21);
+
+        var exclusions = (IList)areaType.GetProperty("Exclusions")!.GetValue(area)!;
+        exclusions.Add((0d, 0d, 10d, 10d));
+        Invoke(window, "UpdateActionStates");
+        Check(clearExclusions.IsEnabled,
+            "exclude reset enables when the active area has exclusions");
+
+        tabs.SelectedIndex = 1;
         Check(!viewport.ExclusionSketchMode && excludeBox.IsChecked != true,
-            "leaving the exclude tab cancels sketch mode");
+            "leaving the area tab cancels sketch mode");
+        Check(exclusions.Count == 1, "tab switch preserves exclusion data");
         Check(window.FindName("AnchorCandidateList") is ListBox, "pattern tab exposes the anchor candidate list");
 
-        tabs.SelectedIndex = 3;
+        tabs.SelectedIndex = 2;
         viewport.VertexEditMode = true;
+        Invoke(window, "UpdateActionStates");
+        Check(!excludeBox.IsEnabled, "vertex edit locks the exclude control");
         viewport.ConnectorEditMode = true;
         tabs.SelectedIndex = 0;
         Check(!viewport.VertexEditMode && !viewport.ConnectorEditMode,
             "leaving the edit tab exits transient vertex/connector modes");
         Check(viewport.FaceSelectionEnabled,
             "returning to the area tab restores face selection");
-        tabs.SelectedIndex = 2;
+        tabs.SelectedIndex = 1;
         viewport.VertexEditMode = true;
-        tabs.SelectedIndex = 4;
+        tabs.SelectedIndex = 3;
         Check(!viewport.VertexEditMode, "vertex edit started outside the edit tab also exits on any tab switch");
 
         var undo = Field<Stack<bool[]>>(window, "_connectorUndo");
         undo.Push(new[] { true });
-        tabs.SelectedIndex = 4;
+        tabs.SelectedIndex = 3;
         tabs.SelectedIndex = 0;
         Check(undo.Count == 1, "committed connector history survives tab round-trip");
         undo.Clear();
@@ -94,9 +124,12 @@ static class SidebarTabChecks
         Check(selected.Contains(13), "area tab accepts face picks again");
 
         // 테스트가 심은 상태를 되돌려 이후 검사에 영향을 주지 않게 한다.
+        Invoke(window, "ClearAllAreas", false);
+        Invoke(window, "UpdateActionStates");
+        Check(!viewport.ExclusionSketchMode && !excludeBox.IsEnabled && !clearExclusions.IsEnabled,
+            "clearing areas disables the exclude controls");
         selected.Clear();
         faceList.Items.Clear();
-        SetField(window, "_multiFaceFrame", null);
         tabs.SelectedIndex = 0;
         Check(viewport.FaceSelectionEnabled && tabs.SelectedIndex == 0,
             "sidebar checks leave the window on the area tab");
