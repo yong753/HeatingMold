@@ -108,7 +108,6 @@ public static class Serpentine
         IReadOnlyList<Vec2> outer,
         IReadOnlyList<IReadOnlyList<Vec2>>? holes,
         PatternParams p,
-        int arcPoints = 12,
         bool constrainConnectors = false)
     {
         if (outer.Count < 3) throw new ArgumentException("외곽 링은 점 3개 이상 필요", nameof(outer));
@@ -127,7 +126,7 @@ public static class Serpentine
         if (constrainConnectors && region.Count != 1)
             throw new InvalidOperationException("마진 적용 후 영역이 분리되어 단일 연속 경로를 구성할 수 없습니다");
 
-        LocalRoute route = BuildLocalRoute(outerLocal, holesLocal, region, p, constrainConnectors, true, arcPoints);
+        LocalRoute route = BuildLocalRoute(region, p, true);
         return ToWorld(route, rad, angleDeg);
     }
 
@@ -149,13 +148,9 @@ public static class Serpentine
     /// <summary>로컬 프레임에서 레인 스캔·연결. startLtr이 첫 레인의 진행 방향을 결정한다.
     /// requireEvenRuns면 양 끝이 같은 인출면에 놓이도록 레인 수를 짝수로 줄인다(간격/마진은 유지).</summary>
     private static LocalRoute BuildLocalRoute(
-        List<Vec2> outerLocal,
-        List<List<Vec2>>? holesLocal,
         List<List<Vec2>> region,
         PatternParams p,
-        bool constrainConnectors,
         bool startLtr,
-        int arcPoints,
         bool requireEvenRuns = false,
         int? laneCountOverride = null,
         int requestedLaneCount = 0)
@@ -175,7 +170,6 @@ public static class Serpentine
         var pts = new List<Vec2>();
         int traversed = 0;
         Vec2? prevEnd = null;
-        bool prevLtr = true;
 
         for (int k = 0; k < laneCount; k++)
         {
@@ -196,18 +190,10 @@ public static class Serpentine
 
                 if (pts.Count > 0 && firstOnLane && prevEnd.HasValue)
                 {
-                    // 레인 간 연결: 반원 U턴이 원본 면(외곽−홀) 안에 머물면 그대로 사용하고,
-                    // 면 밖으로 튀어나오면(모서리·끝단의 완만한 경계) 영역 경계를 따라 라우팅한다.
-                    List<Vec2> arc = ArcInterior(prevEnd.Value, a, prevLtr ? +1 : -1, arcPoints).ToList();
-                    List<Vec2> connector;
-                    if (constrainConnectors
-                        ? ArcStaysInsideFace(region[0], null, arc, 1e-6)
-                        : ArcStaysInsideFace(outerLocal, holesLocal, arc, 1e-6))
-                        connector = arc;
-                    else
-                        connector = RouteAlongBoundary(region, prevEnd.Value, a);
-                    pts.AddRange(connector);
-                    routePieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.TurnConnector, traversed, new[] { prevEnd.Value }.Concat(connector).Append(a).ToList()));
+                    // 레인 간 연결은 항상 두 끝점을 잇는 직선 2점이다. 영역 경계 판정을 하지 않는다.
+                    // 직선이 실제 모델 표면을 벗어나면 확정 단계의 표면 매핑이 거부한다(fail-closed).
+                    routePieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.TurnConnector, traversed,
+                        new[] { prevEnd.Value, a }));
                 }
                 else if (pts.Count > 0 && prevEnd.HasValue)
                 {
@@ -228,15 +214,14 @@ public static class Serpentine
                 firstOnLane = false;
             }
 
-            prevLtr = ltr;
             traversed++;
         }
 
         // 같은 면 인출은 경로 양 끝이 같은 쪽 모서리에 있어야 하고, 그 조건은 레인(구간) 수가 짝수일 때 성립한다.
         // 사용자가 간격을 바꾸지 않아도 되도록 시스템이 가능한 최대 짝수 개수로 한 개 줄여 다시 배치한다.
         if (requireEvenRuns && !laneCountOverride.HasValue && traversed % 2 != 0 && laneCount >= 2)
-            return BuildLocalRoute(outerLocal, holesLocal, region, p, constrainConnectors, startLtr,
-                arcPoints, requireEvenRuns, laneCount - 1, laneCount);
+            return BuildLocalRoute(region, p, startLtr,
+                requireEvenRuns, laneCount - 1, laneCount);
 
         return new LocalRoute(pts, segments, routePieces, traversed, requestedLaneCount);
     }
@@ -302,7 +287,7 @@ public static class Serpentine
             foreach (bool startLtr in new[] { true, false })
             {
                 (int regionCount, double rad, LocalRoute? route) =
-                    BuildAtAngle(outer, holes, p, angleDeg, startLtr, 12, requireEvenRuns: true);
+                    BuildAtAngle(outer, holes, p, angleDeg, startLtr, requireEvenRuns: true);
                 if (regionCount != 1 || route == null || route.Path.Count < 2) continue;
                 Vec2 start = route.Path[0].Rotate(rad);
                 Vec2 end = route.Path[^1].Rotate(rad);
@@ -331,8 +316,7 @@ public static class Serpentine
         IReadOnlyList<Vec2> exitChain,
         Vec2 startAnchor,
         Vec2 endAnchor,
-        PatternDirection direction,
-        int arcPoints = 12)
+        PatternDirection direction)
     {
         if (outer.Count < 3 || p.Spacing <= 0 || exitChain.Count < 2)
             return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
@@ -347,7 +331,7 @@ public static class Serpentine
             foreach (bool startLtr in new[] { true, false })
             {
                 (int regionCount, double rad, LocalRoute? route) =
-                    BuildAtAngle(outer, holes, p, angleDeg, startLtr, arcPoints, requireEvenRuns: true);
+                    BuildAtAngle(outer, holes, p, angleDeg, startLtr, requireEvenRuns: true);
                 if (regionCount != 1 || route == null || route.Path.Count < 2) continue;
                 Vec2 start = route.Path[0].Rotate(rad);
                 Vec2 end = route.Path[^1].Rotate(rad);
@@ -447,7 +431,6 @@ public static class Serpentine
         PatternParams p,
         double angleDeg,
         bool startLtr,
-        int arcPoints,
         bool requireEvenRuns = false)
     {
         double rad = angleDeg * Math.PI / 180.0;
@@ -455,8 +438,7 @@ public static class Serpentine
         List<List<Vec2>>? holesLocal = holes?.Select(h => Rotate(h, -rad)).ToList();
         List<List<Vec2>> region = RegionOps.BuildPatternRegion(outerLocal, holesLocal, p.Margin);
         if (region.Count != 1) return (region.Count, rad, null);
-        return (1, rad, BuildLocalRoute(outerLocal, holesLocal, region, p, true, startLtr, arcPoints,
-            requireEvenRuns));
+        return (1, rad, BuildLocalRoute(region, p, startLtr, requireEvenRuns));
     }
 
     private static AnchoredFailureReason ClassifyFailure(
@@ -486,7 +468,7 @@ public static class Serpentine
         {
             {
                 (int regionCount, double rad, LocalRoute? route) =
-                    BuildAtAngle(outer, holes, p, primaryAngle, startLtr, 12, requireEvenRuns: true);
+                    BuildAtAngle(outer, holes, p, primaryAngle, startLtr, requireEvenRuns: true);
                 if (regionCount == 0) continue;
                 anyRegion = true;
                 if (regionCount != 1) { anySplit = true; continue; }
@@ -561,31 +543,6 @@ public static class Serpentine
         return result;
     }
 
-    /// <summary>a→b U턴 반원의 내부 점들 (끝점 제외). bulgeSign: +1 → +X 쪽 볼록.</summary>
-    private static IEnumerable<Vec2> ArcInterior(Vec2 a, Vec2 b, int bulgeSign, int n)
-    {
-        Vec2 mid = (a + b) * 0.5;
-        double r = a.DistanceTo(b) / 2.0;
-        if (r < 1e-9 || n < 2) yield break;
-
-        double thA = Math.Atan2(a.Y - mid.Y, a.X - mid.X);
-        double thB = Math.Atan2(b.Y - mid.Y, b.X - mid.X);
-        double thM = bulgeSign > 0 ? 0.0 : Math.PI;
-
-        static double Norm(double t) => ((t % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-
-        double ccwSweep = Norm(thB - thA);
-        bool ccw = Norm(thM - thA) <= ccwSweep;
-        double sweep = ccw ? ccwSweep : 2 * Math.PI - ccwSweep;
-        double dir = ccw ? +1 : -1;
-
-        for (int i = 1; i < n; i++)
-        {
-            double t = thA + dir * sweep * i / n;
-            yield return new Vec2(mid.X + r * Math.Cos(t), mid.Y + r * Math.Sin(t));
-        }
-    }
-
     private static List<Vec2> Rotate(IReadOnlyList<Vec2> pts, double rad)
     {
         var res = new List<Vec2>(pts.Count);
@@ -593,27 +550,7 @@ public static class Serpentine
         return res;
     }
 
-    // ---- 면 내부 구속 커넥터 (모서리·끝단에서 반원이 면 밖으로 이탈하는 문제 방지) ----
-
-    /// <summary>반원 U턴 내부 점들이 원본 면(외곽 − 홀) 안에 머무는지 검사.
-    /// 경계 위(tol 이내)는 면 안으로 간주한다.</summary>
-    private static bool ArcStaysInsideFace(
-        IReadOnlyList<Vec2> outer, IReadOnlyList<IReadOnlyList<Vec2>>? holes,
-        IEnumerable<Vec2> arc, double tol)
-    {
-        foreach (Vec2 p in arc)
-        {
-            if (!PointInRing(outer, p) && DistanceToRing(outer, p) > tol)
-                return false;
-            if (holes == null) continue;
-            foreach (IReadOnlyList<Vec2> h in holes)
-            {
-                if (h.Count < 3 || DistanceToRing(h, p) <= tol) continue;
-                if (PointInRing(h, p)) return false;
-            }
-        }
-        return true;
-    }
+    // ---- 면 내부 구속 커넥터 (모서리·끝단에서 직선이 면 밖으로 이탈하는 문제 방지) ----
 
     /// <summary>영역 경계를 따라 P→Q로 가는 내부 점들(끝점 제외). 두 경계 호 중 짧은 쪽을 따른다.
     /// P·Q가 서로 다른 링이면 빈 목록(호출부가 직선 연결).</summary>

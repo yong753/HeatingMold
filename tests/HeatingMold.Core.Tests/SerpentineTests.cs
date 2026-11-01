@@ -111,10 +111,23 @@ public class SerpentineTests
         var r = Serpentine.Generate(outer, null, new PatternParams { Margin = 5, Spacing = 10 });
 
         double straight = 5 * 90.0;           // ?�인 5�?× 길이 90
-        double turns = 4 * Math.PI * 5.0;     // U??반원 4�?(r = Spacing/2 = 5)
+        double turns = 4 * 10.0;     // U??반원 4�?(r = Spacing/2 = 5)
 
-        Assert.True(r.TotalLength > straight);
+        Assert.True(r.TotalLength >= straight);
         Assert.InRange(r.TotalLength, straight + turns * 0.98, straight + turns * 1.02);
+    }
+
+    // T5b: Turn connector is a straight 2-point segment (no arc interior points).
+    [Fact]
+    public void TurnConnector_IsStraightTwoPointSegment()
+    {
+        var r = Serpentine.Generate(Rect(0, 0, 100, 60), null,
+            new PatternParams { Margin = 5, Spacing = 10 });
+
+        var turns = r.RoutePieces.Where(p => p.Kind == SerpentineRoutePieceKind.TurnConnector).ToList();
+        Assert.Equal(4, turns.Count);
+        Assert.All(turns, t => Assert.Equal(2, t.Points.Count));
+        Assert.All(turns, t => Assert.Equal(10.0, t.Points[0].DistanceTo(t.Points[1]), 6));
     }
 
     // T6: 비볼�??�기) �????�접 ?�인 극단?�이 ?�게 ?�긋?�도 커넥?��? �?밖으�??�탈?��? ?�아????(#597 ?��?)
