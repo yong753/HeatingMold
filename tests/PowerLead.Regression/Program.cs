@@ -23,6 +23,8 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        // Failure paths must not block automated runs on a modal error dialog.
+        ErrorReporter.SuppressDialogs = true;
         Check(Bridge.LoadStep(Path.Combine(args[0],"slope.stp")), "load slope");
         var piece = Bridge.ProjectRoutePiece(0,"HeatingRun",new[]{20.0,30,100,80,30,100},new[]{0},0,0,-1,0);
         Console.WriteLine(piece == null ? "Route piece: null" : $"Route piece: {string.Join(",",piece.Start)} -> {string.Join(",",piece.End)}, length {piece.Length}");

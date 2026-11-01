@@ -34,6 +34,8 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        // Failure paths must not block automated runs on a modal error dialog.
+        ErrorReporter.SuppressDialogs = true;
         string path=Path.Combine(args[0],"layers.stp");
         Check(Bridge.LoadStep(path),"load layered model without face selection");
         Check(Bridge.CreateWorkingContext(0,0,0,1,0,0)==null,"invalid working direction cannot create context");

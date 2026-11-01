@@ -22,6 +22,8 @@ public static class ErrorReporter
     private static bool _showing;
     private static string _lastSignature;
     private static DateTime _lastShownUtc;
+    /// <summary>When set by regression harnesses, logs errors to stderr instead of showing a modal dialog.</summary>
+    public static bool SuppressDialogs { get; set; }
 
     public static void ShowError(string context, string message)
         => Show(context, message, ErrorLevel.Error);
@@ -44,6 +46,12 @@ public static class ErrorReporter
 
     private static void Show(string context, string detail, ErrorLevel level)
     {
+        if (SuppressDialogs)
+        {
+            try { Console.Error.WriteLine("[" + level + "] " + (context ?? "") + ": " + (detail ?? "")); }
+            catch (Exception) { }
+            return;
+        }
         try
         {
             var app = Application.Current;
