@@ -68,11 +68,21 @@ public partial class MainWindow
         if (area == null) return;
         var direction = (PatternDirection)Math.Max(0, DirectionBox.SelectedIndex);
         if (area.Direction == direction) return;
-        if (!ConfirmDiscardRouteEdits(area, "배치 방향 변경")) return;
+        if (!ConfirmDiscardRouteEdits(area, "배치 방향 변경"))
+        {
+            // 취소하면 콤보 표시를 실제 영역 방향으로 되돌린다.
+            _suppressDirectionChange = true;
+            DirectionBox.SelectedIndex = (int)area.Direction;
+            _suppressDirectionChange = false;
+            return;
+        }
         if (area.Direction == direction) return;
 
+        ExitVertexEdit();
         area.Direction = direction;
         if (area.HasExitFace) RecomputeAnchorCandidates(area);
+        // 인출 후보가 재계산되어 기존 앵커가 사라졌으므로 편집 상태도 함께 정리한다.
+        ClearRouteEditState(area);
         DrawRegionCanvas();
         SyncExitFaceUi(area);
         if (area.Pattern != null && GenerateHintText != null)
@@ -97,6 +107,7 @@ public partial class MainWindow
             return;
         }
         if (!ConfirmDiscardRouteEdits(area, "인출면 변경")) return;
+        ExitVertexEdit();
         if (Viewport == null || !Viewport.IsReady) return;
         CancelExitFacePick();
 
@@ -214,6 +225,8 @@ public partial class MainWindow
         area.ExitChain3D = chain3D;
         area.ExitChainFaceIds = chainFaceIds;
         RecomputeAnchorCandidates(area);
+        // 인출면이 실제로 바뀐 뒤에만 편집 상태를 지운다(피킹 취소 시에는 보존).
+        ClearRouteEditState(area);
         DrawRegionCanvas();
         SyncExitFaceUi(area);
 
@@ -229,6 +242,7 @@ public partial class MainWindow
         var area = _activeArea;
         if (area == null) return;
         if (!ConfirmDiscardRouteEdits(area, "인출면 초기화")) return;
+        ExitVertexEdit();
         CancelExitFacePick();
         area.ExitFaceId = -1;
         area.ExitFaceRevision = 0;
@@ -239,6 +253,7 @@ public partial class MainWindow
         area.EndAnchor = null;
         area.AnchorCandidates.Clear();
         area.LastExitFailure = null;
+        ClearRouteEditState(area);
         DrawRegionCanvas();
         SyncExitFaceUi(area);
         StatusText.Text = "인출면 지정을 초기화했습니다 — 패턴은 다시 생성해야 합니다";

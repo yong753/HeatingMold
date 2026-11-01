@@ -130,6 +130,10 @@ public:
     /// <summary>Stage an already-mapped 3D route piece without re-projection; points are validated against the selected faces.</summary>
     static RoutePieceResult^ StageSurfaceMappedRoutePiece(long long id, long long revision, int stageId,
         System::String^ kind, array<double>^ xyzFlat, array<int>^ faceIds);
+    /// <summary>Stage a globally surface-mapped piece; each point is validated against the face it came from,
+    /// so points outside the selected faces are accepted when they lie on the model surface.</summary>
+    static RoutePieceResult^ StageSurfaceMappedRoutePieceWithFaces(long long id, long long revision, int stageId,
+        System::String^ kind, array<double>^ xyzFlat, array<int>^ supportFaceIds);
     /// <summary>마지막 경로 조각 스테이징 실패 원인(성공 시 빈 문자열).</summary>
     static System::String^ GetWorkingStageDiagnostic();
     static RoutePieceResult^ StageProjectedWorkingPolyline(long long id, long long revision, int stageId,

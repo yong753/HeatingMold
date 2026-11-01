@@ -15,6 +15,7 @@ public partial class MainWindow
 
     private void ResetWorkingSide()
     {
+        ExitVertexEdit();
         if (_workingSide.Preview != null) Bridge.ReleaseWorkingContext(_workingSide.Preview.Id.Value);
         if (_workingSide.Confirmed != null) Bridge.ReleaseWorkingContext(_workingSide.Confirmed.Id.Value);
         _workingSide.Invalidate();
@@ -101,6 +102,11 @@ public partial class MainWindow
 
     private void WorkingFront_Click(object sender, RoutedEventArgs e)
     {
+        if (Viewport != null && Viewport.VertexEditMode)
+        {
+            StatusText.Text = "꼭지점 편집 중에는 뷰를 바꿀 수 없습니다 — 편집을 종료한 뒤 다시 시도하세요";
+            return;
+        }
         var side = _workingSide.Confirmed;
         if (side == null || !Bridge.ReturnToWorkingFront(side.Id.Value,side.Revision.Value))
             StatusText.Text = "작업 방향 컨텍스트가 만료되었습니다";

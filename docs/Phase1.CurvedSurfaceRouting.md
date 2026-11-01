@@ -29,12 +29,18 @@ ray), which is what the 0.01 mm connection check verifies.
 | `WorkingSideNative.inc` | `MapWorkingPointOntoFacesNative` — filtered ray-cast per datum point |
 | `WorkingSideNative.inc` | `SnapWorkingPointToFacesNative` — `BRepExtrema` fallback (≤ tolerance) |
 | `WorkingSideNative.inc` | `StageSurfaceMappedRoutePieceNative` — validates every point (≤ 0.05 mm from the selected faces), stages the 3D polygon |
+| `WorkingSideNative.inc` | `StageSurfaceMappedRoutePieceWithFacesNative` — same staging, but validates each point against its own support face (used by the global surface mapping) |
 | `WorkingSideNative.inc` | `FaceRegionIsClosedNative`, `GetFaceAxisNative` — region gates |
-| `OccBridgeApi` | `Bridge.MapWorkingPointOntoFaces`, `SnapWorkingPointToFaces`, `StageSurfaceMappedRoutePiece`, `FaceRegionIsClosed`, `GetFaceAxis` |
+| `OccBridgeApi` | `Bridge.MapWorkingPointOntoFaces`, `SnapWorkingPointToFaces`, `StageSurfaceMappedRoutePiece`, `StageSurfaceMappedRoutePieceWithFaces`, `QueryWorkingSurface`, `FaceRegionIsClosed`, `GetFaceAxis` |
 | `SurfacePathMapper` | `TryMapRoute` — adaptive chord refinement for routes (see deviations) |
-| `MainWindow.Areas.cs` | curved branch of `RebuildNativePatternGeometry`, `StageCurvedRoutePiece`, `BuildCurvedMapDelegate`, `ResolveExitAnchor3D` |
+| `MainWindow.Areas.cs` | all-area branch of `RebuildNativePatternGeometry`, `StageCurvedRoutePiece` |
+| `MainWindow.RouteMapping.cs` | `BuildSurfaceMapDelegate` — anchor → selected faces → global surface, fail-closed |
 | `MainWindow.ExitFace.cs` | `ExitChain3D` retained beside the 2D `ExitChain` |
 | `MainWindow.xaml.cs` | gate messages in `TryBuildSelectedRegion` |
+
+> Vertex editing (docs/VertexEditing.md) supersedes the selected-face-only policy: a point outside
+> the heating region maps onto the nearest actual model surface, and the 0.5 mm snap fallback is no
+> longer used. Turn connectors are straight two-point segments.
 
 Selected-face ray-cast targets are cached per working context and face set. A
 `TopoDS_Compound` of the original `g_faces` is used instead of sewing so face TShapes and

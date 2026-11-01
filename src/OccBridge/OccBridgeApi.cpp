@@ -2929,6 +2929,15 @@ RoutePieceResult^ Bridge::StageSurfaceMappedRoutePiece(long long id,long long re
         auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;
     } catch(...) { return nullptr; }
 }
+RoutePieceResult^ Bridge::StageSurfaceMappedRoutePieceWithFaces(long long id,long long revision,int stageId,String^ kind,
+    array<double>^ flat,array<int>^ supportFaceIds)
+{
+    if(kind==nullptr||flat==nullptr||supportFaceIds==nullptr) return nullptr;
+    try { std::vector<double> xyz;std::vector<int> faces;for each(double v in flat)xyz.push_back(v);for each(int v in supportFaceIds)faces.push_back(v);
+        double data[7]={};if(!StageSurfaceMappedRoutePieceWithFacesNative(id,revision,stageId,msclr::interop::marshal_as<std::string>(kind),xyz,faces,data))return nullptr;
+        auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;
+    } catch(...) { return nullptr; }
+}
 String^ Bridge::GetWorkingStageDiagnostic()
 {
     return gcnew String(GetWorkingStageDiagnosticNative());

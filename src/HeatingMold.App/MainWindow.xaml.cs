@@ -123,9 +123,11 @@ namespace HeatingMold.App
         private void UpdateActionStates()
         {
             int selected = _selectedFaceIds.Count;
-            if (ConfirmAreaButton != null) ConfirmAreaButton.IsEnabled = selected > 0;
-            if (ClearConfirmedAreaButton != null) ClearConfirmedAreaButton.IsEnabled = _activeArea != null;
-            if (GenerateButton != null) GenerateButton.IsEnabled = _activeArea != null;
+            bool vertexActive = Viewport != null && Viewport.VertexEditMode;
+            // 편집 중에는 영역 구성/생성/삭제로 경로와 핸들이 어긋나지 않게 막는다.
+            if (ConfirmAreaButton != null) ConfirmAreaButton.IsEnabled = selected > 0 && !vertexActive;
+            if (ClearConfirmedAreaButton != null) ClearConfirmedAreaButton.IsEnabled = _activeArea != null && !vertexActive;
+            if (GenerateButton != null) GenerateButton.IsEnabled = _activeArea != null && !vertexActive;
             if (SelectionSummaryText != null)
                 SelectionSummaryText.Text = selected > 0
                     ? string.Format("선택 {0}개 · 새 작업영역 확정 대기", selected)
@@ -140,10 +142,9 @@ namespace HeatingMold.App
             bool vertexEligible = _activeArea?.Pattern != null
                 && _activeArea.Pattern.RoutePieces.Count > 0
                 && _activeArea.Paths.Count == 0;
-            bool vertexActive = Viewport != null && Viewport.VertexEditMode;
             if (VertexEditModeBox != null) VertexEditModeBox.IsEnabled = vertexEligible || vertexActive;
-            if (VertexUndoButton != null) VertexUndoButton.IsEnabled = vertexActive && _vertexUndo.Count > 0;
-            if (VertexRedoButton != null) VertexRedoButton.IsEnabled = vertexActive && _vertexRedo.Count > 0;
+            if (VertexUndoButton != null) VertexUndoButton.IsEnabled = vertexActive && VertexUndoCount(_activeArea) > 0;
+            if (VertexRedoButton != null) VertexRedoButton.IsEnabled = vertexActive && VertexRedoCount(_activeArea) > 0;
         }
 
         private void ConfirmArea_Click(object sender, RoutedEventArgs e) => ConfirmWorkingArea();
@@ -173,6 +174,7 @@ namespace HeatingMold.App
                 return;
             }
             if (e.Key != Key.Enter) return;
+            if (Viewport != null && Viewport.VertexEditMode) { e.Handled = true; return; }
             if (Keyboard.FocusedElement is TextBox || Keyboard.FocusedElement is ComboBox) return;
             ConfirmWorkingArea();
             e.Handled = true;
@@ -216,6 +218,8 @@ namespace HeatingMold.App
                 return;
             }
             sw.Stop();
+            // 새 모델이 로드된 뒤에만 편집 표시를 지운다(로드 실패 분기는 아래에서 별도 처리).
+            ClearAllRouteEditStates();
 
             Bridge.SetShapeColor(0.55, 0.65, 0.85);   // 고정 표시색 (스틸 블루)
             ClearAllAreas(clearNative: true);
@@ -345,6 +349,7 @@ namespace HeatingMold.App
                 return;
             }
             if (!ConfirmDiscardRouteEdits(_activeArea, "제외영역 추가")) return;
+            ExitVertexEdit();
             var rect = (minX, minY, maxX, maxY);
             _activeArea.Exclusions.Add(rect);
             // 제외영역이 바뀌면 이 영역의 기존 경로만 무효화하고 다시 생성한다.
@@ -358,6 +363,7 @@ namespace HeatingMold.App
             ActivateAreaStateFields(_activeArea);
             Bridge.ClearExclusionOverlays();
             if (!RebuildNativePatternGeometry(out _, out _)) return;
+            ClearRouteEditState(_activeArea);
             ShowActiveExclusionOverlays();
             DrawRegionCanvas();
             StatusText.Text = string.Format("모델 뷰포트 제외영역 추가 — {0}개", _activeArea.Exclusions.Count);
@@ -555,6 +561,7 @@ namespace HeatingMold.App
         private void GenerateMultiFace()
         {
             if (_activeArea != null && !ConfirmDiscardRouteEdits(_activeArea, "패턴 재생성")) return;
+            ExitVertexEdit();
             CancelPowerSetup();
             if (!WorkingGenerationReady()) return;
             var area = _activeArea;
@@ -691,6 +698,9 @@ namespace HeatingMold.App
                 ActivateAreaStateFields(area);
                 return;
             }
+
+            // 재생성이 성공한 뒤에만 기존 편집 표시/이력을 지운다 — 실패 시 편집 내용은 보존된다.
+            ClearRouteEditState(area);
 
             projectedCount = routePiecesMode ? area.Pattern.RoutePieces.Count : area.Paths.Count;
             area.PatternDisplayed = projectedCount > 0;
@@ -988,6 +998,7 @@ namespace HeatingMold.App
             var area = _activeArea;
             if (area == null) { StatusText.Text = "작업영역이 없습니다"; return; }
             if (!ConfirmDiscardRouteEdits(area, "제외영역 지우기")) return;
+            ExitVertexEdit();
             area.Exclusions.Clear();
             area.Pattern = null;
             area.Paths = new List<List<Vec2>>();
@@ -999,6 +1010,7 @@ namespace HeatingMold.App
             ActivateAreaStateFields(area);
             Bridge.ClearExclusionOverlays();
             if (!RebuildNativePatternGeometry(out _, out _)) return;
+            ClearRouteEditState(area);
             if (CircuitLengthGrid != null) CircuitLengthGrid.ItemsSource = null;
             DrawRegionCanvas();
             UpdateActionStates();
@@ -1067,6 +1079,11 @@ namespace HeatingMold.App
 
         private void StandardView_Click(object sender, RoutedEventArgs e)
         {
+            if (Viewport != null && Viewport.VertexEditMode)
+            {
+                StatusText.Text = "꼭지점 편집 중에는 뷰를 바꿀 수 없습니다 — 편집을 종료한 뒤 다시 시도하세요";
+                return;
+            }
             Viewport.CancelPowerLeadPreview();
             string view = (sender as FrameworkElement)?.Tag as string;
             int axis, sign, upAxis;

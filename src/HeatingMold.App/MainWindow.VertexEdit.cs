@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
@@ -9,8 +9,8 @@ using HeatingMold.OccBridge;
 namespace HeatingMold.App;
 
 /// <summary>
-/// 생성된 발열 경로의 꼭지점(제어점)을 3D 뷰포트에서 직접 움직여 수정한다.
-/// 2D 데이텀 좌표가 정본이며, 3D는 항상 선택면 매핑으로 다시 계산한다.
+/// 생성된 발열 경로의 제어점(꼭지점)을 3D 뷰포트에서 직접 드래그해 수정한다.
+/// 2D 데이텀 좌표가 정본이며, 3D는 항상 실제 모델 표면 매핑으로 다시 계산한다.
 /// </summary>
 public partial class MainWindow
 {
@@ -24,12 +24,13 @@ public partial class MainWindow
         Vec2? EndAnchor,
         bool Edited);
 
-    private readonly Stack<VertexEditSnapshot> _vertexUndo = new();
-    private readonly Stack<VertexEditSnapshot> _vertexRedo = new();
+    /// <summary>확정 시 이미 계산한 표본을 재스테이징에서 그대로 쓰기 위한 일회성 캐시.</summary>
+    private readonly Dictionary<(WorkingArea Area, int PieceIndex), List<SurfaceMappedSample>> _pendingStageSamples = new();
+    /// <summary>변경되지 않은 조각의 표본. 편집 세션 동안 재사용해 확정 시 전체 재매핑을 피한다.</summary>
+    private readonly Dictionary<(WorkingArea Area, int PieceIndex), List<SurfaceMappedSample>> _vertexBaselineSamples = new();
+    private readonly Dictionary<WorkingArea, Stack<VertexEditSnapshot>> _vertexUndo = new();
+    private readonly Dictionary<WorkingArea, Stack<VertexEditSnapshot>> _vertexRedo = new();
     private List<RouteVertexGroup> _vertexGroups = new();
-    // 편집 세션 동안 불변인 영역 정보 — 매 이동마다 면 타입/정렬을 다시 계산하지 않는다.
-    private int[] _vertexFaces = Array.Empty<int>();
-    private bool _vertexCurved;
     private int _vertexHover = -1;
     // 표시 인덱스 → _vertexGroups 인덱스. 매핑에 실패한 꼭지점은 핸들을 만들지 않는다.
     private readonly List<int> _vertexHandleGroupMap = new();
@@ -75,22 +76,26 @@ public partial class MainWindow
         Viewport.CircuitHoverMode = false;
         Bridge.ClearHover();
 
-        _connectorUndo.Clear();
-        _connectorRedo.Clear();
-        _vertexUndo.Clear();
-        _vertexRedo.Clear();
         _vertexGroups = RouteVertexGroups.Build(area.Pattern.RoutePieces).ToList();
-        _vertexFaces = SortedFaceIds(area);
-        _vertexCurved = IsCurvedArea(area);
+        _pendingStageSamples.Clear();
+        _vertexBaselineSamples.Clear();
         _vertexHover = -1;
 
+        // 편집 종료 시 원래 카메라로 돌아가기 위해 정면 전환 전에 스냅샷을 잡는다.
+        _vertexPresentation = Bridge.CaptureWorkingPresentation();
+        _vertexPresentationHeld = _vertexPresentation != null;
         if (!Bridge.ReturnToWorkingFront(side.Id.Value, side.Revision.Value))
         {
+            if (_vertexPresentationHeld && _vertexPresentation != null)
+            {
+                Bridge.RestoreWorkingPresentation(_vertexPresentation.Id);
+                Bridge.ReleaseWorkingPresentation(_vertexPresentation.Id);
+            }
+            _vertexPresentation = null;
+            _vertexPresentationHeld = false;
             RejectVertexEdit("작업 정면으로 전환하지 못했습니다");
             return;
         }
-        _vertexPresentation = Bridge.CaptureWorkingPresentation();
-        _vertexPresentationHeld = _vertexPresentation != null;
 
         Viewport.VertexEditMode = true;
         RefreshVertexHandles();
@@ -123,8 +128,8 @@ public partial class MainWindow
         _vertexPresentationHeld = false;
         _vertexGroups.Clear();
         _vertexHandleGroupMap.Clear();
-        _vertexFaces = Array.Empty<int>();
-        _vertexCurved = false;
+        _pendingStageSamples.Clear();
+        _vertexBaselineSamples.Clear();
         _vertexHover = -1;
         _suppressVertexEditToggle = true;
         if (VertexEditModeBox != null) VertexEditModeBox.IsChecked = false;
@@ -147,7 +152,7 @@ public partial class MainWindow
         var side = _workingSide.Confirmed;
         if (area?.Pattern == null || side == null) { Bridge.ClearVertexHandles(); return; }
 
-        var hit = BuildVertexMapDelegate(area, side, _vertexFaces, null);
+        var hit = BuildSurfaceMapDelegate(area, side);
         var xyz = new List<double>();
         _vertexHandleGroupMap.Clear();
         for (int groupIndex = 0; groupIndex < _vertexGroups.Count; groupIndex++)
@@ -172,7 +177,7 @@ public partial class MainWindow
         Bridge.SetVertexHandles(side.Id.Value, side.Revision.Value, xyz.ToArray());
     }
 
-    /// <summary>경로 시작/종료 역할이고 인출 체인 위에 있는 꼭지점 묶음인지.</summary>
+    /// <summary>경로 시작/종료 역할이고 인출 체인 위에 있는 꼭지점 묶음인지 판정한다.</summary>
     private static bool IsAnchorGroup(WorkingArea area, RouteVertexGroup group, out bool isStart)
     {
         isStart = false;
@@ -192,52 +197,10 @@ public partial class MainWindow
         return true;
     }
 
-    /// <summary>
-    /// 편집 전용 매핑 대리자. 일반 꼭지점은 선택면 직접 히트만 인정하고(0.5mm 스냅 폴백 없음),
-    /// 인출 앵커는 실제 공유 모서리 3D 점으로 고정한다.
-    /// </summary>
-    private Func<Vec2, SurfaceMappedSample?> BuildVertexMapDelegate(
-        WorkingArea area, WorkingSideDefinition side, int[] faces, Vec2? movedAnchorDatum)
-    {
-        var anchors = new List<(Vec2 Datum, Vec3 Point, int FaceId)>();
-
-        void AddAnchor(Vec2 datum)
-        {
-            if (!area.HasExitChain3D) return;
-            if (Serpentine.DistanceToChain(area.ExitChain, datum) > 0.05) return;
-            Vec3 point = PointOnExitChain3D(area, datum, out int segment);
-            int faceId = segment >= 1 && segment - 1 < area.ExitChainFaceIds.Count
-                ? area.ExitChainFaceIds[segment - 1]
-                : area.ExitFaceId;
-            anchors.Add((datum, point, faceId));
-        }
-
-        if (movedAnchorDatum.HasValue) AddAnchor(movedAnchorDatum.Value);
-        if (area.Pattern != null && area.Pattern.RoutePieces.Count > 0)
-        {
-            var pieces = area.Pattern.RoutePieces;
-            if (pieces[0].Points.Count > 0) AddAnchor(pieces[0].Points[0]);
-            if (pieces[^1].Points.Count > 0) AddAnchor(pieces[^1].Points[^1]);
-        }
-
-        return uv =>
-        {
-            foreach ((Vec2 datum, Vec3 point, int faceId) in anchors)
-                if (uv == datum) return new SurfaceMappedSample(uv, point, faceId);
-
-            var direct = Bridge.MapWorkingPointOntoFaces(
-                side.Id.Value, side.Revision.Value, faces, uv.X, uv.Y);
-            if (direct != null && direct.Status == WorkingQueryStatus.Hit && direct.Point != null)
-                return new SurfaceMappedSample(uv,
-                    new Vec3(direct.Point[0], direct.Point[1], direct.Point[2]), direct.FaceId);
-            return null;
-        };
-    }
-
     private void OnVertexHovered(int handle)
     {
         if (!Viewport.VertexEditMode) return;
-        if (handle == _vertexHover) return;   // 같은 핸들 반복 — 네이티브 재색칠/Redraw 생략
+        if (handle == _vertexHover) return;   // 같은 핸들 반복 호버 시 색칠/Redraw 생략
         _vertexHover = handle;
         Bridge.HighlightVertexHandle(handle);
         if (handle < 0 || handle >= _vertexHandleGroupMap.Count)
@@ -285,7 +248,7 @@ public partial class MainWindow
         Bridge.ClearRoutePreview();
         Bridge.HighlightVertexHandle(-1);
         if (group < 0 || group >= _vertexGroups.Count) return;
-        // 이동 없는 클릭은 전체 재생성/이력 없이 무시한다.
+        // 이동 없는 클릭은 전체 재생성/이력 기록을 무시한다.
         if (!TryViewportPointOnFrame(x, y, out Vec2 uv, out _))
         {
             RefreshVertexHandles();
@@ -325,18 +288,18 @@ public partial class MainWindow
             return;
         }
         if (ShowVertexPreview(pieces, mappedPieces))
-            StatusText.Text = string.Format("꼭지점 → ({0:F2}, {1:F2})mm{2}",
-                applied.X, applied.Y, anchor ? " · 인출 경계 위" : "");
+            StatusText.Text = string.Format("꼭지점 이동 ({0:F2}, {1:F2})mm{2}",
+                applied.X, applied.Y, anchor ? " · 인출 앵커" : "");
         else
         {
             Bridge.ClearRoutePreview();
-            StatusText.Text = "이동 불가 — 수정된 구간을 작업면에 매핑하지 못했습니다";
+            StatusText.Text = "이동할 수 없습니다 — 확정 구간을 작업면에 매핑하지 못했습니다";
         }
     }
 
     /// <summary>
-    /// 드래그 미리보기용 후보. 변경된 조각의 점만 복사하고, 곡면이면 그 조각만 매핑한다.
-    /// 확정 검증(strict)은 <see cref="CommitVertex"/>가 전체 패턴으로 수행한다.
+    /// 꼭지점 이동 후보를 미리보기용으로 준비한다. 변경된 조각의 점만 복사하고, 조각별로 표면에 매핑한다.
+    /// 확정 시에는 <see cref="CommitVertex"/>가 전체 패턴으로 보강 표본화한다.
     /// </summary>
     private bool TryBuildVertexPreview(Vec2 datum,
         out Dictionary<int, IReadOnlyList<Vec2>> pieces,
@@ -365,29 +328,26 @@ public partial class MainWindow
 
         var edits = new List<(RouteVertexOccurrence, Vec2)>(group.Occurrences.Count);
         foreach (RouteVertexOccurrence occurrence in group.Occurrences) edits.Add((occurrence, applied));
-        if (!SerpentineVertexPreview.TryApplyAffected(area.Pattern, edits, out pieces, out var changed, out failure))
+        if (!SerpentineVertexPreview.TryApplyAffected(area.Pattern, edits, out pieces, out _, out failure))
             return false;
-        if (!RouteVertexValidator.SegmentsStayInRegion(area.Region, changed, out failure)) return false;
 
         var side = _workingSide.Confirmed;
-        if (side != null && _vertexCurved)
+        if (side == null) { failure = "작업면이 확정되지 않았습니다"; return false; }
+        var hit = BuildSurfaceMapDelegate(area, side, anchor ? applied : (Vec2?)null);
+        foreach (KeyValuePair<int, IReadOnlyList<Vec2>> entry in pieces)
         {
-            var hit = BuildVertexMapDelegate(area, side, _vertexFaces, anchor ? applied : (Vec2?)null);
-            foreach (KeyValuePair<int, IReadOnlyList<Vec2>> entry in pieces)
-            {
-                if (entry.Value.Count < 2) continue;
-                bool ok = SurfacePathMapper.TryMapRoute(entry.Value, hit, out var samples, out string mapFailure);
-                if (!ok) { failure = "곡면 매핑 실패 — " + mapFailure; return false; }
-                mappedPieces[entry.Key] = samples;
-            }
+            if (entry.Value.Count < 2) continue;
+            bool ok = SurfacePathMapper.TryMapRoute(entry.Value, hit, out var samples, out string mapFailure);
+            if (!ok) { failure = "모델 표면 매핑 실패 — " + mapFailure; return false; }
+            mappedPieces[entry.Key] = samples;
         }
         return true;
     }
 
     /// <summary>
-    /// 후보 패턴을 만들고 검증한다. strict=false면 미리보기용 느슨 매핑(코드 오차만,
-    /// 조각당 수십 표본)이고, strict=true면 확정용 밀집 표본화(0.1mm 간격)다.
-    /// 곡면 영역에서 매핑에 성공한 조각의 3D 표본은 mappedPieces로 반환해 미리보기에 재사용한다.
+    /// 후보 패턴을 만들고 검증한다. strict=true면 확정용 보강 표본(0.1mm 간격),
+    /// strict=false면 미리보기용 경량 매핑(코드 오차만)이다. 매핑에 성공한 조각의
+    /// 3D 표본은 mappedPieces로 반환해 호출측이 스테이징에 재사용한다.
     /// </summary>
     private bool TryBuildVertexCandidate(Vec2 datum, bool strict, out SerpentineResult candidate, out Vec2 applied,
         out string failure, out bool anchor, out bool isStart,
@@ -417,39 +377,22 @@ public partial class MainWindow
         foreach (RouteVertexOccurrence occurrence in group.Occurrences) edits.Add((occurrence, applied));
         try { candidate = SerpentineVertexEdit.ApplyVertexEdits(area.Pattern, edits); }
         catch (Exception ex) { failure = ex.Message; return false; }
-
-        var changed = new List<(Vec2 A, Vec2 B)>();
-        foreach (RouteVertexOccurrence occurrence in group.Occurrences)
-            AddAdjacentSegments(candidate, occurrence, changed);
-        if (!RouteVertexValidator.SegmentsStayInRegion(area.Region, changed, out failure)) return false;
-
         var side = _workingSide.Confirmed;
-        if (side != null && _vertexCurved)
+
+        if (side == null) { failure = "작업면이 확정되지 않았습니다"; return false; }
+        var hit = BuildSurfaceMapDelegate(area, side, anchor ? applied : (Vec2?)null);
+        foreach (int pieceIndex in group.Occurrences.Select(o => o.Piece).Distinct())
         {
-            var hit = BuildVertexMapDelegate(area, side, _vertexFaces, anchor ? applied : (Vec2?)null);
-            foreach (int pieceIndex in group.Occurrences.Select(o => o.Piece).Distinct())
-            {
-                SerpentineRoutePiece piece = candidate.RoutePieces[pieceIndex];
-                if (piece.Points.Count < 2) continue;
-                bool ok = strict
-                    ? SurfacePathMapper.TryMapRouteStrict(piece.Points, hit, out var samples,
-                        out string mapFailure, 0.1)
-                    : SurfacePathMapper.TryMapRoute(piece.Points, hit, out samples, out mapFailure);
-                if (!ok) { failure = "곡면 매핑 실패 — " + mapFailure; return false; }
-                mappedPieces[pieceIndex] = samples;
-            }
+            SerpentineRoutePiece piece = candidate.RoutePieces[pieceIndex];
+            if (piece.Points.Count < 2) continue;
+            bool ok = strict
+                ? SurfacePathMapper.TryMapRouteStrict(piece.Points, hit, out var samples,
+                    out string mapFailure, 0.1)
+                : SurfacePathMapper.TryMapRoute(piece.Points, hit, out samples, out mapFailure);
+            if (!ok) { failure = "모델 표면 매핑 실패 — " + mapFailure; return false; }
+            mappedPieces[pieceIndex] = samples;
         }
         return true;
-    }
-
-    private static void AddAdjacentSegments(SerpentineResult pattern, RouteVertexOccurrence occurrence,
-        List<(Vec2 A, Vec2 B)> segments)
-    {
-        if (occurrence.Piece < 0 || occurrence.Piece >= pattern.RoutePieces.Count) return;
-        IReadOnlyList<Vec2> points = pattern.RoutePieces[occurrence.Piece].Points;
-        if (occurrence.Point >= points.Count) return;
-        if (occurrence.Point > 0) segments.Add((points[occurrence.Point - 1], points[occurrence.Point]));
-        if (occurrence.Point + 1 < points.Count) segments.Add((points[occurrence.Point], points[occurrence.Point + 1]));
     }
 
     /// <summary>검증 단계에서 이미 계산한 매핑을 재사용해 미리보기 폴리라인을 그린다.</summary>
@@ -463,21 +406,13 @@ public partial class MainWindow
             int pieceIndex = entry.Key;
             IReadOnlyList<Vec2> points = entry.Value;
             if (points.Count < 2) continue;
-            double[] xyz;
-            if (_vertexCurved)
+            if (!mappedPieces.TryGetValue(pieceIndex, out var samples) || samples.Count < 2) return false;
+            var xyz = new double[samples.Count * 3];
+            for (int i = 0; i < samples.Count; i++)
             {
-                if (!mappedPieces.TryGetValue(pieceIndex, out var samples) || samples.Count < 2) return false;
-                xyz = new double[samples.Count * 3];
-                for (int i = 0; i < samples.Count; i++)
-                {
-                    xyz[i * 3] = samples[i].Point.X;
-                    xyz[i * 3 + 1] = samples[i].Point.Y;
-                    xyz[i * 3 + 2] = samples[i].Point.Z;
-                }
-            }
-            else
-            {
-                xyz = Flatten(area.Frame, points);
+                xyz[i * 3] = samples[i].Point.X;
+                xyz[i * 3 + 1] = samples[i].Point.Y;
+                xyz[i * 3 + 2] = samples[i].Point.Z;
             }
             Bridge.ShowRoutePreview(pieceIndex, xyz, false);
         }
@@ -489,10 +424,10 @@ public partial class MainWindow
     private void CommitVertex(Vec2 datum)
     {
         var area = _activeArea;
-        if (area == null) return;
-        // 확정 시에만 밀집 표본화(0.1mm 간격)로 엄격 검증한다.
+        // 확정 시에만 밀집 표본화(0.1mm 간격)로 엄격 검증하고, 그 표본을 스테이징에서 재사용한다.
         if (!TryBuildVertexCandidate(datum, strict: true, out SerpentineResult candidate, out Vec2 applied,
-                out string failure, out bool anchor, out bool isStart, out _))
+                out string failure, out bool anchor, out bool isStart,
+                out Dictionary<int, List<SurfaceMappedSample>> mappedPieces))
         {
             StatusText.Text = "이동할 수 없습니다 — " + failure;
             return;
@@ -505,15 +440,23 @@ public partial class MainWindow
             if (isStart) area.StartAnchor = applied;
             else area.EndAnchor = applied;
         }
-        if (!RebuildNativePatternGeometry(out _, out _))
+        _pendingStageSamples.Clear();
+        foreach (KeyValuePair<int, List<SurfaceMappedSample>> entry in mappedPieces)
+            _pendingStageSamples[(area, entry.Key)] = entry.Value;
+        bool rebuilt;
+        try { rebuilt = RebuildNativePatternGeometry(out _, out _); }
+        finally { _pendingStageSamples.Clear(); }
+        if (!rebuilt)
         {
             RestoreVertexSnapshot(before);
             return;
         }
-
+        // 방금 스테이징에 쓴 표본을 다음 확정의 기준으로 승격한다.
+        foreach (KeyValuePair<int, List<SurfaceMappedSample>> entry in mappedPieces)
+            _vertexBaselineSamples[(area, entry.Key)] = entry.Value;
         area.RouteEdited = true;
-        _vertexUndo.Push(before);
-        _vertexRedo.Clear();
+        UndoStack(area).Push(before);
+        RedoStack(area).Clear();
         _vertexGroups = RouteVertexGroups.Build(area.Pattern.RoutePieces).ToList();
         ActivateAreaStateFields(area);
         UpdateExitLeadLengths(area);
@@ -531,8 +474,8 @@ public partial class MainWindow
     {
         var area = _activeArea;
         if (area == null) return;
-        Stack<VertexEditSnapshot> source = undo ? _vertexUndo : _vertexRedo;
-        Stack<VertexEditSnapshot> target = undo ? _vertexRedo : _vertexUndo;
+        Stack<VertexEditSnapshot> source = undo ? UndoStack(area) : RedoStack(area);
+        Stack<VertexEditSnapshot> target = undo ? RedoStack(area) : UndoStack(area);
         if (source.Count == 0) return;
         VertexEditSnapshot snapshot = source.Pop();
         if (!ReferenceEquals(snapshot.Area, area))
@@ -543,7 +486,8 @@ public partial class MainWindow
         }
 
         VertexEditSnapshot current = CaptureVertexSnapshot(area);
-        RestoreVertexSnapshot(snapshot);
+        // 복원된 패턴은 이전 표본과 다르므로 기준 캐시를 비우고 이번 재스테이징에서 다시 채운다.
+        _vertexBaselineSamples.Clear();
         if (!RebuildNativePatternGeometry(out _, out _))
         {
             // 커밋 전 단계 실패는 기존 네이티브 표시를 그대로 남긴다 — 재시도 불필요.
@@ -582,7 +526,8 @@ public partial class MainWindow
         ActivateAreaStateFields(area);
     }
 
-    /// <summary>편집 내용이 있으면 삭제 경고를 띄운다. 사용자가 계속하기를 고르면 편집 표시를 지운다.</summary>
+    /// <summary>편집 내용이 있으면 삭제 동의를 받는다. 여기서는 상태를 지우지 않는다 —
+    /// 실제 작업이 성공한 뒤 <see cref="ClearRouteEditState"/>를 호출해야 실패 시 편집이 보존된다.</summary>
     private bool ConfirmDiscardRouteEdits(WorkingArea area, string action)
     {
         if (area == null || !area.RouteEdited) return true;
@@ -590,11 +535,15 @@ public partial class MainWindow
             action + " 작업을 계속하면 " + area.Name + " 영역의 꼭지점 편집 내용이 삭제됩니다."
             + Environment.NewLine + "계속할까요?",
             "꼭지점 편집 내용 삭제", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
-        if (result != MessageBoxResult.Yes) return false;
+        return result == MessageBoxResult.Yes;
+    }
+
+    private void ClearRouteEditState(WorkingArea area)
+    {
+        if (area == null) return;
         area.RouteEdited = false;
-        _vertexUndo.Clear();
-        _vertexRedo.Clear();
-        return true;
+        if (_vertexUndo.TryGetValue(area, out Stack<VertexEditSnapshot> undoStack)) undoStack.Clear();
+        if (_vertexRedo.TryGetValue(area, out Stack<VertexEditSnapshot> redoStack)) redoStack.Clear();
     }
 
     private bool ConfirmDiscardAllRouteEdits(string action)
@@ -605,10 +554,39 @@ public partial class MainWindow
             action + " 작업을 계속하면 " + string.Join(", ", edited.Select(a => a.Name))
             + " 영역의 꼭지점 편집 내용이 삭제됩니다." + Environment.NewLine + "계속할까요?",
             "꼭지점 편집 내용 삭제", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
-        if (result != MessageBoxResult.Yes) return false;
-        foreach (WorkingArea area in edited) area.RouteEdited = false;
+        return result == MessageBoxResult.Yes;
+    }
+
+    private void ClearAllRouteEditStates()
+    {
+        foreach (WorkingArea area in _areas) area.RouteEdited = false;
         _vertexUndo.Clear();
         _vertexRedo.Clear();
-        return true;
     }
+
+    private Stack<VertexEditSnapshot> UndoStack(WorkingArea area)
+    {
+        if (!_vertexUndo.TryGetValue(area, out Stack<VertexEditSnapshot> stack))
+        {
+            stack = new Stack<VertexEditSnapshot>();
+            _vertexUndo[area] = stack;
+        }
+        return stack;
+    }
+
+    private Stack<VertexEditSnapshot> RedoStack(WorkingArea area)
+    {
+        if (!_vertexRedo.TryGetValue(area, out Stack<VertexEditSnapshot> stack))
+        {
+            stack = new Stack<VertexEditSnapshot>();
+            _vertexRedo[area] = stack;
+        }
+        return stack;
+    }
+
+    private int VertexUndoCount(WorkingArea area) =>
+        area != null && _vertexUndo.TryGetValue(area, out Stack<VertexEditSnapshot> stack) ? stack.Count : 0;
+
+    private int VertexRedoCount(WorkingArea area) =>
+        area != null && _vertexRedo.TryGetValue(area, out Stack<VertexEditSnapshot> stack) ? stack.Count : 0;
 }

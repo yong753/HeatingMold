@@ -953,6 +953,83 @@ bool StageSurfaceMappedRoutePieceNative(long long id, long long revision, int st
     }
 }
 
+// 전역 표면 매핑 결과 전용 스테이징: 각 점이 어느 Face에서 왔는지(supportFaces)를 함께 받아
+// 그 실제 지지 면에 대한 근접성만 검사한다. 선택면 소속을 요구하지 않으므로 발열영역 밖의
+// 실제 모델 표면에 놓인 점도 그대로 표시할 수 있다.
+bool StageSurfaceMappedRoutePieceWithFacesNative(long long id, long long revision, int stageId,
+    const std::string& kind, const std::vector<double>& xyz, const std::vector<int>& supportFaces, double* result)
+{
+    g_workingStageInputs = "mapped pts=" + std::to_string(xyz.size() / 3);
+    if (stageId >= 0 || g_ctx.IsNull() || !FindWorking(id, revision) || xyz.size() < 6 || xyz.size() % 3 ||
+        supportFaces.size() * 3 != xyz.size() || !result || g_routePieces.count(stageId) ||
+        g_stagedWorkingRouteOwners.count(stageId) || g_stagedWorkingPolylines.count(stageId))
+        return WorkingStageFail("stage-precheck");
+    g_workingStageDiagnostic.clear();
+    Handle(AIS_Shape) ais;
+    try {
+        std::vector<gp_Pnt> points;
+        for (size_t i = 0; i < xyz.size(); i += 3) {
+            if (!std::isfinite(xyz[i]) || !std::isfinite(xyz[i + 1]) || !std::isfinite(xyz[i + 2]))
+                return WorkingStageFail("nonfinite-point");
+            const int face = supportFaces[i / 3];
+            if (face < 0 || face >= static_cast<int>(g_faces.size()))
+                return WorkingStageFail("support-face " + std::to_string(face));
+            const gp_Pnt p(xyz[i], xyz[i + 1], xyz[i + 2]);
+            if (!points.empty() && points.back().Distance(p) <= Precision::Confusion()) continue;
+            BRepExtrema_DistShapeShape distance(BRepBuilderAPI_MakeVertex(p).Vertex(), g_faces[face]);
+            if (!distance.IsDone()) return WorkingStageFail("distance-failure");
+            if (distance.Value() > 0.05)
+                return WorkingStageFail("off-surface " + std::to_string(distance.Value()));
+            points.push_back(p);
+        }
+        if (points.size() < 2) return WorkingStageFail("degenerate-polyline");
+        BRepBuilderAPI_MakePolygon poly;
+        for (const gp_Pnt& p : points) poly.Add(p);
+        if (!poly.IsDone()) return WorkingStageFail("polygon-failure");
+        const TopoDS_Wire wire = poly.Wire();
+        GProp_GProps props; BRepGProp::LinearProperties(wire, props);
+        if (!std::isfinite(props.Mass()) || props.Mass() <= Precision::Confusion())
+            return WorkingStageFail("zero-length");
+        result[0] = props.Mass();
+        result[1] = points.front().X(); result[2] = points.front().Y(); result[3] = points.front().Z();
+        result[4] = points.back().X(); result[5] = points.back().Y(); result[6] = points.back().Z();
+        ais = new AIS_Shape(wire);
+        std::string k = kind;
+        std::transform(k.begin(), k.end(), k.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        const bool connector = k == "turnconnector" || k == "turn";
+        const Quantity_Color color = connector ? kConnectorRouteColor : kHeatingRouteColor;
+        const double width = connector ? 1.0 : kHeatingRouteWidth;
+        g_ctx->SetColor(ais, color, Standard_False);
+        g_ctx->SetWidth(ais, width, Standard_False);
+        if (connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
+        g_ctx->Display(ais, Standard_False);
+        g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
+        g_ctx->Activate(ais, Standard_False);
+        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, connector, true, color, width});
+        if (!inserted.second) { g_ctx->Remove(ais, Standard_False); return WorkingStageFail("display-id-collision"); }
+        try { if (!g_stagedWorkingRouteOwners.emplace(stageId, std::make_pair(id, revision)).second)
+                throw std::runtime_error("staged route owner collision"); }
+        catch (...) { g_ctx->Remove(ais, Standard_False); g_routePieces.erase(stageId); throw; }
+        return true;
+    } catch (const Standard_Failure& failure) {
+        if (!ais.IsNull() && !g_ctx.IsNull()) { try { g_ctx->Remove(ais, Standard_False); } catch (...) {} }
+        auto owner = g_stagedWorkingRouteOwners.find(stageId);
+        if (owner != g_stagedWorkingRouteOwners.end() && owner->second == std::make_pair(id, revision))
+            g_stagedWorkingRouteOwners.erase(owner);
+        auto route = g_routePieces.find(stageId);
+        if (route != g_routePieces.end() && route->second.ais == ais) g_routePieces.erase(route);
+        return WorkingStageFail(std::string("exception ") + (failure.GetMessageString() ? failure.GetMessageString() : ""));
+    } catch (...) {
+        if (!ais.IsNull() && !g_ctx.IsNull()) { try { g_ctx->Remove(ais, Standard_False); } catch (...) {} }
+        auto owner = g_stagedWorkingRouteOwners.find(stageId);
+        if (owner != g_stagedWorkingRouteOwners.end() && owner->second == std::make_pair(id, revision))
+            g_stagedWorkingRouteOwners.erase(owner);
+        auto route = g_routePieces.find(stageId);
+        if (route != g_routePieces.end() && route->second.ais == ais) g_routePieces.erase(route);
+        return WorkingStageFail("exception");
+    }
+}
+
 void DiscardWorkingGeometryNative(long long contextId,long long revision,const std::vector<int>& routes,const std::vector<int>& lines){
     for (int id : routes) {
         auto owner=g_stagedWorkingRouteOwners.find(id);
