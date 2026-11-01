@@ -319,6 +319,8 @@ public partial class MainWindow
 
     private void RegionCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        // 시작점 선택은 패턴 탭의 후보 표시와 함께 움직여야 한다. 제외 탭에서는 확인용으로만 쓴다.
+        if (ActiveSidebarTab != PatternTabIndex) return;
         var area = _activeArea;
         if (area == null || area.AnchorCandidates.Count == 0 || RegionCanvas == null) return;
         Vec2 p = CanvasToWorld(e.GetPosition(RegionCanvas));

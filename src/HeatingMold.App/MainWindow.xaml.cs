@@ -105,6 +105,7 @@ namespace HeatingMold.App
             Loaded += OnLoaded;
             ApplyPowerMigrationState();
             UpdateActionStates();
+            InitializeSidebar();
         }
 
         // 전원 연결은 경로 마이그레이션 전까지 네이티브 게이트로만 막혀 있었다.
@@ -145,6 +146,8 @@ namespace HeatingMold.App
             if (VertexEditModeBox != null) VertexEditModeBox.IsEnabled = vertexEligible || vertexActive;
             if (VertexUndoButton != null) VertexUndoButton.IsEnabled = vertexActive && VertexUndoCount(_activeArea) > 0;
             if (VertexRedoButton != null) VertexRedoButton.IsEnabled = vertexActive && VertexRedoCount(_activeArea) > 0;
+
+            RefreshSidebarSummary();
         }
 
         private void ConfirmArea_Click(object sender, RoutedEventArgs e) => ConfirmWorkingArea();
@@ -176,6 +179,8 @@ namespace HeatingMold.App
             if (e.Key != Key.Enter) return;
             if (Viewport != null && Viewport.VertexEditMode) { e.Handled = true; return; }
             if (Keyboard.FocusedElement is TextBox || Keyboard.FocusedElement is ComboBox) return;
+            // 탭 머리글 포커스 중 Enter는 키보드 탭 전환 기본 동작이므로 가로채지 않는다.
+            if (Keyboard.FocusedElement is TabItem) return;
             ConfirmWorkingArea();
             e.Handled = true;
         }
@@ -212,6 +217,7 @@ namespace HeatingMold.App
                 Viewport.ExclusionSketchMode = false;
                 StatusText.Text = "로드 실패: " + path;
                 UpdateActionStates();
+                ReturnToAreaTab();
                 ErrorReporter.ShowError("STEP 로드 실패",
                     "파일: " + path + Environment.NewLine + Environment.NewLine +
                     "파일 형식/경로와 OCCT 로그(occ_viewer_log.txt)를 확인하세요.");
@@ -233,6 +239,7 @@ namespace HeatingMold.App
                 Path.GetFileName(path), info.Solids, info.Shells, info.Faces, info.Planes, sw.ElapsedMilliseconds);
             ApplyWorkingSide(new Vec3(0,0,1));
             UpdateActionStates();
+            ReturnToAreaTab();
         }
 
         private void TryGetParams(out double margin, out double spacing)
@@ -277,6 +284,7 @@ namespace HeatingMold.App
         private void OnFacesRectanglePicked(int[] faceIds, bool toggle)
         {
             if (faceIds == null) return;
+            if (ActiveSidebarTab != AreaTabIndex) return;
             _selectedFaceIds.Clear();
             SelectedFacesList.Items.Clear();
             foreach (int faceIndex in faceIds)
@@ -372,6 +380,8 @@ namespace HeatingMold.App
         private void OnFacePicked(int faceIndex, bool toggle)
         {
             if (Viewport.PowerLocationMode) return;
+            // 뷰포트에서 이미 차단되지만, 다른 경로로 올라온 선택도 후보 목록을 바꾸지 않게 방어한다.
+            if (ActiveSidebarTab != AreaTabIndex) return;
             if (faceIndex < 0)
             {
                 if (!toggle)
@@ -426,6 +436,8 @@ namespace HeatingMold.App
 
         private void ConfirmWorkingArea()
         {
+            // WPF 키 경로와 네이티브 뷰포트 Enter가 모두 이 지점을 지나므로 탭 게이트를 한 곳에 둔다.
+            if (ActiveSidebarTab != AreaTabIndex) return;
             if (_selectedFaceIds.Count == 0)
             {
                 StatusText.Text = _activeArea == null

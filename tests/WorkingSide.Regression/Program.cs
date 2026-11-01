@@ -93,7 +93,7 @@ static class Program
         Check(!Bridge.CommitWorkingRouteGeometry(front.Id,front.Revision,new[]{int.MinValue},Array.Empty<int>(),Array.Empty<int>()),
             "invalid candidate commit is rejected before replacing existing routes");
         Bridge.DiscardWorkingRouteGeometry(front.Id,front.Revision,new[]{int.MinValue},new[]{lineStage});
-        Check(Bridge.SetConnectorEnabled(900,true,.2,.8,.3),"discarding failed candidate stage preserves prior selectable connector");
+        Check(Bridge.SetConnectorEnabled(900,true,.2,.8,.3,false),"discarding failed candidate stage preserves prior selectable connector");
         Bridge.ClearRoutePieces();
         var releaseA=Bridge.CreateWorkingContext(0,0,1,1,0,0);
         var releaseB=Bridge.CreateWorkingContext(0,0,1,1,0,0);
@@ -105,14 +105,14 @@ static class Program
               !Bridge.StageWorkingPolyline(releaseB.Id,releaseB.Revision,releaseLineId,new[]{8.0,1,20,9,1,20}),
             "same-revision context B cannot claim context A's occupied staging IDs");
         Bridge.DiscardWorkingRouteGeometry(releaseB.Id,releaseB.Revision,new[]{releaseRouteId},new[]{releaseLineId});
-        Check(Bridge.SetConnectorEnabled(releaseRouteId,true,.2,.8,.3),"wrong-owner discard leaves context A staged route intact");
+        Check(Bridge.SetConnectorEnabled(releaseRouteId,true,.2,.8,.3,false),"wrong-owner discard leaves context A staged route intact");
         Bridge.ReleaseWorkingContext(releaseA.Id);
-        Check(!Bridge.SetConnectorEnabled(releaseRouteId,true,.2,.8,.3),"releasing context A removes its staged route AIS/ID");
+        Check(!Bridge.SetConnectorEnabled(releaseRouteId,true,.2,.8,.3,false),"releasing context A removes its staged route AIS/ID");
         var reusedRoute=Bridge.DisplayWorkingRoutePiece(releaseB.Id,releaseB.Revision,releaseRouteId,"TurnConnector",new[]{6.0,0,20,7,0,20});
         bool reusedLine=Bridge.StageWorkingPolyline(releaseB.Id,releaseB.Revision,releaseLineId,new[]{6.0,1,20,7,1,20});
         Check(reusedRoute!=null && reusedLine &&
               Bridge.CommitWorkingRouteGeometry(releaseB.Id,releaseB.Revision,new[]{releaseRouteId},new[]{901},new[]{releaseLineId}) &&
-              Bridge.SetConnectorEnabled(901,true,.2,.8,.3),
+              Bridge.SetConnectorEnabled(901,true,.2,.8,.3,false),
             "context B reuses released IDs and commits only its own staged handles at the same model revision");
         int ownedDiscardId=int.MinValue/2+701;
         Check(Bridge.StageWorkingPolyline(releaseB.Id,releaseB.Revision,ownedDiscardId,new[]{6.0,2,20,7,2,20}),"context B stages independently discardable line");
@@ -126,7 +126,7 @@ static class Program
               Bridge.DisplayWorkingRoutePiece(commitB.Id,commitB.Revision,candidateB,"TurnConnector",new[]{12.0,0,20,13,0,20})!=null,
               "two contexts own independent staged routes");
         Check(Bridge.CommitWorkingRouteGeometry(commitA.Id,commitA.Revision,new[]{candidateA},new[]{902},Array.Empty<int>()) &&
-              Bridge.SetConnectorEnabled(candidateB,true,.2,.8,.3),
+              Bridge.SetConnectorEnabled(candidateB,true,.2,.8,.3,false),
               "committing one context preserves another context staged route and ownership");
         Bridge.DiscardWorkingRouteGeometry(commitB.Id,commitB.Revision,new[]{candidateB},Array.Empty<int>());
         Check(Bridge.DisplayWorkingRoutePiece(commitB.Id,commitB.Revision,candidateB,"TurnConnector",new[]{12.0,0,20,13,0,20})!=null,
@@ -165,6 +165,7 @@ static class Program
             typeof(OccViewport).GetEvent("WorkingBoundaryPicked")==null,"diagnostic UI and click interception are removed");
         Check(window.FindName("WorkingBoundaryCanvas")==null && window.FindName("WorkingAxisBox")==null,
             "boundary diagnostic canvas removed; axis selector removed because working direction is fixed to +Z");
+        SidebarTabChecks.Run(window);
         Check(typeof(Bridge).GetMethod("HlrProject")==null && typeof(Bridge).GetMethod("HlrEdges")!=null,
             "HLR smoke API removed while exporter HlrEdges remains");
         viewport.RectangleSelectionMode=true;

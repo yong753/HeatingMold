@@ -230,6 +230,12 @@ namespace HeatingMold.App
         public bool RectangleSelectionMode { get; set; }
         public bool ExclusionSketchMode { get; set; }
 
+        /// <summary>
+        /// 영역 탭에서만 Face 클릭/사각형 선택을 허용한다. 네이티브 선택은 이벤트보다 먼저
+        /// 일어나므로 창 쪽에서 이벤트만 막아서는 부족하다.
+        /// </summary>
+        public bool FaceSelectionEnabled { get; set; } = true;
+
         private bool _vertexEditMode;
         private bool _vertexDragging;
         private int _lastVertexHover = -2;   // 같은 핸들 반복 이벤트 억제
@@ -472,7 +478,9 @@ namespace HeatingMold.App
                     _lastSelectionPreviewX = _downX;
                     _lastSelectionPreviewY = _downY;
                     bool shift = (GetKeyState(0x10) & 0x8000) != 0;
-                    _activeDragMode = PowerLocationMode ? 0 : (ExclusionSketchMode ? 2 : (shift || RectangleSelectionMode ? 1 : 0));
+                    // Face 선택이 꺼진 탭에서는 Shift+드래그가 사각형 선택으로 승격되지 않게 한다.
+                    bool rectangleSelect = (shift || RectangleSelectionMode) && FaceSelectionEnabled;
+                    _activeDragMode = PowerLocationMode ? 0 : (ExclusionSketchMode ? 2 : (rectangleSelect ? 1 : 0));
                     handled = true;
                     break;
 
@@ -673,7 +681,7 @@ namespace HeatingMold.App
                         {
                             ConnectorPicked?.Invoke(Bridge.PickConnector(LoWord(lParam), HiWord(lParam)));
                         }
-                        else if (_activeDragMode == 0)
+                        else if (_activeDragMode == 0 && FaceSelectionEnabled)
                         {
                             // 이동 없는 클릭 = 면 선택 (W5 — 하이라이트 유지)
                             bool toggle = (GetKeyState(0x11) & 0x8000) != 0; // VK_CONTROL

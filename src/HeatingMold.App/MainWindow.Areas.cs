@@ -498,6 +498,7 @@ public partial class MainWindow
             Bridge.ClearExclusionOverlays();
             Bridge.ClearConfirmedFaceHighlights();
         }
+        RefreshSidebarSummary();
     }
 
     private void ShowActiveExclusionOverlays()
