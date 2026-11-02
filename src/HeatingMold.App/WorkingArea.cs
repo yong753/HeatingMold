@@ -48,6 +48,18 @@ internal sealed class WorkingArea
     /// <summary>현재 방향에서 같은 인출면으로 양 끝을 맞출 수 있는 후보 쌍.</summary>
     public List<AnchoredCandidate> AnchorCandidates { get; set; } = new();
 
+    /// <summary>제외영역까지 반영해 계산한 시작/종료점 후보(경로 계획 포함).</summary>
+    public List<ExcludedAnchorCandidate> ExcludedCandidates { get; set; } = new();
+
+    /// <summary>선택한 제외영역 경로 계획. 입력이 바뀌면 무효화된다.</summary>
+    public ExcludedAnchorCandidate ExcludedPlan { get; set; }
+
+    /// <summary>제외영역 후보 계산이 실패한 이유(후보가 없을 때).</summary>
+    public SerpentineComponentsFailureReason? ExcludedCandidateFailure { get; set; }
+
+    /// <summary>제외영역 경로 계획을 만든 입력(마진/간격/방향/제외/인출면/모델)의 지문.</summary>
+    public string ExcludedPlanKey { get; set; } = "";
+
     /// <summary>인출면 고정 생성 실패 사유(사용자 표시용).</summary>
     public string LastExitFailure { get; set; }
 

@@ -25,6 +25,9 @@ public partial class MainWindow
         {
             if (!area.HasExitChain3D || area.ExitChain.Count < 2) return;
             if (Serpentine.DistanceToChain(area.ExitChain, datum) > 0.05) return;
+            foreach (var existing in anchors)
+                if (Math.Abs(existing.Datum.X - datum.X) <= 1e-9 &&
+                    Math.Abs(existing.Datum.Y - datum.Y) <= 1e-9) return;
             Vec3 point = PointOnExitChain3D(area, datum, out int segment);
             int faceId = segment >= 1 && segment - 1 < area.ExitChainFaceIds.Count
                 ? area.ExitChainFaceIds[segment - 1]
@@ -33,6 +36,11 @@ public partial class MainWindow
         }
 
         if (movedAnchorDatum.HasValue) AddAnchor(movedAnchorDatum.Value);
+        if (area.HasExitAnchors)
+        {
+            AddAnchor(area.StartAnchor.Value);
+            AddAnchor(area.EndAnchor.Value);
+        }
         if (area.Pattern != null && area.Pattern.RoutePieces.Count > 0)
         {
             var pieces = area.Pattern.RoutePieces;

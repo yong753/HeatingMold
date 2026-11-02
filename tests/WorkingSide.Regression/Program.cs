@@ -169,6 +169,7 @@ static class Program
             "boundary diagnostic canvas removed; axis selector removed because working direction is fixed to +Z");
         SidebarTabChecks.Run(window);
         AreaHighlightChecks.Run(window);
+        ExclusionExitChecks.Run(window);
         Check(typeof(Bridge).GetMethod("HlrProject")==null && typeof(Bridge).GetMethod("HlrEdges")!=null,
             "HLR smoke API removed while exporter HlrEdges remains");
         viewport.RectangleSelectionMode=true;

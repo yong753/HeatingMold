@@ -375,10 +375,11 @@ public partial class MainWindow
         return shown;
     }
 
-    /// <summary>네이티브가 색/선종류를 고르는 데 쓰는 kind 문자열. 제외 모드의 턴·고정 연결선은
-    /// 발열선이 아니므로 전부 ExcludedBridge(연결선 스타일)로 넘긴다.</summary>
+    /// <summary>네이티브가 색/선종류를 고르는 데 쓰는 kind 문자열. 제외 모드의 턴·고정 연결선과
+    /// 인출 리드는 발열선이 아니므로 전부 ExcludedBridge(연결선 스타일)로 넘긴다.</summary>
     private static string StageKindText(SerpentineRoutePiece piece, bool exclusionMode) =>
-        exclusionMode && piece.Kind is SerpentineRoutePieceKind.TurnConnector or SerpentineRoutePieceKind.FixedConnector
+        exclusionMode && piece.Kind is SerpentineRoutePieceKind.TurnConnector
+            or SerpentineRoutePieceKind.FixedConnector or SerpentineRoutePieceKind.ExitPiece
             ? "ExcludedBridge"
             : piece.Kind.ToString();
 
@@ -466,7 +467,9 @@ public partial class MainWindow
                     {
                         int stageId = _nextStageId--;
                         var piece = area.Pattern.RoutePieces[i];
-                        RoutePieceResult shown = StageCurvedRoutePiece(area, side, piece, i, count, stageId);
+                        RoutePieceResult shown = StageCurvedRoutePiece(
+                            area, side, piece, i, count, stageId,
+                            exclusionMode: area.Exclusions.Count > 0);
                         stagedRoutes.Add(stageId);
                         finalIds.Add(area.NativePieceIds[i]);
                         pieces.Add(shown);
@@ -482,29 +485,42 @@ public partial class MainWindow
                     // 제외 모드도 일반 경로와 같은 표면 매핑을 쓴다. 제외영역을 지나는 연결선은 실제
                     // 모델 표면 위에 있을 때만 표시되고, 표면이 끊기면 이번 생성 전체가 거부된다.
                     var flat = new List<SerpentineRoutePiece>();
-                    foreach (var component in area.ExclusionPieces) flat.AddRange(component);
+                    var componentOf = new List<int>();
+                    for (int c = 0; c < area.ExclusionPieces.Count; c++)
+                        foreach (var piece in area.ExclusionPieces[c])
+                        {
+                            flat.Add(piece);
+                            componentOf.Add(c);
+                        }
                     if (area.NativePieceIds.Length != flat.Count)
                         area.NativePieceIds = AllocateNativePieceIds(flat.Count);
                     var pieces = new List<RoutePieceResult>();
                     var lengths = new List<double>();
                     double sum = 0;
+                    RoutePieceResult previous = null;
+                    int previousComponent = -1;
                     for (int i = 0; i < flat.Count; i++)
                     {
+                        if (componentOf[i] != previousComponent)
+                        {
+                            previous = null;
+                            previousComponent = componentOf[i];
+                        }
                         SerpentineRoutePiece piece = flat[i];
                         if (piece.Points.Count < 2) continue;
                         int stageId = _nextStageId--;
                         RoutePieceResult shown = StageCurvedRoutePiece(
                             area, side, piece, i, flat.Count, stageId,
                             allowCachedSamples: false, exclusionMode: true);
+                        if (previous != null && Distance3D(previous.End, shown.Start) > 0.01)
+                            throw new InvalidOperationException("영역 " + area.Name + " 제외 경로 조각이 연결되지 않습니다");
                         stagedRoutes.Add(stageId);
                         finalIds.Add(area.NativePieceIds[i]);
                         pieces.Add(shown);
                         lengths.Add(shown.Length);
                         sum += shown.Length;
+                        previous = shown;
                     }
-                    for (int i = 1; i < pieces.Count; i++)
-                        if (Distance3D(pieces[i - 1].End, pieces[i].Start) > 0.01)
-                            throw new InvalidOperationException("영역 " + area.Name + " 제외 경로 조각이 연결되지 않습니다");
                     exclusionResults[area] = (pieces, lengths.ToArray());
                     lineLengths[area] = sum;
                 }

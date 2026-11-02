@@ -390,6 +390,15 @@ namespace HeatingMold.App
             var previousProjected = area.ProjectedPieces;
             var previousTurns = area.TurnEnabled;
             var previousDisplayed = area.PatternDisplayed;
+            var previousLeadLengths = area.LeadLengths;
+            var previousFailure = area.LastExitFailure;
+            var previousStartAnchor = area.StartAnchor;
+            var previousEndAnchor = area.EndAnchor;
+            var previousCandidates = area.AnchorCandidates;
+            var previousExcludedCandidates = area.ExcludedCandidates;
+            var previousExcludedPlan = area.ExcludedPlan;
+            var previousExcludedFailure = area.ExcludedCandidateFailure;
+            var previousExcludedKey = area.ExcludedPlanKey;
 
             area.Exclusions.Add(rect);
             // 1) 표시 메시 스테이징 — 실패하면 아무 상태도 바꾸지 않는다.
@@ -416,7 +425,10 @@ namespace HeatingMold.App
                 Bridge.DiscardAreaHighlight(area.AreaId);
                 RestoreAreaExclusions(area, previousExclusions);
                 RestoreAreaPatternState(area, previousPattern, previousPaths, previousExclusionPieces, previousPieceIds,
-                    previousLengths, previousProjected, previousTurns, previousDisplayed);
+                    previousLengths, previousProjected, previousTurns, previousDisplayed,
+                    previousStartAnchor, previousEndAnchor, previousCandidates,
+                    previousExcludedCandidates, previousExcludedPlan, previousExcludedFailure,
+                    previousExcludedKey, previousLeadLengths, previousFailure);
                 UpdateActiveAreaHighlight();
                 StatusText.Text = "제외영역 표시를 적용하지 못했습니다 — 이전 제외영역/경로를 유지했습니다";
                 return;
@@ -427,14 +439,24 @@ namespace HeatingMold.App
             {
                 RestoreAreaExclusions(area, previousExclusions);
                 RestoreAreaPatternState(area, previousPattern, previousPaths, previousExclusionPieces, previousPieceIds,
-                    previousLengths, previousProjected, previousTurns, previousDisplayed);
+                    previousLengths, previousProjected, previousTurns, previousDisplayed,
+                    previousStartAnchor, previousEndAnchor, previousCandidates,
+                    previousExcludedCandidates, previousExcludedPlan, previousExcludedFailure,
+                    previousExcludedKey, previousLeadLengths, previousFailure);
                 Bridge.DiscardAreaHighlight(area.AreaId);
                 UpdateActiveAreaHighlight();
                 return;
             }
             ClearRouteEditState(area);
+            if (area.HasExitFace)
+            {
+                RecomputeAnchorCandidates(area);
+                SyncExitFaceUi(area);
+            }
             UpdateActiveAreaHighlight();
-            StatusText.Text = string.Format("모델 뷰포트 제외영역 추가 — {0}개", area.Exclusions.Count);
+            StatusText.Text = area.HasExitFace && !area.HasExitAnchors && !string.IsNullOrEmpty(area.LastExitFailure)
+                ? area.LastExitFailure
+                : string.Format("모델 뷰포트 제외영역 추가 — {0}개", area.Exclusions.Count);
         }
 
         /// <summary>제외 목록을 스냅샷으로 되돌린다.</summary>
@@ -448,7 +470,11 @@ namespace HeatingMold.App
         /// <summary>경로 상태를 스냅샷으로 되돌리고 창 필드도 다시 연결한다.</summary>
         private void RestoreAreaPatternState(WorkingArea area, SerpentineResult pattern,
             List<List<Vec2>> paths, List<List<SerpentineRoutePiece>> exclusionPieces, int[] pieceIds,
-            double[] lengths, List<RoutePieceResult> projected, List<bool> turns, bool displayed)
+            double[] lengths, List<RoutePieceResult> projected, List<bool> turns, bool displayed,
+            Vec2? startAnchor, Vec2? endAnchor, List<AnchoredCandidate> anchorCandidates,
+            List<ExcludedAnchorCandidate> excludedCandidates, ExcludedAnchorCandidate excludedPlan,
+            SerpentineComponentsFailureReason? excludedFailure, string excludedKey,
+            double[] leadLengths, string lastExitFailure)
         {
             area.Pattern = pattern;
             area.Paths = paths;
@@ -458,6 +484,15 @@ namespace HeatingMold.App
             area.ProjectedPieces = projected;
             area.TurnEnabled = turns;
             area.PatternDisplayed = displayed;
+            area.StartAnchor = startAnchor;
+            area.EndAnchor = endAnchor;
+            area.AnchorCandidates = anchorCandidates;
+            area.ExcludedCandidates = excludedCandidates;
+            area.ExcludedPlan = excludedPlan;
+            area.ExcludedCandidateFailure = excludedFailure;
+            area.ExcludedPlanKey = excludedKey;
+            area.LeadLengths = leadLengths;
+            area.LastExitFailure = lastExitFailure;
             if (ReferenceEquals(area, _activeArea)) ActivateAreaStateFields(area);
         }
 
@@ -705,21 +740,39 @@ namespace HeatingMold.App
             var paths = new List<IReadOnlyList<Vec2>>();
             List<List<SerpentineRoutePiece>> exclusionPieces = null;
             SerpentineResult editablePattern = null;
-            if (area.HasExitFace && !area.HasExitAnchors)
+            if (area.HasExitFace && !area.HasExitAnchors && area.Exclusions.Count == 0)
             {
                 StatusText.Text = area.LastExitFailure
                     ?? "인출면의 시작/종료점이 지정되지 않았습니다 — 후보 목록에서 시작/종료점을 선택하세요";
                 return;
             }
-            if (area.HasExitAnchors && area.Exclusions.Count > 0)
-            {
-                StatusText.Text = "제외 영역이 있는 상태에서는 인출면 고정 경로를 아직 지원하지 않습니다 — 제외 영역을 지우거나 인출면을 초기화하세요";
-                return;
-            }
             var parameters = new PatternParams { Margin = margin, Spacing = spacing, Direction = area.Direction };
             try
             {
-                if (area.HasExitAnchors)
+                if (area.HasExitFace && area.Exclusions.Count > 0)
+                {
+                    // 제외영역이 있어도 인출면 앵커를 고정한 단일 사행 경로를 생성한다.
+                    var plan = TryPrepareExcludedPlan(area, out string planFailure);
+                    if (plan == null)
+                    {
+                        area.LastExitFailure = planFailure;
+                        SyncExitFaceUi(area);
+                        StatusText.Text = planFailure;
+                        return;
+                    }
+                    var anchored = Serpentine.GenerateAnchoredComponents(area.Region[0], area.Exclusions,
+                        parameters, area.ExitChain, plan, area.Direction);
+                    if (!anchored.Succeeded)
+                    {
+                        area.LastExitFailure = ExplainAnchoredFailure(anchored.Failure);
+                        SyncExitFaceUi(area);
+                        StatusText.Text = area.LastExitFailure;
+                        return;
+                    }
+                    editablePattern = anchored.Pattern;
+                    if (editablePattern.Path.Count >= 2) paths.Add(editablePattern.Path);
+                }
+                else if (area.HasExitAnchors)
                 {
                     // 인출면이 지정되면 앵커 경로만 사용한다. 실패해도 무앵커 경로로 조용히 대체하지 않는다.
                     var anchored = Serpentine.GenerateAnchored(area.Region[0], null, parameters,
@@ -748,10 +801,15 @@ namespace HeatingMold.App
                         {
                             // 제외영역 모드: 발열선은 발열영역(외곽−제외) 안에서만 생성되고, 턴커넥터는
                             // 이전 발열선 끝점에서 다음 발열선 시작점까지의 최단 직선(2점)이다.
-                            // 제외영역이 영역을 가로질러 발열영역이 분리되면 연결 성분마다 독립 경로가 된다.
-                            var components = Serpentine.GenerateComponents(ring, area.Exclusions, parameters);
-                            exclusionPieces = components.Select(c => c.ToList()).ToList();
-                            paths.AddRange(components.Select(FlattenPieces));
+                            // 제외영역으로 발열영역이 분리되면 두 독립 경로를 만들지 않고 실패로 알린다.
+                            var result = Serpentine.GenerateComponents(ring, area.Exclusions, parameters);
+                            if (result.Failure != null)
+                            {
+                                StatusText.Text = ExplainComponentsFailure(result.Failure);
+                                return;
+                            }
+                            exclusionPieces = result.Components.Select(c => c.ToList()).ToList();
+                            paths.AddRange(result.Components.Select(FlattenPieces));
                         }
                     }
                 }
@@ -767,7 +825,7 @@ namespace HeatingMold.App
                 StatusText.Text = "생성 가능한 경로가 없습니다. 마진/간격 또는 선택 영역을 확인하세요";
                 return;
             }
-            bool routePiecesMode = editablePattern != null && area.Exclusions.Count == 0 && editablePattern.RoutePieces.Count > 0;
+            bool routePiecesMode = editablePattern != null && editablePattern.RoutePieces.Count > 0;
 
             // 실패 시 이 영역의 기존 패턴 상태를 복원한다. 다른 영역은 건드리지 않는다.
             var oldPattern = area.Pattern;
@@ -780,6 +838,13 @@ namespace HeatingMold.App
             var oldShown = area.PatternDisplayed;
             var oldLeadLengths = area.LeadLengths;
             var oldFailure = area.LastExitFailure;
+            var oldStartAnchor = area.StartAnchor;
+            var oldEndAnchor = area.EndAnchor;
+            var oldCandidates = area.AnchorCandidates;
+            var oldExcludedCandidates = area.ExcludedCandidates;
+            var oldExcludedPlan = area.ExcludedPlan;
+            var oldExcludedFailure = area.ExcludedCandidateFailure;
+            var oldExcludedKey = area.ExcludedPlanKey;
 
             area.Pattern = routePiecesMode ? editablePattern : null;
             area.TurnEnabled = routePiecesMode
@@ -817,6 +882,13 @@ namespace HeatingMold.App
                 area.PatternDisplayed = oldShown;
                 area.LeadLengths = oldLeadLengths;
                 area.LastExitFailure = oldFailure;
+                area.StartAnchor = oldStartAnchor;
+                area.EndAnchor = oldEndAnchor;
+                area.AnchorCandidates = oldCandidates;
+                area.ExcludedCandidates = oldExcludedCandidates;
+                area.ExcludedPlan = oldExcludedPlan;
+                area.ExcludedCandidateFailure = oldExcludedFailure;
+                area.ExcludedPlanKey = oldExcludedKey;
                 SyncExitFaceUi(area);
                 ActivateAreaStateFields(area);
                 return;
@@ -842,15 +914,30 @@ namespace HeatingMold.App
                 _leadLengths = area.LeadLengths;
             }
             int connectors = area.ExclusionPieces?.Sum(c => c.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector)) ?? 0;
-            StatusText.Text = projectedCount == 0
-                ? "생성 가능한 경로가 없습니다. 마진/간격 또는 선택 영역을 확인하세요"
-                : string.Format(routePiecesMode
-                    ? "{0} 영역 — {1}개 경로 · 길이 {2:F1}mm · 회로 {3}개 · 회로 분할 가능"
-                    : "{0} 영역 제외경로 — {1}개 경로 · 길이 {2:F1}mm · 연결선 {4}개 · 깊이 0",
-                    area.Name, projectedCount, total,
-                    routePiecesMode ? SerpentineTopology.Compute(area.Pattern.RoutePieces, area.TurnEnabled).Count : 0,
-                    connectors)
-                  + LaneNote(area.Pattern);
+            int leadCount = routePiecesMode
+                ? area.Pattern.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.ExitPiece) : 0;
+            int turnCount = routePiecesMode
+                ? area.Pattern.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector) : 0;
+            if (projectedCount == 0)
+            {
+                StatusText.Text = "생성 가능한 경로가 없습니다. 마진/간격 또는 선택 영역을 확인하세요";
+            }
+            else if (routePiecesMode)
+            {
+                int circuits = SerpentineTopology.Compute(area.Pattern.RoutePieces, area.TurnEnabled).Count;
+                string counts = area.Exclusions.Count > 0
+                    ? string.Format(" · 연결선 {0}개 · 리드 {1}개", turnCount, leadCount)
+                    : string.Empty;
+                StatusText.Text = string.Format(
+                    "{0} 영역 — {1}개 경로 · 길이 {2:F1}mm · 회로 {3}개 · 회로 분할 가능",
+                    area.Name, projectedCount, total, circuits) + counts + LaneNote(area.Pattern);
+            }
+            else
+            {
+                StatusText.Text = string.Format(
+                    "{0} 영역 제외경로 — {1}개 경로 · 길이 {2:F1}mm · 연결선 {3}개 · 깊이 0",
+                    area.Name, projectedCount, total, connectors) + LaneNote(area.Pattern);
+            }
             UpdateActionStates();
         }
 
@@ -1066,6 +1153,15 @@ namespace HeatingMold.App
             var previousProjected = area.ProjectedPieces;
             var previousTurns = area.TurnEnabled;
             var previousDisplayed = area.PatternDisplayed;
+            var previousLeadLengths = area.LeadLengths;
+            var previousFailure = area.LastExitFailure;
+            var previousStartAnchor = area.StartAnchor;
+            var previousEndAnchor = area.EndAnchor;
+            var previousCandidates = area.AnchorCandidates;
+            var previousExcludedCandidates = area.ExcludedCandidates;
+            var previousExcludedPlan = area.ExcludedPlan;
+            var previousExcludedFailure = area.ExcludedCandidateFailure;
+            var previousExcludedKey = area.ExcludedPlanKey;
 
             area.Exclusions.Clear();
             area.Pattern = null;
@@ -1082,13 +1178,21 @@ namespace HeatingMold.App
             {
                 RestoreAreaExclusions(area, previousExclusions);
                 RestoreAreaPatternState(area, previousPattern, previousPaths, previousExclusionPieces, previousPieceIds,
-                    previousLengths, previousProjected, previousTurns, previousDisplayed);
+                    previousLengths, previousProjected, previousTurns, previousDisplayed,
+                    previousStartAnchor, previousEndAnchor, previousCandidates,
+                    previousExcludedCandidates, previousExcludedPlan, previousExcludedFailure,
+                    previousExcludedKey, previousLeadLengths, previousFailure);
                 UpdateActiveAreaHighlight();
                 return;
             }
             // 경로 재생성 성공 후에만 채움 메시를 걷어내고 Face 색칠로 되돌린다.
             UpdateActiveAreaHighlight();   // 제외 0: ClearAreaHighlight + ApplyAreaColors
             ClearRouteEditState(area);
+            if (area.HasExitFace)
+            {
+                RecomputeAnchorCandidates(area);
+                SyncExitFaceUi(area);
+            }
             if (CircuitLengthGrid != null) CircuitLengthGrid.ItemsSource = null;
             UpdateActionStates();
             StatusText.Text = string.Format("{0} 영역의 제외 사각형을 모두 지웠습니다", area.Name);

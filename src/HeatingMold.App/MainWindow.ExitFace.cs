@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -92,6 +94,10 @@ public partial class MainWindow
         area.StartAnchor = row.Start;
         area.EndAnchor = row.End;
         area.LastExitFailure = null;
+        area.ExcludedPlan = area.Exclusions.Count > 0
+            ? area.ExcludedCandidates.FirstOrDefault(c =>
+                Dist(c.Start, row.Start) <= 1e-4 && Dist(c.End, row.End) <= 1e-4)
+            : null;
         SyncExitFaceUi(area);
         UpdateActionStates();
         StatusText.Text = string.Format("시작 ({0:F1}, {1:F1}) → 종료 ({2:F1}, {3:F1}) · 각도 {4:F0}° — 반대쪽 끝은 레인 위상으로 결정됩니다",
@@ -301,6 +307,10 @@ public partial class MainWindow
         area.StartAnchor = null;
         area.EndAnchor = null;
         area.AnchorCandidates.Clear();
+        area.ExcludedCandidates.Clear();
+        area.ExcludedPlan = null;
+        area.ExcludedCandidateFailure = null;
+        area.ExcludedPlanKey = "";
         area.LastExitFailure = null;
         ClearRouteEditState(area);
         SyncExitFaceUi(area);
@@ -311,18 +321,56 @@ public partial class MainWindow
     private void RecomputeAnchorCandidates(WorkingArea area)
     {
         area.AnchorCandidates.Clear();
+        area.ExcludedCandidates.Clear();
+        area.ExcludedPlan = null;
+        area.ExcludedCandidateFailure = null;
+        area.ExcludedPlanKey = "";
         area.StartAnchor = null;
         area.EndAnchor = null;
         area.LastExitFailure = null;
         if (area == null || !area.HasExitFace || area.Region.Count != 1) return;
 
         TryGetParams(out double margin, out double spacing);
+        var parameters = new PatternParams { Margin = margin, Spacing = spacing, Direction = area.Direction };
+        if (area.Exclusions.Count > 0)
+        {
+            ExcludedCandidatesResult excluded;
+            try
+            {
+                excluded = Serpentine.ComputeCandidatesComponents(area.Region[0], area.Exclusions,
+                    parameters, area.ExitChain, area.Direction);
+            }
+            catch (Exception ex)
+            {
+                area.LastExitFailure = "시작/종료점 후보 계산 실패: " + ex.Message;
+                ErrorReporter.ShowWarning("시작/종료점 후보 계산 실패", ex);
+                return;
+            }
+
+            area.ExcludedCandidates = excluded.Candidates.ToList();
+            area.ExcludedCandidateFailure = excluded.Failure;
+            area.ExcludedPlanKey = BuildExcludedPlanKey(area, margin, spacing);
+            foreach (var candidate in excluded.Candidates)
+                area.AnchorCandidates.Add(new AnchoredCandidate(candidate.Start, candidate.End, candidate.AngleDeg));
+            if (excluded.Candidates.Count == 0)
+            {
+                area.LastExitFailure = ExplainComponentsFailure(excluded.Failure);
+                return;
+            }
+            if (excluded.Candidates.Count == 1)
+            {
+                area.StartAnchor = excluded.Candidates[0].Start;
+                area.EndAnchor = excluded.Candidates[0].End;
+                area.ExcludedPlan = excluded.Candidates[0];
+            }
+            return;
+        }
+
         IReadOnlyList<AnchoredCandidate> candidates;
         try
         {
             candidates = Serpentine.ComputeCandidates(area.Region[0], null,
-                new PatternParams { Margin = margin, Spacing = spacing, Direction = area.Direction },
-                area.ExitChain, area.Direction);
+                parameters, area.ExitChain, area.Direction);
         }
         catch (Exception ex)
         {
@@ -343,6 +391,88 @@ public partial class MainWindow
             area.StartAnchor = candidates[0].Start;
             area.EndAnchor = candidates[0].End;
         }
+    }
+
+    /// <summary>제외영역 경로 계획을 만든 입력이 그대로인지 비교할 지문.</summary>
+    private string BuildExcludedPlanKey(WorkingArea area, double margin, double spacing)
+    {
+        var inv = CultureInfo.InvariantCulture;
+        var sb = new StringBuilder();
+        sb.Append(area.ExitFaceId).Append('|').Append(area.ExitFaceRevision).Append('|');
+        sb.Append((int)area.Direction).Append('|');
+        sb.Append(margin.ToString("R", inv)).Append('|').Append(spacing.ToString("R", inv)).Append('|');
+        sb.Append(Bridge.GetModelRevision()).Append('|');
+        var side = _workingSide?.Confirmed;
+        sb.Append(side?.Id.Value ?? -1).Append('|').Append(side?.Revision.Value ?? -1).Append('|');
+        foreach (var e in area.Exclusions)
+            sb.Append(e.MinX.ToString("R", inv)).Append(',')
+              .Append(e.MinY.ToString("R", inv)).Append(',')
+              .Append(e.MaxX.ToString("R", inv)).Append(',')
+              .Append(e.MaxY.ToString("R", inv)).Append(';');
+        sb.Append('|');
+        foreach (var point in area.ExitChain)
+            sb.Append(point.X.ToString("R", inv)).Append(',').Append(point.Y.ToString("R", inv)).Append(';');
+        return sb.ToString();
+    }
+
+    /// <summary>제외영역 후보 계산이 실패한 이유를 사용자 문구로 바꾼다.</summary>
+    private static string ExplainComponentsFailure(SerpentineComponentsFailureReason? failure) => failure switch
+    {
+        SerpentineComponentsFailureReason.InvalidInput =>
+            "인출면/영역 입력이 올바르지 않습니다",
+        SerpentineComponentsFailureReason.NoLanes =>
+            "마진/간격 조건에서 생성되는 레인이 없습니다 — 간격을 줄이거나 영역을 넓히세요",
+        SerpentineComponentsFailureReason.SplitByExclusion =>
+            "제외영역이 작업영역을 완전히 가로질러 발열영역이 분리되었습니다 — 제외영역을 줄이거나 방향을 바꾸세요",
+        SerpentineComponentsFailureReason.TooComplex =>
+            "제외영역으로 레인 조각이 너무 많아(20개 초과) 경로를 계산할 수 없습니다 — 제외영역을 줄이거나 간격을 조정하세요",
+        SerpentineComponentsFailureReason.TooManyFragments =>
+            "레인 조각이 너무 많습니다(4000개 초과) — 제외영역을 줄이세요",
+        SerpentineComponentsFailureReason.NoCompletePath =>
+            "제외영역 배치로 모든 레인을 한 번씩 잇는 경로가 없습니다 — 제외영역을 줄이거나 방향을 바꾸세요",
+        _ => "인출면이 제외영역을 고려한 사행 경로의 양 끝을 지나지 않습니다 — 반대쪽 모서리나 다른 인출면을 선택하세요"
+    };
+
+    /// <summary>현재 입력으로 제외영역 경로 계획을 확보한다. 마진/간격이 바뀌었으면 후보를 다시 계산한다.</summary>
+    private ExcludedAnchorCandidate TryPrepareExcludedPlan(WorkingArea area, out string failure)
+    {
+        failure = null;
+        if (area == null || !area.HasExitFace)
+        {
+            failure = area?.LastExitFailure ?? "인출면이 지정되지 않았습니다";
+            return null;
+        }
+
+        TryGetParams(out double margin, out double spacing);
+        string key = BuildExcludedPlanKey(area, margin, spacing);
+        if (!string.Equals(area.ExcludedPlanKey, key, StringComparison.Ordinal))
+            RecomputeAnchorCandidates(area);
+
+        if (area.ExcludedCandidates.Count == 0)
+        {
+            failure = area.LastExitFailure ?? ExplainComponentsFailure(area.ExcludedCandidateFailure);
+            return null;
+        }
+        if (!area.HasExitAnchors)
+        {
+            failure = "후보 목록에서 시작/종료점 쌍을 선택하세요";
+            return null;
+        }
+
+        var plan = area.ExcludedPlan;
+        if (plan == null && area.StartAnchor.HasValue && area.EndAnchor.HasValue)
+        {
+            plan = area.ExcludedCandidates.FirstOrDefault(c =>
+                Dist(c.Start, area.StartAnchor.Value) <= 1e-4 &&
+                Dist(c.End, area.EndAnchor.Value) <= 1e-4);
+            area.ExcludedPlan = plan;
+        }
+        if (plan == null)
+        {
+            failure = "후보 목록에서 시작/종료점 쌍을 선택하세요";
+            return null;
+        }
+        return plan;
     }
 
     private string ExplainNoCandidate(WorkingArea area, double margin, double spacing)

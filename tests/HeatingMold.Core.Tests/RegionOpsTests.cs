@@ -62,12 +62,16 @@ public class RegionOpsTests
     // 끝점에서 다음 발열선 시작점까지의 최단 직선(2점)이다. 제외영역이 영역을 가로질러 발열영역이
     // 분리되면 연결 성분마다 독립 경로가 된다. 갈라진 구간은 같은 레인에서 이어지지 않는다.
 
-    /// <summary>100×40 / Margin 0 / Spacing 10 → 레인 y=5,15,25,35 (각 런 0~100).</summary>
+    /// <summary>100×40 / Margin 0 / Spacing 10 → 레인 y=5,15,25,35 (각 런 0~100). 분리되면 실패한다.</summary>
     private static IReadOnlyList<IReadOnlyList<SerpentineRoutePiece>> ExcludedComponents(
         (double MinX, double MinY, double MaxX, double MaxY)[] exclusions,
-        PatternDirection direction = PatternDirection.FrameX) =>
-        Serpentine.GenerateComponents(Rect(0, 0, 100, 40), exclusions,
+        PatternDirection direction = PatternDirection.FrameX)
+    {
+        var result = Serpentine.GenerateComponents(Rect(0, 0, 100, 40), exclusions,
             new PatternParams { Margin = 0, Spacing = 10, Direction = direction });
+        Assert.Null(result.Failure);
+        return result.Components;
+    }
 
     [Fact]
     public void InteriorExclusionSpiralsWithStraightConnectors()
@@ -103,45 +107,36 @@ public class RegionOpsTests
     }
 
     [Fact]
-    public void FullSpanExclusionYieldsTwoIndependentPaths()
+    public void FullSpanExclusionIsRejectedInsteadOfSplittingIntoTwoPaths()
     {
-        // 제외 (40,0)-(60,40)가 영역을 완전히 가로질러 발열영역이 둘로 나뉘면 경로도 2개가 된다.
-        var components = ExcludedComponents(new[] { (40d, 0d, 60d, 40d) });
-        Assert.Equal(2, components.Count);
-
-        foreach (var path in components)
-        {
-            Assert.Equal(4, path.Count(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun));
-            Assert.Equal(3, path.Count(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector));
-
-            double minX = path.SelectMany(piece => piece.Points).Min(pt => pt.X);
-            double maxX = path.SelectMany(piece => piece.Points).Max(pt => pt.X);
-            Assert.True(maxX <= 40 + 1e-6 || minX >= 60 - 1e-6,
-                "경로가 자기 절반(좌/우) 안에 있어야 합니다");
-
-            Assert.Equal(30, path.Where(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector)
-                .Sum(c => Math.Abs(c.Points[0].Y - c.Points[1].Y)), 6);
-            AssertRunsAvoidRect(path, (40d, 0d, 60d, 40d));
-        }
+        // 제외 (40,0)-(60,40)가 영역을 완전히 가로질러 발열영역이 둘로 나뉘면
+        // 독립 경로 2개를 만들지 않고 실패로 처리한다(전폭 분리 금지 정책).
+        var result = Serpentine.GenerateComponents(Rect(0, 0, 100, 40), new[] { (40d, 0d, 60d, 40d) },
+            new PatternParams { Margin = 0, Spacing = 10 });
+        Assert.Empty(result.Components);
+        Assert.Equal(SerpentineComponentsFailureReason.SplitByExclusion, result.Failure);
     }
 
     [Fact]
     public void TrapezoidEdgeExclusionProducesDiagonalConnectors()
     {
         // 왼쪽 모서리에 붙은 제외 (0,0)-(20,40)를 빼면 유효 영역은 (20,0),(100,0),(90,40),(20,40).
-        // 오른쪽 경사면을 따라 레인 끝 x가 어긋나므로 턴커넥터는 사선 2개 + 수직 1개가 된다.
+        // 오른쪽 경사면을 따라 레인 끝 x가 어긋나므로 턴커넥터는 사선 1개 + 수직 2개가 최소다.
+        // (수직 2×10 + 사선 √(10²+2.5²) = 30.3078…, 사선 2개 조합 30.6156…보다 짧다.)
         var outer = new List<Vec2> { new(0, 0), new(100, 0), new(90, 40), new(10, 40) };
-        var components = Serpentine.GenerateComponents(outer, new[] { (0d, 0d, 20d, 40d) },
+        var result = Serpentine.GenerateComponents(outer, new[] { (0d, 0d, 20d, 40d) },
             new PatternParams { Margin = 0, Spacing = 10 });
-        Assert.Single(components);
-        var pieces = components[0];
+        Assert.Null(result.Failure);
+        Assert.Single(result.Components);
+        var pieces = result.Components[0];
 
         Assert.Equal(4, pieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun));
         var connectors = pieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector).ToList();
         Assert.Equal(3, connectors.Count);
-        Assert.Equal(2, connectors.Count(c => Math.Abs(c.Points[0].X - c.Points[1].X) > 1e-6
+        Assert.Equal(1, connectors.Count(c => Math.Abs(c.Points[0].X - c.Points[1].X) > 1e-6
             && Math.Abs(c.Points[0].Y - c.Points[1].Y) > 1e-6));
-        Assert.Equal(1, connectors.Count(c => Math.Abs(c.Points[0].X - c.Points[1].X) <= 1e-6));
+        Assert.Equal(2, connectors.Count(c => Math.Abs(c.Points[0].X - c.Points[1].X) <= 1e-6));
+        Assert.Equal(2 * 10 + Math.Sqrt(100 + 6.25), connectors.Sum(c => c.Length), 6);
 
         Assert.All(pieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun),
             run => Assert.All(run.Points, pt => Assert.True(pt.X >= 20 - 1e-6,
@@ -224,6 +219,181 @@ public class RegionOpsTests
             .Sum(piece => piece.Length), 6);
 
         AssertRunsAvoidRect(pieces, (40d, 10d, 60d, 30d));
+    }
+
+    [Fact]
+    public void AnchoredExclusionStartsAndEndsOnExitFaceWithoutCrossingExclusion()
+    {
+        // 100×50, Margin 5 → 발열영역 x∈[5,95], y∈[5,45], 레인 y=10/20/30/40.
+        // 제외 (40,15)-(60,35)는 레인 y=20/30을 좌우 35mm 조각으로 가르므로 노드 6개(1+2+2+1).
+        // 인출면 x=100 고정: 모든 오른쪽 레인 끝(95)에서 5mm 리드가 생긴다.
+        var outer = Rect(0, 0, 100, 50);
+        var exclusions = new[] { (40d, 15d, 60d, 35d) };
+        var parameters = new PatternParams { Margin = 5, Spacing = 10, Direction = PatternDirection.FrameX };
+        var chain = new List<Vec2> { new(100, 0), new(100, 50) };
+
+        var candidates = Serpentine.ComputeCandidatesComponents(
+            outer, exclusions, parameters, chain, PatternDirection.FrameX);
+        Assert.Null(candidates.Failure);
+        Assert.NotEmpty(candidates.Candidates);
+        Assert.All(candidates.Candidates, candidate => Assert.Equal(0, candidate.AngleDeg, 9));
+
+        var candidate = candidates.Candidates[0];
+        var anchored = Serpentine.GenerateAnchoredComponents(
+            outer, exclusions, parameters, chain, candidate, PatternDirection.FrameX);
+        Assert.True(anchored.Succeeded);
+        var pattern = anchored.Pattern!;
+
+        Assert.Equal(candidate.Start, pattern.Path[0]);
+        Assert.Equal(candidate.End, pattern.Path[^1]);
+
+        var runs = pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun).ToList();
+        Assert.Equal(6, runs.Count);
+        Assert.Equal(320, runs.Sum(piece => piece.Length), 6);
+
+        var connectors = pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector).ToList();
+        Assert.Equal(5, connectors.Count);
+        Assert.Equal(50, connectors.Sum(piece => piece.Length), 6);
+
+        var exits = pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.ExitPiece).ToList();
+        Assert.Equal(2, exits.Count);
+        Assert.Equal(10, exits.Sum(piece => piece.Length), 6);
+        Assert.Equal(candidate.Start, exits[0].Points[0]);
+        Assert.Equal(candidate.End, exits[^1].Points[1]);
+        Assert.Equal(380, pattern.TotalLength, 6);
+
+        AssertRunsAvoidRect(pattern.RoutePieces, (40d, 15d, 60d, 35d));
+    }
+
+    [Fact]
+    public void AnchoredExclusionHonorsAutoAxisSelection()
+    {
+        var outer = Rect(0, 0, 100, 50);
+        var exclusions = new[] { (40d, 15d, 60d, 35d) };
+        var parameters = new PatternParams { Margin = 5, Spacing = 10, Direction = PatternDirection.Auto };
+        var chain = new List<Vec2> { new(100, 0), new(100, 50) };
+
+        var candidates = Serpentine.ComputeCandidatesComponents(
+            outer, exclusions, parameters, chain, PatternDirection.Auto);
+        Assert.Null(candidates.Failure);
+        Assert.NotEmpty(candidates.Candidates);
+        Assert.All(candidates.Candidates, candidate => Assert.Equal(0, candidate.AngleDeg, 9));
+    }
+
+    [Fact]
+    public void AnchoredExclusionHonorsFrameYExitFace()
+    {
+        // FrameY: 레인은 x=5..95의 세로줄 10개, 인출면은 위쪽 y=50. 제외 (40,15)-(60,35)는
+        // 세로 레인 2개(x=45/55)를 자른다 → 노드 12개(짝수 레인이라 양 끝이 서로 반대편).
+        var outer = Rect(0, 0, 100, 50);
+        var exclusions = new[] { (40d, 15d, 60d, 35d) };
+        var parameters = new PatternParams { Margin = 0, Spacing = 10, Direction = PatternDirection.FrameY };
+        var chain = new List<Vec2> { new(0, 50), new(100, 50) };
+
+        var candidates = Serpentine.ComputeCandidatesComponents(
+            outer, exclusions, parameters, chain, PatternDirection.FrameY);
+        Assert.Null(candidates.Failure);
+        Assert.NotEmpty(candidates.Candidates);
+        Assert.All(candidates.Candidates, candidate => Assert.Equal(90, candidate.AngleDeg, 9));
+
+        var anchored = Serpentine.GenerateAnchoredComponents(
+            outer, exclusions, parameters, chain, candidates.Candidates[0], PatternDirection.FrameY);
+        Assert.True(anchored.Succeeded);
+        var pattern = anchored.Pattern!;
+        Assert.Equal(90, pattern.AngleDeg, 9);
+        Assert.Equal(12, pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun));
+        Assert.Equal(11, pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector));
+        Assert.Empty(pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.ExitPiece));
+        Assert.Equal(460, pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun)
+            .Sum(piece => piece.Length), 6);
+        AssertRunsAvoidRect(pattern.RoutePieces, (40d, 15d, 60d, 35d));
+    }
+
+    [Fact]
+    public void AnchoredEdgeExclusionKeepsZeroLeadAndRunsOutside()
+    {
+        // 왼쪽 경계에 붙은 제외 (0,10)-(20,30): 오른쪽 레인 끝은 인출면 위에 정확히 놓인다.
+        var outer = Rect(0, 0, 100, 40);
+        var exclusions = new[] { (0d, 10d, 20d, 30d) };
+        var parameters = new PatternParams { Margin = 0, Spacing = 10, Direction = PatternDirection.FrameX };
+        var chain = new List<Vec2> { new(100, 0), new(100, 40) };
+
+        var candidates = Serpentine.ComputeCandidatesComponents(
+            outer, exclusions, parameters, chain, PatternDirection.FrameX);
+        Assert.Null(candidates.Failure);
+        Assert.NotEmpty(candidates.Candidates);
+
+        var anchored = Serpentine.GenerateAnchoredComponents(
+            outer, exclusions, parameters, chain, candidates.Candidates[0], PatternDirection.FrameX);
+        Assert.True(anchored.Succeeded);
+        var pattern = anchored.Pattern!;
+
+        Assert.Equal(4, pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun));
+        Assert.Equal(3, pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector));
+        Assert.Empty(pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.ExitPiece));
+        Assert.Equal(360, pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun)
+            .Sum(piece => piece.Length), 6);
+        AssertRunsAvoidRect(pattern.RoutePieces, (0d, 10d, 20d, 30d));
+    }
+
+    [Fact]
+    public void AnchoredExclusionWithTwoSplitLanesAndMarginTwo()
+    {
+        // 작업영역 30x16, 마진 2, 간격 5 → 유효영역 26x12, 수평 레인 2개(y=-2.5, 2.5).
+        // 제외 (0,-4)-(6,4)가 두 레인을 모두 절단 → 노드 4개. 인출면 x=15, 레인 끝 x=±13 → 리드 2+2.
+        var outer = Rect(-15, -8, 15, 8);
+        var exclusions = new[] { (0d, -4d, 6d, 4d) };
+        var parameters = new PatternParams { Margin = 2, Spacing = 5, Direction = PatternDirection.FrameX };
+        var chain = new List<Vec2> { new(15, -8), new(15, 8) };
+
+        var candidates = Serpentine.ComputeCandidatesComponents(
+            outer, exclusions, parameters, chain, PatternDirection.FrameX);
+        Assert.Null(candidates.Failure);
+        Assert.NotEmpty(candidates.Candidates);
+        Assert.All(candidates.Candidates, candidate => Assert.Equal(0, candidate.AngleDeg, 9));
+
+        var anchored = Serpentine.GenerateAnchoredComponents(
+            outer, exclusions, parameters, chain, candidates.Candidates[0], PatternDirection.FrameX);
+        Assert.True(anchored.Succeeded);
+        var pattern = anchored.Pattern!;
+
+        Assert.Equal(4, pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun));
+        Assert.Equal(3, pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector));
+        Assert.Equal(2, pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.ExitPiece));
+        Assert.Equal(4, pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.ExitPiece)
+            .Sum(piece => piece.Length), 6);
+        Assert.True(candidates.Candidates[0].Start.DistanceTo(pattern.Path[0]) < 1e-9);
+        Assert.True(candidates.Candidates[0].End.DistanceTo(pattern.Path[^1]) < 1e-9);
+        AssertRunsAvoidRect(pattern.RoutePieces, (0d, -4d, 6d, 4d));
+    }
+
+    [Fact]
+    public void ExcludedAnchorCandidatesRejectTooManyLaneFragments()
+    {
+        // 10레인 중 8레인이 세 개의 내부 홀로 4분할 → 노드 34개 (> 20) → TooComplex.
+        var outer = Rect(0, 0, 100, 100);
+        var exclusions = new[] { (20d, 12d, 30d, 88d), (45d, 12d, 55d, 88d), (70d, 12d, 80d, 88d) };
+        var parameters = new PatternParams { Margin = 0, Spacing = 10, Direction = PatternDirection.FrameX };
+        var chain = new List<Vec2> { new(100, 0), new(100, 100) };
+
+        var candidates = Serpentine.ComputeCandidatesComponents(
+            outer, exclusions, parameters, chain, PatternDirection.FrameX);
+        Assert.Empty(candidates.Candidates);
+        Assert.Equal(SerpentineComponentsFailureReason.TooComplex, candidates.Failure);
+    }
+
+    [Fact]
+    public void FullSpanExclusionHasNoAnchoredCandidates()
+    {
+        var outer = Rect(0, 0, 100, 40);
+        var exclusions = new[] { (40d, 0d, 60d, 40d) };
+        var parameters = new PatternParams { Margin = 0, Spacing = 10, Direction = PatternDirection.FrameX };
+        var chain = new List<Vec2> { new(100, 0), new(100, 40) };
+
+        var candidates = Serpentine.ComputeCandidatesComponents(
+            outer, exclusions, parameters, chain, PatternDirection.FrameX);
+        Assert.Empty(candidates.Candidates);
+        Assert.Equal(SerpentineComponentsFailureReason.SplitByExclusion, candidates.Failure);
     }
 
     /// <summary>수평선 y와 영역 링들의 교차 x 좌표를 짝지어(even-odd) 구간 폭 합을 계산한다.</summary>
