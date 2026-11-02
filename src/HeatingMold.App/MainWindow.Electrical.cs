@@ -16,7 +16,7 @@ public partial class MainWindow
 
     private sealed record CircuitLengthInfo(string CircuitId, double HeatingLengthMm, double LeadLengthMm);
 
-    /// <summary>사양표 UI 표시용 행. 합계 행은 길이/저항/전압이 비어 있고 IsTotal이 true다.</summary>
+    /// <summary>사양표 UI 표시용 행. 합계 행은 전류/전력만 채우고 IsTotal이 true다.</summary>
     private sealed record ElectricalSpecUiRow(
         string CircuitId,
         double? LengthM,
@@ -24,9 +24,8 @@ public partial class MainWindow
         double? VoltageV,
         double? CurrentA,
         double? PowerW,
-        string VerdictText,
-        bool IsTotal,
-        bool IsFault);
+        string Note,
+        bool IsTotal);
 
     private void InitializeElectricalUi()
     {
@@ -57,7 +56,7 @@ public partial class MainWindow
     {
         if (!_electricalUiReady || _suppressElectricalInput) return;
 
-        // 직경/저항을 직접 고치면 프리셋을 "직접 입력"으로 되돌린다.
+        // 직경/저항을 직접 고치면 프리셋 선택을 "직접 입력"으로 되돌린다.
         if ((ReferenceEquals(sender, WireDiameterBox) || ReferenceEquals(sender, WireResistanceBox))
             && WirePresetBox.SelectedIndex != 2)
         {
@@ -76,11 +75,9 @@ public partial class MainWindow
         if (!TryReadPositive(WireDiameterBox.Text, "발열사 직경", out double diameter, out error)) return false;
         if (!TryReadPositive(WireResistanceBox.Text, "단위 길이당 저항", out double resistance, out error)) return false;
         if (!TryReadNonNegative(AppliedVoltageBox.Text, "인가전압", out double voltage, out error)) return false;
-        if (!TryReadPositive(MaxCurrentBox.Text, "허용 전류", out double maxCurrent, out error)) return false;
-        if (!TryReadPositive(MaxPowerBox.Text, "허용 전력", out double maxPower, out error)) return false;
 
         wire = new HeatingWireSpec { DiameterMm = diameter, ResistanceOhmPerMeter = resistance };
-        supply = new PowerSupplySpec { VoltageV = voltage, MaxCurrentA = maxCurrent, MaxPowerW = maxPower };
+        supply = new PowerSupplySpec { VoltageV = voltage };
         return true;
     }
 
@@ -109,8 +106,8 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 확정된 모든 영역의 회로를 모아 전기 사양표를 다시 만든다.
-    /// L은 가열부(HeatingRun + 활성 Turn + FixedConnector)만 사용하고 ExitPiece와 외부 리드는 제외한다.
+    /// 확정된 발열 경로의 회로별 길이로 전기 사양표를 다시 계산한다.
+    /// L은 가열부(HeatingRun + 활성 Turn + FixedConnector)만 합산하고 ExitPiece는 외부 인출로 제외한다.
     /// </summary>
     private void RefreshElectricalTable()
     {
@@ -119,7 +116,7 @@ public partial class MainWindow
         if (!TryReadElectricalSettings(out HeatingWireSpec wire, out PowerSupplySpec supply, out string error))
         {
             ElectricalSpecGrid.ItemsSource = null;
-            ElectricalSummaryText.Text = "입력 오류 — " + error;
+            ElectricalSummaryText.Text = "입력 오류 ? " + error;
             _lastElectricalTable = null;
             return;
         }
@@ -144,26 +141,24 @@ public partial class MainWindow
         var rows = table.Rows
             .Select(r => new ElectricalSpecUiRow(
                 r.CircuitId, r.LengthM, r.ResistanceOhm, r.VoltageV, r.CurrentA, r.PowerW,
-                r.VerdictText, false, r.Verdict != ElectricalVerdict.Ok))
+                r.Message, false))
             .ToList();
         if (rows.Count > 0)
         {
             rows.Add(new ElectricalSpecUiRow(
-                "합계", null, null, null, table.TotalCurrentA, table.TotalPowerW,
-                table.TotalVerdictText, true, table.TotalVerdict != ElectricalVerdict.Ok));
+                "합계", null, null, null, table.TotalCurrentA, table.TotalPowerW, "", true));
         }
         ElectricalSpecGrid.ItemsSource = rows;
 
         ElectricalSummaryText.Text = table.Rows.Count == 0
-            ? "생성된 발열 경로가 없습니다"
+            ? "도면에 발열 경로가 없습니다"
             : string.Format(CultureInfo.CurrentCulture,
-                "총 {0}회로 · 합계 {1:F2} A / {2:F1} W · {3}\n회로당 최소 길이 {4:F2} m (인가전압 {5:F0} V, 허용전류 {6:F1} A 기준)",
-                table.Rows.Count, table.TotalCurrentA, table.TotalPowerW, table.TotalMessage,
-                table.RecommendedMinLengthM, supply.VoltageV, supply.MaxCurrentA);
+                "총 {0}회로 ? 합계 {1:F2} A / {2:F1} W (인가전압 {3:F0} V)",
+                table.Rows.Count, table.TotalCurrentA, table.TotalPowerW, supply.VoltageV);
     }
 
     /// <summary>
-    /// 기존 회로별 길이 표와 전기 사양표가 같은 길이 정의를 쓰도록 한 곳에서 계산한다.
+    /// 현재 회로별 가열부 길이를 표시 순서대로 만든다. 인출부 길이는 함께 보관한다.
     /// </summary>
     private List<CircuitLengthInfo> GetCircuitLengths(WorkingArea area, string prefix = "")
     {

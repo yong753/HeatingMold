@@ -16,7 +16,6 @@ public class ElectricalCalculatorTests
         Assert.Equal(80.0, result.ResistanceOhm, 9);
         Assert.Equal(2.75, result.CurrentA, 9);
         Assert.Equal(605.0, result.PowerW, 9);
-        Assert.Equal(ElectricalVerdict.Ok, result.Verdict);
     }
 
     [Fact]
@@ -28,7 +27,6 @@ public class ElectricalCalculatorTests
         Assert.Equal(160.0, result.ResistanceOhm, 9);
         Assert.Equal(1.375, result.CurrentA, 9);
         Assert.Equal(302.5, result.PowerW, 9);
-        Assert.Equal(ElectricalVerdict.Ok, result.Verdict);
     }
 
     [Fact]
@@ -40,7 +38,6 @@ public class ElectricalCalculatorTests
         Assert.Equal(4.0, result.ResistanceOhm, 9);
         Assert.Equal(55.0, result.CurrentA, 9);
         Assert.Equal(12_100.0, result.PowerW, 9);
-        Assert.Equal(ElectricalVerdict.OverCurrentAndPower, result.Verdict);
     }
 
     [Theory]
@@ -52,7 +49,7 @@ public class ElectricalCalculatorTests
         ElectricalResult result = ElectricalCalculator.Compute(lengthMm, HeatingWireSpec.Case1, Supply);
 
         Assert.False(result.IsValid);
-        Assert.Equal(ElectricalVerdict.InvalidInput, result.Verdict);
+        Assert.Contains("길이", result.Message);
     }
 
     [Fact]
@@ -67,43 +64,24 @@ public class ElectricalCalculatorTests
     }
 
     [Fact]
-    public void ExactlyAtCurrentLimit_IsOk()
+    public void NegativeVoltage_IsRejected()
     {
-        // 3.4375 m × 4 Ω/m = 13.75 Ω, 220 V / 13.75 Ω = 16 A, 220 V × 16 A = 3520 W
-        ElectricalResult result = ElectricalCalculator.Compute(3_437.5, HeatingWireSpec.Case1, Supply);
-
-        Assert.Equal(16.0, result.CurrentA, 9);
-        Assert.Equal(3_520.0, result.PowerW, 9);
-        Assert.Equal(ElectricalVerdict.Ok, result.Verdict);
-    }
-
-    [Fact]
-    public void JustOverCurrentLimit_IsOverCurrent()
-    {
-        var supply = Supply with { MaxPowerW = 4_000 };
-
-        ElectricalResult result = ElectricalCalculator.Compute(3_400, HeatingWireSpec.Case1, supply);
-
-        Assert.True(result.CurrentA > supply.MaxCurrentA);
-        Assert.Equal(ElectricalVerdict.OverCurrent, result.Verdict);
-    }
-
-    [Fact]
-    public void PowerAboveLimit_IsOverPower()
-    {
-        var supply = Supply with { MaxPowerW = 500 };
+        var supply = Supply with { VoltageV = -1 };
 
         ElectricalResult result = ElectricalCalculator.Compute(20_000, HeatingWireSpec.Case1, supply);
 
-        Assert.Equal(ElectricalVerdict.OverPower, result.Verdict);
+        Assert.False(result.IsValid);
     }
 
     [Fact]
-    public void MaxVoltage_KeepsCurrentWithinLimit()
+    public void ZeroVoltage_ProducesZeroCurrentAndPower()
     {
-        ElectricalResult result = ElectricalCalculator.Compute(20_000, HeatingWireSpec.Case1, Supply);
+        var supply = Supply with { VoltageV = 0 };
 
-        Assert.Equal(1_280.0, result.MaxVoltageV, 9);
-        Assert.Equal(Supply.MaxCurrentA, result.MaxVoltageV / result.ResistanceOhm, 9);
+        ElectricalResult result = ElectricalCalculator.Compute(20_000, HeatingWireSpec.Case1, supply);
+
+        Assert.True(result.IsValid);
+        Assert.Equal(0.0, result.CurrentA, 9);
+        Assert.Equal(0.0, result.PowerW, 9);
     }
 }

@@ -94,8 +94,8 @@ public static class DxfExporter
     {
         const double textHeight = 3.2;
         const double rowHeight = 7.0;
-        double[] widths = { 16, 22, 24, 22, 22, 24, 32 };
-        string[] headers = { "회로", "길이(m)", "저항(Ω)", "전압(V)", "전류(A)", "전력(W)", "판정" };
+        double[] widths = { 16, 22, 24, 22, 22, 24 };
+        string[] headers = { "회로", "길이(m)", "저항(Ω)", "전압(V)", "전류(A)", "전력(W)" };
         double tableWidth = widths.Sum();
         double top = origin.Y;
         int rowCount = table.Rows.Count + 2; // header + circuits + total
@@ -137,8 +137,7 @@ public static class DxfExporter
             AddSpecText(doc, layer, style, row.ResistanceOhm.ToString("F2", inv), x + 1, y, textHeight); x += widths[2];
             AddSpecText(doc, layer, style, row.VoltageV.ToString("F1", inv), x + 1, y, textHeight); x += widths[3];
             AddSpecText(doc, layer, style, row.CurrentA.ToString("F2", inv), x + 1, y, textHeight); x += widths[4];
-            AddSpecText(doc, layer, style, row.PowerW.ToString("F1", inv), x + 1, y, textHeight); x += widths[5];
-            AddSpecText(doc, layer, style, row.VerdictText, x + 1, y, textHeight);
+            AddSpecText(doc, layer, style, row.PowerW.ToString("F1", inv), x + 1, y, textHeight);
         }
 
         double totalY = top - rowHeight * (table.Rows.Count + 1) - rowHeight / 2;
@@ -146,15 +145,12 @@ public static class DxfExporter
         AddSpecText(doc, layer, style, "합계", x + 1, totalY, textHeight);
         x += widths[0] + widths[1] + widths[2] + widths[3];
         AddSpecText(doc, layer, style, table.TotalCurrentA.ToString("F2", inv), x + 1, totalY, textHeight); x += widths[4];
-        AddSpecText(doc, layer, style, table.TotalPowerW.ToString("F1", inv), x + 1, totalY, textHeight); x += widths[5];
-        AddSpecText(doc, layer, style, table.TotalVerdictText, x + 1, totalY, textHeight);
+        AddSpecText(doc, layer, style, table.TotalPowerW.ToString("F1", inv), x + 1, totalY, textHeight);
 
         AddSpecText(doc, layer, style,
             "L: 가열부 길이(인출부 제외). 외부 리드 저항은 반영하지 않음.", origin.X, bottom - 7, 2.8);
         AddSpecText(doc, layer, style,
             "R = rL, I = V/R, P = V²/(rL). AC RMS, 상온 일정 저항 기준.", origin.X, bottom - 12, 2.8);
-        AddSpecText(doc, layer, style,
-            "합계 판정은 모든 회로가 하나의 전원을 공유한다고 가정.", origin.X, bottom - 17, 2.8);
     }
 
     private static void AddSpecText(DxfDocument doc, Layer layer, TextStyle style,

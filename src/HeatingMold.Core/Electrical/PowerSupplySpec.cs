@@ -4,9 +4,7 @@ namespace HeatingMold.Core.Electrical;
 public sealed record PowerSupplySpec
 {
     public double VoltageV { get; init; } = 220.0;
-    public double MaxCurrentA { get; init; } = 16.0;
-    public double MaxPowerW { get; init; } = 3520.0;
 
     public string Describe() =>
-        FormattableString.Invariant($"{VoltageV:0.###}V / {MaxCurrentA:0.###}A / {MaxPowerW:0.###}W");
+        FormattableString.Invariant($"{VoltageV:0.###}V");
 }

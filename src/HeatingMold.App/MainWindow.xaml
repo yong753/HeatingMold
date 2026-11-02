@@ -488,7 +488,6 @@
                                             <Grid.RowDefinitions>
                                                 <RowDefinition Height="Auto"/>
                                                 <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
                                             </Grid.RowDefinitions>
                                             <StackPanel Grid.Row="0" Grid.Column="0">
                                                 <TextBlock Text="직경 (mm)" Style="{StaticResource FieldLabel}"/>
@@ -505,19 +504,6 @@
                                                 <TextBox x:Name="AppliedVoltageBox" Text="220" Style="{StaticResource ValueBox}"
                                                          TextChanged="ElectricalInput_Changed"/>
                                             </StackPanel>
-                                            <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,8,0,0">
-                                                <TextBlock Text="허용 전류 (A)" Style="{StaticResource FieldLabel}"/>
-                                                <TextBox x:Name="MaxCurrentBox" Text="16" Style="{StaticResource ValueBox}"
-                                                         TextChanged="ElectricalInput_Changed"/>
-                                            </StackPanel>
-                                            <StackPanel Grid.Row="2" Grid.Column="0" Margin="0,8,0,0">
-                                                <TextBlock Text="허용 전력 (W)" Style="{StaticResource FieldLabel}"/>
-                                                <TextBox x:Name="MaxPowerBox" Text="3520" Style="{StaticResource ValueBox}"
-                                                         TextChanged="ElectricalInput_Changed"/>
-                                            </StackPanel>
-                                            <TextBlock Grid.Row="2" Grid.Column="2" Margin="0,26,0,0"
-                                                       Style="{StaticResource Hint}"
-                                                       Text="합계는 모든 회로가 하나의 전원을 공유한다고 가정합니다."/>
                                         </Grid>
                                         <TextBlock x:Name="ElectricalSummaryText" Style="{StaticResource Hint}"
                                                    Margin="0,8,0,4" Text="생성된 발열 경로가 없습니다"/>
@@ -545,21 +531,7 @@
                                                 <DataGridTextColumn Header="전압 V" Binding="{Binding VoltageV, StringFormat=F1}" Width="*" MinWidth="38"/>
                                                 <DataGridTextColumn Header="전류 A" Binding="{Binding CurrentA, StringFormat=F2}" Width="*" MinWidth="42"/>
                                                 <DataGridTextColumn Header="전력 W" Binding="{Binding PowerW, StringFormat=F1}" Width="*" MinWidth="44"/>
-                                                <DataGridTextColumn Header="판정" Binding="{Binding VerdictText}" Width="Auto" MinWidth="44">
-                                                    <DataGridTextColumn.ElementStyle>
-                                                        <Style TargetType="TextBlock">
-                                                            <Setter Property="Foreground" Value="#16A34A"/>
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding IsFault}" Value="True">
-                                                                    <Setter Property="Foreground" Value="#DC2626"/>
-                                                                </DataTrigger>
-                                                                <DataTrigger Binding="{Binding IsTotal}" Value="True">
-                                                                    <Setter Property="FontWeight" Value="Bold"/>
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </DataGridTextColumn.ElementStyle>
-                                                </DataGridTextColumn>
+                                                <DataGridTextColumn Header="비고" Binding="{Binding Note}" Width="*" MinWidth="60"/>
                                             </DataGrid.Columns>
                                         </DataGrid>
                                         <TextBlock Style="{StaticResource Hint}"
