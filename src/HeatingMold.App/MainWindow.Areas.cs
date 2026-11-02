@@ -82,7 +82,7 @@ public partial class MainWindow
                 UpdateCircuitTable(SerpentineTopology.Compute(area.Pattern.RoutePieces, area.TurnEnabled));
         }
 
-        ShowActiveRegionOutline();
+        UpdateActiveAreaHighlight();
         SyncExitFaceUi(area);
         UpdateActionStates();
     }
@@ -121,6 +121,8 @@ public partial class MainWindow
 
         if (!ConfirmDiscardRouteEdits(area, "작업영역 삭제")) return;
         ExitVertexEdit();
+        // 영역을 지우기 전에 채움 메시 표시를 먼저 제거한다(유령 하이라이트 방지).
+        if (area.AreaId > 0) Bridge.ClearAreaHighlight(area.AreaId);
         bool wasActive = ReferenceEquals(area, _activeArea);
         _areas.Remove(area);
         // 삭제된 영역을 참조하는 편집 이력은 남겨두지 않는다.
@@ -131,19 +133,25 @@ public partial class MainWindow
         ApplyAreaColors();
         if (!RebuildNativePatternGeometry(out _, out _)) return;
 
-        if (!wasActive) ShowActiveRegionOutline();
+        if (!wasActive) UpdateActiveAreaHighlight();
         RefreshAreaList();
         ClearFaceSelectionOnly();
         StatusText.Text = string.Format("{0} 작업영역을 삭제했습니다 — 남은 영역 {1}개", area.Name, _areas.Count);
         UpdateActionStates();
     }
 
+    /// <summary>
+    /// 모든 영역의 발열면 표시를 다시 적용한다. 제외가 없는 영역은 기존처럼 Face 색칠을
+    /// 쓰고, 제외가 있는 영역은 클리핑된 채움 메시만 표시한다(통짜 Face 색칠 금지).
+    /// </summary>
     private void ApplyAreaColors()
     {
         var faceIds = new List<int>();
         var rgb = new List<double>();
+        var clipped = new List<WorkingArea>();
         foreach (var area in _areas)
         {
+            if (area.Exclusions.Count > 0) { clipped.Add(area); continue; }
             double r = area.Color.R / 255.0, g = area.Color.G / 255.0, b = area.Color.B / 255.0;
             foreach (int faceId in area.FaceIdSet)
             {
@@ -151,6 +159,12 @@ public partial class MainWindow
                 rgb.Add(r); rgb.Add(g); rgb.Add(b);
             }
         }
+
+        // 메시를 먼저 확정해 두면 Face 색칠 갱신이 그 영역의 색을 덮어쓰지 않는다.
+        foreach (var area in clipped)
+            if (!ApplyAreaHighlightMesh(area))
+                StatusText.Text = string.Format("{0} 영역의 제외영역 표시를 갱신하지 못했습니다 — 이전 표시를 유지합니다", area.Name);
+
         if (faceIds.Count == 0)
         {
             Bridge.ClearConfirmedFaceHighlights();
@@ -158,6 +172,100 @@ public partial class MainWindow
         }
         Bridge.SetConfirmedFaceHighlightColors(faceIds.ToArray(), rgb.ToArray());
     }
+
+    /// <summary>
+    /// 활성 영역의 발열면 표시를 현재 제외 상태에 맞춘다.
+    /// 제외 없음 → Face 색칠, 제외 있음 → 클리핑된 채움 메시. 실패 시 이전 표시를 유지한다.
+    /// </summary>
+    private void UpdateActiveAreaHighlight()
+    {
+        var area = _activeArea;
+        if (area == null) return;
+        try
+        {
+            if (area.Frame == null || area.FaceIdSet == null || area.FaceIdSet.Count == 0)
+            {
+                if (area.AreaId > 0) Bridge.ClearAreaHighlight(area.AreaId);
+                return;
+            }
+            if (area.Exclusions.Count == 0)
+            {
+                // Face 색칠로 되돌린다. 여러 영역이 공존하므로 전체 색칠을 다시 적용한다.
+                if (area.AreaId > 0) Bridge.ClearAreaHighlight(area.AreaId);
+                ApplyAreaColors();
+                return;
+            }
+            // Stage가 실패하면 이전 표시(이전 커밋 메시 또는 Face 색칠)가 그대로 남는다.
+            if (!ApplyAreaHighlightMesh(area))
+            {
+                StatusText.Text = "제외영역 표시를 갱신하지 못했습니다 — 이전 표시를 유지합니다";
+                return;
+            }
+            Bridge.RedrawView();
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "제외영역 표시 갱신 실패: " + ex.Message;
+        }
+    }
+
+    /// <summary>영역의 2D 제외 사각형을 4개 double(minX,minY,maxX,maxY)씩 펼친다.</summary>
+    private static double[] ExclusionRectValues(WorkingArea area)
+    {
+        var rects = new double[area.Exclusions.Count * 4];
+        for (int i = 0; i < area.Exclusions.Count; i++)
+        {
+            var rect = area.Exclusions[i];
+            rects[i * 4] = rect.MinX;
+            rects[i * 4 + 1] = rect.MinY;
+            rects[i * 4 + 2] = rect.MaxX;
+            rects[i * 4 + 3] = rect.MaxY;
+        }
+        return rects;
+    }
+
+    /// <summary>StageAreaHighlightMesh에 넘길 프레임 값 9개(origin, axisX, axisY).</summary>
+    private static double[] FrameValues(WorkingArea area)
+    {
+        ProjectionFrame frame = area.Frame;
+        return new[]
+        {
+            frame.Origin.X, frame.Origin.Y, frame.Origin.Z,
+            frame.AxisX.X, frame.AxisX.Y, frame.AxisX.Z,
+            frame.AxisY.X, frame.AxisY.Y, frame.AxisY.Z
+        };
+    }
+
+    /// <summary>제외 사각형을 뺀 채움 메시를 스테이징한다(표시는 아직 바뀌지 않는다).</summary>
+    private bool StageAreaHighlightMesh(WorkingArea area)
+    {
+        var side = _workingSide?.Confirmed;
+        if (area == null || area.AreaId <= 0 || area.Frame == null || area.FaceIdSet == null ||
+            area.FaceIdSet.Count == 0 || area.Exclusions.Count == 0 ||
+            side == null) return false;
+        try
+        {
+            int[] faceIds = SortedFaceIds(area);
+            return Bridge.StageAreaHighlightMesh(area.AreaId, side.Revision.Value, side.Id.Value,
+                faceIds, ExclusionRectValues(area), FrameValues(area),
+                new[] { area.Color.R / 255.0, area.Color.G / 255.0, area.Color.B / 255.0 });
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>스테이징된 채움 메시를 확정 표시로 바꾼다.</summary>
+    private bool CommitAreaHighlight(WorkingArea area)
+    {
+        if (area == null || area.AreaId <= 0) return false;
+        try { return Bridge.CommitAreaHighlight(area.AreaId); }
+        catch (Exception) { return false; }
+    }
+
+    private bool ApplyAreaHighlightMesh(WorkingArea area) =>
+        StageAreaHighlightMesh(area) && CommitAreaHighlight(area);
 
     private string NextAreaName()
     {
@@ -209,22 +317,27 @@ public partial class MainWindow
     /// 곡면 영역의 조각 하나를 데이텀 점 단위로 매핑해 3D 폴리라인으로 스테이징한다.
     /// 2D 프레임 → 3D 평면 되돌리기와 BRepProj 재투영을 모두 쓰지 않는다.
     /// </summary>
+    /// <param name="allowCachedSamples">false면 편집 세션 표본 캐시(_pendingStageSamples/
+    /// _vertexBaselineSamples)를 읽지도 쓰지도 않고 항상 다시 매핑한다.</param>
+    /// <param name="exclusionMode">true면 제외영역이 잘라낸 연결선을 "ExcludedBridge" 종류로 넘긴다.</param>
     private RoutePieceResult StageCurvedRoutePiece(WorkingArea area, WorkingSideDefinition side,
-        SerpentineRoutePiece piece, int index, int count, int stageId)
+        SerpentineRoutePiece piece, int index, int count, int stageId,
+        bool allowCachedSamples = true, bool exclusionMode = false)
     {
         var hit = BuildSurfaceMapDelegate(area, side);
-        if (!_pendingStageSamples.Remove((area, index), out List<SurfaceMappedSample> samples))
+        List<SurfaceMappedSample> samples = null;
+        bool cached = allowCachedSamples;
+        if (cached && !_pendingStageSamples.Remove((area, index), out samples))
+            cached = _vertexBaselineSamples.TryGetValue((area, index), out samples);
+        if (!cached)
         {
-            if (!_vertexBaselineSamples.TryGetValue((area, index), out samples))
-            {
-                if (!SurfacePathMapper.TryMapRoute(piece.Points, hit, out samples, out string failure))
-                    throw new InvalidOperationException(
-                        "영역 " + area.Name + " 경로 조각 " + (index + 1) + "/" + count + " (" + piece.Kind + ") 매핑 실패 — "
-                        + failure + " [" + FaceTypesText(area) + "]");
-                // 편집 세션 중에는 바뀌지 않은 조각의 표본을 유지해 다음 확정에서 재매핑을 생략한다.
-                if (Viewport != null && Viewport.VertexEditMode && ReferenceEquals(area, _activeArea))
-                    _vertexBaselineSamples[(area, index)] = samples;
-            }
+            if (!SurfacePathMapper.TryMapRoute(piece.Points, hit, out samples, out string failure))
+                throw new InvalidOperationException(
+                    "영역 " + area.Name + " 경로 조각 " + (index + 1) + "/" + count + " (" + piece.Kind + ") 매핑 실패 — "
+                    + failure + " [" + FaceTypesText(area) + "]");
+            // 편집 세션 중에는 바뀌지 않은 조각의 표본을 유지해 다음 확정에서 재매핑을 생략한다.
+            if (allowCachedSamples && Viewport != null && Viewport.VertexEditMode && ReferenceEquals(area, _activeArea))
+                _vertexBaselineSamples[(area, index)] = samples;
         }
 
         // 결정적 레이캐스트에서는 같은 데이텀 점이 항상 같은 3D 점을 내므로 인접 조각 끝점은
@@ -254,13 +367,20 @@ public partial class MainWindow
             supportFaces[i] = samples[i].FaceId;
         }
         var shown = Bridge.StageSurfaceMappedRoutePieceWithFaces(
-            side.Id.Value, side.Revision.Value, stageId, piece.Kind.ToString(), xyz, supportFaces);
+            side.Id.Value, side.Revision.Value, stageId, StageKindText(piece, exclusionMode), xyz, supportFaces);
         if (shown == null)
             throw new InvalidOperationException(
                 "영역 " + area.Name + " 경로 조각 " + (index + 1) + "/" + count + " (" + piece.Kind + ") 3D 스테이징 실패 ["
                 + FaceTypesText(area) + " | " + Bridge.GetWorkingStageDiagnostic() + "]");
         return shown;
     }
+
+    /// <summary>네이티브가 색/선종류를 고르는 데 쓰는 kind 문자열. 제외 모드의 턴·고정 연결선은
+    /// 발열선이 아니므로 전부 ExcludedBridge(연결선 스타일)로 넘긴다.</summary>
+    private static string StageKindText(SerpentineRoutePiece piece, bool exclusionMode) =>
+        exclusionMode && piece.Kind is SerpentineRoutePieceKind.TurnConnector or SerpentineRoutePieceKind.FixedConnector
+            ? "ExcludedBridge"
+            : piece.Kind.ToString();
 
     /// <summary>
     /// 두 연속 샘플의 면이 다를 때 그 사이 데이텀 구간을 이분 탐색해 전이 지점을 µm 수준으로 좁히고,
@@ -325,6 +445,7 @@ public partial class MainWindow
         var finalIds = new List<int>();
         var stagedLines = new List<int>();
         var routeResults = new Dictionary<WorkingArea, (List<RoutePieceResult> Pieces, double[] Lengths)>();
+        var exclusionResults = new Dictionary<WorkingArea, (List<RoutePieceResult> Pieces, double[] Lengths)>();
         var lineLengths = new Dictionary<WorkingArea, double>();
 
         try
@@ -356,6 +477,37 @@ public partial class MainWindow
                             throw new InvalidOperationException("영역 " + area.Name + " 경로 조각이 연결되지 않습니다");
                     routeResults[area] = (pieces, lengths.ToArray());
                 }
+                else if (area.ExclusionPieces is { Count: > 0 })
+                {
+                    // 제외 모드도 일반 경로와 같은 표면 매핑을 쓴다. 제외영역을 지나는 연결선은 실제
+                    // 모델 표면 위에 있을 때만 표시되고, 표면이 끊기면 이번 생성 전체가 거부된다.
+                    var flat = new List<SerpentineRoutePiece>();
+                    foreach (var component in area.ExclusionPieces) flat.AddRange(component);
+                    if (area.NativePieceIds.Length != flat.Count)
+                        area.NativePieceIds = AllocateNativePieceIds(flat.Count);
+                    var pieces = new List<RoutePieceResult>();
+                    var lengths = new List<double>();
+                    double sum = 0;
+                    for (int i = 0; i < flat.Count; i++)
+                    {
+                        SerpentineRoutePiece piece = flat[i];
+                        if (piece.Points.Count < 2) continue;
+                        int stageId = _nextStageId--;
+                        RoutePieceResult shown = StageCurvedRoutePiece(
+                            area, side, piece, i, flat.Count, stageId,
+                            allowCachedSamples: false, exclusionMode: true);
+                        stagedRoutes.Add(stageId);
+                        finalIds.Add(area.NativePieceIds[i]);
+                        pieces.Add(shown);
+                        lengths.Add(shown.Length);
+                        sum += shown.Length;
+                    }
+                    for (int i = 1; i < pieces.Count; i++)
+                        if (Distance3D(pieces[i - 1].End, pieces[i].Start) > 0.01)
+                            throw new InvalidOperationException("영역 " + area.Name + " 제외 경로 조각이 연결되지 않습니다");
+                    exclusionResults[area] = (pieces, lengths.ToArray());
+                    lineLengths[area] = sum;
+                }
                 else if (area.Paths.Count > 0)
                 {
                     double sum = 0;
@@ -364,7 +516,7 @@ public partial class MainWindow
                         if (path.Count < 2) continue;
                         int stageId = _nextStageId--;
                         var projected = Bridge.StageProjectedWorkingPolyline(
-                            side.Id.Value, side.Revision.Value, stageId,
+                            side.Id.Value, side.Revision.Value, stageId, "HeatingRun",
                             Flatten(area.Frame, path), SortedFaceIds(area),
                             -area.Frame.Normal.X, -area.Frame.Normal.Y, -area.Frame.Normal.Z);
                         if (projected == null)
@@ -402,6 +554,11 @@ public partial class MainWindow
         try
         {
             foreach (var entry in routeResults)
+            {
+                entry.Key.ProjectedPieces = entry.Value.Pieces;
+                entry.Key.RoutePieceLengths = entry.Value.Lengths;
+            }
+            foreach (var entry in exclusionResults)
             {
                 entry.Key.ProjectedPieces = entry.Value.Pieces;
                 entry.Key.RoutePieceLengths = entry.Value.Lengths;
@@ -497,40 +654,8 @@ public partial class MainWindow
         {
             Bridge.ClearRoutePieces();
             Bridge.ClearExclusionOverlays();
+            Bridge.ClearAllAreaHighlights();
             Bridge.ClearConfirmedFaceHighlights();
         }
-    }
-
-    /// <summary>
-    /// 활성 영역의 "제외된 발열영역" 경계를 다시 그린다. 제외 사각형을 별도 박스로
-    /// 덧그리지 않고, 제외를 뺀 실제 영역 링(외곽·분리 조각·홀)을 폐루프 와이어로 표시한다.
-    /// 제외가 없으면 아무것도 덧그리지 않는다(영역 자체는 Face 색칠로 표시된다).
-    /// </summary>
-    private void ShowActiveRegionOutline()
-    {
-        Bridge.ClearExclusionOverlays();
-        if (_activeArea == null || _activeArea.Frame == null || _activeArea.Exclusions.Count == 0) return;
-        foreach (var ring in _activeArea.EffectiveRegion())
-        {
-            double[] wire = RegionRingWire(_activeArea.Frame, ring);
-            if (wire.Length > 0) Bridge.AddExclusionOverlay(wire);
-        }
-    }
-
-    private static double[] RegionRingWire(ProjectionFrame frame, IReadOnlyList<Vec2> ring)
-    {
-        if (ring.Count < 3) return Array.Empty<double>();
-        int count = ring.Count;
-        var xyz = new double[(count + 1) * 3];
-        for (int i = 0; i < count; i++)
-        {
-            Vec3 p = frame.Unproject(ring[i]);
-            xyz[i * 3] = p.X; xyz[i * 3 + 1] = p.Y; xyz[i * 3 + 2] = p.Z;
-        }
-        // 와이어를 닫기 위해 첫 점을 끝에 반복한다.
-        xyz[count * 3] = xyz[0];
-        xyz[count * 3 + 1] = xyz[1];
-        xyz[count * 3 + 2] = xyz[2];
-        return xyz;
     }
 }

@@ -137,7 +137,7 @@ public:
     /// <summary>마지막 경로 조각 스테이징 실패 원인(성공 시 빈 문자열).</summary>
     static System::String^ GetWorkingStageDiagnostic();
     static RoutePieceResult^ StageProjectedWorkingPolyline(long long id, long long revision, int stageId,
-        array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);
+        System::String^ kind, array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);
     /// <summary>Camera-ray nearest visible face hit with face id, point, outward normal and UV.</summary>
     static FacePickResult^ PickFacePoint(int x, int y);
     /// <summary>3D polylines of the CAD edges shared by the exit face and the heating faces (empty when not adjacent).</summary>
@@ -301,6 +301,21 @@ public:
     static bool AddExclusionOverlay(array<double>^ xyzFlat);
     static void SetExclusionPreview(array<double>^ xyzFlat);
     static void ClearExclusionOverlays();
+
+    // ---- 제외영역 차감 발열면 채움 표시 ----
+    /// <summary>확정 면의 표시 삼각분할을 frame 2D로 사영해 rects를 뺀 채움 메시를 스테이징한다.
+    /// 실패하면 기존 엔트리를 건드리지 않는다(revision/workingId 검증 포함).</summary>
+    static bool StageAreaHighlightMesh(int areaId, long long modelRevision, long long workingId,
+        array<int>^ faceIds, array<double>^ rects, array<double>^ frame, array<double>^ color);
+    /// <summary>스테이징된 메시를 AIS_Triangulation으로 표시하고 해당 Face의 통짜 색칠을 해제한다.</summary>
+    static bool CommitAreaHighlight(int areaId);
+    /// <summary>스테이징만 폐기한다. 커밋된 표시는 Commit 성공 전까지 유지된다.</summary>
+    static void DiscardAreaHighlight(int areaId);
+    /// <summary>영역의 채움 메시 표시를 제거한다(면 색 복원은 호출측 몫).</summary>
+    static void ClearAreaHighlight(int areaId);
+    static void ClearAllAreaHighlights();
+    /// <summary>표시 중인 삼각형 수. 엔트리가 없으면 -1, 전부 제외면 0.</summary>
+    static int GetAreaHighlightTriangleCount(int areaId);
 
 
     // ---- HLR (S1 항목 5, S3 측면 뷰에서 본격 사용) ----

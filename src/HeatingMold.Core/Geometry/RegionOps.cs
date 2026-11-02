@@ -39,6 +39,30 @@ public static class RegionOps
         return clips.Count == 0 ? FromPaths(subject) : FromPaths(Clipper.Difference(subject, clips, FillRule.NonZero));
     }
 
+    /// <summary>사각형 제외영역을 amount만큼 바깥으로 팽창시킨 뒤 서로 겹치는 것끼리 병합한다.
+    /// 스캔라인 사이 최소 클리어런스를 확보하기 위한 사전 처리. 축퇴 사각형(폭/높이 0)은 무시한다.</summary>
+    public static List<List<Vec2>> ExpandAndUnionRectangles(
+        IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> rects,
+        double amount)
+    {
+        ArgumentNullException.ThrowIfNull(rects);
+        double grow = Math.Max(0, amount);
+        PathsD paths = new();
+        foreach (var r in rects)
+        {
+            if (!(r.MaxX > r.MinX && r.MaxY > r.MinY)) continue;
+            paths.Add(ToPath(new[]
+            {
+                new Vec2(r.MinX - grow, r.MinY - grow),
+                new Vec2(r.MaxX + grow, r.MinY - grow),
+                new Vec2(r.MaxX + grow, r.MaxY + grow),
+                new Vec2(r.MinX - grow, r.MaxY + grow),
+            }));
+        }
+        if (paths.Count == 0) return new();
+        return FromPaths(Clipper.Union(paths, new PathsD(), FillRule.NonZero, 2));
+    }
+
     /// <summary>링의 부호 있는 면적 (CCW 양수).</summary>
     public static double SignedArea(IReadOnlyList<Vec2> ring)
     {

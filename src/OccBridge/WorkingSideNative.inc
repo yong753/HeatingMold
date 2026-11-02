@@ -719,15 +719,22 @@ bool StageProjectedWorkingRouteNative(long long id,long long revision,int stageI
     }
 }
 
-bool StageProjectedWorkingPolylineNative(long long id,long long revision,int stageId,const std::vector<double>& xyz,
-    const std::vector<int>& faces,const gp_Dir& direction,double* result)
+bool StageProjectedWorkingPolylineNative(long long id,long long revision,int stageId,const std::string& kind,
+    const std::vector<double>& xyz,const std::vector<int>& faces,const gp_Dir& direction,double* result)
 {
     if(stageId>=0||g_ctx.IsNull()||g_stagedWorkingPolylines.count(stageId)||g_stagedWorkingRouteOwners.count(stageId)||g_routePieces.count(stageId)) return false;
     g_workingStageDiagnostic.clear();
     TopoDS_Wire wire; if(!BuildProjectedWorkingWire(id,revision,xyz,faces,direction,wire,result)) return false;
     Handle(AIS_Shape) ais;
-    try { ais=new AIS_Shape(wire);g_ctx->SetColor(ais,kHeatingRouteColor,Standard_False);
-        g_ctx->SetWidth(ais,kHeatingRouteWidth,Standard_False);
+    try { ais=new AIS_Shape(wire);
+        std::string k=kind;
+        std::transform(k.begin(),k.end(),k.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
+        bool connector=k=="turnconnector"||k=="turn";
+        Quantity_Color color=connector?kConnectorRouteColor:kHeatingRouteColor;
+        const double width=connector?1.0:kHeatingRouteWidth;
+        g_ctx->SetColor(ais,color,Standard_False);
+        g_ctx->SetWidth(ais,width,Standard_False);
+        if(connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
         g_ctx->Display(ais,Standard_False);g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost);g_ctx->Deactivate(ais,Standard_False);
         if(!g_stagedWorkingPolylines.emplace(stageId,StagedWorkingPolyline{ais,id,revision}).second) { g_ctx->Remove(ais,Standard_False); return false; }
         return true;
@@ -996,16 +1003,20 @@ bool StageSurfaceMappedRoutePieceWithFacesNative(long long id, long long revisio
         ais = new AIS_Shape(wire);
         std::string k = kind;
         std::transform(k.begin(), k.end(), k.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        const bool connector = k == "turnconnector" || k == "turn";
-        const Quantity_Color color = connector ? kConnectorRouteColor : kHeatingRouteColor;
-        const double width = connector ? 1.0 : kHeatingRouteWidth;
+        // "excludedbridge" = 제외영역을 지나는 고정 연결선. 커넥터와 같은 색/굵기의 실선으로 그리되
+        // 편집·픽 대상은 아니므로 RoutePieceOverlay.connector 는 false 로 둔다.
+        const bool turnKind = k == "turnconnector" || k == "turn";
+        const bool bridgeKind = k == "excludedbridge";
+        const bool connectorStyle = turnKind || bridgeKind;
+        const Quantity_Color color = connectorStyle ? kConnectorRouteColor : kHeatingRouteColor;
+        const double width = connectorStyle ? 1.0 : kHeatingRouteWidth;
         g_ctx->SetColor(ais, color, Standard_False);
         g_ctx->SetWidth(ais, width, Standard_False);
-        if (connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
+        if (turnKind) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
         g_ctx->Display(ais, Standard_False);
         g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
         g_ctx->Activate(ais, Standard_False);
-        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, connector, true, color, width});
+        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, turnKind, true, color, width});
         if (!inserted.second) { g_ctx->Remove(ais, Standard_False); return WorkingStageFail("display-id-collision"); }
         try { if (!g_stagedWorkingRouteOwners.emplace(stageId, std::make_pair(id, revision)).second)
                 throw std::runtime_error("staged route owner collision"); }

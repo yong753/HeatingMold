@@ -106,6 +106,11 @@
 // 메싱 (W2 — shaded 렌더링 실패 원인 대응) — TKMesh
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <Poly_Triangulation.hxx>
+#include <Poly_Triangle.hxx>
+// 제외영역 차감 채움 메시 — 삼각분할 표시(AIS_Triangulation) + 노드별 색
+#include <AIS_Triangulation.hxx>
+#include <TColStd_HArray1OfInteger.hxx>
+#include <Aspect_PolygonOffsetMode.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_ShadingAspect.hxx>
@@ -285,6 +290,8 @@ namespace
     // 꼭지점 편집 오버레이 (WorkingSideNative.inc에서 정의, 이 파일 뒤쪽에 include됨)
     void ClearVertexHandlesNative();
     void ClearRoutePreviewNative();
+    // 제외영역 채움 메시 점유 면 조회 (AreaHighlightNative.inc에서 정의, 뒤쪽 include)
+    bool IsFaceInAreaHighlightNative(int faceId);
     std::vector<Handle(AIS_Shape)> g_exclusionOverlays;
     Handle(AIS_Shape) g_exclusionPreview;
     // 인출 측면 후보 강조 (인출면 선택 모드에서만 표시)
@@ -2429,7 +2436,9 @@ namespace
         if (!g_faceHighlightsVisible) return -1;
         int faceId = -1;
         const PickStatusNative status = PickFaceAtPixelNative(x, y, faceId);
-        const int idx = (status == PickStatusNative::Ok) ? faceId : -1;
+        int idx = (status == PickStatusNative::Ok) ? faceId : -1;
+        // 제외영역 클리핑 메시가 표시 중인 면은 통짜 색칠이 없으므로 호버에서 제외한다.
+        if (idx >= 0 && IsFaceInAreaHighlightNative(idx)) idx = -1;
         if (idx == g_lastHoverFace) return idx;
         const int previous = g_lastHoverFace;
         g_lastHoverFace = idx;
@@ -2474,7 +2483,8 @@ namespace
                 if (it != owners.end()) owner = it->second;
             }
         }
-        if (status != PickStatusNative::Ok || owner.IsNull())
+        if (status != PickStatusNative::Ok || owner.IsNull() ||
+            IsFaceInAreaHighlightNative(faceId))
         {
             // Empty space keeps an existing AIS selection when a working area is
             // confirmed. A picker/owner failure must not rewrite the selection.
@@ -2796,6 +2806,7 @@ namespace
         return out;
     }
 #include "WorkingSideNative.inc"
+#include "AreaHighlightNative.inc"
 }
 #pragma managed(pop)
 
@@ -2942,11 +2953,11 @@ String^ Bridge::GetWorkingStageDiagnostic()
 {
     return gcnew String(GetWorkingStageDiagnosticNative());
 }
-RoutePieceResult^ Bridge::StageProjectedWorkingPolyline(long long id,long long revision,int stageId,array<double>^ flat,array<int>^ faceIds,double dx,double dy,double dz)
+RoutePieceResult^ Bridge::StageProjectedWorkingPolyline(long long id,long long revision,int stageId,String^ kind,array<double>^ flat,array<int>^ faceIds,double dx,double dy,double dz)
 {
     if(flat==nullptr||faceIds==nullptr)return nullptr;
     try {std::vector<double> xyz;std::vector<int> faces;for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
-        double data[7]={};if(!StageProjectedWorkingPolylineNative(id,revision,stageId,xyz,faces,gp_Dir(dx,dy,dz),data))return nullptr;
+        double data[7]={};if(!StageProjectedWorkingPolylineNative(id,revision,stageId,msclr::interop::marshal_as<std::string>(kind),xyz,faces,gp_Dir(dx,dy,dz),data))return nullptr;
         auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;}catch(...){return nullptr;}
 }
 FacePickResult^ Bridge::PickFacePoint(int x, int y)
@@ -3044,6 +3055,7 @@ bool Bridge::LoadStep(String^ path)
     ClearDisplayedShape();
     ClearOverlayNative();
     ClearExclusionOverlaysNative();
+    ClearAllAreaHighlightsNative();
     g_shape.Nullify();
     g_faces.clear();
     g_faceMap.Clear();
@@ -3568,6 +3580,56 @@ void Bridge::SetExclusionPreview(array<double>^ xyzFlat)
 void Bridge::ClearExclusionOverlays()
 {
     ClearExclusionOverlaysNative();
+}
+
+bool Bridge::StageAreaHighlightMesh(int areaId, long long modelRevision, long long workingId,
+    array<int>^ faceIds, array<double>^ rects, array<double>^ frame, array<double>^ color)
+{
+    if (faceIds == nullptr || rects == nullptr || frame == nullptr || color == nullptr) return false;
+    if (faceIds->Length == 0 || rects->Length == 0 || frame->Length != 9 || color->Length < 3) return false;
+    try
+    {
+        std::vector<int> ids(static_cast<size_t>(faceIds->Length));
+        for (int i = 0; i < faceIds->Length; ++i) ids[(size_t)i] = faceIds[i];
+        std::vector<double> nativeRects(static_cast<size_t>(rects->Length));
+        for (int i = 0; i < rects->Length; ++i) nativeRects[(size_t)i] = rects[i];
+        std::vector<double> nativeFrame(static_cast<size_t>(frame->Length));
+        for (int i = 0; i < frame->Length; ++i) nativeFrame[(size_t)i] = frame[i];
+        double nativeColor[3] = {color[0], color[1], color[2]};
+        return StageAreaHighlightMeshNative(areaId, modelRevision, workingId, ids, nativeRects,
+            nativeFrame, nativeColor);
+    }
+    catch (...) { return false; }
+}
+
+bool Bridge::CommitAreaHighlight(int areaId)
+{
+    try { return CommitAreaHighlightNative(areaId); }
+    catch (...) { return false; }
+}
+
+void Bridge::DiscardAreaHighlight(int areaId)
+{
+    try { DiscardAreaHighlightNative(areaId); }
+    catch (...) { }
+}
+
+void Bridge::ClearAreaHighlight(int areaId)
+{
+    try { ClearAreaHighlightNative(areaId); }
+    catch (...) { }
+}
+
+void Bridge::ClearAllAreaHighlights()
+{
+    try { ClearAllAreaHighlightsNative(); }
+    catch (...) { }
+}
+
+int Bridge::GetAreaHighlightTriangleCount(int areaId)
+{
+    try { return GetAreaHighlightTriangleCountNative(areaId); }
+    catch (...) { return -1; }
 }
 
 int Bridge::HoverFace(int x, int y)

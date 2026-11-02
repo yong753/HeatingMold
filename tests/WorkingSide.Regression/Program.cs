@@ -79,7 +79,7 @@ static class Program
         Check(Bridge.IsWorkingPointVisible(front.Id,front.Revision,40,0,0,.001),"camera visibility allows exposed lower surface");
         int topFace=top.FaceId;
         int projectionStage=int.MinValue+1200;
-        var datumProjection=Bridge.StageProjectedWorkingPolyline(front.Id,front.Revision,projectionStage,
+        var datumProjection=Bridge.StageProjectedWorkingPolyline(front.Id,front.Revision,projectionStage,"HeatingRun",
             new[]{0.0,0,30,1,0,30},new[]{topFace},0,0,-1);
         Check(datumProjection!=null && Math.Abs(datumProjection.Start[2]-20)<1e-5 && Math.Abs(datumProjection.End[2]-20)<1e-5,
             "outside datum route projects toward and onto selected model face");
@@ -168,6 +168,7 @@ static class Program
         Check(window.FindName("WorkingBoundaryCanvas")==null && window.FindName("WorkingAxisBox")==null,
             "boundary diagnostic canvas removed; axis selector removed because working direction is fixed to +Z");
         SidebarTabChecks.Run(window);
+        AreaHighlightChecks.Run(window);
         Check(typeof(Bridge).GetMethod("HlrProject")==null && typeof(Bridge).GetMethod("HlrEdges")!=null,
             "HLR smoke API removed while exporter HlrEdges remains");
         viewport.RectangleSelectionMode=true;
@@ -228,12 +229,12 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
         Check(faceA!=faceB && faceB!=faceC && faceA!=faceC && ab && bc && !ac,
             "ordered three-face path accepts A-B-C shared-edge transitions while endpoints A/C are not adjacent");
         int seamStage=int.MinValue+1300;
-        var acrossSeams=Bridge.StageProjectedWorkingPolyline(panels.Id,panels.Revision,seamStage,
+        var acrossSeams=Bridge.StageProjectedWorkingPolyline(panels.Id,panels.Revision,seamStage,"HeatingRun",
             new[]{.25, .5, 5.0, 2.75, .5, 5.0},new[]{faceA,faceB,faceC},0,0,-1);
         Check(acrossSeams!=null,"projected route reconnects across selected three-panel seams");
         Bridge.DiscardWorkingRouteGeometry(panels.Id,panels.Revision,Array.Empty<int>(),new[]{seamStage});
         int partialStage=int.MinValue+1301;
-        Check(Bridge.StageProjectedWorkingPolyline(panels.Id,panels.Revision,partialStage,
+        Check(Bridge.StageProjectedWorkingPolyline(panels.Id,panels.Revision,partialStage,"HeatingRun",
             new[]{.25, .5, 5.0, 1.5, .5, 5.0, 3.5, .5, 5.0, 2.75, .5, 5.0},
             new[]{faceA,faceB,faceC},0,0,-1)==null,"partially out-of-domain projected path is rejected");
         int reloadStage=int.MinValue/2+91;

@@ -36,6 +36,8 @@ namespace HeatingMold.App
         // 확정된 작업영역 목록. 항목을 추가/삭제해도 기존 영역과 패턴은 유지된다.
         private readonly List<WorkingArea> _areas = new();
         private WorkingArea _activeArea;
+        // 제외영역 채움 메시(AreaHighlight) 키 — 영역 인스턴스마다 1씩 증가.
+        private int _nextAreaId;
         private int _nextNativePieceId;
         private int _nextStageId = int.MinValue + 1_000_000;
         private bool _suppressAreaSelection;
@@ -376,22 +378,100 @@ namespace HeatingMold.App
             }
             if (!ConfirmDiscardRouteEdits(_activeArea, "제외영역 추가")) return;
             ExitVertexEdit();
+            var area = _activeArea;
             var rect = (minX, minY, maxX, maxY);
-            _activeArea.Exclusions.Add(rect);
-            // 제외영역이 바뀌면 이 영역의 기존 경로만 무효화하고 다시 생성한다.
-            _activeArea.Pattern = null;
-            _activeArea.Paths = new List<List<Vec2>>();
-            _activeArea.NativePieceIds = Array.Empty<int>();
-            _activeArea.RoutePieceLengths = Array.Empty<double>();
-            _activeArea.ProjectedPieces = new List<RoutePieceResult>();
-            _activeArea.TurnEnabled = new List<bool>();
-            _activeArea.PatternDisplayed = false;
-            ActivateAreaStateFields(_activeArea);
+            // 롤백 스냅샷 — 어느 단계에서 실패해도 제외 목록과 경로 상태를 이전 그대로 되돌린다.
+            var previousExclusions = area.Exclusions.ToList();
+            var previousPattern = area.Pattern;
+            var previousPaths = area.Paths;
+            var previousExclusionPieces = area.ExclusionPieces;
+            var previousPieceIds = area.NativePieceIds;
+            var previousLengths = area.RoutePieceLengths;
+            var previousProjected = area.ProjectedPieces;
+            var previousTurns = area.TurnEnabled;
+            var previousDisplayed = area.PatternDisplayed;
+
+            area.Exclusions.Add(rect);
+            // 1) 표시 메시 스테이징 — 실패하면 아무 상태도 바꾸지 않는다.
+            if (!StageAreaHighlightMesh(area))
+            {
+                RestoreAreaExclusions(area, previousExclusions);
+                StatusText.Text = "제외영역 표시를 생성하지 못했습니다 — 이전 제외영역/경로를 유지했습니다";
+                return;
+            }
+
+            // 2) 스테이징이 성공한 뒤에만 이 영역의 기존 경로를 무효화한다.
+            area.Pattern = null;
+            area.Paths = new List<List<Vec2>>();
+            area.ExclusionPieces = null;
+            area.NativePieceIds = Array.Empty<int>();
+            area.RoutePieceLengths = Array.Empty<double>();
+            area.ProjectedPieces = new List<RoutePieceResult>();
+            area.TurnEnabled = new List<bool>();
+            area.PatternDisplayed = false;
+            ActivateAreaStateFields(area);
             Bridge.ClearExclusionOverlays();
-            if (!RebuildNativePatternGeometry(out _, out _)) return;
-            ClearRouteEditState(_activeArea);
-            ShowActiveRegionOutline();
-            StatusText.Text = string.Format("모델 뷰포트 제외영역 추가 — {0}개", _activeArea.Exclusions.Count);
+            if (!CommitAreaHighlight(area))
+            {
+                Bridge.DiscardAreaHighlight(area.AreaId);
+                RestoreAreaExclusions(area, previousExclusions);
+                RestoreAreaPatternState(area, previousPattern, previousPaths, previousExclusionPieces, previousPieceIds,
+                    previousLengths, previousProjected, previousTurns, previousDisplayed);
+                UpdateActiveAreaHighlight();
+                StatusText.Text = "제외영역 표시를 적용하지 못했습니다 — 이전 제외영역/경로를 유지했습니다";
+                return;
+            }
+
+            // 3) 경로 재생성이 실패하면 표시까지 이전 상태로 되돌린다.
+            if (!RebuildNativePatternGeometry(out _, out _))
+            {
+                RestoreAreaExclusions(area, previousExclusions);
+                RestoreAreaPatternState(area, previousPattern, previousPaths, previousExclusionPieces, previousPieceIds,
+                    previousLengths, previousProjected, previousTurns, previousDisplayed);
+                Bridge.DiscardAreaHighlight(area.AreaId);
+                UpdateActiveAreaHighlight();
+                return;
+            }
+            ClearRouteEditState(area);
+            UpdateActiveAreaHighlight();
+            StatusText.Text = string.Format("모델 뷰포트 제외영역 추가 — {0}개", area.Exclusions.Count);
+        }
+
+        /// <summary>제외 목록을 스냅샷으로 되돌린다.</summary>
+        private static void RestoreAreaExclusions(WorkingArea area,
+            List<(double MinX, double MinY, double MaxX, double MaxY)> snapshot)
+        {
+            area.Exclusions.Clear();
+            area.Exclusions.AddRange(snapshot);
+        }
+
+        /// <summary>경로 상태를 스냅샷으로 되돌리고 창 필드도 다시 연결한다.</summary>
+        private void RestoreAreaPatternState(WorkingArea area, SerpentineResult pattern,
+            List<List<Vec2>> paths, List<List<SerpentineRoutePiece>> exclusionPieces, int[] pieceIds,
+            double[] lengths, List<RoutePieceResult> projected, List<bool> turns, bool displayed)
+        {
+            area.Pattern = pattern;
+            area.Paths = paths;
+            area.ExclusionPieces = exclusionPieces;
+            area.NativePieceIds = pieceIds;
+            area.RoutePieceLengths = lengths;
+            area.ProjectedPieces = projected;
+            area.TurnEnabled = turns;
+            area.PatternDisplayed = displayed;
+            if (ReferenceEquals(area, _activeArea)) ActivateAreaStateFields(area);
+        }
+
+        /// <summary>조각 순서대로 점을 이어 하나의 폴리라인으로 만든다 — 조각 경계의 중복 시작점은 건너뛴다.</summary>
+        private static List<Vec2> FlattenPieces(IReadOnlyList<SerpentineRoutePiece> pieces)
+        {
+            var points = new List<Vec2>();
+            foreach (var piece in pieces)
+            {
+                int start = points.Count > 0 && piece.Points.Count > 0
+                    && points[^1].DistanceTo(piece.Points[0]) <= 1e-9 ? 1 : 0;
+                for (int i = start; i < piece.Points.Count; i++) points.Add(piece.Points[i]);
+            }
+            return points;
         }
 
         private void OnFacePicked(int faceIndex, bool toggle)
@@ -501,7 +581,8 @@ namespace HeatingMold.App
             {
                 Name = NextAreaName(),
                 Color = NextAreaColor(),
-                Frame = frame
+                Frame = frame,
+                AreaId = ++_nextAreaId
             };
             area.FaceIdSet.UnionWith(_selectedFaceIds);
             area.Region.Add(region[0]);
@@ -622,6 +703,7 @@ namespace HeatingMold.App
                 return;
             }
             var paths = new List<IReadOnlyList<Vec2>>();
+            List<List<SerpentineRoutePiece>> exclusionPieces = null;
             SerpentineResult editablePattern = null;
             if (area.HasExitFace && !area.HasExitAnchors)
             {
@@ -664,7 +746,12 @@ namespace HeatingMold.App
                         }
                         else
                         {
-                            paths.AddRange(Serpentine.GenerateComponents(ring, area.Exclusions, parameters));
+                            // 제외영역 모드: 발열선은 발열영역(외곽−제외) 안에서만 생성되고, 턴커넥터는
+                            // 이전 발열선 끝점에서 다음 발열선 시작점까지의 최단 직선(2점)이다.
+                            // 제외영역이 영역을 가로질러 발열영역이 분리되면 연결 성분마다 독립 경로가 된다.
+                            var components = Serpentine.GenerateComponents(ring, area.Exclusions, parameters);
+                            exclusionPieces = components.Select(c => c.ToList()).ToList();
+                            paths.AddRange(components.Select(FlattenPieces));
                         }
                     }
                 }
@@ -689,6 +776,7 @@ namespace HeatingMold.App
             var oldLengths = area.RoutePieceLengths;
             var oldProjected = area.ProjectedPieces;
             var oldPaths = area.Paths;
+            var oldExclusionPieces = area.ExclusionPieces;
             var oldShown = area.PatternDisplayed;
             var oldLeadLengths = area.LeadLengths;
             var oldFailure = area.LastExitFailure;
@@ -698,6 +786,7 @@ namespace HeatingMold.App
                 ? editablePattern.RoutePieces.Where(p => p.Kind == SerpentineRoutePieceKind.TurnConnector).Select(_ => true).ToList()
                 : new List<bool>();
             area.Paths = routePiecesMode ? new List<List<Vec2>>() : paths.Select(p => p.ToList()).ToList();
+            area.ExclusionPieces = routePiecesMode ? null : exclusionPieces;
             if (routePiecesMode)
             {
                 int count = editablePattern.RoutePieces.Count;
@@ -724,6 +813,7 @@ namespace HeatingMold.App
                 area.RoutePieceLengths = oldLengths;
                 area.ProjectedPieces = oldProjected;
                 area.Paths = oldPaths;
+                area.ExclusionPieces = oldExclusionPieces;
                 area.PatternDisplayed = oldShown;
                 area.LeadLengths = oldLeadLengths;
                 area.LastExitFailure = oldFailure;
@@ -751,13 +841,15 @@ namespace HeatingMold.App
                 area.LeadLengths = Array.Empty<double>();
                 _leadLengths = area.LeadLengths;
             }
+            int connectors = area.ExclusionPieces?.Sum(c => c.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector)) ?? 0;
             StatusText.Text = projectedCount == 0
                 ? "생성 가능한 경로가 없습니다. 마진/간격 또는 선택 영역을 확인하세요"
                 : string.Format(routePiecesMode
                     ? "{0} 영역 — {1}개 경로 · 길이 {2:F1}mm · 회로 {3}개 · 회로 분할 가능"
-                    : "{0} 영역 제외경로 — {1}개 독립 경로 · 길이 {2:F1}mm · 깊이 0",
+                    : "{0} 영역 제외경로 — {1}개 경로 · 길이 {2:F1}mm · 연결선 {4}개 · 깊이 0",
                     area.Name, projectedCount, total,
-                    routePiecesMode ? SerpentineTopology.Compute(area.Pattern.RoutePieces, area.TurnEnabled).Count : 0)
+                    routePiecesMode ? SerpentineTopology.Compute(area.Pattern.RoutePieces, area.TurnEnabled).Count : 0,
+                    connectors)
                   + LaneNote(area.Pattern);
             UpdateActionStates();
         }
@@ -964,9 +1056,21 @@ namespace HeatingMold.App
             if (area == null) { StatusText.Text = "작업영역이 없습니다"; return; }
             if (!ConfirmDiscardRouteEdits(area, "제외영역 지우기")) return;
             ExitVertexEdit();
+            // 롤백 스냅샷 — 실패 시 제외 목록/경로/표시를 이전 그대로 되돌린다.
+            var previousExclusions = area.Exclusions.ToList();
+            var previousPattern = area.Pattern;
+            var previousPaths = area.Paths;
+            var previousExclusionPieces = area.ExclusionPieces;
+            var previousPieceIds = area.NativePieceIds;
+            var previousLengths = area.RoutePieceLengths;
+            var previousProjected = area.ProjectedPieces;
+            var previousTurns = area.TurnEnabled;
+            var previousDisplayed = area.PatternDisplayed;
+
             area.Exclusions.Clear();
             area.Pattern = null;
             area.Paths = new List<List<Vec2>>();
+            area.ExclusionPieces = null;
             area.NativePieceIds = Array.Empty<int>();
             area.RoutePieceLengths = Array.Empty<double>();
             area.ProjectedPieces = new List<RoutePieceResult>();
@@ -974,7 +1078,16 @@ namespace HeatingMold.App
             area.PatternDisplayed = false;
             ActivateAreaStateFields(area);
             Bridge.ClearExclusionOverlays();
-            if (!RebuildNativePatternGeometry(out _, out _)) return;
+            if (!RebuildNativePatternGeometry(out _, out _))
+            {
+                RestoreAreaExclusions(area, previousExclusions);
+                RestoreAreaPatternState(area, previousPattern, previousPaths, previousExclusionPieces, previousPieceIds,
+                    previousLengths, previousProjected, previousTurns, previousDisplayed);
+                UpdateActiveAreaHighlight();
+                return;
+            }
+            // 경로 재생성 성공 후에만 채움 메시를 걷어내고 Face 색칠로 되돌린다.
+            UpdateActiveAreaHighlight();   // 제외 0: ClearAreaHighlight + ApplyAreaColors
             ClearRouteEditState(area);
             if (CircuitLengthGrid != null) CircuitLengthGrid.ItemsSource = null;
             UpdateActionStates();

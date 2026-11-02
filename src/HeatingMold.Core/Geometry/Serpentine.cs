@@ -68,40 +68,234 @@ public static class SerpentineTopology
 /// → 지그재그 연결(U턴 호) → 단일 연속 폴리라인.</summary>
 public static class Serpentine
 {
-    /// <summary>Generate independent lane components for a face with rectangular exclusions.
-    /// Each scanline interval is emitted separately, so no path bridges an excluded gap.</summary>
-    public static IReadOnlyList<IReadOnlyList<Vec2>> GenerateComponents(
+    /// <summary>제외영역을 반영한 발열 경로 조각. 발열선은 발열영역(외곽−제외) 안에서만 생성되고,
+    /// 턴커넥터는 이전 발열선 끝점에서 다음 발열선 시작점까지의 최단 직선이다. 제외영역이 영역을
+    /// 가로질러 발열영역이 분리되면 연결 성분마다 독립 경로가 된다.</summary>
+    public static IReadOnlyList<IReadOnlyList<SerpentineRoutePiece>> GenerateComponents(
         IReadOnlyList<Vec2> outer,
         IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
         PatternParams p)
     {
+        ArgumentNullException.ThrowIfNull(exclusions);
         if (outer.Count < 3) throw new ArgumentException("외곽 링은 점 3개 이상 필요", nameof(outer));
         if (p.Spacing <= 0) throw new ArgumentOutOfRangeException(nameof(p), "Spacing > 0 필요");
         double angle = ResolveAngleDeg(outer, p.Direction), rad = angle * Math.PI / 180.0;
         List<Vec2> local = Rotate(outer, -rad);
         var rotatedExclusions = exclusions.Select(r =>
         {
-            // Rectangles are axis-aligned in the supplied face coordinates; rotate their corners
-            // and use the enclosing local rectangle for robust scanline clipping.
-            Vec2[] corners = { new(r.MinX,r.MinY), new(r.MaxX,r.MinY), new(r.MaxX,r.MaxY), new(r.MinX,r.MaxY) };
+            Vec2[] corners = { new(r.MinX, r.MinY), new(r.MaxX, r.MinY), new(r.MaxX, r.MaxY), new(r.MinX, r.MaxY) };
             Vec2[] q = corners.Select(v => v.Rotate(-rad)).ToArray();
             return (q.Min(v => v.X), q.Min(v => v.Y), q.Max(v => v.X), q.Max(v => v.Y));
         }).ToList();
+
+        // 발열영역 = 외곽(마진) − 제외 사각형(정확 차감, 팽창·AABB 근사 없음).
         List<List<Vec2>> region = RegionOps.SubtractRectangles(
             RegionOps.BuildPatternRegion(local, null, p.Margin), rotatedExclusions);
-        if (region.Count == 0) return Array.Empty<IReadOnlyList<Vec2>>();
+        if (region.Count == 0) return Array.Empty<IReadOnlyList<SerpentineRoutePiece>>();
+
         double minY = region.Min(r => r.Min(v => v.Y)), maxY = region.Max(r => r.Max(v => v.Y));
         double height = maxY - minY;
         int lanes = Math.Max(1, (int)Math.Floor((height + 1e-9) / p.Spacing));
         double y0 = minY + (height - (lanes - 1) * p.Spacing) / 2.0;
-        var result = new List<IReadOnlyList<Vec2>>();
-        for (int k = 0; k < lanes; k++)
+        var laneY = new double[lanes];
+        for (int k = 0; k < lanes; k++) laneY[k] = y0 + k * p.Spacing;
+
+        var result = new List<IReadOnlyList<SerpentineRoutePiece>>();
+        foreach (List<List<Vec2>> component in GroupComponents(region))
         {
-            double y = y0 + k * p.Spacing;
-            foreach (var interval in ScanlineIntervals(region, y))
-                result.Add(new[] { new Vec2(interval.X0, y).Rotate(rad), new Vec2(interval.X1, y).Rotate(rad) });
+            var byLane = new List<LaneIntervalNode>[lanes];
+            for (int k = 0; k < lanes; k++)
+            {
+                byLane[k] = new List<LaneIntervalNode>();
+                foreach ((double X0, double X1) interval in ScanlineIntervals(component, laneY[k]))
+                    byLane[k].Add(new LaneIntervalNode(k, laneY[k], interval.X0, interval.X1));
+            }
+            foreach (List<SerpentineRoutePiece> chain in TraceLaneChains(byLane))
+                result.Add(chain.Select(piece => piece with { Points = piece.Points.Select(v => v.Rotate(rad)).ToList() }).ToList());
         }
         return result;
+    }
+
+    private const int LaneChainSearchBudget = 20000;
+    private const int MaxLaneChainNodes = 4000;
+
+    private readonly record struct LaneIntervalNode(int Lane, double Y, double X0, double X1);
+
+    /// <summary>CCW 외곽 링마다 그 안에 들어 있는 CW 홀 링을 묶어 연결 성분을 만든다.
+    /// 홀의 대표점은 정점 평균(링 내부)을 쓴다.</summary>
+    private static List<List<List<Vec2>>> GroupComponents(IReadOnlyList<List<Vec2>> rings)
+    {
+        var outers = new List<List<Vec2>>();
+        var holes = new List<List<Vec2>>();
+        foreach (List<Vec2> ring in rings)
+        {
+            if (ring.Count < 3) continue;
+            if (RegionOps.SignedArea(ring) > 0) outers.Add(ring);
+            else holes.Add(ring);
+        }
+        if (outers.Count == 0) return new();
+        var components = outers.Select(o => new List<List<Vec2>> { o }).ToList();
+        foreach (List<Vec2> hole in holes)
+        {
+            Vec2 probe = new(hole.Average(v => v.X), hole.Average(v => v.Y));
+            int best = -1;
+            double bestArea = double.MaxValue;
+            for (int i = 0; i < components.Count; i++)
+            {
+                double area = Math.Abs(RegionOps.SignedArea(components[i][0]));
+                if (area < bestArea && PointInRing(components[i][0], probe)) { best = i; bestArea = area; }
+            }
+            if (best >= 0) components[best].Add(hole);
+        }
+        return components;
+    }
+
+    /// <summary>연결 성분 하나의 레인 구간 노드들을 최장 사슬로 이어 경로로 만든다.
+    /// 간선은 인접 레인의 모든 노드 쌍(기하 제약 없음 — 턴커넥터는 어디든 지날 수 있다).
+    /// 같은 레인의 노드끼리는 잇지 않는다(제외로 갈라진 구간은 같은 레인에서 이어지지 않는다).</summary>
+    private static List<List<SerpentineRoutePiece>> TraceLaneChains(IReadOnlyList<List<LaneIntervalNode>> byLane)
+    {
+        var nodes = new List<LaneIntervalNode>();
+        var laneNodes = new List<int>[byLane.Count];
+        for (int k = 0; k < byLane.Count; k++)
+        {
+            laneNodes[k] = new List<int>(byLane[k].Count);
+            foreach (LaneIntervalNode node in byLane[k]) { laneNodes[k].Add(nodes.Count); nodes.Add(node); }
+        }
+        var paths = new List<List<SerpentineRoutePiece>>();
+        if (nodes.Count == 0) return paths;
+
+        if (nodes.Count > MaxLaneChainNodes)
+        {
+            foreach (LaneIntervalNode node in nodes)
+                paths.Add(new List<SerpentineRoutePiece>
+                {
+                    new(SerpentineRoutePieceKind.HeatingRun, node.Lane,
+                        new Vec2[] { new(node.X0, node.Y), new(node.X1, node.Y) }),
+                });
+            return paths;
+        }
+
+        var adjacency = new List<int>[nodes.Count];
+        for (int i = 0; i < adjacency.Length; i++) adjacency[i] = new();
+        for (int k = 0; k + 1 < byLane.Count; k++)
+            foreach (int a in laneNodes[k])
+                foreach (int b in laneNodes[k + 1])
+                {
+                    adjacency[a].Add(b);
+                    adjacency[b].Add(a);
+                }
+
+        var used = new bool[nodes.Count];
+        for (int pass = 0; pass < nodes.Count; pass++)
+        {
+            int start = Array.IndexOf(used, false);
+            if (start < 0) break;
+            int available = 0;
+            for (int i = 0; i < used.Length; i++) if (!used[i]) available++;
+            (List<int> order, List<(double Enter, double Exit)> spans) =
+                SearchLaneChain(nodes, adjacency, used, start, available);
+            foreach (int index in order) used[index] = true;
+            paths.Add(BuildLaneChainPath(nodes, order, spans));
+        }
+        return paths;
+    }
+
+    /// <summary>start에서 시작해 아직 쓰지 않은 노드를 최대한 많이, 각 1회씩 지나는 사슬을 찾는다.
+    /// 방문 노드 수가 같으면 커넥터 총 길이가 짧은 쪽을 쓴다. 시작 구간의 진행 방향 두 가지를
+    /// 모두 시도한다. 다음 구간은 현재 출구에 가장 가까운 끝점으로 진입해 반대쪽 끝으로 나간다.
+    /// 인접 노드는 최단 점프 순(가장 가까운 이웃 우선)으로 시도하고, 완전 사슬을 찾은 뒤에는
+    /// 커넥터 비용 하한으로 가지치기해 최단 직선 커넥터 사슬을 보장한다.</summary>
+    private static (List<int> Order, List<(double Enter, double Exit)> Spans) SearchLaneChain(
+        IReadOnlyList<LaneIntervalNode> nodes,
+        IReadOnlyList<List<int>> adjacency,
+        IReadOnlyList<bool> blocked,
+        int start,
+        int target)
+    {
+        var bestOrder = new List<int> { start };
+        var bestSpans = new List<(double Enter, double Exit)> { (nodes[start].X0, nodes[start].X1) };
+        double bestCost = 0;
+        var order = new List<int>();
+        var spans = new List<(double Enter, double Exit)>();
+        var visited = new bool[nodes.Count];
+        int budget = 0;
+        double cost = 0;
+
+        void Visit(int node, double enter, double exit)
+        {
+            visited[node] = true;
+            order.Add(node);
+            spans.Add((enter, exit));
+            if (order.Count > bestOrder.Count || (order.Count == bestOrder.Count && cost < bestCost))
+            {
+                bestOrder = new List<int>(order);
+                bestSpans = new List<(double Enter, double Exit)>(spans);
+                bestCost = cost;
+            }
+            if (--budget >= 0)
+            {
+                Vec2 exitPoint = new(exit, nodes[node].Y);
+                // 현재 출구에 가장 가까운 이웃부터 시도한다 — 최단 직선 커넥터 우선.
+                var candidates = new List<(int Next, double Enter, double Exit, double Jump)>();
+                foreach (int next in adjacency[node])
+                {
+                    if (visited[next]) continue;
+                    LaneIntervalNode n = nodes[next];
+                    double d0 = new Vec2(n.X0, n.Y).DistanceTo(exitPoint);
+                    double d1 = new Vec2(n.X1, n.Y).DistanceTo(exitPoint);
+                    candidates.Add((next, d0 <= d1 ? n.X0 : n.X1, d0 <= d1 ? n.X1 : n.X0, Math.Min(d0, d1)));
+                }
+                candidates.Sort((x, y) => x.Jump.CompareTo(y.Jump));
+                foreach (var candidate in candidates)
+                {
+                    // 완전 사슬을 이미 찾았고 이 분기가 더 짧을 수 없으면 가지치기(비용은 단조 증가).
+                    if (bestOrder.Count >= target && cost + candidate.Jump >= bestCost) continue;
+                    cost += candidate.Jump;
+                    Visit(candidate.Next, candidate.Enter, candidate.Exit);
+                    cost -= candidate.Jump;
+                }
+            }
+            visited[node] = false;
+            order.RemoveAt(order.Count - 1);
+            spans.RemoveAt(spans.Count - 1);
+        }
+
+        for (int orientation = 0; orientation < 2 && bestOrder.Count < target; orientation++)
+        {
+            for (int i = 0; i < blocked.Count; i++) visited[i] = blocked[i];
+            order.Clear();
+            spans.Clear();
+            cost = 0;
+            budget = LaneChainSearchBudget;
+            if (orientation == 0) Visit(start, nodes[start].X0, nodes[start].X1);
+            else Visit(start, nodes[start].X1, nodes[start].X0);
+        }
+        return (bestOrder, bestSpans);
+    }
+
+    /// <summary>사슬의 노드 순서·진입/출구 좌표로 조각 목록을 만든다. 노드마다 HeatingRun 1개,
+    /// 노드 사이에는 이전 출구에서 다음 진입구까지의 직선 2점 TurnConnector가 들어간다.</summary>
+    private static List<SerpentineRoutePiece> BuildLaneChainPath(
+        IReadOnlyList<LaneIntervalNode> nodes,
+        List<int> order,
+        List<(double Enter, double Exit)> spans)
+    {
+        var pieces = new List<SerpentineRoutePiece>(Math.Max(0, order.Count * 2 - 1));
+        Vec2? previousExit = null;
+        for (int i = 0; i < order.Count; i++)
+        {
+            LaneIntervalNode node = nodes[order[i]];
+            Vec2 enter = new(spans[i].Enter, node.Y);
+            Vec2 exit = new(spans[i].Exit, node.Y);
+            if (previousExit.HasValue)
+                pieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.TurnConnector, node.Lane,
+                    new[] { previousExit.Value, enter }));
+            pieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, node.Lane,
+                new[] { enter, exit }));
+            previousExit = exit;
+        }
+        return pieces;
     }
 
     public static SerpentineResult Generate(

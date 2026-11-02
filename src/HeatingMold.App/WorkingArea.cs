@@ -15,6 +15,8 @@ internal sealed class WorkingArea
 {
     public string Name { get; init; } = "";
     public Color Color { get; init; }
+    /// <summary>네이티브 제외영역 채움 메시(AreaHighlight) 키. 0이면 미할당.</summary>
+    public int AreaId { get; set; }
     public HashSet<int> FaceIdSet { get; } = new();
     public List<List<Vec2>> Region { get; } = new();
     public ProjectionFrame Frame { get; init; }
@@ -56,6 +58,9 @@ internal sealed class WorkingArea
     public double[] RoutePieceLengths { get; set; } = Array.Empty<double>();
     public double[] LeadLengths { get; set; } = Array.Empty<double>();
     public List<List<Vec2>> Paths { get; set; } = new();
+    /// <summary>제외영역이 있는 면의 경로를 조각별 kind와 함께 보관한다(가열 런/우회 스커트 표시용).
+    /// 제외가 없거나 편집 모드(RoutePieces)면 null이다.</summary>
+    public List<List<SerpentineRoutePiece>> ExclusionPieces { get; set; }
     public bool PatternDisplayed { get; set; }
 
     /// <summary>생성 후 꼭지점 편집으로 경로가 수정되었는지. 재생성 시 삭제 경고에 사용한다.</summary>
