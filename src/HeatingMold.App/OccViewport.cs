@@ -244,6 +244,10 @@ namespace HeatingMold.App
         /// </summary>
         public bool FaceSelectionEnabled { get; set; } = true;
 
+        /// <summary>인출면 선택처럼 화면과 판정 기준을 일치시켜야 하는 모드에서 드래그 회전을 막는다.
+        /// 줌/팬은 작업 프레임을 바꾸지 않으므로 허용한다.</summary>
+        public bool ViewLocked { get; set; }
+
         private bool _vertexEditMode;
         private bool _vertexDragging;
         private int _lastVertexHover = -2;   // 같은 핸들 반복 이벤트 억제
@@ -567,7 +571,7 @@ namespace HeatingMold.App
                             if (dx * dx + dy * dy >= ClickDragThreshold * ClickDragThreshold)
                             {
                                 _dragStarted = true;
-                                if (_activeDragMode == 0)
+                                if (_activeDragMode == 0 && !ViewLocked)
                                 {
                                     Bridge.ClearHover();          // 회전 중 잔상 방지
                                     if (ExitFacePickMode) ExitFacePickMoved?.Invoke(-1, -1);
@@ -578,7 +582,7 @@ namespace HeatingMold.App
                         }
                         if (_dragStarted)
                         {
-                            if (_activeDragMode == 0) Bridge.RotateMove(x, y);
+                            if (_activeDragMode == 0 && !ViewLocked) Bridge.RotateMove(x, y);
                             else if (_activeDragMode == 1 &&
                                      (Math.Abs(x - _lastSelectionPreviewX) >= 4 || Math.Abs(y - _lastSelectionPreviewY) >= 4))
                             {
@@ -670,7 +674,7 @@ namespace HeatingMold.App
                         if (_dragStarted)
                         {
                             int x = LoWord(lParam), y = HiWord(lParam);
-                            if (_activeDragMode == 0) Bridge.RotateEnd();
+                            if (_activeDragMode == 0 && !ViewLocked) Bridge.RotateEnd();
                             else if (_activeDragMode == 1)
                             {
                                 Bridge.ClearSelectionRectangle();

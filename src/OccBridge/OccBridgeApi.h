@@ -179,6 +179,10 @@ public:
     /// 나체 Edge(인접면 없음)는 후보에서 제외한다. 후보가 없으면 null/빈 배열.
     /// </summary>
     static array<ExitSideCandidate^>^ GetBoundaryExitSides(array<int>^ faceIds, double deflection);
+    static array<ExitSideCandidate^>^ GetBoundaryExitSides(array<int>^ faceIds, double deflection,
+                                                          double nx, double ny, double nz);
+    /// <summary>Last exit-side extraction diagnostic (ASCII, one item per line).</summary>
+    static System::String^ GetExitSideDiagnostic();
     /// <summary>인출 측면 후보를 임시 강조 표시한다 (이전 강조는 지운다).</summary>
     static void ShowExitCandidates(array<array<double>^>^ polylines);
     static void ClearExitCandidates();

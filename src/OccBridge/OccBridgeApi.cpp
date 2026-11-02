@@ -926,39 +926,53 @@ namespace
     }
 
     /// <summary>run의 진행 방향(시작쪽 첫 유효 구간)을 반환한다.</summary>
-    bool ExitFirstSegmentDirection(const NativeExitSide& run, gp_Vec& direction)
+    // The boundary turns by the dihedral angle wherever the neighbouring face
+    // changes, so a 3D angle gate rejects legitimate splits of one straight
+    // side. Judge in the working-plane projection instead, and use a chord
+    // window so a short sampling segment cannot set the direction.
+    std::string g_exitSideDiagnostic;
+
+    const double kExitJunctionAngle2dDegrees = 15.0;
+    const double kExitJunctionWindow = 1.0;
+    const double kExitPlaneDirectionEpsilon = 1e-7;
+
+    gp_Vec ProjectExitDirection(const gp_Vec& direction, const gp_Vec& viewNormal)
     {
-        const int count = static_cast<int>(run.xyz.size() / 3);
-        if (count < 2) return false;
-        const gp_Pnt origin(run.xyz[0], run.xyz[1], run.xyz[2]);
-        for (int i = 1; i < count; ++i)
-        {
-            const gp_Pnt point(run.xyz[i * 3], run.xyz[i * 3 + 1], run.xyz[i * 3 + 2]);
-            if (origin.Distance(point) > 1e-9)
-            {
-                direction = gp_Vec(origin, point);
-                return true;
-            }
-        }
-        return false;
+        const double length = viewNormal.Magnitude();
+        if (length <= 1e-12) return direction;
+        const gp_Vec unit = viewNormal / length;
+        return direction - unit * (direction * unit);
     }
 
-    /// <summary>run의 진행 방향(끝쪽 마지막 유효 구간)을 반환한다.</summary>
-    bool ExitLastSegmentDirection(const NativeExitSide& run, gp_Vec& direction)
+    /// <summary>
+    /// Chord direction over a window (mm) measured from the requested end of the
+    /// run. Sampling noise shorter than the window is ignored; a run shorter than
+    /// the window falls back to its farthest sample.
+    /// </summary>
+    bool ExitWindowDirection(const NativeExitSide& run, bool fromEnd, gp_Vec& direction)
     {
         const int count = static_cast<int>(run.xyz.size() / 3);
         if (count < 2) return false;
-        const gp_Pnt end(run.xyz[(count - 1) * 3], run.xyz[(count - 1) * 3 + 1], run.xyz[(count - 1) * 3 + 2]);
-        for (int i = count - 2; i >= 0; --i)
+        const int anchor = fromEnd ? count - 1 : 0;
+        const gp_Pnt base(run.xyz[anchor * 3], run.xyz[anchor * 3 + 1], run.xyz[anchor * 3 + 2]);
+        int farthest = -1;
+        for (int step = 1; step < count; ++step)
         {
+            const int i = fromEnd ? count - 1 - step : step;
             const gp_Pnt point(run.xyz[i * 3], run.xyz[i * 3 + 1], run.xyz[i * 3 + 2]);
-            if (point.Distance(end) > 1e-9)
+            const double distance = base.Distance(point);
+            if (distance <= 1e-9) continue;
+            if (distance >= kExitJunctionWindow)
             {
-                direction = gp_Vec(point, end);
-                return true;
+                farthest = i;
+                break;
             }
+            farthest = i;
         }
-        return false;
+        if (farthest < 0) return false;
+        const gp_Pnt point(run.xyz[farthest * 3], run.xyz[farthest * 3 + 1], run.xyz[farthest * 3 + 2]);
+        direction = fromEnd ? gp_Vec(point, base) : gp_Vec(base, point);
+        return true;
     }
 
     /// <summary>
@@ -968,12 +982,12 @@ namespace
     /// BSpline으로 근사되므로 완전 공선을 요구하지 않고 꺾임 각도로 판정한다.
     /// 모서리(코너)와 되돌이는 병합하지 않는다.
     /// </summary>
-    bool CanJoinExitRuns(const NativeExitSide& first, const NativeExitSide& second, bool& flipped)
+    bool CanJoinExitRuns(const NativeExitSide& first, const NativeExitSide& second,
+                         const gp_Vec& viewNormal, double contactTolerance, bool& flipped)
     {
         flipped = false;
         if (first.xyz.size() < 6 || second.xyz.size() < 6) return false;
-        const double contactTolerance = 0.01;
-        const double angleToleranceDegrees = 8.0;
+        if (!(contactTolerance > 0.0)) return false;
 
         const size_t firstCount = first.xyz.size();
         const gp_Pnt firstEnd(first.xyz[firstCount - 3], first.xyz[firstCount - 2], first.xyz[firstCount - 1]);
@@ -981,22 +995,42 @@ namespace
         const size_t secondCount = second.xyz.size();
         const gp_Pnt secondEnd(second.xyz[secondCount - 3], second.xyz[secondCount - 2],
                                second.xyz[secondCount - 1]);
-        const bool forward = firstEnd.Distance(secondStart) <= contactTolerance;
-        const bool backward = firstEnd.Distance(secondEnd) <= contactTolerance;
-        if (!forward && !backward) return false;
+        const double forwardDistance = firstEnd.Distance(secondStart);
+        const double backwardDistance = firstEnd.Distance(secondEnd);
+        const double contact = forwardDistance < backwardDistance ? forwardDistance : backwardDistance;
+        const bool forward = forwardDistance <= contactTolerance;
+        const bool backward = backwardDistance <= contactTolerance;
+        if (!forward && !backward)
+        {
+            g_exitSideDiagnostic += "join contact=" + std::to_string(contact) + " reject(contact)\n";
+            return false;
+        }
         flipped = backward && !forward;
 
         gp_Vec directionFirst, directionSecond;
-        if (!ExitLastSegmentDirection(first, directionFirst)) return false;
-        if (!ExitFirstSegmentDirection(second, directionSecond)) return false;
+        if (!ExitWindowDirection(first, true, directionFirst)) return false;
+        if (!ExitWindowDirection(second, false, directionSecond)) return false;
         if (flipped) directionSecond.Reverse();
+        directionFirst = ProjectExitDirection(directionFirst, viewNormal);
+        directionSecond = ProjectExitDirection(directionSecond, viewNormal);
         const double lengthFirst = directionFirst.Magnitude();
         const double lengthSecond = directionSecond.Magnitude();
-        if (lengthFirst <= 1e-9 || lengthSecond <= 1e-9) return false;
+        if (lengthFirst <= kExitPlaneDirectionEpsilon || lengthSecond <= kExitPlaneDirectionEpsilon)
+        {
+            g_exitSideDiagnostic += "join reject(degenerate-projection)\n";
+            return false;
+        }
         const gp_Vec unitFirst = directionFirst / lengthFirst;
         const gp_Vec unitSecond = directionSecond / lengthSecond;
-        const double limit = std::cos(angleToleranceDegrees * 3.141592653589793 / 180.0);
-        return (unitFirst * unitSecond) >= limit;
+        const double cosine = unitFirst * unitSecond;
+        double clamped = cosine;
+        if (clamped < -1.0) clamped = -1.0;
+        if (clamped > 1.0) clamped = 1.0;
+        const double degrees = std::acos(clamped) * 180.0 / 3.141592653589793;
+        const double limit = std::cos(kExitJunctionAngle2dDegrees * 3.141592653589793 / 180.0);
+        g_exitSideDiagnostic += "join contact=" + std::to_string(contact) +
+            " angle2d=" + std::to_string(degrees) + (cosine >= limit ? " pass\n" : " reject(angle)\n");
+        return cosine >= limit;
     }
 
     /// <summary>
@@ -1004,7 +1038,7 @@ namespace
     /// 영역 경계 추출과 동일한 0.01mm Sewing 공차/경계 분류를 사용한다.
     /// </summary>
     bool ExtractBoundaryExitSides(const std::vector<int>& faceIds, double deflection,
-                                  std::vector<NativeExitSide>& sides)
+                                  const gp_Vec& viewNormal, std::vector<NativeExitSide>& sides)
     {
         sides.clear();
         if (faceIds.empty() || !std::isfinite(deflection) || deflection <= 0.0) return false;
@@ -1018,6 +1052,11 @@ namespace
         try
         {
             const double sewingTolerance = 0.01;
+            const double geometryMatchTolerance = 0.05;
+            std::string faceList;
+            for (int faceId : selected) { faceList += std::to_string(faceId); faceList += ','; }
+            g_exitSideDiagnostic.clear();
+            g_exitSideDiagnostic += "faces=" + faceList + "\n";
             BRepBuilderAPI_Sewing sewing(sewingTolerance, Standard_True, Standard_True, Standard_True, Standard_True);
             for (int faceId : selected) sewing.Add(g_faces[faceId]);
             sewing.Perform();
@@ -1057,8 +1096,13 @@ namespace
             // 밀지 않도록 edgeMap 인덱스로 직접 보관한다.
             std::vector<int> adjacent(edgeMap.Extent(), -1);
             for (size_t i = 0; i < boundaryEdges.size(); ++i)
-                adjacent[boundaryIndices[i] - 1] =
-                    FindAdjacentOriginalFace(boundaryEdges[i], selected, sewingTolerance);
+            {
+                const int match = FindAdjacentOriginalFace(boundaryEdges[i], selected, geometryMatchTolerance);
+                adjacent[boundaryIndices[i] - 1] = match;
+                g_exitSideDiagnostic += "edge" + std::to_string(i) +
+                    " len=" + std::to_string(EdgeLengthNative(boundaryEdges[i])) +
+                    " adjacent=" + std::to_string(match) + "\n";
+            }
 
             TopTools_IndexedMapOfShape vertexMap;
             std::vector<std::vector<int>> incident;
@@ -1146,19 +1190,28 @@ namespace
                     }
                     catch (const Standard_Failure&) { sampled = false; }
 
-                    if (faceId < 0 || !sampled)
+                    if (!sampled)
                     {
                         // 반대편 면을 찾지 못한 구간(나체 Edge)은 후보 run을 끊는다.
                         if (current.faceId >= 0 && current.xyz.size() >= 6) runs.push_back(std::move(current));
                         current = NativeExitSide();
                         continue;
                     }
-                    if (current.faceId != faceId)
+                    if (faceId < 0)
                     {
-                        if (current.faceId >= 0 && current.xyz.size() >= 6) runs.push_back(std::move(current));
-                        current = NativeExitSide();
-                        current.faceId = faceId;
+                        // No matching neighbour face (naked edge). Keep the samples as a
+                        // bridge so a single unmatched edge does not split one exit side.
+                        // Runs that never meet a matched face are dropped below, so naked
+                        // boundaries still produce no candidate.
+                        for (const gp_Pnt& p : points) AppendExitPoint(current, -1, p);
+                        continue;
                     }
+                    if (current.faceId >= 0 && current.faceId != faceId)
+                    {
+                        if (current.xyz.size() >= 6) runs.push_back(std::move(current));
+                        current = NativeExitSide();
+                    }
+                    current.faceId = faceId;
                     for (const gp_Pnt& p : points) AppendExitPoint(current, faceId, p);
                 }
                 if (current.faceId >= 0 && current.xyz.size() >= 6) runs.push_back(std::move(current));
@@ -1175,27 +1228,33 @@ namespace
                 // (STEP에서 반대편 면이 달라 중간에 끊긴 긴 변 복원. 구간별 면 id는 segmentStarts에 보존.)
                 {
                     std::vector<NativeExitSide> joined;
-                    for (auto& run : runs)
+                    for (auto& run : runs) joined.push_back(std::move(run));
+                    const double contactTolerance = 2.0 * sewingTolerance;
+                    bool merged = true;
+                    while (merged && joined.size() >= 2)
                     {
-                        bool flipped = false;
-                        if (!joined.empty() && CanJoinExitRuns(joined.back(), run, flipped))
+                        merged = false;
+                        for (size_t i = 0; i + 1 < joined.size(); ++i)
                         {
-                            const NativeExitSide tail = flipped ? ReverseExitRun(run) : run;
-                            AppendExitRun(joined.back(), tail);
+                            bool flipped = false;
+                            if (!CanJoinExitRuns(joined[i], joined[i + 1], viewNormal, contactTolerance, flipped))
+                                continue;
+                            const NativeExitSide tail = flipped ? ReverseExitRun(joined[i + 1]) : joined[i + 1];
+                            AppendExitRun(joined[i], tail);
+                            joined.erase(joined.begin() + static_cast<std::ptrdiff_t>(i + 1));
+                            merged = true;
+                            if (i > 0) --i;
                         }
-                        else
+                        if (joined.size() >= 2)
                         {
-                            joined.push_back(std::move(run));
-                        }
-                    }
-                    if (joined.size() >= 2)
-                    {
-                        bool flipped = false;
-                        if (CanJoinExitRuns(joined.back(), joined.front(), flipped))
-                        {
-                            const NativeExitSide head = flipped ? ReverseExitRun(joined.front()) : joined.front();
-                            AppendExitRun(joined.back(), head);
-                            joined.erase(joined.begin());
+                            bool flipped = false;
+                            if (CanJoinExitRuns(joined.back(), joined.front(), viewNormal, contactTolerance, flipped))
+                            {
+                                const NativeExitSide head = flipped ? ReverseExitRun(joined.front()) : joined.front();
+                                AppendExitRun(joined.back(), head);
+                                joined.erase(joined.begin());
+                                merged = true;
+                            }
                         }
                     }
                     runs.swap(joined);
@@ -3149,13 +3208,26 @@ array<RegionBoundaryLoop^>^ Bridge::GetSelectedRegionBoundary(array<int>^ faceId
 
 array<ExitSideCandidate^>^ Bridge::GetBoundaryExitSides(array<int>^ faceIds, double deflection)
 {
+    // Default working normal is the model +Z axis (legacy behaviour).
+    return Bridge::GetBoundaryExitSides(faceIds, deflection, 0.0, 0.0, 1.0);
+}
+
+System::String^ Bridge::GetExitSideDiagnostic()
+{
+    return msclr::interop::marshal_as<System::String^>(g_exitSideDiagnostic);
+}
+
+array<ExitSideCandidate^>^ Bridge::GetBoundaryExitSides(array<int>^ faceIds, double deflection,
+                                                       double nx, double ny, double nz)
+{
     if (faceIds == nullptr || faceIds->Length == 0) return nullptr;
     std::vector<int> ids(faceIds->Length);
     for (int i = 0; i < faceIds->Length; ++i) ids[(size_t)i] = faceIds[i];
+    const gp_Vec viewNormal(nx, ny, nz);
     std::vector<NativeExitSide> nativeSides;
     try
     {
-        if (!ExtractBoundaryExitSides(ids, deflection, nativeSides)) return nullptr;
+        if (!ExtractBoundaryExitSides(ids, deflection, viewNormal, nativeSides)) return nullptr;
     }
     catch (const Standard_Failure&)
     {

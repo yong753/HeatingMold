@@ -168,7 +168,9 @@ public partial class MainWindow
         CancelExitFacePick();
 
         // 인출면은 확정 영역 외곽선의 반대편 면에서만 고른다 (근접 면 클릭 방식 대체).
-        var sides = Bridge.GetBoundaryExitSides(SortedFaceIds(area), 0.05);
+        var frameNormal = area.Frame.Normal;
+        var sides = Bridge.GetBoundaryExitSides(SortedFaceIds(area), 0.05,
+            frameNormal.X, frameNormal.Y, frameNormal.Z);
         if (sides == null || sides.Length == 0)
         {
             StatusText.Text = "인출 측면 후보가 없습니다 — 적용영역 외곽선에 인접한 면이 없거나 경계 매칭에 실패했습니다";
@@ -187,13 +189,18 @@ public partial class MainWindow
 
         Bridge.ShowExitCandidates(_exitCandidatePolylines = _exitCandidates.Select(c => c.Points).ToArray());
         Viewport.ExitFacePickMode = true;
+        Viewport.ViewLocked = true;
         StatusText.Text = string.Format("외곽선을 따라 표시된 인출 측면 후보 {0}개 — 후보 위로 마우스를 올리면 강조됩니다. 클릭하세요 (Esc 취소)",
             _exitCandidates.Count);
     }
 
     private void CancelExitFacePick()
     {
-        if (Viewport != null) Viewport.ExitFacePickMode = false;
+        if (Viewport != null)
+        {
+            Viewport.ExitFacePickMode = false;
+            Viewport.ViewLocked = false;
+        }
         Bridge.ClearExitCandidates();
         _exitCandidates.Clear();
         _exitCandidatePolylines = Array.Empty<double[]>();
@@ -252,8 +259,11 @@ public partial class MainWindow
             // 중복점 제거로 압축되는 구간의 면 id가 서로 다르면 라벨이 모호하므로 선택을 거부한다.
             int segment = segmentFaceIds[k - 1];
             bool consistent = true;
+            // 매칭에 실패한 경계 Edge는 -1로 남는다. 이 구간은 이웃 라벨과 충돌하지 않으므로
+            // 중복점 압축 판정에서 제외하고, 체인 라벨은 직전 값을 이어받는다.
             for (int t = lastKept; t < k; t++)
-                if (segmentFaceIds[t] != segment) { consistent = false; break; }
+                if (segmentFaceIds[t] >= 0 && segment >= 0 && segmentFaceIds[t] != segment)
+                { consistent = false; break; }
             if (!consistent)
             {
                 CancelExitFacePick();
@@ -262,7 +272,7 @@ public partial class MainWindow
             }
             chain.Add(p);
             chain3D.Add(p3);
-            chainFaceIds.Add(segment);
+            chainFaceIds.Add(segment >= 0 ? segment : (chainFaceIds.Count > 0 ? chainFaceIds[^1] : chosen.FaceId));
             lastKept = k;
         }
         double length = 0;
