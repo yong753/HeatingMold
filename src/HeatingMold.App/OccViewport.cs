@@ -148,6 +148,9 @@ namespace HeatingMold.App
         private int _downX, _downY;
         private int _lastSelectionPreviewX, _lastSelectionPreviewY;
         private int _lastExclusionPreviewX, _lastExclusionPreviewY;
+        // 사각형 선택 라이브 프리뷰 — 이동이 멈춘 뒤에만 갱신한다(디바운스).
+        private DispatcherTimer _rectPreviewTimer;
+        private (int X, int Y)? _pendingRectPreview, _lastRectPreview;
         private int _lastHover = -2;      // W5 — 호버 이벤트 중복 억제
         private int _activeDragMode; // 0=orbit, 1=rectangle selection, 2=exclusion sketch
         private bool _connectorEditMode;
@@ -177,6 +180,8 @@ namespace HeatingMold.App
         }
 
         private const int ClickDragThreshold = 4;   // px — 이하면 클릭(픽킹), 초과 시 회전
+        // 사각형 선택 프리뷰는 프로빙/Redraw 비용이 크므로 이동이 멈춘 뒤 갱신한다.
+        private const int RectPreviewIntervalMs = 100;
 
         /// <summary>W3 — 면 클릭 선택 결과 (faceId, 없으면 -1)</summary>
         public event Action<int, bool> FacePicked;
@@ -307,6 +312,39 @@ namespace HeatingMold.App
             _powerPreviewTimer?.Stop();
             _pendingPowerPreview = _lastPowerPreview = null;
             Bridge.ClearPowerLeadPreview();
+        }
+
+        // 사각형 선택 프리뷰도 최신 좌표만 일정 시간 뒤에 반영한다. 이동마다
+        // 프로빙/Redisplay를 실행하면 드래그가 끊기기 때문이다.
+        private void QueueRectPreview(int x, int y)
+        {
+            var point = (X: x, Y: y);
+            if (_pendingRectPreview == point) return;
+            _pendingRectPreview = point;
+            if (_rectPreviewTimer == null)
+            {
+                _rectPreviewTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+                    { Interval = TimeSpan.FromMilliseconds(RectPreviewIntervalMs) };
+                _rectPreviewTimer.Tick += FlushRectPreview;
+            }
+            if (!_rectPreviewTimer.IsEnabled) _rectPreviewTimer.Start();
+        }
+
+        private void FlushRectPreview(object sender, EventArgs e)
+        {
+            _rectPreviewTimer?.Stop();
+            var point = _pendingRectPreview;
+            _pendingRectPreview = null;
+            if (!_ready || _activeDragMode != 1 || !_dragStarted || point == null || point == _lastRectPreview) return;
+            _lastRectPreview = point;
+            bool ctrl = (GetKeyState(0x11) & 0x8000) != 0;   // VK_CONTROL
+            Bridge.PreviewFacesInRectangle(_downX, _downY, point.Value.X, point.Value.Y, ctrl);
+        }
+
+        private void CancelRectPreview()
+        {
+            _rectPreviewTimer?.Stop();
+            _pendingRectPreview = _lastRectPreview = null;
         }
 
         /// <summary>진행 중인 꼭지점 드래그를 취소하고 완료 이벤트를 올리지 않는다.</summary>
@@ -494,6 +532,7 @@ namespace HeatingMold.App
                     _lastExclusionPreviewY = _downY;
                     _lastSelectionPreviewX = _downX;
                     _lastSelectionPreviewY = _downY;
+                    CancelRectPreview();   // 이전 드래그의 프리뷰 대기 상태 초기화
                     bool shift = (GetKeyState(0x10) & 0x8000) != 0;
                     // Face 선택이 꺼진 탭에서는 Shift+드래그가 사각형 선택으로 승격되지 않게 한다.
                     bool rectangleSelect = (shift || RectangleSelectionMode) && FaceSelectionEnabled;
@@ -578,6 +617,10 @@ namespace HeatingMold.App
                                     CancelPowerLeadPreview();
                                     Bridge.RotateStart(_downX, _downY);
                                 }
+                                else if (_activeDragMode == 1)
+                                {
+                                    Bridge.ClearHover();          // 사각형 선택 중 호버색 잔상 방지
+                                }
                             }
                         }
                         if (_dragStarted)
@@ -589,6 +632,10 @@ namespace HeatingMold.App
                                 _lastSelectionPreviewX = x;
                                 _lastSelectionPreviewY = y;
                                 Bridge.SetSelectionRectangle(_downX, _downY, x, y);
+                                // 드래그 중 선택 예정 면을 미리 하이라이트한다. 이동마다
+                                // 프로빙/Redisplay를 하면 UI가 끊기므로 최신 좌표만
+                                // 디바운스 타이머로 반영한다(마우스 업에서 최종 확정).
+                                QueueRectPreview(x, y);
                             }
                             else if (_activeDragMode == 2 &&
                                      (Math.Abs(x - _lastExclusionPreviewX) >= 4 || Math.Abs(y - _lastExclusionPreviewY) >= 4))
@@ -677,6 +724,7 @@ namespace HeatingMold.App
                             if (_activeDragMode == 0 && !ViewLocked) Bridge.RotateEnd();
                             else if (_activeDragMode == 1)
                             {
+                                CancelRectPreview();
                                 Bridge.ClearSelectionRectangle();
                                 bool toggle = (GetKeyState(0x11) & 0x8000) != 0;
                                 int[] ids = Bridge.SelectFacesInRectangle(_downX, _downY, x, y, toggle);
@@ -716,7 +764,12 @@ namespace HeatingMold.App
                     _dragging = false;
                     if (_panDragging && _ready) Bridge.PanEnd();
                     _panDragging = false;
-                    if (_activeDragMode == 1) Bridge.ClearSelectionRectangle();
+                    if (_activeDragMode == 1)
+                    {
+                        CancelRectPreview();
+                        Bridge.ClearSelectionRectangle();
+                        Bridge.ClearFacesRectanglePreview();   // 캡처 상실 시 프리뷰 색 복원
+                    }
                     if (_activeDragMode == 2 && _dragStarted) ExclusionSketchCancelled?.Invoke();
                     _dragStarted = false;
                     break;

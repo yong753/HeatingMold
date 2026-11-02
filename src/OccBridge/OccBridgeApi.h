@@ -301,6 +301,10 @@ public:
     static array<int>^ SelectFacesInRectangle(int x0, int y0, int x1, int y1, bool toggle);
     static void SetSelectionRectangle(int x0, int y0, int x1, int y1);
     static void ClearSelectionRectangle();
+    /// <summary>드래그 중 사각형 선택 결과를 선택색으로 미리 표시한다(AIS 선택은 변경하지 않음).</summary>
+    static void PreviewFacesInRectangle(int x0, int y0, int x1, int y1, bool toggle);
+    /// <summary>사각형 드래그 프리뷰 색을 걷어내고 실제 선택 상태 색으로 되돌린다.</summary>
+    static void ClearFacesRectanglePreview();
     static array<double>^ ScreenPointOnPlane(int x, int y, double ox, double oy, double oz, double nx, double ny, double nz);
     static bool AddExclusionOverlay(array<double>^ xyzFlat);
     static void SetExclusionPreview(array<double>^ xyzFlat);
