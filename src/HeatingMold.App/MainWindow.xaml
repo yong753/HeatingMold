@@ -458,9 +458,20 @@
                                                 Style="{StaticResource FlatButton}" Margin="0,10,0,0"/>
                                         <TextBlock Style="{StaticResource Hint}"
                                                    Text="금형 4면 투상도(+히든선)와 전기 사양표를 output\heat_pattern.dxf로 저장합니다. 발열 경로는 아직 포함되지 않습니다."/>
+                                    </StackPanel>
+                                </Border>
+                            </ScrollViewer>
+                        </TabItem>
 
-                                        <Border Height="1" Background="{StaticResource LineBrush}" Margin="0,12,0,10"/>
+                        <!-- 5. 전기 -->
+                        <TabItem Header="전기" Style="{StaticResource SidebarTabItem}">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                          Padding="4,8,10,12">
+                                <Border Style="{StaticResource Card}">
+                                    <StackPanel>
                                         <TextBlock Text="전기 사양" Style="{StaticResource SectionTitle}"/>
+                                        <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0"
+                                                   Text="아래 표는 DXF 내보내기에 동일한 구성으로 포함됩니다."/>
                                         <TextBlock Text="발열사 프리셋" Style="{StaticResource FieldLabel}" Margin="0,8,0,3"/>
                                         <ComboBox x:Name="WirePresetBox" Height="28" SelectedIndex="0"
                                                   SelectionChanged="WirePreset_Changed">
@@ -511,19 +522,44 @@
                                         <TextBlock x:Name="ElectricalSummaryText" Style="{StaticResource Hint}"
                                                    Margin="0,8,0,4" Text="생성된 발열 경로가 없습니다"/>
                                         <DataGrid x:Name="ElectricalSpecGrid" AutoGenerateColumns="False" IsReadOnly="True"
-                                                  Height="170" HeadersVisibility="Column" RowHeaderWidth="0"
+                                                  Height="260" HeadersVisibility="Column" RowHeaderWidth="0"
                                                   GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#EDEFF2"
                                                   BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
                                                   Background="White" RowBackground="White"
                                                   AlternatingRowBackground="#FAFBFC" FontSize="11"
-                                                  HorizontalScrollBarVisibility="Auto">
+                                                  HorizontalScrollBarVisibility="Auto"
+                                                  ClipboardCopyMode="IncludeHeader">
+                                            <DataGrid.RowStyle>
+                                                <Style TargetType="DataGridRow">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsTotal}" Value="True">
+                                                            <Setter Property="FontWeight" Value="Bold"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </DataGrid.RowStyle>
                                             <DataGrid.Columns>
                                                 <DataGridTextColumn Header="회로" Binding="{Binding CircuitId}" Width="*" MinWidth="38"/>
-                                                <DataGridTextColumn Header="길이 m" Binding="{Binding LengthM, StringFormat=F2}" Width="*" MinWidth="44"/>
-                                                <DataGridTextColumn Header="저항 Ω" Binding="{Binding ResistanceOhm, StringFormat=F2}" Width="*" MinWidth="44"/>
-                                                <DataGridTextColumn Header="전류 A" Binding="{Binding CurrentA, StringFormat=F2}" Width="*" MinWidth="44"/>
-                                                <DataGridTextColumn Header="전력 W" Binding="{Binding PowerW, StringFormat=F1}" Width="*" MinWidth="46"/>
-                                                <DataGridTextColumn Header="판정" Binding="{Binding VerdictShortText}" Width="Auto" MinWidth="38"/>
+                                                <DataGridTextColumn Header="길이 m" Binding="{Binding LengthM, StringFormat=F2}" Width="*" MinWidth="42"/>
+                                                <DataGridTextColumn Header="저항 Ω" Binding="{Binding ResistanceOhm, StringFormat=F2}" Width="*" MinWidth="42"/>
+                                                <DataGridTextColumn Header="전압 V" Binding="{Binding VoltageV, StringFormat=F1}" Width="*" MinWidth="38"/>
+                                                <DataGridTextColumn Header="전류 A" Binding="{Binding CurrentA, StringFormat=F2}" Width="*" MinWidth="42"/>
+                                                <DataGridTextColumn Header="전력 W" Binding="{Binding PowerW, StringFormat=F1}" Width="*" MinWidth="44"/>
+                                                <DataGridTextColumn Header="판정" Binding="{Binding VerdictText}" Width="Auto" MinWidth="44">
+                                                    <DataGridTextColumn.ElementStyle>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Foreground" Value="#16A34A"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsFault}" Value="True">
+                                                                    <Setter Property="Foreground" Value="#DC2626"/>
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding IsTotal}" Value="True">
+                                                                    <Setter Property="FontWeight" Value="Bold"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </DataGridTextColumn.ElementStyle>
+                                                </DataGridTextColumn>
                                             </DataGrid.Columns>
                                         </DataGrid>
                                         <TextBlock Style="{StaticResource Hint}"

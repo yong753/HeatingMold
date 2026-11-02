@@ -16,6 +16,18 @@ public partial class MainWindow
 
     private sealed record CircuitLengthInfo(string CircuitId, double HeatingLengthMm, double LeadLengthMm);
 
+    /// <summary>사양표 UI 표시용 행. 합계 행은 길이/저항/전압이 비어 있고 IsTotal이 true다.</summary>
+    private sealed record ElectricalSpecUiRow(
+        string CircuitId,
+        double? LengthM,
+        double? ResistanceOhm,
+        double? VoltageV,
+        double? CurrentA,
+        double? PowerW,
+        string VerdictText,
+        bool IsTotal,
+        bool IsFault);
+
     private void InitializeElectricalUi()
     {
         _electricalUiReady = true;
@@ -128,7 +140,19 @@ public partial class MainWindow
 
         ElectricalSpecTable table = ElectricalSpecTableBuilder.Build(inputs, wire, supply);
         _lastElectricalTable = table;
-        ElectricalSpecGrid.ItemsSource = table.Rows;
+
+        var rows = table.Rows
+            .Select(r => new ElectricalSpecUiRow(
+                r.CircuitId, r.LengthM, r.ResistanceOhm, r.VoltageV, r.CurrentA, r.PowerW,
+                r.VerdictText, false, r.Verdict != ElectricalVerdict.Ok))
+            .ToList();
+        if (rows.Count > 0)
+        {
+            rows.Add(new ElectricalSpecUiRow(
+                "합계", null, null, null, table.TotalCurrentA, table.TotalPowerW,
+                table.TotalVerdictText, true, table.TotalVerdict != ElectricalVerdict.Ok));
+        }
+        ElectricalSpecGrid.ItemsSource = rows;
 
         ElectricalSummaryText.Text = table.Rows.Count == 0
             ? "생성된 발열 경로가 없습니다"
