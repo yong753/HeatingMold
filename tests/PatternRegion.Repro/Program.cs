@@ -37,10 +37,53 @@ static class Program
         throw new FileNotFoundException("resource/Mold.stp not found; pass the STEP path as the first argument.");
     }
 
+    /// <summary>
+    /// Exit-side dump for a real model: <c>--exit &lt;step&gt; &lt;faceId&gt;...</c>.
+    /// Prints every candidate and the native extraction diagnostic.
+    /// </summary>
+    static int ExitSideDump(string[] args)
+    {
+        bool use3d = args.Contains("--3d");
+        var rest = args.Where(a => a != "--3d").ToArray();
+        var model = rest.Length > 0 ? Path.GetFullPath(rest[0]) : ModelPath(Array.Empty<string>());
+        var ids = rest.Skip(1).Select(int.Parse).ToArray();
+        if (ids.Length == 0) ids = new[] { 9, 18, 74 };
+        Console.WriteLine($"model: {model}");
+        if (!Bridge.LoadStep(model)) { Console.WriteLine("FAIL load STEP"); return 2; }
+        var info = Bridge.GetShapeInfo();
+        Console.WriteLine($"faces={info.Faces} solids={info.Solids} shells={info.Shells}");
+        foreach (var id in ids) Console.WriteLine($"face {id}: {Bridge.GetFaceType(id)}");
+
+        var sides = Bridge.GetBoundaryExitSides(ids, 0.05, 0, 0, use3d ? 0 : 1);
+        Console.WriteLine($"candidates={(sides == null ? 0 : sides.Length)}");
+        if (sides != null)
+            for (int i = 0; i < sides.Length; i++)
+            {
+                var s = sides[i];
+                int points = s.Points.Length / 3;
+                double length = 0;
+                for (int k = 1; k < points; k++)
+                    length += Dist(
+                        new[] { s.Points[(k - 1) * 3], s.Points[(k - 1) * 3 + 1], s.Points[(k - 1) * 3 + 2] },
+                        new[] { s.Points[k * 3], s.Points[k * 3 + 1], s.Points[k * 3 + 2] });
+                string labels = s.SegmentFaceIds == null
+                    ? "<null>"
+                    : string.Join(",", s.SegmentFaceIds.GroupBy(x => x).Select(g => $"{g.Key}x{g.Count()}"));
+                Console.WriteLine($"  [{i}] face={s.FaceId} points={points} length={length:F2} segments={labels}");
+                Console.WriteLine(
+                    $"      start=({s.Points[0]:F2},{s.Points[1]:F2},{s.Points[2]:F2}) end=({s.Points[^3]:F2},{s.Points[^2]:F2},{s.Points[^1]:F2})");
+            }
+
+        Console.WriteLine("--- diagnostic ---");
+        Console.WriteLine(Bridge.GetExitSideDiagnostic() ?? "<null>");
+        return 0;
+    }
+
     [STAThread]
     static int Main(string[] args)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
+        if (args.Length > 0 && args[0] == "--exit") return ExitSideDump(args.Skip(1).ToArray());
         var model = ModelPath(args);
         Console.WriteLine($"model: {model}");
 
