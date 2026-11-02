@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\HeatingMold.Core\HeatingMold.Core.csproj" />
+    <ProjectReference Include="..\..\src\HeatingMold.Export\HeatingMold.Export.csproj" />
   </ItemGroup>
 
 </Project>

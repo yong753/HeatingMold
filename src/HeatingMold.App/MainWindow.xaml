@@ -457,7 +457,77 @@
                                         <Button Content="DXF 투상도 내보내기" Click="Export_Click"
                                                 Style="{StaticResource FlatButton}" Margin="0,10,0,0"/>
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="금형 4면 투상도(+히든선)를 output\heat_pattern.dxf로 저장합니다. 생성된 발열 경로와 사양표는 아직 포함되지 않습니다."/>
+                                                   Text="금형 4면 투상도(+히든선)와 전기 사양표를 output\heat_pattern.dxf로 저장합니다. 발열 경로는 아직 포함되지 않습니다."/>
+
+                                        <Border Height="1" Background="{StaticResource LineBrush}" Margin="0,12,0,10"/>
+                                        <TextBlock Text="전기 사양" Style="{StaticResource SectionTitle}"/>
+                                        <TextBlock Text="발열사 프리셋" Style="{StaticResource FieldLabel}" Margin="0,8,0,3"/>
+                                        <ComboBox x:Name="WirePresetBox" Height="28" SelectedIndex="0"
+                                                  SelectionChanged="WirePreset_Changed">
+                                            <ComboBoxItem Content="Case 1 — SUS 316L, Ø0.3 mm, 4 Ω/m"/>
+                                            <ComboBoxItem Content="Case 2 — SUS 316L, Ø0.15 mm, 8 Ω/m"/>
+                                            <ComboBoxItem Content="직접 입력"/>
+                                        </ComboBox>
+                                        <Grid Margin="0,8,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="10"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+                                            <StackPanel Grid.Row="0" Grid.Column="0">
+                                                <TextBlock Text="직경 (mm)" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox x:Name="WireDiameterBox" Text="0.3" Style="{StaticResource ValueBox}"
+                                                         TextChanged="ElectricalInput_Changed"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="0" Grid.Column="2">
+                                                <TextBlock Text="단위 저항 (Ω/m)" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox x:Name="WireResistanceBox" Text="4" Style="{StaticResource ValueBox}"
+                                                         TextChanged="ElectricalInput_Changed"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,8,0,0">
+                                                <TextBlock Text="인가전압 (V)" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox x:Name="AppliedVoltageBox" Text="220" Style="{StaticResource ValueBox}"
+                                                         TextChanged="ElectricalInput_Changed"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,8,0,0">
+                                                <TextBlock Text="허용 전류 (A)" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox x:Name="MaxCurrentBox" Text="16" Style="{StaticResource ValueBox}"
+                                                         TextChanged="ElectricalInput_Changed"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="2" Grid.Column="0" Margin="0,8,0,0">
+                                                <TextBlock Text="허용 전력 (W)" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox x:Name="MaxPowerBox" Text="3520" Style="{StaticResource ValueBox}"
+                                                         TextChanged="ElectricalInput_Changed"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Row="2" Grid.Column="2" Margin="0,26,0,0"
+                                                       Style="{StaticResource Hint}"
+                                                       Text="합계는 모든 회로가 하나의 전원을 공유한다고 가정합니다."/>
+                                        </Grid>
+                                        <TextBlock x:Name="ElectricalSummaryText" Style="{StaticResource Hint}"
+                                                   Margin="0,8,0,4" Text="생성된 발열 경로가 없습니다"/>
+                                        <DataGrid x:Name="ElectricalSpecGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                                                  Height="170" HeadersVisibility="Column" RowHeaderWidth="0"
+                                                  GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#EDEFF2"
+                                                  BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                                                  Background="White" RowBackground="White"
+                                                  AlternatingRowBackground="#FAFBFC" FontSize="11"
+                                                  HorizontalScrollBarVisibility="Auto">
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="회로" Binding="{Binding CircuitId}" Width="*" MinWidth="38"/>
+                                                <DataGridTextColumn Header="길이 m" Binding="{Binding LengthM, StringFormat=F2}" Width="*" MinWidth="44"/>
+                                                <DataGridTextColumn Header="저항 Ω" Binding="{Binding ResistanceOhm, StringFormat=F2}" Width="*" MinWidth="44"/>
+                                                <DataGridTextColumn Header="전류 A" Binding="{Binding CurrentA, StringFormat=F2}" Width="*" MinWidth="44"/>
+                                                <DataGridTextColumn Header="전력 W" Binding="{Binding PowerW, StringFormat=F1}" Width="*" MinWidth="46"/>
+                                                <DataGridTextColumn Header="판정" Binding="{Binding VerdictShortText}" Width="Auto" MinWidth="38"/>
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="L은 가열부 길이(인출부 제외)이며 외부 리드 저항은 반영하지 않습니다. P = V²/(rL), R = rL, I = V/R (RMS, 상온 일정 저항)."/>
                                     </StackPanel>
                                 </Border>
                             </ScrollViewer>

@@ -9,6 +9,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using Rectangle = System.Windows.Shapes.Rectangle;
 using Polyline = System.Windows.Shapes.Polyline;
+using HeatingMold.Core.Electrical;
 using HeatingMold.Core.Geometry;
 using HeatingMold.Core.Model;
 using HeatingMold.Export;
@@ -113,6 +114,7 @@ namespace HeatingMold.App
             ApplyPowerMigrationState();
             UpdateActionStates();
             InitializeSidebar();
+            InitializeElectricalUi();
         }
 
         // 전원 연결은 경로 마이그레이션 전까지 네이티브 게이트로만 막혀 있었다.
@@ -998,24 +1000,22 @@ namespace HeatingMold.App
         {
             if (CircuitLengthGrid == null) return;
             var area = _activeArea;
-            if (area?.Pattern == null) { CircuitLengthGrid.ItemsSource = null; return; }
-            var rows = new List<CircuitLengthRow>();
-            var groups = CircuitPieceGroups(area);
-            var lengthById = new Dictionary<int, double>();
-            var heatingIds = new HashSet<int>();
-            for (int i = 0; i < area.NativePieceIds.Length; i++)
+            if (area?.Pattern == null)
             {
-                lengthById[area.NativePieceIds[i]] = area.RoutePieceLengths.ElementAtOrDefault(i);
-                if (i < area.Pattern.RoutePieces.Count && area.Pattern.RoutePieces[i].Kind != SerpentineRoutePieceKind.ExitPiece)
-                    heatingIds.Add(area.NativePieceIds[i]);
+                CircuitLengthGrid.ItemsSource = null;
+                RefreshElectricalTable();
+                return;
             }
-            for (int i = 0; i < groups.Count; i++)
-            {
-                double heating = groups[i].Where(id => heatingIds.Contains(id))
-                    .Sum(id => lengthById.TryGetValue(id, out double value) ? value : 0);
-                rows.Add(new CircuitLengthRow { Circuit = (i + 1).ToString(), HeatingLength = heating, LeadLength = area.LeadLengths.ElementAtOrDefault(i) });
-            }
-            CircuitLengthGrid.ItemsSource = rows;
+
+            CircuitLengthGrid.ItemsSource = GetCircuitLengths(area)
+                .Select(x => new CircuitLengthRow
+                {
+                    Circuit = x.CircuitId,
+                    HeatingLength = x.HeatingLengthMm,
+                    LeadLength = x.LeadLengthMm
+                })
+                .ToList();
+            RefreshElectricalTable();
         }
 
         // Group stable route-piece IDs, not resampled planar points. Disabled
@@ -1245,8 +1245,14 @@ namespace HeatingMold.App
 
             try
             {
+                ElectricalSpecTable spec = _lastElectricalTable;
+                if (spec == null)
+                {
+                    StatusText.Text = "전기 사양을 계산할 수 없습니다 — 입력값과 발열 경로를 확인하세요";
+                    return;
+                }
                 var views = BuildViews();
-                DxfExporter.ExportViews(file, views);
+                DxfExporter.ExportViews(file, views, specTable: spec);
                 StatusText.Text = "DXF 저장 — " + file;
             }
             catch (Exception ex)

@@ -38,6 +38,7 @@ public partial class MainWindow
         ConfirmedAreasList.ItemsSource = _areas.ToList();
         ConfirmedAreasList.SelectedItem = _activeArea;
         _suppressAreaSelection = false;
+        RefreshElectricalTable();
     }
 
     private void ConfirmedAreasList_SelectionChanged(object sender, SelectionChangedEventArgs e)
