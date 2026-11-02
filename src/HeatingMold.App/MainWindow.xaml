@@ -535,7 +535,7 @@
                                             </DataGrid.Columns>
                                         </DataGrid>
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="L은 가열부 길이(인출부 제외)이며 외부 리드 저항은 반영하지 않습니다. P = V²/(rL), R = rL, I = V/R (RMS, 상온 일정 저항)."/>
+                                                   Text="L은 가열부 길이(인출부 제외)이며 외부 리드 저항은 반영하지 않습니다. P = V²/(rL), R = rL, I = V/R."/>
                                     </StackPanel>
                                 </Border>
                             </ScrollViewer>
