@@ -268,9 +268,9 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
             "hover reports the same camera-facing face");
         Bridge.ClearHover();
         var coincidentRectangle=Bridge.SelectFacesInRectangle(
-            coincidentCenter[0]-4,coincidentCenter[1]-4,coincidentCenter[0]+4,coincidentCenter[1]+4,false);
-        Check(coincidentRectangle!=null && coincidentRectangle.Contains(frontFace) && !coincidentRectangle.Contains(backFace),
-            "rectangle pick skips the coincident back-facing face");
+            coincidentCenter[0]-4,coincidentCenter[1]-4,coincidentCenter[0]+4,coincidentCenter[1]+4);
+        Check(coincidentRectangle!=null && coincidentRectangle.Contains(frontFace) && coincidentRectangle.Contains(backFace),
+            "rectangle pick includes the coincident back-facing face (OCCT native behavior)");
         Bridge.SetViewFrame(0,0,-1,0,1,0);
         var flippedCenter=Bridge.WorldToScreen(0,0,0);
         Check(flippedCenter!=null && Bridge.SelectFace(flippedCenter[0],flippedCenter[1],false)==backFace,

@@ -290,8 +290,6 @@ namespace
     // 꼭지점 편집 오버레이 (WorkingSideNative.inc에서 정의, 이 파일 뒤쪽에 include됨)
     void ClearVertexHandlesNative();
     void ClearRoutePreviewNative();
-    // 사각형 선택 드래그 프리뷰 (정의는 SelectFacesRectangleNative 앞)
-    void ClearFacesRectanglePreviewNative();
     // 제외영역 채움 메시 점유 면 조회 (AreaHighlightNative.inc에서 정의, 뒤쪽 include)
     bool IsFaceInAreaHighlightNative(int faceId);
     std::vector<Handle(AIS_Shape)> g_exclusionOverlays;
@@ -312,18 +310,6 @@ namespace
     // stays on the same face.
     int g_hoverColorFace = -1;
 
-    // ---- 사각형 선택 라이브 프리뷰 ----
-    // 드래그 중에는 AIS 선택을 건드리지 않고 색 오버라이드만 갱신한다.
-    std::set<int> g_rectPreviewFaces;     // 마지막 프리뷰의 선택 예정 면(초록)
-    std::set<int> g_rectPreviewReleased;  // 프리뷰 때문에 하이라이트가 해제된 면
-    std::set<int> g_rectPreviewTouched;   // 프리뷰가 색을 바꾼 모든 면(취소 복원용)
-
-    // 증분 프로빙 캐시. 드래그 중에는 뷰가 고정이므로 픽셀(절대 좌표)당 면 결과를
-    // 재사용하고, 사각형이 새로 덮은 픽셀만 추가 조사한다. 매 업데이트 전체
-    // 재프로빙(수백 회 ray-BRep 교차)이 프리뷰 끊김의 원인이었으므로 핵심 개선이다.
-    std::map<long long, int> g_rectProbeCache;   // (x<<32)|y -> faceId(-1=빈 픽셀)
-    std::map<int, int> g_rectProbeCount;         // faceId -> 캐시 점유 픽셀 수
-    int g_rectProbeStep = 0;                     // 현재 그리드 간격(0=비활성)
 
     void RebuildFaceCache()
     {
@@ -340,12 +326,6 @@ namespace
 
     const Quantity_Color kSelectedFaceColor(0.12, 0.82, 0.38, Quantity_TOC_RGB);   // 선택 = 초록
     const Quantity_Color kConfirmedFaceColor(0.90, 0.16, 0.16, Quantity_TOC_RGB);  // 단일 영역 기본값
-    // 사각형 선택의 화면 그리드 프로브 상한. 최종 선택은 정확도 우선(2500),
-    // 드래그 프리뷰는 픽셀 캐시로 증분 갱신하므로 그리드를 거칠게(400) 유지하고,
-    // 업데이트당 새 프로브 수를 제한해 점진적으로 정밀해진다.
-    constexpr int kRectSelectMaxProbes = 2500;
-    constexpr int kRectPreviewMaxProbes = 400;
-    constexpr int kRectPreviewPerUpdateProbes = 140;
     const Quantity_Color kHeatingRouteColor(1.00, 0.10, 0.10, Quantity_TOC_RGB);   // 발열 경로 = 두꺼운 빨강
     const Quantity_Color kConnectorRouteColor(0.10, 0.65, 1.00, Quantity_TOC_RGB); // 턴 커넥터 = 파랑 점선
     const Quantity_Color kRouteEndpointColor(1.00, 0.05, 0.05, Quantity_TOC_RGB);  // 인출점/끝점 마커
@@ -460,7 +440,6 @@ namespace
     void HideFaceHighlightsNative()
     {
         if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
-        ClearFacesRectanglePreviewNative();   // 드래그 프리뷰 색도 함께 제거
         Handle(AIS_ColoredShape) colored = Handle(AIS_ColoredShape)::DownCast(g_aisShape);
         if (colored.IsNull()) return;
         // Remove presentation overrides, not selected owners: Ctrl selection and
@@ -516,12 +495,6 @@ namespace
         g_selectedFaceIds.clear();
         g_confirmedFaceColors.clear();
         g_faceHighlightsVisible = true;
-        g_rectPreviewFaces.clear();
-        g_rectPreviewReleased.clear();
-        g_rectPreviewTouched.clear();
-        g_rectProbeCache.clear();
-        g_rectProbeCount.clear();
-        g_rectProbeStep = 0;
     }
 
     void ClearDisplayedShape()
@@ -540,12 +513,6 @@ namespace
         g_confirmedFaceColors.clear();
         g_lastHoverFace = -1;
         g_hoverColorFace = -1;
-        g_rectPreviewFaces.clear();
-        g_rectPreviewReleased.clear();
-        g_rectPreviewTouched.clear();
-        g_rectProbeCache.clear();
-        g_rectProbeCount.clear();
-        g_rectProbeStep = 0;
     }
 
     bool LoadStepFile(const char* path)
@@ -2610,7 +2577,6 @@ namespace
     void ClearFaceSelectionNative()
     {
         if (g_ctx.IsNull() || g_view.IsNull()) return;
-        ClearFacesRectanglePreviewNative();   // 드래그 프리뷰 색이 남아 있으면 먼저 복원
         g_ctx->ClearSelected(Standard_False);
         UpdateSelectedFaceColors();
         g_view->Redraw();
@@ -2632,199 +2598,12 @@ namespace
         return selected;
     }
 
-    /// <summary>사각형 영역의 가시 면을 화면 그리드 프로빙으로 수집한다.
-    /// 최종 선택과 프리뷰가 같은 코드를 쓰고 maxProbeCount만 다르다.</summary>
-    std::set<int> CollectVisibleFacesInRectNative(int clippedMinX, int clippedMinY,
-                                                  int clippedMaxX, int clippedMaxY, int maxProbeCount)
-    {
-        // OCCT rectangle selection includes sensitive faces behind the visible
-        // surface. Probe the rectangle and keep only the frontmost detected face
-        // at each screen location. Bound work for very large window selections.
-        std::set<int> visibleFaces;
-        const int64_t width = static_cast<int64_t>(clippedMaxX) - clippedMinX + 1;
-        const int64_t height = static_cast<int64_t>(clippedMaxY) - clippedMinY + 1;
-        const int64_t area = width * height;
-        int step = std::max(1, static_cast<int>(std::ceil(std::sqrt(static_cast<double>(area) / maxProbeCount))));
-        while (((width + step - 1) / step) * ((height + step - 1) / step) > maxProbeCount) ++step;
-        for (int y = clippedMinY; ; y = std::min(clippedMaxY, y + step))
-        {
-            for (int x = clippedMinX; ; x = std::min(clippedMaxX, x + step))
-            {
-                int pickedFace = -1;
-                if (PickFaceAtPixelNative(x, y, pickedFace) == PickStatusNative::Ok)
-                    visibleFaces.insert(pickedFace);
-                if (x == clippedMaxX) break;
-            }
-            if (y == clippedMaxY) break;
-        }
-        return visibleFaces;
-    }
-
-    /// <summary>사각형 드래그의 최종 선택 집합(토글 XOR 포함)을 계산한다.</summary>
-    std::set<int> ComputeRectangleTargetFacesNative(const std::set<int>& visibleFaces, bool toggle,
-                                                    const std::set<int>& previouslySelected)
-    {
-        std::set<int> targetFaces = toggle ? previouslySelected : std::set<int>();
-        for (int faceId : visibleFaces)
-        {
-            if (toggle && previouslySelected.count(faceId) != 0) targetFaces.erase(faceId);
-            else targetFaces.insert(faceId);
-        }
-        return targetFaces;
-    }
-
-    /// <summary>면들을 실제 기준 색으로 복원한다. 확정색 > 선택색 > 원래 색.</summary>
-    void RestoreFacesToBaseColorNative(const std::set<int>& faces)
-    {
-        for (int faceId : faces)
-        {
-            if (const Quantity_Color* confirmed = ConfirmedFaceColor(faceId)) SetFaceColorOverride(faceId, *confirmed);
-            else if (g_selectedFaceIds.count(faceId) != 0) SetFaceColorOverride(faceId, kSelectedFaceColor);
-            else ClearFaceColorOverride(faceId);
-        }
-    }
-
-    /// <summary>드래그 프리뷰 색을 모두 걷어내고 실제 선택 상태 색으로 되돌린다.</summary>
-    void ClearFacesRectanglePreviewNative()
-    {
-        if (g_rectPreviewTouched.empty()) return;
-        RestoreFacesToBaseColorNative(g_rectPreviewTouched);
-        g_rectPreviewFaces.clear();
-        g_rectPreviewReleased.clear();
-        g_rectPreviewTouched.clear();
-        g_rectProbeCache.clear();
-        g_rectProbeCount.clear();
-        g_rectProbeStep = 0;
-        if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
-        g_ctx->Redisplay(g_aisShape, Standard_False);
-        if (!g_view.IsNull()) g_view->Redraw();
-    }
-
-    /// <summary>드래그 중 사각형 선택 결과를 선택색으로 미리 칠한다(AIS 선택은 불변).</summary>
-    void PreviewFacesInRectangleNative(int x0, int y0, int x1, int y1, bool toggle)
-    {
-        if (g_ctx.IsNull() || g_view.IsNull() || g_aisShape.IsNull()) return;
-        if (!g_faceHighlightsVisible) return;
-        if (Handle(AIS_ColoredShape)::DownCast(g_aisShape).IsNull()) return;
-        const int minX = std::min(x0, x1), maxX = std::max(x0, x1);
-        const int minY = std::min(y0, y1), maxY = std::max(y0, y1);
-        Standard_Integer viewWidth = 0, viewHeight = 0;
-        g_view->Window()->Size(viewWidth, viewHeight);
-        const int clippedMinX = std::max(0, minX), clippedMaxX = std::min(viewWidth - 1, maxX);
-        const int clippedMinY = std::max(0, minY), clippedMaxY = std::min(viewHeight - 1, maxY);
-        if (clippedMinX > clippedMaxX || clippedMinY > clippedMaxY)
-        {
-            ClearFacesRectanglePreviewNative();
-            return;
-        }
-        // 호버색이 남아 있으면 프리뷰 색과 섞이므로 먼저 걷어낸다.
-        DropHoverFaceColorNative();
-        g_lastHoverFace = -1;
-
-        // 증분 프로빙: 캐시에 없는 그리드 픽셀만 이번 업데이트 예산만큼 조사한다.
-        // 첫 갱신은 거칠게 시작해 후속 갱신에서 점진적으로 정밀해진다.
-        const int64_t width = static_cast<int64_t>(clippedMaxX) - clippedMinX + 1;
-        const int64_t height = static_cast<int64_t>(clippedMaxY) - clippedMinY + 1;
-        const int64_t area = width * height;
-        const int step = std::max(1, static_cast<int>(std::ceil(
-            std::sqrt(static_cast<double>(area) / kRectPreviewMaxProbes))));
-        if (step != g_rectProbeStep)   // 그리드 간격이 바뀌면 캐시 무효화
-        {
-            g_rectProbeCache.clear();
-            g_rectProbeCount.clear();
-            g_rectProbeStep = step;
-        }
-
-        // 사각형 밖으로 나간 캐시 픽셀 제거 -> 축소 시 면이 프리뷰에서 즉시 빠진다.
-        for (auto it = g_rectProbeCache.begin(); it != g_rectProbeCache.end(); )
-        {
-            const int px = static_cast<int>(it->first >> 32);
-            const int py = static_cast<int>(it->first & 0xFFFFFFFFLL);
-            if (px < clippedMinX || px > clippedMaxX || py < clippedMinY || py > clippedMaxY)
-            {
-                if (it->second >= 0)
-                {
-                    auto count = g_rectProbeCount.find(it->second);
-                    if (count != g_rectProbeCount.end() && --count->second <= 0) g_rectProbeCount.erase(count);
-                }
-                it = g_rectProbeCache.erase(it);
-            }
-            else ++it;
-        }
-
-        // 새로 덮인 그리드 픽셀만 예산만큼 조사. 그리드는 절대 좌표(step의 배수)에
-        // 고정해 사각형이 조금씩 움직여도 캐시가 무효화되지 않게 한다.
-        const int firstX = ((clippedMinX + step - 1) / step) * step;
-        const int firstY = ((clippedMinY + step - 1) / step) * step;
-        size_t probed = 0;
-        for (int y = firstY; y <= clippedMaxY && probed < static_cast<size_t>(kRectPreviewPerUpdateProbes); y += step)
-        {
-            for (int x = firstX; x <= clippedMaxX && probed < static_cast<size_t>(kRectPreviewPerUpdateProbes); x += step)
-            {
-                const long long key = (static_cast<long long>(x) << 32) | static_cast<unsigned int>(y);
-                if (g_rectProbeCache.count(key) != 0) continue;
-                int pickedFace = -1;
-                g_rectProbeCache[key] =
-                    PickFaceAtPixelNative(x, y, pickedFace) == PickStatusNative::Ok ? pickedFace : -1;
-                if (g_rectProbeCache[key] >= 0) ++g_rectProbeCount[g_rectProbeCache[key]];
-                ++probed;
-            }
-        }
-
-        // 캐시를 점유한 면 = 프리뷰 대상
-        std::set<int> visibleFaces;
-        for (const auto& entry : g_rectProbeCount) visibleFaces.insert(entry.first);
-
-        const std::set<int> previouslySelected = CollectSelectedFaceIdsNative();
-        const std::set<int> targetFaces =
-            ComputeRectangleTargetFacesNative(visibleFaces, toggle, previouslySelected);
-
-        // 이번 프리뷰에서 하이라이트가 해제되어야 하는 면:
-        // 현재 선택 + 이전 프리뷰 중 target에 없는 것.
-        std::set<int> newReleased = g_selectedFaceIds;
-        newReleased.insert(g_rectPreviewFaces.begin(), g_rectPreviewFaces.end());
-        for (int faceId : targetFaces) newReleased.erase(faceId);
-
-        bool changed = false;
-        for (int faceId : newReleased)
-        {
-            if (g_rectPreviewReleased.count(faceId) != 0) continue;
-            if (const Quantity_Color* confirmed = ConfirmedFaceColor(faceId)) SetFaceColorOverride(faceId, *confirmed);
-            else ClearFaceColorOverride(faceId);
-            g_rectPreviewTouched.insert(faceId);
-            changed = true;
-        }
-        for (int faceId : g_rectPreviewReleased)
-        {
-            if (newReleased.count(faceId) != 0) continue;
-            // 다시 선택 예정 → 초록. 확정 영역 색(빨강)은 그대로 유지한다.
-            if (const Quantity_Color* confirmed = ConfirmedFaceColor(faceId)) SetFaceColorOverride(faceId, *confirmed);
-            else SetFaceColorOverride(faceId, kSelectedFaceColor);
-            g_rectPreviewTouched.insert(faceId);
-            changed = true;
-        }
-        for (int faceId : targetFaces)
-        {
-            if (g_rectPreviewFaces.count(faceId) != 0) continue;   // 이미 초록
-            if (g_selectedFaceIds.count(faceId) != 0) continue;    // 선택색 유지
-            if (ConfirmedFaceColor(faceId) != nullptr) continue;   // 확정 영역 색 유지
-            SetFaceColorOverride(faceId, kSelectedFaceColor);
-            g_rectPreviewTouched.insert(faceId);
-            changed = true;
-        }
-        g_rectPreviewFaces = targetFaces;
-        g_rectPreviewReleased = newReleased;
-        if (!changed) return;
-        g_ctx->Redisplay(g_aisShape, Standard_False);
-        g_view->Redraw();
-    }
-
-    std::vector<int> SelectFacesRectangleNative(int x0, int y0, int x1, int y1, bool toggle)
+    /// <summary>사각형 영역을 OCCT 네이티브 선택으로 적용한다(항상 교체).
+    /// OCCT 기본 동작이므로 화면에서 가려진 뒤쪽 면도 함께 선택된다.</summary>
+    std::vector<int> SelectFacesRectangleNative(int x0, int y0, int x1, int y1)
     {
         std::vector<int> result;
         if (g_ctx.IsNull() || g_view.IsNull() || g_aisShape.IsNull()) return result;
-        // 실제 선택을 적용하기 전에 드래그 프리뷰 색을 걷어낸다.
-        ClearFacesRectanglePreviewNative();
         const int minX = std::min(x0, x1), maxX = std::max(x0, x1);
         const int minY = std::min(y0, y1), maxY = std::max(y0, y1);
         Standard_Integer viewWidth = 0, viewHeight = 0;
@@ -2832,44 +2611,20 @@ namespace
         const int clippedMinX = std::max(0, minX), clippedMaxX = std::min(viewWidth - 1, maxX);
         const int clippedMinY = std::max(0, minY), clippedMaxY = std::min(viewHeight - 1, maxY);
         if (clippedMinX > clippedMaxX || clippedMinY > clippedMaxY) return result;
-        std::map<int, Handle(SelectMgr_EntityOwner)> owners;
-        std::set<int> previouslySelected;
 
-        // Keep currently selected owners so XOR selection can preserve faces
-        // outside the rectangle while replacing the selection deterministically.
-        for (g_ctx->InitSelected(); g_ctx->MoreSelected(); g_ctx->NextSelected())
-        {
-            Handle(SelectMgr_EntityOwner) owner = g_ctx->SelectedOwner();
-            const Handle(StdSelect_BRepOwner) brep = Handle(StdSelect_BRepOwner)::DownCast(owner);
-            if (brep.IsNull() || !brep->HasShape()) continue;
-            if (!g_faceMap.Contains(brep->Shape())) continue;
-            const int faceId = g_faceMap.FindIndex(brep->Shape()) - 1;
-            previouslySelected.insert(faceId);
-            owners[faceId] = owner;
-        }
-        {
-            // The picker resolves face IDs, not AIS owners; map the whole mode-4
-            // selection once instead of per probe.
-            std::map<int, Handle(SelectMgr_EntityOwner)> faceOwners;
-            if (BuildFaceOwnerMapNative(faceOwners))
-                for (const auto& entry : faceOwners) owners.emplace(entry.first, entry.second);
-        }
-
-        const std::set<int> visibleFaces = CollectVisibleFacesInRectNative(
-            clippedMinX, clippedMinY, clippedMaxX, clippedMaxY, kRectSelectMaxProbes);
-        const std::set<int> targetFaces =
-            ComputeRectangleTargetFacesNative(visibleFaces, toggle, previouslySelected);
-        g_ctx->ClearSelected(Standard_False);
-        for (int faceId : targetFaces)
-        {
-            auto it = owners.find(faceId);
-            if (it != owners.end()) g_ctx->AddSelect(it->second);
-        }
+        // 완전히 포함된 면만 고르는 기본값(false) 대신 부분 교차도 선택되게 한다.
+        g_ctx->MainSelector()->AllowOverlapDetection(Standard_True);
+        // Replace: 기존 선택을 지우고 이번 사각형 결과로 교체한다.
+        g_ctx->SelectRectangle(Graphic3d_Vec2i(clippedMinX, clippedMinY),
+                               Graphic3d_Vec2i(clippedMaxX, clippedMaxY),
+                               g_view, AIS_SelectionScheme_Replace);
         g_ctx->HilightSelected(Standard_False);
         UpdateSelectedFaceColors();
         g_ctx->ClearDetected(Standard_False);
         g_lastHoverFace = -1;
-        result.assign(targetFaces.begin(), targetFaces.end());
+
+        const std::set<int> selected = CollectSelectedFaceIdsNative();
+        result.assign(selected.begin(), selected.end());
         g_view->Redraw();
         return result;
     }
@@ -3816,9 +3571,9 @@ array<double>^ Bridge::GetAutoAxis(int axis)
     return r;
 }
 
-array<int>^ Bridge::SelectFacesInRectangle(int x0, int y0, int x1, int y1, bool toggle)
+array<int>^ Bridge::SelectFacesInRectangle(int x0, int y0, int x1, int y1)
 {
-    const std::vector<int> ids = SelectFacesRectangleNative(x0, y0, x1, y1, toggle);
+    const std::vector<int> ids = SelectFacesRectangleNative(x0, y0, x1, y1);
     array<int>^ result = gcnew array<int>((int)ids.size());
     for (int i = 0; i < result->Length; ++i) result[i] = ids[(size_t)i];
     return result;
@@ -3832,16 +3587,6 @@ void Bridge::SetSelectionRectangle(int x0, int y0, int x1, int y1)
 void Bridge::ClearSelectionRectangle()
 {
     ClearSelectionRectangleNative();
-}
-
-void Bridge::PreviewFacesInRectangle(int x0, int y0, int x1, int y1, bool toggle)
-{
-    PreviewFacesInRectangleNative(x0, y0, x1, y1, toggle);
-}
-
-void Bridge::ClearFacesRectanglePreview()
-{
-    ClearFacesRectanglePreviewNative();
 }
 
 array<double>^ Bridge::ScreenPointOnPlane(int x, int y, double ox, double oy, double oz, double nx, double ny, double nz)

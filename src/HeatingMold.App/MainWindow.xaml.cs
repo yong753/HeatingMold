@@ -303,7 +303,7 @@ namespace HeatingMold.App
             if (enabled) StatusText.Text = "모델 뷰포트에서 사각형 제외영역을 드래그하세요";
         }
 
-        private void OnFacesRectanglePicked(int[] faceIds, bool toggle)
+        private void OnFacesRectanglePicked(int[] faceIds)
         {
             if (faceIds == null) return;
             if (ActiveSidebarTab != AreaTabIndex) return;

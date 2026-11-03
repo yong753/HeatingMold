@@ -311,9 +311,6 @@ public partial class MainWindow
     private string FaceTypesText(WorkingArea area) =>
         string.Join(", ", SortedFaceIds(area).Select(id => "Face " + id + "=" + Bridge.GetFaceType(id)));
 
-    /// <summary>위상 인접성 검사가 실패한 전이에서 허용하는 실제 3D 간극 — 게이트 sewing 허용치 0.01mm와 동일.</summary>
-    private const double SeamGapTolerance = 0.01;
-
     /// <summary>
     /// 곡면 영역의 조각 하나를 데이텀 점 단위로 매핑해 3D 폴리라인으로 스테이징한다.
     /// 2D 프레임 → 3D 평면 되돌리기와 BRepProj 재투영을 모두 쓰지 않는다.
@@ -341,23 +338,6 @@ public partial class MainWindow
                 _vertexBaselineSamples[(area, index)] = samples;
         }
 
-        // 결정적 레이캐스트에서는 같은 데이텀 점이 항상 같은 3D 점을 내므로 인접 조각 끝점은
-        // 자동으로 일치한다. 여기서는 비인접 면으로 건너뛴 경우만 잡는다(앞/뒤면 붕괴 방지).
-        // 위상적으로 Edge를 공유하지 않아도 두 면이 기하학적으로는 접합(같은 곡면)일 수 있다.
-        // 전이 지점의 데이텀 간격을 µm 수준으로 좁혀 실제 3D 간극을 재고, 그 값으로 판정한다.
-        for (int i = 1; i < samples.Count; i++)
-        {
-            int previous = samples[i - 1].FaceId, current = samples[i].FaceId;
-            if (previous < 0 || current < 0 || previous == current) continue;
-            double? gap = MeasureSeamGap(hit, samples[i - 1], samples[i]);
-            if (gap.HasValue && gap.Value <= SeamGapTolerance) continue;
-            throw new InvalidOperationException(
-                "영역 " + area.Name + " 경로 조각 " + (index + 1) + "/" + count + " (" + piece.Kind + ")가 인접하지 않은 면으로 건너뜁니다 — Face "
-                + previous + " → Face " + current + " (3D 간극 "
-                + (gap.HasValue ? gap.Value.ToString("F4", System.Globalization.CultureInfo.InvariantCulture) : "측정 실패")
-                + " mm) [" + FaceTypesText(area) + "]");
-        }
-
         var xyz = new double[samples.Count * 3];
         var supportFaces = new int[samples.Count];
         for (int i = 0; i < samples.Count; i++)
@@ -383,28 +363,6 @@ public partial class MainWindow
             or SerpentineRoutePieceKind.FixedConnector or SerpentineRoutePieceKind.ExitPiece
             ? "ExcludedBridge"
             : piece.Kind.ToString();
-
-    /// <summary>
-    /// 두 연속 샘플의 면이 다를 때 그 사이 데이텀 구간을 이분 탐색해 전이 지점을 µm 수준으로 좁히고,
-    /// 같은 데이텀에서 양쪽 면의 3D 점 거리(= 실제 간극)를 잰다. 접합면이면 ≈0, 앞/뒤면 붕괴면 벽 두께.
-    /// 측정 불가(구간이 영역 밖으로 나감)면 null.
-    /// </summary>
-    private static double? MeasureSeamGap(Func<Vec2, SurfaceMappedSample?> hit,
-        SurfaceMappedSample before, SurfaceMappedSample after)
-    {
-        Vec2 low = before.DatumPoint, high = after.DatumPoint;
-        int lowFace = before.FaceId;
-        Vec3 lowPoint = before.Point, highPoint = after.Point;
-        for (int step = 0; step < 30; step++)
-        {
-            var middle = new Vec2((low.X + high.X) * 0.5, (low.Y + high.Y) * 0.5);
-            var sample = hit(middle);
-            if (!sample.HasValue || sample.Value.FaceId < 0) return null;
-            if (sample.Value.FaceId == lowFace) { low = middle; lowPoint = sample.Value.Point; }
-            else { high = middle; highPoint = sample.Value.Point; }
-        }
-        return (lowPoint - highPoint).Length;
-    }
 
     /// <summary>2D 인출 체인에서 가장 가까운 구간을 찾아 같은 구간 파라미터로 3D 점을 보간한다.</summary>
     private static Vec3 PointOnExitChain3D(WorkingArea area, Vec2 datum, out int segmentIndex)

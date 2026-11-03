@@ -39,11 +39,11 @@ static class SidebarTabChecks
               window.FindName("VertexUndoButton") is Button &&
               window.FindName("VertexRedoButton") is Button,
             "vertex edit controls live in the viewport toolbar under the heating-path name");
-        Check(tabs.Items.Count == 4 && tabs.SelectedIndex == 0,
-            "sidebar exposes four tabs and starts on the area tab");
+        Check(tabs.Items.Count == 5 && tabs.SelectedIndex == 0,
+            "sidebar exposes five tabs and starts on the area tab");
         Check(window.FindName("ActiveAreaSummaryText") == null &&
               tabs.Items.Cast<TabItem>().Select(t => t.Header as string)
-                  .SequenceEqual(new[] { "영역", "패턴", "편집", "결과" }),
+                  .SequenceEqual(new[] { "영역", "패턴", "편집", "결과", "전기" }),
             "sidebar drops the active-area summary card and keeps labelled tabs");
         Check(excludeBox.IsChecked != true && !excludeBox.IsEnabled && !clearExclusions.IsEnabled,
             "exclude controls start disabled in the viewport toolbar");
