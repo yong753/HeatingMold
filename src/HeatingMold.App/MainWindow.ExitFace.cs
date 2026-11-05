@@ -551,6 +551,5 @@ public partial class MainWindow
             leads[i] = lead;
         }
         area.LeadLengths = leads;
-        if (ReferenceEquals(area, _activeArea)) _leadLengths = leads;
     }
 }

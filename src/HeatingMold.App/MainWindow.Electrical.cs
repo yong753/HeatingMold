@@ -12,7 +12,6 @@ public partial class MainWindow
 {
     private bool _electricalUiReady;
     private bool _suppressElectricalInput;
-    private ElectricalSpecTable _lastElectricalTable;
 
     private sealed record CircuitLengthInfo(string CircuitId, double HeatingLengthMm, double LeadLengthMm);
 
@@ -106,20 +105,15 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 확정된 발열 경로의 회로별 길이로 전기 사양표를 다시 계산한다.
-    /// L은 가열부(HeatingRun + 활성 Turn + FixedConnector)만 합산하고 ExitPiece는 외부 인출로 제외한다.
+    /// 현재 입력값과 확정된 모든 발열 경로로 전기 사양을 계산한다.
+    /// UI 표시와 DXF 출력이 같은 계산 경로를 사용하도록 캐시 없이 매번 계산한다.
     /// </summary>
-    private void RefreshElectricalTable()
+    private bool TryBuildCurrentElectricalTable(out ElectricalSpecTable table, out PowerSupplySpec supply, out string error)
     {
-        if (!_electricalUiReady || ElectricalSpecGrid == null) return;
-
-        if (!TryReadElectricalSettings(out HeatingWireSpec wire, out PowerSupplySpec supply, out string error))
-        {
-            ElectricalSpecGrid.ItemsSource = null;
-            ElectricalSummaryText.Text = "입력 오류 ? " + error;
-            _lastElectricalTable = null;
-            return;
-        }
+        table = null;
+        supply = null;
+        if (!TryReadElectricalSettings(out HeatingWireSpec wire, out supply, out error))
+            return false;
 
         var inputs = new List<ElectricalCircuitInput>();
         var areas = _areas.Where(a => a?.Pattern != null && a.RoutePieceLengths.Length > 0).ToList();
@@ -135,8 +129,24 @@ public partial class MainWindow
                 inputs.Add(new ElectricalCircuitInput(length.CircuitId, length.HeatingLengthMm));
         }
 
-        ElectricalSpecTable table = ElectricalSpecTableBuilder.Build(inputs, wire, supply);
-        _lastElectricalTable = table;
+        table = ElectricalSpecTableBuilder.Build(inputs, wire, supply);
+        return true;
+    }
+
+    /// <summary>
+    /// 확정된 발열 경로의 회로별 길이로 전기 사양표를 다시 계산한다.
+    /// L은 가열부(HeatingRun + 활성 Turn + FixedConnector)만 합산하고 ExitPiece는 외부 인출로 제외한다.
+    /// </summary>
+    private void RefreshElectricalTable()
+    {
+        if (!_electricalUiReady || ElectricalSpecGrid == null) return;
+
+        if (!TryBuildCurrentElectricalTable(out ElectricalSpecTable table, out PowerSupplySpec supply, out string error))
+        {
+            ElectricalSpecGrid.ItemsSource = null;
+            ElectricalSummaryText.Text = "입력 오류 ? " + error;
+            return;
+        }
 
         var rows = table.Rows
             .Select(r => new ElectricalSpecUiRow(

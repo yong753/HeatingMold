@@ -48,7 +48,6 @@
     bool                      g_faceIdCacheValid = false;
     FaceIdCameraKeyNative     g_faceIdCameraKey;
     long long                 g_faceIdBuildCount = 0;
-    long long                 g_faceIdQueryCount = 0;
     bool                      g_faceIdBuildFailed = false;
 
     // 사각형 선택 프리뷰 세션 — 취소 시 되돌릴 기준 선택.
@@ -337,7 +336,6 @@
     {
         out.clear();
         if (!EnsureFaceIdCacheNative()) return false;
-        ++g_faceIdQueryCount;
 
         int minX = std::min(x0, x1), maxX = std::max(x0, x1);
         int minY = std::min(y0, y1), maxY = std::max(y0, y1);

@@ -11,6 +11,10 @@ public static class SurfacePathMapper
     private const double MaxChordError = 0.05;
     private const int MaxDepth = 18;
     private const int DefaultMaxProbes = 100_000;
+    private const string DenseDepthError =
+        "Surface mapping could not resolve a discontinuity or sampling tolerance within depth 18.";
+    private const string RouteDepthError =
+        "Surface mapping could not resolve a discontinuity within depth 18.";
 
     public static bool AreSamplesContinuous(IReadOnlyList<SurfaceMappedSample> samples,
         Func<int,int,bool> adjacent, double max3DStep = 2.0)
@@ -38,108 +42,9 @@ public static class SurfacePathMapper
     {
         ArgumentNullException.ThrowIfNull(path);
         ArgumentNullException.ThrowIfNull(hit);
-        if (maxProbes < 1) throw new ArgumentOutOfRangeException(nameof(maxProbes));
-        mapped = new List<Vec3>();
-        failure = string.Empty;
-        if (path.Count == 0)
-        {
-            failure = "The planar path is empty.";
-            return false;
-        }
-
-        var result = new List<Vec3>();
-        string error = string.Empty;
-        int probes = 0;
-
-        bool TryProbe(Vec2 point, out Vec3 value)
-        {
-            value = default;
-            if (!double.IsFinite(point.X) || !double.IsFinite(point.Y))
-            {
-                error = "The planar path contains a nonfinite coordinate.";
-                return false;
-            }
-            if (probes >= maxProbes)
-            {
-                error = $"Surface mapping exceeded the {maxProbes}-probe limit.";
-                return false;
-            }
-            probes++;
-            Vec3? sample = hit(point);
-            if (!sample.HasValue)
-            {
-                error = "The path leaves the selected surface domain.";
-                return false;
-            }
-            value = sample.Value;
-            if (!double.IsFinite(value.X) || !double.IsFinite(value.Y) || !double.IsFinite(value.Z))
-            {
-                error = "A surface hit contains a nonfinite coordinate.";
-                return false;
-            }
-            return true;
-        }
-
-        void Append(Vec3 point)
-        {
-            if (result.Count == 0 || result[^1] != point) result.Add(point);
-        }
-
-        bool Refine(Vec2 a, Vec3 mappedA, Vec2 b, Vec3 mappedB, int depth)
-        {
-            Vec2 midpoint = a * 0.5 + b * 0.5;
-            if (!TryProbe(midpoint, out Vec3 mappedMidpoint)) return false;
-            Vec2 quarter = a * 0.75 + b * 0.25;
-            Vec2 threeQuarter = a * 0.25 + b * 0.75;
-            if (!TryProbe(quarter, out Vec3 mappedQuarter) ||
-                !TryProbe(threeQuarter, out Vec3 mappedThreeQuarter)) return false;
-
-            // Compare at the same parameter, rather than distance to the infinite
-            // chord line: a jump along that line must also trigger refinement.
-            Vec3 chordMidpoint = mappedA * 0.5 + mappedB * 0.5;
-            Vec3 chordQuarter = mappedA * 0.75 + mappedB * 0.25;
-            Vec3 chordThreeQuarter = mappedA * 0.25 + mappedB * 0.75;
-            if (a.DistanceTo(b) <= MaxPlanarSpacing &&
-                (mappedMidpoint - chordMidpoint).Length <= MaxChordError &&
-                (mappedQuarter - chordQuarter).Length <= MaxChordError &&
-                (mappedThreeQuarter - chordThreeQuarter).Length <= MaxChordError)
-            {
-                // These probes are part of the accepted leaf's ordered geometry: dropping
-                // them here can hide a narrow face/domain transition between equal endpoints.
-                Append(mappedQuarter);
-                Append(mappedMidpoint);
-                Append(mappedThreeQuarter);
-                Append(mappedB);
-                return true;
-            }
-            if (depth >= MaxDepth || midpoint == a || midpoint == b)
-            {
-                error = "Surface mapping could not resolve a discontinuity or sampling tolerance within depth 18.";
-                return false;
-            }
-            return Refine(a, mappedA, midpoint, mappedMidpoint, depth + 1) &&
-                Refine(midpoint, mappedMidpoint, b, mappedB, depth + 1);
-        }
-
-        if (!TryProbe(path[0], out Vec3 previous))
-        {
-            failure = error;
-            return false;
-        }
-        Append(previous);
-        for (int i = 1; i < path.Count; i++)
-        {
-            if (path[i] == path[i - 1]) continue;
-            if (!TryProbe(path[i], out Vec3 next) ||
-                !Refine(path[i - 1], previous, path[i], next, 0))
-            {
-                failure = error;
-                return false;
-            }
-            previous = next;
-        }
-        mapped = result;
-        return true;
+        return TryMapCore(path, hit, point => point, (a, b) => a == b,
+            requirePlanarSpacing: true, gapSpacing: 0, previousSampleFromResult: false,
+            DenseDepthError, out mapped, out failure, maxProbes);
     }
 
     /// <summary>Adaptive map retaining the face identity of every final, path-ordered sample.</summary>
@@ -147,43 +52,10 @@ public static class SurfacePathMapper
         out List<SurfaceMappedSample> mapped, out string failure, int maxProbes = DefaultMaxProbes)
     {
         ArgumentNullException.ThrowIfNull(path); ArgumentNullException.ThrowIfNull(hit);
-        mapped = new(); failure = string.Empty;
-        if (maxProbes < 1) throw new ArgumentOutOfRangeException(nameof(maxProbes));
-        if (path.Count == 0) { failure = "The planar path is empty."; return false; }
-        var result = new List<SurfaceMappedSample>(); string error = string.Empty; int probes = 0;
-        bool Probe(Vec2 uv, out SurfaceMappedSample sample)
-        {
-            sample = default;
-            if (!double.IsFinite(uv.X) || !double.IsFinite(uv.Y)) { error = "The planar path contains a nonfinite coordinate."; return false; }
-            if (probes++ >= maxProbes) { error = $"Surface mapping exceeded the {maxProbes}-probe limit."; return false; }
-            var value = hit(uv);
-            if (!value.HasValue) { error = "The path leaves the selected surface domain."; return false; }
-            sample = value.Value;
-            if (!double.IsFinite(sample.Point.X) || !double.IsFinite(sample.Point.Y) || !double.IsFinite(sample.Point.Z))
-            { error = "A surface hit contains a nonfinite coordinate."; return false; }
-            return true;
-        }
-        void Append(SurfaceMappedSample sample)
-        { if (result.Count == 0 || result[^1].DatumPoint != sample.DatumPoint) result.Add(sample); }
-        bool Refine(Vec2 a, SurfaceMappedSample ma, Vec2 b, SurfaceMappedSample mb, int depth)
-        {
-            Vec2 mid=a*0.5+b*0.5, q1=a*0.75+b*0.25, q3=a*0.25+b*0.75;
-            if (!Probe(mid,out var mm) || !Probe(q1,out var m1) || !Probe(q3,out var m3)) return false;
-            Vec3 chordMid=ma.Point*0.5+mb.Point*0.5, chord1=ma.Point*0.75+mb.Point*0.25, chord3=ma.Point*0.25+mb.Point*0.75;
-            if (a.DistanceTo(b)<=MaxPlanarSpacing && (mm.Point-chordMid).Length<=MaxChordError &&
-                (m1.Point-chord1).Length<=MaxChordError && (m3.Point-chord3).Length<=MaxChordError)
-            { Append(m1); Append(mm); Append(m3); Append(mb); return true; }
-            if (depth>=MaxDepth || mid==a || mid==b) { error="Surface mapping could not resolve a discontinuity or sampling tolerance within depth 18."; return false; }
-            return Refine(a,ma,mid,mm,depth+1) && Refine(mid,mm,b,mb,depth+1);
-        }
-        if (!Probe(path[0],out var first)) { failure=error; return false; }
-        Append(first);
-        for (int i=1;i<path.Count;i++)
-        {
-            if (path[i]==path[i-1]) continue;
-            if (!Probe(path[i],out var next) || !Refine(path[i-1],result[^1],path[i],next,0)) { failure=error; return false; }
-        }
-        mapped=result; return true;
+        return TryMapCore(path, hit, sample => sample.Point,
+            (a, b) => a.DatumPoint == b.DatumPoint,
+            requirePlanarSpacing: true, gapSpacing: 0, previousSampleFromResult: true,
+            DenseDepthError, out mapped, out failure, maxProbes);
     }
 
     /// <summary>
@@ -194,6 +66,7 @@ public static class SurfacePathMapper
     public static bool TryMapRoute(IReadOnlyList<Vec2> path, Func<Vec2, SurfaceMappedSample?> hit,
         out List<SurfaceMappedSample> mapped, out string failure, int maxProbes = DefaultMaxProbes)
     {
+        ArgumentNullException.ThrowIfNull(path); ArgumentNullException.ThrowIfNull(hit);
         return TryMapRouteCore(path, hit, 0, out mapped, out failure, maxProbes);
     }
 
@@ -208,31 +81,74 @@ public static class SurfacePathMapper
     {
         if (!double.IsFinite(gapSpacing) || gapSpacing < 0)
             throw new ArgumentOutOfRangeException(nameof(gapSpacing));
+        ArgumentNullException.ThrowIfNull(path); ArgumentNullException.ThrowIfNull(hit);
         return TryMapRouteCore(path, hit, gapSpacing, out mapped, out failure, maxProbes);
     }
 
     private static bool TryMapRouteCore(IReadOnlyList<Vec2> path, Func<Vec2, SurfaceMappedSample?> hit,
         double gapSpacing, out List<SurfaceMappedSample> mapped, out string failure, int maxProbes)
     {
-        ArgumentNullException.ThrowIfNull(path); ArgumentNullException.ThrowIfNull(hit);
-        mapped = new(); failure = string.Empty;
+        return TryMapCore(path, hit, sample => sample.Point,
+            (a, b) => a.DatumPoint == b.DatumPoint,
+            requirePlanarSpacing: false, gapSpacing, previousSampleFromResult: true,
+            RouteDepthError, out mapped, out failure, maxProbes);
+    }
+
+    /// <summary>
+    /// Shared adaptive traversal. The three public modes differ only in sample equality,
+    /// planar-spacing policy, optional gap probes, and which sample seeds the next segment.
+    /// Probe order and every rejection path are intentionally identical across modes.
+    /// </summary>
+    private static bool TryMapCore<TSample>(IReadOnlyList<Vec2> path, Func<Vec2, TSample?> hit,
+        Func<TSample, Vec3> pointOf, Func<TSample, TSample, bool> same,
+        bool requirePlanarSpacing, double gapSpacing, bool previousSampleFromResult,
+        string depthError, out List<TSample> mapped, out string failure, int maxProbes)
+        where TSample : struct
+    {
+        mapped = new List<TSample>();
+        failure = string.Empty;
         if (maxProbes < 1) throw new ArgumentOutOfRangeException(nameof(maxProbes));
         if (path.Count == 0) { failure = "The planar path is empty."; return false; }
-        var result = new List<SurfaceMappedSample>(); string error = string.Empty; int probes = 0;
-        bool Probe(Vec2 uv, out SurfaceMappedSample sample)
+
+        var result = new List<TSample>();
+        string error = string.Empty;
+        int probes = 0;
+
+        bool Probe(Vec2 point, out TSample sample)
         {
             sample = default;
-            if (!double.IsFinite(uv.X) || !double.IsFinite(uv.Y)) { error = "The planar path contains a nonfinite coordinate."; return false; }
-            if (probes++ >= maxProbes) { error = $"Surface mapping exceeded the {maxProbes}-probe limit."; return false; }
-            var value = hit(uv);
-            if (!value.HasValue) { error = "The path leaves the selected surface domain."; return false; }
+            if (!double.IsFinite(point.X) || !double.IsFinite(point.Y))
+            {
+                error = "The planar path contains a nonfinite coordinate.";
+                return false;
+            }
+            if (probes >= maxProbes)
+            {
+                error = $"Surface mapping exceeded the {maxProbes}-probe limit.";
+                return false;
+            }
+            probes++;
+            TSample? value = hit(point);
+            if (!value.HasValue)
+            {
+                error = "The path leaves the selected surface domain.";
+                return false;
+            }
             sample = value.Value;
-            if (!double.IsFinite(sample.Point.X) || !double.IsFinite(sample.Point.Y) || !double.IsFinite(sample.Point.Z))
-            { error = "A surface hit contains a nonfinite coordinate."; return false; }
+            Vec3 mappedPoint = pointOf(sample);
+            if (!double.IsFinite(mappedPoint.X) || !double.IsFinite(mappedPoint.Y) || !double.IsFinite(mappedPoint.Z))
+            {
+                error = "A surface hit contains a nonfinite coordinate.";
+                return false;
+            }
             return true;
         }
-        void Append(SurfaceMappedSample sample)
-        { if (result.Count == 0 || result[^1].DatumPoint != sample.DatumPoint) result.Add(sample); }
+
+        void Append(TSample sample)
+        {
+            if (result.Count == 0 || !same(result[^1], sample)) result.Add(sample);
+        }
+
         // 리프 내부의 표본화되지 않은 긴 구간을 gapSpacing 간격으로 확인한다.
         bool ProbeLeafGaps(Vec2 a, Vec2 b)
         {
@@ -247,27 +163,70 @@ public static class SurfacePathMapper
             }
             return true;
         }
-        bool Refine(Vec2 a, SurfaceMappedSample ma, Vec2 b, SurfaceMappedSample mb, int depth)
+
+        bool Refine(Vec2 a, TSample mappedA, Vec2 b, TSample mappedB, int depth)
         {
-            Vec2 mid=a*0.5+b*0.5, q1=a*0.75+b*0.25, q3=a*0.25+b*0.75;
-            if (!Probe(mid,out var mm) || !Probe(q1,out var m1) || !Probe(q3,out var m3)) return false;
-            Vec3 chordMid=ma.Point*0.5+mb.Point*0.5, chord1=ma.Point*0.75+mb.Point*0.25, chord3=ma.Point*0.25+mb.Point*0.75;
-            if ((mm.Point-chordMid).Length<=MaxChordError &&
-                (m1.Point-chord1).Length<=MaxChordError && (m3.Point-chord3).Length<=MaxChordError)
+            Vec2 midpoint = a * 0.5 + b * 0.5;
+            if (!Probe(midpoint, out TSample mappedMidpoint)) return false;
+            Vec2 quarter = a * 0.75 + b * 0.25;
+            Vec2 threeQuarter = a * 0.25 + b * 0.75;
+            if (!Probe(quarter, out TSample mappedQuarter) ||
+                !Probe(threeQuarter, out TSample mappedThreeQuarter)) return false;
+
+            // Compare at the same parameter, rather than distance to the infinite
+            // chord line: a jump along that line must also trigger refinement.
+            Vec3 pointA = pointOf(mappedA);
+            Vec3 pointB = pointOf(mappedB);
+            Vec3 chordMidpoint = pointA * 0.5 + pointB * 0.5;
+            Vec3 chordQuarter = pointA * 0.75 + pointB * 0.25;
+            Vec3 chordThreeQuarter = pointA * 0.25 + pointB * 0.75;
+            bool withinPlanarSpacing = !requirePlanarSpacing || a.DistanceTo(b) <= MaxPlanarSpacing;
+            if (withinPlanarSpacing &&
+                (pointOf(mappedMidpoint) - chordMidpoint).Length <= MaxChordError &&
+                (pointOf(mappedQuarter) - chordQuarter).Length <= MaxChordError &&
+                (pointOf(mappedThreeQuarter) - chordThreeQuarter).Length <= MaxChordError)
             {
                 if (!ProbeLeafGaps(a, b)) return false;
-                Append(m1); Append(mm); Append(m3); Append(mb); return true;
+                // These probes are part of the accepted leaf's ordered geometry: dropping
+                // them here can hide a narrow face/domain transition between equal endpoints.
+                Append(mappedQuarter);
+                Append(mappedMidpoint);
+                Append(mappedThreeQuarter);
+                Append(mappedB);
+                return true;
             }
-            if (depth>=MaxDepth || mid==a || mid==b) { error="Surface mapping could not resolve a discontinuity within depth 18."; return false; }
-            return Refine(a,ma,mid,mm,depth+1) && Refine(mid,mm,b,mb,depth+1);
+            if (depth >= MaxDepth || midpoint == a || midpoint == b)
+            {
+                error = depthError;
+                return false;
+            }
+            return Refine(a, mappedA, midpoint, mappedMidpoint, depth + 1) &&
+                Refine(midpoint, mappedMidpoint, b, mappedB, depth + 1);
         }
-        if (!Probe(path[0],out var first)) { failure=error; return false; }
-        Append(first);
-        for (int i=1;i<path.Count;i++)
+
+        if (!Probe(path[0], out TSample previous))
         {
-            if (path[i]==path[i-1]) continue;
-            if (!Probe(path[i],out var next) || !Refine(path[i-1],result[^1],path[i],next,0)) { failure=error; return false; }
+            failure = error;
+            return false;
         }
-        mapped=result; return true;
+        Append(previous);
+        for (int i = 1; i < path.Count; i++)
+        {
+            if (path[i] == path[i - 1]) continue;
+            if (!Probe(path[i], out TSample next))
+            {
+                failure = error;
+                return false;
+            }
+            TSample segmentStart = previousSampleFromResult ? result[^1] : previous;
+            if (!Refine(path[i - 1], segmentStart, path[i], next, 0))
+            {
+                failure = error;
+                return false;
+            }
+            previous = next;
+        }
+        mapped = result;
+        return true;
     }
 }

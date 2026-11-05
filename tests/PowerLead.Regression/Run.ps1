@@ -10,13 +10,22 @@ $msbuild = 'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Curr
 if ($LASTEXITCODE) { throw 'Native bridge build failed' }
 & $msbuild "$root/HeatingMold.Mvp.sln" /p:Configuration=Release /p:Platform=x64 "/p:OutDir=$root\x64\PowerLeadBuild\" /m /v:minimal
 if ($LASTEXITCODE) { throw 'Isolated Release build failed' }
+$vcvars = 'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat'
+# Keep the compiler command in a .cmd file: passing the whole quoted command through
+# PowerShell can exceed cmd.exe's input-line limit on some hosts.
+$compileScript = "$out/compile-fixtures.cmd"
+@(
+    "call `"$vcvars`" >nul"
+    "cl /nologo /EHsc /MD /I`"$occt/inc`" `"$PSScriptRoot/Fixtures.cpp`" /Fo`"$out/Fixtures.obj`" /Fe`"$out/Fixtures.exe`" /link /LIBPATH:`"$occt/win64/vc14/lib`" TKernel.lib TKMath.lib TKG2d.lib TKG3d.lib TKGeomBase.lib TKBRep.lib TKTopAlgo.lib TKDESTEP.lib TKXSBase.lib"
+) | Set-Content -Path $compileScript -Encoding Ascii
+& cmd.exe /d /c "`"$compileScript`""
+if ($LASTEXITCODE) { throw 'Fixture compilation failed' }
+
+# Add the OCCT/3rd-party DLL directories only after compilation. On some hosts the
+# recursive third-party list makes the inherited PATH too large for cmd.exe/cl.
 $dllDirs = @("$occt/win64/vc14/bin") + @(Get-ChildItem "$root/third_party/3rdparty-vc14-64" -Recurse -Filter *.dll | ForEach-Object DirectoryName | Select-Object -Unique)
 $env:PATH = ($dllDirs -join ';') + ';' + $env:PATH
 $env:CSF_OCCTResourcePath = "$occt/src"
-$vcvars = 'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat'
-$compile = "call `"$vcvars`" >nul && cl /nologo /EHsc /MD /I`"$occt/inc`" `"$PSScriptRoot/Fixtures.cpp`" /Fo`"$out/Fixtures.obj`" /Fe`"$out/Fixtures.exe`" /link /LIBPATH:`"$occt/win64/vc14/lib`" TKernel.lib TKMath.lib TKG2d.lib TKG3d.lib TKGeomBase.lib TKBRep.lib TKTopAlgo.lib TKDESTEP.lib TKXSBase.lib"
-& cmd.exe /d /c $compile
-if ($LASTEXITCODE) { throw 'Fixture compilation failed' }
 & "$out/Fixtures.exe" $out
 if ($LASTEXITCODE) { throw 'Fixture generation failed' }
 & dotnet run --project "$PSScriptRoot/PowerLead.Regression.csproj" -c Release -- $out

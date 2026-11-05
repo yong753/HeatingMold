@@ -11,8 +11,6 @@ namespace HeatingMold.App;
 
 public partial class MainWindow
 {
-    private WorkingArea ActiveArea => _activeArea;
-
     private void ResetCircuitEditingUi()
     {
         ExitVertexEdit();
@@ -26,7 +24,6 @@ public partial class MainWindow
         if (ConnectorEditModeBox != null) ConnectorEditModeBox.IsChecked = false;
         _connectorUndo.Clear();
         _connectorRedo.Clear();
-        _hoverConnector = -1;
         if (CircuitLengthGrid != null) CircuitLengthGrid.ItemsSource = null;
     }
 
@@ -62,25 +59,14 @@ public partial class MainWindow
 
         if (area == null)
         {
-            _confirmedFaceIds = new HashSet<int>();
-            _selectedRegion = new List<List<Vec2>>();
-            _multiFaceFrame = null;
-            _exclusions = new List<(double MinX, double MinY, double MaxX, double MaxY)>();
-            _pattern = null;
-            _turnEnabled = new List<bool>();
-            _routePieceLengths = Array.Empty<double>();
-            _projectedPieces = new List<RoutePieceResult>();
-            _leadLengths = Array.Empty<double>();
-            _multiFacePatternDisplayed = false;
             if (Viewport != null) Viewport.CircuitHoverMode = false;
         }
         else
         {
-            ActivateAreaStateFields(area);
             if (Viewport != null)
                 Viewport.CircuitHoverMode = area.Pattern != null && area.Pattern.RoutePieces.Count > 0;
             if (area.Pattern != null)
-                UpdateCircuitTable(SerpentineTopology.Compute(area.Pattern.RoutePieces, area.TurnEnabled));
+                UpdateCircuitTable();
         }
 
         UpdateActiveAreaHighlight();
@@ -88,18 +74,52 @@ public partial class MainWindow
         UpdateActionStates();
     }
 
-    private void ActivateAreaStateFields(WorkingArea area)
+    /// <summary>제외영역 변경이나 재생성 실패 시 복원할 경로 상태를 캡처한다.</summary>
+    private static AreaRouteSnapshot CaptureAreaRouteState(WorkingArea area) => new(
+        area.Exclusions.ToList(),
+        area.Pattern,
+        area.Paths,
+        area.ExclusionPieces,
+        area.NativePieceIds,
+        area.RoutePieceLengths,
+        area.ProjectedPieces,
+        area.TurnEnabled,
+        area.PatternDisplayed,
+        area.LeadLengths,
+        area.LastExitFailure,
+        area.StartAnchor,
+        area.EndAnchor,
+        area.AnchorCandidates,
+        area.ExcludedCandidates,
+        area.ExcludedPlan,
+        area.ExcludedCandidateFailure,
+        area.ExcludedPlanKey);
+
+    /// <summary>캡처한 경로 상태를 영역에 되돌린다. 제외 목록은 필요할 때만 복원한다.</summary>
+    private static void RestoreAreaRouteState(WorkingArea area, AreaRouteSnapshot snapshot, bool restoreExclusions)
     {
-        _confirmedFaceIds = area.FaceIdSet;
-        _selectedRegion = area.Region;
-        _multiFaceFrame = area.Frame;
-        _exclusions = area.Exclusions;
-        _pattern = area.Pattern;
-        _turnEnabled = area.TurnEnabled;
-        _routePieceLengths = area.RoutePieceLengths;
-        _projectedPieces = area.ProjectedPieces;
-        _leadLengths = area.LeadLengths;
-        _multiFacePatternDisplayed = area.PatternDisplayed;
+        if (restoreExclusions)
+        {
+            area.Exclusions.Clear();
+            area.Exclusions.AddRange(snapshot.Exclusions);
+        }
+        area.Pattern = snapshot.Pattern;
+        area.Paths = snapshot.Paths;
+        area.ExclusionPieces = snapshot.ExclusionPieces;
+        area.NativePieceIds = snapshot.NativePieceIds;
+        area.RoutePieceLengths = snapshot.RoutePieceLengths;
+        area.ProjectedPieces = snapshot.ProjectedPieces;
+        area.TurnEnabled = snapshot.TurnEnabled;
+        area.PatternDisplayed = snapshot.PatternDisplayed;
+        area.LeadLengths = snapshot.LeadLengths;
+        area.LastExitFailure = snapshot.LastExitFailure;
+        area.StartAnchor = snapshot.StartAnchor;
+        area.EndAnchor = snapshot.EndAnchor;
+        area.AnchorCandidates = snapshot.AnchorCandidates;
+        area.ExcludedCandidates = snapshot.ExcludedCandidates;
+        area.ExcludedPlan = snapshot.ExcludedPlan;
+        area.ExcludedCandidateFailure = snapshot.ExcludedCandidateFailure;
+        area.ExcludedPlanKey = snapshot.ExcludedPlanKey;
     }
 
     private void ClearFaceSelectionOnly()
@@ -471,9 +491,11 @@ public partial class MainWindow
                         RoutePieceResult shown = StageCurvedRoutePiece(
                             area, side, piece, i, flat.Count, stageId,
                             allowCachedSamples: false, exclusionMode: true);
+                        // 스테이징에 성공한 ID는 후속 검증보다 먼저 정리 목록에 넣는다.
+                        // 그래야 연속성 검사가 실패해도 방금 만든 네이티브 객체를 폐기할 수 있다.
+                        stagedRoutes.Add(stageId);
                         if (previous != null && Distance3D(previous.End, shown.Start) > 0.01)
                             throw new InvalidOperationException("영역 " + area.Name + " 제외 경로 조각이 연결되지 않습니다");
-                        stagedRoutes.Add(stageId);
                         finalIds.Add(area.NativePieceIds[i]);
                         pieces.Add(shown);
                         lengths.Add(shown.Length);
@@ -555,11 +577,6 @@ public partial class MainWindow
 
             if (_activeArea != null)
             {
-                _pattern = _activeArea.Pattern;
-                _turnEnabled = _activeArea.TurnEnabled;
-                _routePieceLengths = _activeArea.RoutePieceLengths;
-                _projectedPieces = _activeArea.ProjectedPieces;
-                _leadLengths = _activeArea.LeadLengths;
                 if (_activeArea.Pattern != null)
                 {
                     activeCount = _activeArea.Pattern.RoutePieces.Count;
@@ -601,27 +618,21 @@ public partial class MainWindow
     {
         ExitExclusionSketch();
         ResetCircuitEditingUi();
+        // 외부에서 이전 컬렉션 참조를 들고 있어도 빈 상태가 되도록 in-place로 비운다.
+        foreach (WorkingArea area in _areas)
+        {
+            area.FaceIdSet.Clear();
+            area.Region.Clear();
+            area.Exclusions.Clear();
+            area.TurnEnabled.Clear();
+            area.ProjectedPieces.Clear();
+        }
         _areas.Clear();
         _activeArea = null;
         _nextNativePieceId = 0;
         _selectedFaceIds.Clear();
         if (SelectedFacesList != null) SelectedFacesList.Items.Clear();
-        // 외부에서 이전 컬렉션 참조를 들고 있어도 빈 상태가 되도록 in-place로도 비운다.
-        _confirmedFaceIds.Clear();
-        _selectedRegion.Clear();
-        _exclusions.Clear();
-        _turnEnabled.Clear();
-        _projectedPieces.Clear();
-        _confirmedFaceIds = new HashSet<int>();
-        _selectedRegion = new List<List<Vec2>>();
-        _multiFaceFrame = null;
-        _exclusions = new List<(double MinX, double MinY, double MaxX, double MaxY)>();
-        _pattern = null;
-        _turnEnabled = new List<bool>();
-        _routePieceLengths = Array.Empty<double>();
-        _projectedPieces = new List<RoutePieceResult>();
         _leadLengths = Array.Empty<double>();
-        _multiFacePatternDisplayed = false;
         if (Viewport != null) Viewport.CircuitHoverMode = false;
         RefreshAreaList();
         SyncExitFaceUi(null);

@@ -5,6 +5,7 @@ using HeatingMold.App;
 using HeatingMold.Core.Geometry;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Windows.Controls;
 using System.Windows.Threading;
@@ -109,10 +110,16 @@ static class Program
         void Invoke(string name) => typeof(MainWindow).GetMethod(name,flags).Invoke(window,new object[]{null,null});
         var pattern = Serpentine.Generate(new List<Vec2>{new(0,0),new(100,0),new(100,60),new(0,60)},null,
             new HeatingMold.Core.Model.PatternParams{Margin=5,Spacing=10},constrainConnectors:true);
-        Set("_pattern",pattern);
-        Set("_multiFaceFrame",new ProjectionFrame(new Vec3(0,0,100),new Vec3(0,0,1),new Vec3(1,0,0)));
-        var turns = (List<bool>)Field("_turnEnabled");
-        var projected = (List<RoutePieceResult>)Field("_projectedPieces");
+        var frame=new ProjectionFrame(new Vec3(0,0,100),new Vec3(0,0,1),new Vec3(1,0,0));
+        var areaType=typeof(MainWindow).Assembly.GetType("HeatingMold.App.WorkingArea")!;
+        var area=Activator.CreateInstance(areaType,nonPublic:true)!;
+        areaType.GetProperty("Name")!.SetValue(area,"PowerLeadCheck");
+        areaType.GetProperty("Frame")!.SetValue(area,frame);
+        areaType.GetProperty("Pattern")!.SetValue(area,pattern);
+        areaType.GetProperty("NativePieceIds")!.SetValue(area,
+            Enumerable.Range(0,pattern.RoutePieces.Count).ToArray());
+        var turns = (List<bool>)areaType.GetProperty("TurnEnabled")!.GetValue(area)!;
+        var projected = (List<RoutePieceResult>)areaType.GetProperty("ProjectedPieces")!.GetValue(area)!;
         var lengths = new double[pattern.RoutePieces.Count];
         double expected = 0;
         for(int i=0;i<pattern.RoutePieces.Count;i++)
@@ -122,7 +129,9 @@ static class Program
             projected.Add(new RoutePieceResult{Length=lengths[i],Start=new[]{a.X,a.Y,10.0},End=new[]{b.X,b.Y,20.0}});
             if(p.Kind==SerpentineRoutePieceKind.TurnConnector) turns.Add(true);
         }
-        Set("_routePieceLengths",lengths);
+        areaType.GetProperty("RoutePieceLengths")!.SetValue(area,lengths);
+        ((IList)Field("_areas")).Add(area);
+        typeof(MainWindow).GetMethod("ActivateArea",flags)!.Invoke(window,new object[]{area});
         ((HashSet<int>)Field("_selectedFaceIds")).Add(0);
         typeof(MainWindow).GetMethod("ApplyConnectorStates",flags).Invoke(window,null);
         var grid=(DataGrid)window.FindName("CircuitLengthGrid");
@@ -147,8 +156,12 @@ static class Program
         // The old automatic endpoint-queue entry is intentionally unavailable at this checkpoint.
         // A future first-hit-safe route migration must add its own entry/endpoint tests before enabling it.
         var session=(WorkingSideSession)Field("_workingSide");
-        var revision=new ModelRevision(Bridge.GetModelRevision());
-        session.SetPreview(new WorkingSideDefinition(new WorkingSideId(-1),revision,(ProjectionFrame)Field("_multiFaceFrame")));
+        var uiContext=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+        var uiFrame=new ProjectionFrame(new Vec3(uiContext.Frame[0],uiContext.Frame[1],uiContext.Frame[2]),
+            new Vec3(uiContext.Frame[9],uiContext.Frame[10],uiContext.Frame[11]),
+            new Vec3(uiContext.Frame[3],uiContext.Frame[4],uiContext.Frame[5]));
+        var revision=new ModelRevision(uiContext.Revision);
+        session.SetPreview(new WorkingSideDefinition(new WorkingSideId(uiContext.Id),revision,uiFrame));
         session.Confirm(revision);
         viewport.RectangleSelectionMode=true; viewport.ConnectorEditMode=true;
         Invoke("PowerSetup_Click");
@@ -162,7 +175,9 @@ static class Program
         {
             pending.Clear();
             var type=typeof(MainWindow).GetNestedType("PendingLead",BindingFlags.NonPublic);
-            var groups=(IEnumerable)typeof(MainWindow).GetMethod("CircuitPieceGroups",flags).Invoke(window,null);
+            var groupsMethod=typeof(MainWindow).GetMethods(flags)
+                .Single(m=>m.Name=="CircuitPieceGroups" && m.GetParameters().Length==0);
+            var groups=(IEnumerable)groupsMethod.Invoke(window,null);
             int circuit=0;
             foreach(IList group in groups)
             {
@@ -201,7 +216,7 @@ static class Program
         Check(((IList)Field("_pendingLeads")).Count==0 && !viewport.PowerLocationMode,"regeneration attempt cancels pending power setup even when validation fails");
         SeedPending();
         Invoke("ClearExclusions_Click");
-        Check(Field("_pattern")==null && ((IList)Field("_pendingLeads")).Count==0 && !viewport.PowerLocationMode,"exclusion changes invalidate generated topology and pending leads");
+        Check(areaType.GetProperty("Pattern")!.GetValue(area)==null && ((IList)Field("_pendingLeads")).Count==0 && !viewport.PowerLocationMode,"exclusion changes invalidate generated topology and pending leads");
         window.Close();
     }
 

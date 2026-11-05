@@ -18,6 +18,7 @@ public partial class MainWindow
         WorkingArea Area,
         SerpentineResult Pattern,
         List<RoutePieceResult> Projected,
+        int[] NativeIds,
         double[] Lengths,
         double[] Leads,
         Vec2? StartAnchor,
@@ -344,11 +345,11 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 후보 패턴을 만들고 검증한다. strict=true면 확정용 보강 표본(0.1mm 간격),
-    /// strict=false면 미리보기용 경량 매핑(코드 오차만)이다. 매핑에 성공한 조각의
-    /// 3D 표본은 mappedPieces로 반환해 호출측이 스테이징에 재사용한다.
+    /// 확정용 후보 패턴을 만들고 보강 표본(0.1mm 간격)으로 검증한다. 미리보기는
+    /// 별도 <see cref="TryBuildVertexPreview"/>가 경량 매핑으로 처리한다. 매핑에 성공한
+    /// 조각의 3D 표본은 mappedPieces로 반환해 호출측이 스테이징에 재사용한다.
     /// </summary>
-    private bool TryBuildVertexCandidate(Vec2 datum, bool strict, out SerpentineResult candidate, out Vec2 applied,
+    private bool TryBuildVertexCandidate(Vec2 datum, out SerpentineResult candidate, out Vec2 applied,
         out string failure, out bool anchor, out bool isStart,
         out Dictionary<int, List<SurfaceMappedSample>> mappedPieces)
     {
@@ -384,10 +385,8 @@ public partial class MainWindow
         {
             SerpentineRoutePiece piece = candidate.RoutePieces[pieceIndex];
             if (piece.Points.Count < 2) continue;
-            bool ok = strict
-                ? SurfacePathMapper.TryMapRouteStrict(piece.Points, hit, out var samples,
-                    out string mapFailure, 0.1)
-                : SurfacePathMapper.TryMapRoute(piece.Points, hit, out samples, out mapFailure);
+            bool ok = SurfacePathMapper.TryMapRouteStrict(piece.Points, hit, out var samples,
+                out string mapFailure, 0.1);
             if (!ok) { failure = "모델 표면 매핑 실패 — " + mapFailure; return false; }
             mappedPieces[pieceIndex] = samples;
         }
@@ -424,7 +423,7 @@ public partial class MainWindow
     {
         var area = _activeArea;
         // 확정 시에만 밀집 표본화(0.1mm 간격)로 엄격 검증하고, 그 표본을 스테이징에서 재사용한다.
-        if (!TryBuildVertexCandidate(datum, strict: true, out SerpentineResult candidate, out Vec2 applied,
+        if (!TryBuildVertexCandidate(datum, out SerpentineResult candidate, out Vec2 applied,
                 out string failure, out bool anchor, out bool isStart,
                 out Dictionary<int, List<SurfaceMappedSample>> mappedPieces))
         {
@@ -457,9 +456,8 @@ public partial class MainWindow
         UndoStack(area).Push(before);
         RedoStack(area).Clear();
         _vertexGroups = RouteVertexGroups.Build(area.Pattern.RoutePieces).ToList();
-        ActivateAreaStateFields(area);
         UpdateExitLeadLengths(area);
-        UpdateCircuitTable(SerpentineTopology.Compute(area.Pattern.RoutePieces, area.TurnEnabled));
+        UpdateCircuitTable();
         StatusText.Text = string.Format("{0} 영역 · 경로 꼭지점 수정 — 길이 {1:F1}mm",
             area.Name, area.RoutePieceLengths.Sum());
         UpdateActionStates();
@@ -485,12 +483,18 @@ public partial class MainWindow
         }
 
         VertexEditSnapshot current = CaptureVertexSnapshot(area);
-        // 복원된 패턴은 이전 표본과 다르므로 기준 캐시를 비우고 이번 재스테이징에서 다시 채운다.
+        // 복원할 패턴은 현재 표본과 다르므로 두 캐시를 모두 비운다. 남겨 두면
+        // 되돌린 경로가 아니라 되돌리기 직전 경로의 표본으로 다시 스테이징된다.
+        _pendingStageSamples.Clear();
         _vertexBaselineSamples.Clear();
+        // 이력의 상태를 실제 영역에 먼저 적용한 뒤 그 형상으로 네이티브 표시를 다시 만든다.
+        RestoreVertexSnapshot(snapshot);
         if (!RebuildNativePatternGeometry(out _, out _))
         {
             // 커밋 전 단계 실패는 기존 네이티브 표시를 그대로 남긴다 — 재시도 불필요.
             RestoreVertexSnapshot(current);
+            _pendingStageSamples.Clear();
+            _vertexBaselineSamples.Clear();
             source.Push(snapshot);
             StatusText.Text = undo ? "Undo 실패 — 경로를 되돌리지 못했습니다" : "Redo 실패 — 경로를 되돌리지 못했습니다";
             return;
@@ -501,15 +505,14 @@ public partial class MainWindow
             ? RouteVertexGroups.Build(area.Pattern.RoutePieces).ToList()
             : new List<RouteVertexGroup>();
         UpdateExitLeadLengths(area);
-        if (area.Pattern != null)
-            UpdateCircuitTable(SerpentineTopology.Compute(area.Pattern.RoutePieces, area.TurnEnabled));
+        UpdateCircuitTable();
         RefreshVertexHandles();
         StatusText.Text = undo ? "발열경로 편집 Undo" : "발열경로 편집 Redo";
         UpdateActionStates();
     }
 
     private static VertexEditSnapshot CaptureVertexSnapshot(WorkingArea area) => new(
-        area, area.Pattern, area.ProjectedPieces, area.RoutePieceLengths, area.LeadLengths,
+        area, area.Pattern, area.ProjectedPieces, area.NativePieceIds, area.RoutePieceLengths, area.LeadLengths,
         area.StartAnchor, area.EndAnchor, area.RouteEdited);
 
     private void RestoreVertexSnapshot(VertexEditSnapshot snapshot)
@@ -517,12 +520,12 @@ public partial class MainWindow
         WorkingArea area = snapshot.Area;
         area.Pattern = snapshot.Pattern;
         area.ProjectedPieces = snapshot.Projected;
+        area.NativePieceIds = snapshot.NativeIds;
         area.RoutePieceLengths = snapshot.Lengths;
         area.LeadLengths = snapshot.Leads;
         area.StartAnchor = snapshot.StartAnchor;
         area.EndAnchor = snapshot.EndAnchor;
         area.RouteEdited = snapshot.Edited;
-        ActivateAreaStateFields(area);
     }
 
     /// <summary>편집 내용이 있으면 삭제 동의를 받는다. 여기서는 상태를 지우지 않는다 —

@@ -462,10 +462,6 @@ public class RegionOpsTests
         return inside;
     }
 
-    /// <summary>컴포넌트(조각 목록) 목록을 기존 좌표 단언용 폴리라인 목록으로 변환한다.</summary>
-    private static List<List<Vec2>> FlattenAll(IReadOnlyList<IReadOnlyList<SerpentineRoutePiece>> components) =>
-        components.Select(Flatten).ToList();
-
     /// <summary>조각을 순서대로 이어 붙인다 — 조각 경계의 중복 시작점은 건너뛴다.</summary>
     private static List<Vec2> Flatten(IReadOnlyList<SerpentineRoutePiece> pieces)
     {

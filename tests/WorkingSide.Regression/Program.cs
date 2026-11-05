@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Reflection;
 using System.IO;
 using System.Windows;
@@ -144,7 +145,12 @@ static class Program
         Check((bool)Invoke(window,"ApplyWorkingSide",new Vec3(0,0,1)) && active.Confirmed?.Frame.Normal.Z==1,
             "direct axis application creates an active +Z context without a confirmation step");
         var sameSide=active.Confirmed;
-        var retainedRegion=Field<List<List<Vec2>>>(window,"_selectedRegion"); retainedRegion.Add(new(){new(0,0),new(1,0),new(0,1)});
+        var areaType = typeof(MainWindow).Assembly.GetType("HeatingMold.App.WorkingArea")!;
+        var retainedArea = Activator.CreateInstance(areaType, nonPublic: true)!;
+        areaType.GetProperty("Frame")!.SetValue(retainedArea, sameSide.Frame);
+        var retainedRegion = (List<List<Vec2>>)areaType.GetProperty("Region")!.GetValue(retainedArea)!;
+        retainedRegion.Add(new(){new(0,0),new(1,0),new(0,1)});
+        ((IList)Field<object>(window,"_areas")).Add(retainedArea);
         var selectedFaceIds=Field<HashSet<int>>(window,"_selectedFaceIds"); selectedFaceIds.Add(7);
         ((ListBox)window.FindName("SelectedFacesList")).Items.Add("seed");
         Check((bool)Invoke(window,"ApplyWorkingSide",new Vec3(0,0,1)) && ReferenceEquals(sameSide,active.Confirmed) && retainedRegion.Count==1,
@@ -170,6 +176,9 @@ static class Program
         SidebarTabChecks.Run(window);
         AreaHighlightChecks.Run(window);
         ExclusionExitChecks.Run(window);
+        VertexHistoryChecks.Run(window);
+        ElectricalRefreshChecks.Run(window);
+        GeometryRollbackChecks.Run(window);
         Check(typeof(Bridge).GetMethod("HlrProject")==null && typeof(Bridge).GetMethod("HlrEdges")!=null,
             "HLR smoke API removed while exporter HlrEdges remains");
         viewport.RectangleSelectionMode=true;

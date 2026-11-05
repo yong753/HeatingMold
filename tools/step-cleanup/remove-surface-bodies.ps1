@@ -8,9 +8,11 @@
     표면 표현을 참조하는 SHAPE_REPRESENTATION_RELATIONSHIP 엔티티 하나만 제거해서
     솔리드 30개만 로드되게 만든다.
 
-    OCCT 로 다시 읽고 쓰는 방식(재출력)과 달리, 나머지 엔티티는 바이트 단위로
-    그대로 유지된다. 특히 'supplemental geometry' 표현(#10/#11)이 보존되므로
-    HeatingMold 의 ComputeAutoAxes() 가 이전과 동일한 모델 좌표계를 얻는다.
+    OCCT 로 다시 읽고 쓰는 방식(재출력)과 달리, 대상 관계 엔티티의 문자열만 제거하고
+    나머지 엔티티 텍스트는 그대로 둔다. 특히 'supplemental geometry' 표현(#10/#11)이
+    보존되므로 HeatingMold 의 ComputeAutoAxes() 가 이전과 동일한 모델 좌표계를 얻는다.
+    다만 ReadAllText/WriteAllText 를 거치므로 원본 파일의 인코딩·BOM·줄바꿈이
+    바이트 단위로 그대로 유지되는 것은 보장하지 않는다.
 
 .PARAMETER In
     원본 STEP 경로.
@@ -48,8 +50,10 @@ $removed = 0
 foreach ($sid in $surfIds) {
     $pattern = "(?ms)^#\d+\s*=\s*SHAPE_REPRESENTATION_RELATIONSHIP\s*\([^;]*?,\s*#$sid\s*\);\s*\r?\n"
     $matches = [regex]::Matches($text, $pattern)
-    foreach ($m in $matches) {
-        Write-Host ("관계 엔티티 제거: {0} bytes" -f $m.Length)
+    # 같은 문자열에서 삭제하면 뒤쪽 매치의 인덱스가 밀리므로 뒤에서부터 제거한다.
+    for ($i = $matches.Count - 1; $i -ge 0; --$i) {
+        $m = $matches[$i]
+        Write-Host ("관계 엔티티 제거: {0} chars" -f $m.Length)
         $text = $text.Remove($m.Index, $m.Length)
         $removed++
     }

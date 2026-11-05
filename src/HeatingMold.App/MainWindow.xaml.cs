@@ -7,8 +7,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using Rectangle = System.Windows.Shapes.Rectangle;
-using Polyline = System.Windows.Shapes.Polyline;
 using HeatingMold.Core.Electrical;
 using HeatingMold.Core.Geometry;
 using HeatingMold.Core.Model;
@@ -20,19 +18,9 @@ namespace HeatingMold.App
 {
     public partial class MainWindow : Window
     {
-        private SerpentineResult _pattern;
         private readonly HashSet<int> _selectedFaceIds = new();
-        // 활성 작업영역의 Face 집합. 작업영역을 전환하면 해당 영역의 집합을 가리킨다.
-        private HashSet<int> _confirmedFaceIds = new();
-        private List<List<Vec2>> _selectedRegion = new();
-        private ProjectionFrame _multiFaceFrame;
         private string _multiFaceRegionFailure;
-        private List<(double MinX, double MinY, double MaxX, double MaxY)> _exclusions = new();
-        private bool _multiFacePatternDisplayed;
-        private List<bool> _turnEnabled = new();
         private readonly Stack<bool[]> _connectorUndo = new(), _connectorRedo = new();
-        private double[] _routePieceLengths = Array.Empty<double>();
-        private List<RoutePieceResult> _projectedPieces = new();
 
         // 확정된 작업영역 목록. 항목을 추가/삭제해도 기존 영역과 패턴은 유지된다.
         private readonly List<WorkingArea> _areas = new();
@@ -53,7 +41,6 @@ namespace HeatingMold.App
             Color.FromRgb(0xDB, 0x27, 0x77), // G 자홍
             Color.FromRgb(0x92, 0x40, 0x0E), // H 갈색
         };
-        private int _hoverConnector = -1;
         private sealed class CircuitLengthRow { public string Circuit { get; set; } public double HeatingLength { get; set; } public double LeadLength { get; set; } public double TotalLength => HeatingLength + LeadLength; }
         private sealed record PendingLead(int CircuitIndex, bool IsStart, Vec3 Start);
         private List<PendingLead> _pendingLeads = new();
@@ -72,8 +59,9 @@ namespace HeatingMold.App
             Bridge.ClearPowerLeads();
             _leadLengths = Array.Empty<double>();
             SetPowerEditingLock(false);
-            if (_pattern != null && _routePieceLengths.Length == _pattern.RoutePieces.Count)
-                UpdateCircuitTable(SerpentineTopology.Compute(_pattern.RoutePieces, _turnEnabled));
+            WorkingArea area = _activeArea;
+            if (area?.Pattern != null && area.RoutePieceLengths.Length == area.Pattern.RoutePieces.Count)
+                UpdateCircuitTable();
         }
 
         private void SetPowerEditingLock(bool locked)
@@ -280,7 +268,7 @@ namespace HeatingMold.App
             HoverText.Text = string.Format("호버 #{0} ({1})", faceIndex, type);
         }
 
-        private bool ExclusionEligible() => _activeArea != null && _multiFaceFrame != null;
+        private bool ExclusionEligible() => _activeArea?.Frame != null;
 
         private void ExcludeMode_Changed(object sender, RoutedEventArgs e)
         {
@@ -322,12 +310,13 @@ namespace HeatingMold.App
         {
             point = default;
             world = default;
-            if (_multiFaceFrame == null) return false;
-            Vec3 o = _multiFaceFrame.Origin, n = _multiFaceFrame.Normal;
+            ProjectionFrame frame = _activeArea?.Frame;
+            if (frame == null) return false;
+            Vec3 o = frame.Origin, n = frame.Normal;
             double[] hit = Bridge.ScreenPointOnPlane(x, y, o.X, o.Y, o.Z, n.X, n.Y, n.Z);
             if (hit == null || hit.Length < 3 || hit.Any(v => !double.IsFinite(v))) return false;
             world = new Vec3(hit[0], hit[1], hit[2]);
-            point = _multiFaceFrame.Project(world);
+            point = frame.Project(world);
             return true;
         }
 
@@ -337,9 +326,10 @@ namespace HeatingMold.App
             double minY = Math.Min(a.Y, b.Y), maxY = Math.Max(a.Y, b.Y);
             Vec2[] corners = { new(minX, minY), new(maxX, minY), new(maxX, maxY), new(minX, maxY), new(minX, minY) };
             var xyz = new double[corners.Length * 3];
+            ProjectionFrame frame = _activeArea.Frame;
             for (int i = 0; i < corners.Length; i++)
             {
-                Vec3 p = _multiFaceFrame.Unproject(corners[i]);
+                Vec3 p = frame.Unproject(corners[i]);
                 xyz[i * 3] = p.X; xyz[i * 3 + 1] = p.Y; xyz[i * 3 + 2] = p.Z;
             }
             return xyz;
@@ -383,30 +373,13 @@ namespace HeatingMold.App
             var area = _activeArea;
             var rect = (minX, minY, maxX, maxY);
             // 롤백 스냅샷 — 어느 단계에서 실패해도 제외 목록과 경로 상태를 이전 그대로 되돌린다.
-            var previousExclusions = area.Exclusions.ToList();
-            var previousPattern = area.Pattern;
-            var previousPaths = area.Paths;
-            var previousExclusionPieces = area.ExclusionPieces;
-            var previousPieceIds = area.NativePieceIds;
-            var previousLengths = area.RoutePieceLengths;
-            var previousProjected = area.ProjectedPieces;
-            var previousTurns = area.TurnEnabled;
-            var previousDisplayed = area.PatternDisplayed;
-            var previousLeadLengths = area.LeadLengths;
-            var previousFailure = area.LastExitFailure;
-            var previousStartAnchor = area.StartAnchor;
-            var previousEndAnchor = area.EndAnchor;
-            var previousCandidates = area.AnchorCandidates;
-            var previousExcludedCandidates = area.ExcludedCandidates;
-            var previousExcludedPlan = area.ExcludedPlan;
-            var previousExcludedFailure = area.ExcludedCandidateFailure;
-            var previousExcludedKey = area.ExcludedPlanKey;
+            AreaRouteSnapshot previous = CaptureAreaRouteState(area);
 
             area.Exclusions.Add(rect);
             // 1) 표시 메시 스테이징 — 실패하면 아무 상태도 바꾸지 않는다.
             if (!StageAreaHighlightMesh(area))
             {
-                RestoreAreaExclusions(area, previousExclusions);
+                RestoreAreaExclusions(area, previous.Exclusions);
                 StatusText.Text = "제외영역 표시를 생성하지 못했습니다 — 이전 제외영역/경로를 유지했습니다";
                 return;
             }
@@ -420,17 +393,11 @@ namespace HeatingMold.App
             area.ProjectedPieces = new List<RoutePieceResult>();
             area.TurnEnabled = new List<bool>();
             area.PatternDisplayed = false;
-            ActivateAreaStateFields(area);
             Bridge.ClearExclusionOverlays();
             if (!CommitAreaHighlight(area))
             {
                 Bridge.DiscardAreaHighlight(area.AreaId);
-                RestoreAreaExclusions(area, previousExclusions);
-                RestoreAreaPatternState(area, previousPattern, previousPaths, previousExclusionPieces, previousPieceIds,
-                    previousLengths, previousProjected, previousTurns, previousDisplayed,
-                    previousStartAnchor, previousEndAnchor, previousCandidates,
-                    previousExcludedCandidates, previousExcludedPlan, previousExcludedFailure,
-                    previousExcludedKey, previousLeadLengths, previousFailure);
+                RestoreAreaRouteState(area, previous, restoreExclusions: true);
                 UpdateActiveAreaHighlight();
                 StatusText.Text = "제외영역 표시를 적용하지 못했습니다 — 이전 제외영역/경로를 유지했습니다";
                 return;
@@ -439,12 +406,7 @@ namespace HeatingMold.App
             // 3) 경로 재생성이 실패하면 표시까지 이전 상태로 되돌린다.
             if (!RebuildNativePatternGeometry(out _, out _))
             {
-                RestoreAreaExclusions(area, previousExclusions);
-                RestoreAreaPatternState(area, previousPattern, previousPaths, previousExclusionPieces, previousPieceIds,
-                    previousLengths, previousProjected, previousTurns, previousDisplayed,
-                    previousStartAnchor, previousEndAnchor, previousCandidates,
-                    previousExcludedCandidates, previousExcludedPlan, previousExcludedFailure,
-                    previousExcludedKey, previousLeadLengths, previousFailure);
+                RestoreAreaRouteState(area, previous, restoreExclusions: true);
                 Bridge.DiscardAreaHighlight(area.AreaId);
                 UpdateActiveAreaHighlight();
                 return;
@@ -456,6 +418,8 @@ namespace HeatingMold.App
                 SyncExitFaceUi(area);
             }
             UpdateActiveAreaHighlight();
+            // 경로가 무효화된 영역은 회로표/전기표에서도 즉시 빠져야 한다.
+            UpdateCircuitTable();
             StatusText.Text = area.HasExitFace && !area.HasExitAnchors && !string.IsNullOrEmpty(area.LastExitFailure)
                 ? area.LastExitFailure
                 : string.Format("모델 뷰포트 제외영역 추가 — {0}개", area.Exclusions.Count);
@@ -467,35 +431,6 @@ namespace HeatingMold.App
         {
             area.Exclusions.Clear();
             area.Exclusions.AddRange(snapshot);
-        }
-
-        /// <summary>경로 상태를 스냅샷으로 되돌리고 창 필드도 다시 연결한다.</summary>
-        private void RestoreAreaPatternState(WorkingArea area, SerpentineResult pattern,
-            List<List<Vec2>> paths, List<List<SerpentineRoutePiece>> exclusionPieces, int[] pieceIds,
-            double[] lengths, List<RoutePieceResult> projected, List<bool> turns, bool displayed,
-            Vec2? startAnchor, Vec2? endAnchor, List<AnchoredCandidate> anchorCandidates,
-            List<ExcludedAnchorCandidate> excludedCandidates, ExcludedAnchorCandidate excludedPlan,
-            SerpentineComponentsFailureReason? excludedFailure, string excludedKey,
-            double[] leadLengths, string lastExitFailure)
-        {
-            area.Pattern = pattern;
-            area.Paths = paths;
-            area.ExclusionPieces = exclusionPieces;
-            area.NativePieceIds = pieceIds;
-            area.RoutePieceLengths = lengths;
-            area.ProjectedPieces = projected;
-            area.TurnEnabled = turns;
-            area.PatternDisplayed = displayed;
-            area.StartAnchor = startAnchor;
-            area.EndAnchor = endAnchor;
-            area.AnchorCandidates = anchorCandidates;
-            area.ExcludedCandidates = excludedCandidates;
-            area.ExcludedPlan = excludedPlan;
-            area.ExcludedCandidateFailure = excludedFailure;
-            area.ExcludedPlanKey = excludedKey;
-            area.LeadLengths = leadLengths;
-            area.LastExitFailure = lastExitFailure;
-            if (ReferenceEquals(area, _activeArea)) ActivateAreaStateFields(area);
         }
 
         /// <summary>조각 순서대로 점을 이어 하나의 폴리라인으로 만든다 — 조각 경계의 중복 시작점은 건너뛴다.</summary>
@@ -830,23 +765,7 @@ namespace HeatingMold.App
             bool routePiecesMode = editablePattern != null && editablePattern.RoutePieces.Count > 0;
 
             // 실패 시 이 영역의 기존 패턴 상태를 복원한다. 다른 영역은 건드리지 않는다.
-            var oldPattern = area.Pattern;
-            var oldTurns = area.TurnEnabled;
-            var oldIds = area.NativePieceIds;
-            var oldLengths = area.RoutePieceLengths;
-            var oldProjected = area.ProjectedPieces;
-            var oldPaths = area.Paths;
-            var oldExclusionPieces = area.ExclusionPieces;
-            var oldShown = area.PatternDisplayed;
-            var oldLeadLengths = area.LeadLengths;
-            var oldFailure = area.LastExitFailure;
-            var oldStartAnchor = area.StartAnchor;
-            var oldEndAnchor = area.EndAnchor;
-            var oldCandidates = area.AnchorCandidates;
-            var oldExcludedCandidates = area.ExcludedCandidates;
-            var oldExcludedPlan = area.ExcludedPlan;
-            var oldExcludedFailure = area.ExcludedCandidateFailure;
-            var oldExcludedKey = area.ExcludedPlanKey;
+            AreaRouteSnapshot previous = CaptureAreaRouteState(area);
 
             area.Pattern = routePiecesMode ? editablePattern : null;
             area.TurnEnabled = routePiecesMode
@@ -868,31 +787,13 @@ namespace HeatingMold.App
                 area.ProjectedPieces = new List<RoutePieceResult>();
             }
             area.PatternDisplayed = false;
-            ActivateAreaStateFields(area);
             _connectorUndo.Clear();
             _connectorRedo.Clear();
 
             if (!RebuildNativePatternGeometry(out double total, out int projectedCount))
             {
-                area.Pattern = oldPattern;
-                area.TurnEnabled = oldTurns;
-                area.NativePieceIds = oldIds;
-                area.RoutePieceLengths = oldLengths;
-                area.ProjectedPieces = oldProjected;
-                area.Paths = oldPaths;
-                area.ExclusionPieces = oldExclusionPieces;
-                area.PatternDisplayed = oldShown;
-                area.LeadLengths = oldLeadLengths;
-                area.LastExitFailure = oldFailure;
-                area.StartAnchor = oldStartAnchor;
-                area.EndAnchor = oldEndAnchor;
-                area.AnchorCandidates = oldCandidates;
-                area.ExcludedCandidates = oldExcludedCandidates;
-                area.ExcludedPlan = oldExcludedPlan;
-                area.ExcludedCandidateFailure = oldExcludedFailure;
-                area.ExcludedPlanKey = oldExcludedKey;
+                RestoreAreaRouteState(area, previous, restoreExclusions: false);
                 SyncExitFaceUi(area);
-                ActivateAreaStateFields(area);
                 return;
             }
 
@@ -901,20 +802,18 @@ namespace HeatingMold.App
 
             projectedCount = routePiecesMode ? area.Pattern.RoutePieces.Count : area.Paths.Count;
             area.PatternDisplayed = projectedCount > 0;
-            _multiFacePatternDisplayed = area.PatternDisplayed;
             Viewport.CircuitHoverMode = routePiecesMode;
             Bridge.ClearHover();
             HoverText.Text = "";
             if (routePiecesMode)
             {
                 UpdateExitLeadLengths(area);
-                UpdateCircuitTable(SerpentineTopology.Compute(area.Pattern.RoutePieces, area.TurnEnabled));
             }
             else
             {
                 area.LeadLengths = Array.Empty<double>();
-                _leadLengths = area.LeadLengths;
             }
+            UpdateCircuitTable();
             int connectors = area.ExclusionPieces?.Sum(c => c.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector)) ?? 0;
             int leadCount = routePiecesMode
                 ? area.Pattern.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.ExitPiece) : 0;
@@ -945,7 +844,8 @@ namespace HeatingMold.App
 
         private void ConnectorEditMode_Changed(object sender, RoutedEventArgs e)
         {
-            bool enabled = ConnectorEditModeBox.IsChecked == true && _pattern != null && _pattern.RoutePieces.Count > 0;
+            SerpentineResult pattern = _activeArea?.Pattern;
+            bool enabled = ConnectorEditModeBox.IsChecked == true && pattern != null && pattern.RoutePieces.Count > 0;
             if (ConnectorEditModeBox.IsChecked == true && !enabled) { ConnectorEditModeBox.IsChecked = false; StatusText.Text = "먼저 턴 커넥터가 있는 패턴을 생성하세요"; return; }
             // 꼭지점 편집과 회로 분할은 상호 배타 — 편집 중에는 뷰포트가 꼭지점 입력을 우선 처리한다.
             if (enabled && Viewport.VertexEditMode) ExitVertexEdit();
@@ -954,7 +854,7 @@ namespace HeatingMold.App
             if (enabled) { Bridge.ClearHover(); StatusText.Text = "회로 분할 — 연결 구간을 클릭해 회로를 분할하거나 다시 연결합니다"; }
         }
 
-        private void OnConnectorHovered(int id) { _hoverConnector = id; HoverText.Text = id < 0 ? "" : "커넥터 #" + id; }
+        private void OnConnectorHovered(int id) => HoverText.Text = id < 0 ? "" : "커넥터 #" + id;
         private void OnRoutePieceHovered(int id)
         {
             var area = _areas.FirstOrDefault(a => a.NativePieceIds.Contains(id));
@@ -992,11 +892,10 @@ namespace HeatingMold.App
                 .Sum(x => area.RoutePieceLengths.ElementAtOrDefault(x.i));
             area.LeadLengths = new double[circuits.Count];
             UpdateExitLeadLengths(area);
-            _leadLengths = area.LeadLengths;
-            UpdateCircuitTable(circuits);
+            UpdateCircuitTable();
             StatusText.Text = string.Format("{0} 영역 · 회로 {1}개 · 길이 합계 {2:F1}mm", area.Name, circuits.Count, length);
         }
-        private void UpdateCircuitTable(IReadOnlyList<IReadOnlyList<Vec2>> circuits)
+        private void UpdateCircuitTable()
         {
             if (CircuitLengthGrid == null) return;
             var area = _activeArea;
@@ -1046,17 +945,18 @@ namespace HeatingMold.App
             if (_workingSide.Confirmed == null) { WorkingGenerationReady(); return; }
             if (!WorkingRouteMigrationComplete) { StatusText.Text = "생성 보류: 전원 경로는 아직 작업 방향 첫 충돌 경로로 마이그레이션되지 않았습니다"; return; }
             if (!WorkingGenerationReady()) return;
-            if (_pattern == null || _multiFaceFrame == null) { StatusText.Text = "먼저 회로 분할 가능한 패턴을 생성하세요"; return; }
+            WorkingArea area = _activeArea;
+            if (area?.Pattern == null || area.Frame == null) { StatusText.Text = "먼저 회로 분할 가능한 패턴을 생성하세요"; return; }
             CancelPowerSetup();
-            if (_projectedPieces.Count != _pattern.RoutePieces.Count) { StatusText.Text = "3D 경로 끝점이 없습니다. 패턴을 다시 생성하세요"; return; }
+            if (area.ProjectedPieces.Count != area.Pattern.RoutePieces.Count) { StatusText.Text = "3D 경로 끝점이 없습니다. 패턴을 다시 생성하세요"; return; }
             var groups = CircuitPieceGroups();
             _leadLengths = new double[groups.Count];
             for (int i = 0; i < groups.Count; i++)
             {
-                int first = Array.IndexOf(_activeArea.NativePieceIds, groups[i][0]);
-                int last = Array.IndexOf(_activeArea.NativePieceIds, groups[i][^1]);
+                int first = Array.IndexOf(area.NativePieceIds, groups[i][0]);
+                int last = Array.IndexOf(area.NativePieceIds, groups[i][^1]);
                 if (first < 0 || last < 0) continue;
-                double[] a = _projectedPieces[first].Start, b = _projectedPieces[last].End;
+                double[] a = area.ProjectedPieces[first].Start, b = area.ProjectedPieces[last].End;
                 _pendingLeads.Add(new PendingLead(i, true, new Vec3(a[0], a[1], a[2])));
                 _pendingLeads.Add(new PendingLead(i, false, new Vec3(b[0], b[1], b[2])));
             }
@@ -1069,7 +969,7 @@ namespace HeatingMold.App
             Viewport.PowerLocationMode = _pendingLeads.Count > 0;
             Viewport.CircuitHoverMode = false;
             SetPowerEditingLock(Viewport.PowerLocationMode);
-            UpdateCircuitTable(SerpentineTopology.Compute(_pattern.RoutePieces, _turnEnabled));
+            UpdateCircuitTable();
             StatusText.Text = PowerPrompt();
         }
         private void PowerCancel_Click(object sender, RoutedEventArgs e)
@@ -1092,11 +992,13 @@ namespace HeatingMold.App
             int[] areaFaces = _activeArea == null ? Array.Empty<int>() : SortedFaceIds(_activeArea);
             double[] hit = Bridge.PickSelectedBoundaryPoint(areaFaces, x, y);
             if (hit == null || hit.Length < 4 || hit.Any(v => !double.IsFinite(v))) { Bridge.ClearPowerLeadPreview(); if (!previewOnly) StatusText.Text = "선택 가열면의 외곽 경계를 클릭하세요 · " + PowerPrompt(); return; }
+            ProjectionFrame frame = _activeArea?.Frame;
+            if (frame == null) { Bridge.ClearPowerLeadPreview(); return; }
             var pending = _pendingLeads[0];
             Vec3 end = new(hit[0], hit[1], hit[2]);
-            Vec3 source = _multiFaceFrame.Unproject(_multiFaceFrame.Project(pending.Start));
-            Vec3 datumEnd = end + _multiFaceFrame.Normal * _insertionDepth;
-            Vec3 direction = _multiFaceFrame.Normal * -1.0;
+            Vec3 source = frame.Unproject(frame.Project(pending.Start));
+            Vec3 datumEnd = end + frame.Normal * _insertionDepth;
+            Vec3 direction = frame.Normal * -1.0;
             var result = Bridge.ProjectPowerLead(pending.CircuitIndex * 2 + (pending.IsStart ? 0 : 1),
                 new[] { source.X, source.Y, source.Z, datumEnd.X, datumEnd.Y, datumEnd.Z },
                 new[] { pending.Start.X, pending.Start.Y, pending.Start.Z }, areaFaces,
@@ -1113,8 +1015,7 @@ namespace HeatingMold.App
             if (previewOnly) return; // Hover must never consume endpoints or update lengths.
             _pendingLeads.RemoveAt(0);
             _leadLengths[pending.CircuitIndex] += result[1];
-            var circuits = SerpentineTopology.Compute(_pattern.RoutePieces, _turnEnabled);
-            UpdateCircuitTable(circuits);
+            UpdateCircuitTable();
             if (_pendingLeads.Count == 0) { Viewport.PowerLocationMode = false; SetPowerEditingLock(false); }
             StatusText.Text = _pendingLeads.Count == 0 ? "전원 연결 경로 완료 — 실제 3D 접속 길이를 회로별 합계에 반영했습니다" : PowerPrompt();
         }
@@ -1143,25 +1044,9 @@ namespace HeatingMold.App
             if (area == null) { StatusText.Text = "작업영역이 없습니다"; return; }
             if (!ConfirmDiscardRouteEdits(area, "제외영역 지우기")) return;
             ExitVertexEdit();
+            CancelPowerSetup();
             // 롤백 스냅샷 — 실패 시 제외 목록/경로/표시를 이전 그대로 되돌린다.
-            var previousExclusions = area.Exclusions.ToList();
-            var previousPattern = area.Pattern;
-            var previousPaths = area.Paths;
-            var previousExclusionPieces = area.ExclusionPieces;
-            var previousPieceIds = area.NativePieceIds;
-            var previousLengths = area.RoutePieceLengths;
-            var previousProjected = area.ProjectedPieces;
-            var previousTurns = area.TurnEnabled;
-            var previousDisplayed = area.PatternDisplayed;
-            var previousLeadLengths = area.LeadLengths;
-            var previousFailure = area.LastExitFailure;
-            var previousStartAnchor = area.StartAnchor;
-            var previousEndAnchor = area.EndAnchor;
-            var previousCandidates = area.AnchorCandidates;
-            var previousExcludedCandidates = area.ExcludedCandidates;
-            var previousExcludedPlan = area.ExcludedPlan;
-            var previousExcludedFailure = area.ExcludedCandidateFailure;
-            var previousExcludedKey = area.ExcludedPlanKey;
+            AreaRouteSnapshot previous = CaptureAreaRouteState(area);
 
             area.Exclusions.Clear();
             area.Pattern = null;
@@ -1172,16 +1057,10 @@ namespace HeatingMold.App
             area.ProjectedPieces = new List<RoutePieceResult>();
             area.TurnEnabled = new List<bool>();
             area.PatternDisplayed = false;
-            ActivateAreaStateFields(area);
             Bridge.ClearExclusionOverlays();
             if (!RebuildNativePatternGeometry(out _, out _))
             {
-                RestoreAreaExclusions(area, previousExclusions);
-                RestoreAreaPatternState(area, previousPattern, previousPaths, previousExclusionPieces, previousPieceIds,
-                    previousLengths, previousProjected, previousTurns, previousDisplayed,
-                    previousStartAnchor, previousEndAnchor, previousCandidates,
-                    previousExcludedCandidates, previousExcludedPlan, previousExcludedFailure,
-                    previousExcludedKey, previousLeadLengths, previousFailure);
+                RestoreAreaRouteState(area, previous, restoreExclusions: true);
                 UpdateActiveAreaHighlight();
                 return;
             }
@@ -1193,7 +1072,7 @@ namespace HeatingMold.App
                 RecomputeAnchorCandidates(area);
                 SyncExitFaceUi(area);
             }
-            if (CircuitLengthGrid != null) CircuitLengthGrid.ItemsSource = null;
+            UpdateCircuitTable();
             UpdateActionStates();
             StatusText.Text = string.Format("{0} 영역의 제외 사각형을 모두 지웠습니다", area.Name);
         }
@@ -1231,9 +1110,10 @@ namespace HeatingMold.App
 
         private void Export_Click(object sender, RoutedEventArgs e)
         {
-            if (_pattern == null)
+            WorkingArea active = _activeArea;
+            if (active?.Pattern == null)
             {
-                StatusText.Text = _multiFacePatternDisplayed
+                StatusText.Text = active?.PatternDisplayed == true
                     ? "다중 Face/제외영역 DXF 출력은 아직 지원하지 않습니다"
                     : "먼저 [패턴 생성]을 실행하세요";
                 return;
@@ -1245,8 +1125,7 @@ namespace HeatingMold.App
 
             try
             {
-                ElectricalSpecTable spec = _lastElectricalTable;
-                if (spec == null)
+                if (!TryBuildCurrentElectricalTable(out ElectricalSpecTable spec, out _, out _))
                 {
                     StatusText.Text = "전기 사양을 계산할 수 없습니다 — 입력값과 발열 경로를 확인하세요";
                     return;

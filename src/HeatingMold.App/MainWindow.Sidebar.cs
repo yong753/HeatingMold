@@ -1,7 +1,6 @@
 using System;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Threading;
 using HeatingMold.OccBridge;
 
 namespace HeatingMold.App;
@@ -16,7 +15,6 @@ public partial class MainWindow
     private const int AreaTabIndex = 0;
     private const int PatternTabIndex = 1;
     private const int EditTabIndex = 2;
-    private const int ResultsTabIndex = 3;
 
     private bool _sidebarInitialized;
     private int _activeSidebarTabIndex = AreaTabIndex;
@@ -31,7 +29,7 @@ public partial class MainWindow
         if (SidebarTabs == null) return;
         _sidebarInitialized = true;
         SidebarTabs.SelectedIndex = AreaTabIndex;
-        ApplySidebarTabState(AreaTabIndex, AreaTabIndex);
+        ApplySidebarTabState(AreaTabIndex);
     }
 
     private void SidebarTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -47,10 +45,10 @@ public partial class MainWindow
         // 진행 중 드래그는 뷰포트가 확정 없이 취소하고, 완료된 편집·이력은 그대로 둔다.
         ExitVertexEdit();
         ExitTransientModeForTab(previous);
-        ApplySidebarTabState(next, previous);
+        ApplySidebarTabState(next);
     }
 
-    private void ApplySidebarTabState(int tabIndex, int previousTab)
+    private void ApplySidebarTabState(int tabIndex)
     {
         // 제외 그리기는 탭과 무관한 뷰포트 입력 모드이므로 어떤 탭으로든 이동하면 종료한다.
         ExitExclusionSketch();
@@ -106,6 +104,6 @@ public partial class MainWindow
         if (SidebarTabs != null && SidebarTabs.SelectedIndex != AreaTabIndex)
             SidebarTabs.SelectedIndex = AreaTabIndex;
         if (_activeSidebarTabIndex != AreaTabIndex)
-            ApplySidebarTabState(AreaTabIndex, _activeSidebarTabIndex);
+            ApplySidebarTabState(AreaTabIndex);
     }
 }

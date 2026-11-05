@@ -145,6 +145,9 @@ passes 48/48.
 
 ## Reproduce
 
+The solution exposes only `Release|x64`. The C++/CLI bridge is built for that configuration,
+so Debug/x86/Any CPU solution builds are not supported.
+
 ```powershell
 # Build the native bridge and app first
 & "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\amd64\MSBuild.exe" `
