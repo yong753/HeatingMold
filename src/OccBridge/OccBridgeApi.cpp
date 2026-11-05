@@ -96,6 +96,15 @@
 #include <Message.hxx>
 #include <Message_PrinterOStream.hxx>
 
+// 사각형 선택 가시성(face ID 이미지 캐시) — TKService/TKV3d
+#include <Image_PixMap.hxx>
+#include <Image_Format.hxx>
+#include <V3d_ImageDumpOptions.hxx>
+#include <Graphic3d_BufferType.hxx>
+#include <Graphic3d_TypeOfShadingModel.hxx>
+#include <Graphic3d_AspectFillArea3d.hxx>
+#include <NCollection_Array1.hxx>
+
 // HLR (S1 항목 5) — TKHLR
 #include <HLRBRep_Algo.hxx>
 #include <HLRBRep_HLRToShape.hxx>
@@ -149,6 +158,9 @@ namespace
     gp_Dir g_autoAxes[3] = { gp::DX(), gp::DY(), gp::DZ() };
     long long g_modelRevision = 0;
     void InvalidateWorkingContexts();
+    // 사각형 선택 가시성 캐시/프리뷰 (FaceIdSelectionNative.inc 에서 정의)
+    void ReleaseFaceIdCacheNative();
+    void AbortRectanglePreviewNative();
 
     bool TryGetSupplementalAxes(const Handle(StepData_StepModel)& model)
     {
@@ -499,6 +511,8 @@ namespace
 
     void ClearDisplayedShape()
     {
+        AbortRectanglePreviewNative();
+        ReleaseFaceIdCacheNative();
         if (!g_ctx.IsNull())
         {
             g_ctx->ClearSelected(Standard_False);   // 이전 선택 해제 (해당 프레젠테이션 제거 전)
@@ -2598,34 +2612,32 @@ namespace
         return selected;
     }
 
-    /// <summary>사각형 영역을 OCCT 네이티브 선택으로 적용한다(항상 교체).
-    /// OCCT 기본 동작이므로 화면에서 가려진 뒤쪽 면도 함께 선택된다.</summary>
+    // 사각형 선택 가시성/프리뷰 (FaceIdSelectionNative.inc 에서 정의, 아래에서 include)
+    bool QueryVisibleFaceIdsNative(int x0, int y0, int x1, int y1, std::vector<int>& out);
+    void BeginRectanglePreviewNative();
+    void PreviewFacesRectangleNative(int x0, int y0, int x1, int y1);
+    void EndRectanglePreviewNative(bool cancel);
+    std::vector<int> ApplySelectedFaceIdsNative(const std::vector<int>& faceIds);
+    bool IsRectanglePreviewActiveNative();
+    void ReleaseFaceIdCacheNative();
+    void AbortRectanglePreviewNative();
+
+    /// <summary>사각형 영역을 선택 전용 face-ID 이미지로 판정해 화면에 보이는 면만 적용한다.
+    /// 캐시/렌더에 실패하면 기존 선택을 그대로 둔다(가려진 면이 섞이는 이전 동작으로 되돌리지 않는다).</summary>
     std::vector<int> SelectFacesRectangleNative(int x0, int y0, int x1, int y1)
     {
         std::vector<int> result;
         if (g_ctx.IsNull() || g_view.IsNull() || g_aisShape.IsNull()) return result;
-        const int minX = std::min(x0, x1), maxX = std::max(x0, x1);
-        const int minY = std::min(y0, y1), maxY = std::max(y0, y1);
-        Standard_Integer viewWidth = 0, viewHeight = 0;
-        g_view->Window()->Size(viewWidth, viewHeight);
-        const int clippedMinX = std::max(0, minX), clippedMaxX = std::min(viewWidth - 1, maxX);
-        const int clippedMinY = std::max(0, minY), clippedMaxY = std::min(viewHeight - 1, maxY);
-        if (clippedMinX > clippedMaxX || clippedMinY > clippedMaxY) return result;
 
-        // 완전히 포함된 면만 고르는 기본값(false) 대신 부분 교차도 선택되게 한다.
-        g_ctx->MainSelector()->AllowOverlapDetection(Standard_True);
-        // Replace: 기존 선택을 지우고 이번 사각형 결과로 교체한다.
-        g_ctx->SelectRectangle(Graphic3d_Vec2i(clippedMinX, clippedMinY),
-                               Graphic3d_Vec2i(clippedMaxX, clippedMaxY),
-                               g_view, AIS_SelectionScheme_Replace);
-        g_ctx->HilightSelected(Standard_False);
-        UpdateSelectedFaceColors();
-        g_ctx->ClearDetected(Standard_False);
-        g_lastHoverFace = -1;
-
-        const std::set<int> selected = CollectSelectedFaceIdsNative();
-        result.assign(selected.begin(), selected.end());
-        g_view->Redraw();
+        std::vector<int> visible;
+        BeginRectanglePreviewNative();   // 활성 세션이 없으면 기준 선택을 보관한다
+        if (!QueryVisibleFaceIdsNative(x0, y0, x1, y1, visible))
+        {
+            EndRectanglePreviewNative(true);
+            return result;
+        }
+        result = ApplySelectedFaceIdsNative(visible);
+        EndRectanglePreviewNative(false);
         return result;
     }
 
@@ -2647,7 +2659,8 @@ namespace
                                             std::max(x0, x1), std::max(flippedY0, flippedY1));
         if (!g_ctx->IsDisplayed(g_selectionRubberBand)) g_ctx->Display(g_selectionRubberBand, Standard_False);
         else g_ctx->Redisplay(g_selectionRubberBand, Standard_False);
-        if (!g_view.IsNull()) g_view->Redraw();
+        // 프리뷰 세션이 활성화면 33ms 틱이 밴드와 면 강조를 한 번에 그린다(중복 Redraw 방지).
+        if (!g_view.IsNull() && !IsRectanglePreviewActiveNative()) g_view->Redraw();
     }
 
     void ClearSelectionRectangleNative()
@@ -2837,6 +2850,7 @@ namespace
     }
 #include "WorkingSideNative.inc"
 #include "AreaHighlightNative.inc"
+#include "FaceIdSelectionNative.inc"
 }
 #pragma managed(pop)
 
@@ -3589,6 +3603,21 @@ void Bridge::ClearSelectionRectangle()
     ClearSelectionRectangleNative();
 }
 
+void Bridge::BeginFaceRectanglePreview()
+{
+    BeginRectanglePreviewNative();
+}
+
+void Bridge::PreviewFacesInRectangle(int x0, int y0, int x1, int y1)
+{
+    PreviewFacesRectangleNative(x0, y0, x1, y1);
+}
+
+void Bridge::CancelFaceRectanglePreview()
+{
+    EndRectanglePreviewNative(true);
+}
+
 array<double>^ Bridge::ScreenPointOnPlane(int x, int y, double ox, double oy, double oz, double nx, double ny, double nz)
 {
     gp_Vec n(nx, ny, nz);
@@ -3710,6 +3739,20 @@ void Bridge::ClearConfirmedFaceHighlights()
 void Bridge::ClearFaceSelection()
 {
     ClearFaceSelectionNative();
+}
+
+array<int>^ Bridge::GetSelectedFaceIds()
+{
+    const std::set<int> ids = CollectSelectedFaceIdsNative();
+    array<int>^ result = gcnew array<int>((int)ids.size());
+    int index = 0;
+    for (int id : ids) result[index++] = id;
+    return result;
+}
+
+long long Bridge::GetFaceIdBuildCount()
+{
+    return g_faceIdBuildCount;
 }
 
 void Bridge::ClearHover()

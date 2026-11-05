@@ -150,6 +150,10 @@ namespace HeatingMold.App
         private int _lastExclusionPreviewX, _lastExclusionPreviewY;
         private int _lastHover = -2;      // W5 — 호버 이벤트 중복 억제
         private int _activeDragMode; // 0=orbit, 1=rectangle selection, 2=exclusion sketch
+        private DispatcherTimer _rectPreviewTimer;
+        private bool _rectPreviewPending;
+        private bool _rectPreviewSession;
+        private int _rectPreviewX, _rectPreviewY;
         private bool _connectorEditMode;
         private bool _circuitHoverMode;
         public bool ConnectorEditMode
@@ -346,6 +350,38 @@ namespace HeatingMold.App
             VertexDragMoved?.Invoke(point.Value.X, point.Value.Y);
         }
 
+        // ---- 사각형 선택 프리뷰 (최신 좌표만 33ms 간격으로 반영) ----
+        private void QueueFaceRectanglePreview(int x, int y)
+        {
+            _rectPreviewX = x;
+            _rectPreviewY = y;
+            _rectPreviewPending = true;
+            if (_rectPreviewTimer == null)
+            {
+                _rectPreviewTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+                    { Interval = TimeSpan.FromMilliseconds(33) };
+                _rectPreviewTimer.Tick += FlushFaceRectanglePreview;
+            }
+            if (!_rectPreviewTimer.IsEnabled) _rectPreviewTimer.Start();
+        }
+
+        private void FlushFaceRectanglePreview(object sender, EventArgs e)
+        {
+            if (!_rectPreviewPending || !_dragging || _activeDragMode != 1)
+            {
+                StopFaceRectanglePreview();
+                return;
+            }
+            _rectPreviewPending = false;
+            Bridge.PreviewFacesInRectangle(_downX, _downY, _rectPreviewX, _rectPreviewY);
+        }
+
+        private void StopFaceRectanglePreview()
+        {
+            _rectPreviewTimer?.Stop();
+            _rectPreviewPending = false;
+        }
+
         protected override HandleRef BuildWindowCore(HandleRef hwndParent)
         {
             EnsureClassRegistered();
@@ -359,6 +395,12 @@ namespace HeatingMold.App
         protected override void DestroyWindowCore(HandleRef hwnd)
         {
             CancelPowerLeadPreview();
+            StopFaceRectanglePreview();
+            if (_rectPreviewSession)
+            {
+                Bridge.CancelFaceRectanglePreview();
+                _rectPreviewSession = false;
+            }
             _ready = false;
             _dragging = false;
             _dragStarted = false;
@@ -453,6 +495,18 @@ namespace HeatingMold.App
                             VertexEscape?.Invoke();
                             handled = true;
                         }
+                        else if (_dragging && _activeDragMode == 1 && _dragStarted)
+                        {
+                            // 사각형 드래그 취소 — 드래그 시작 시점의 선택으로 되돌린다.
+                            StopFaceRectanglePreview();
+                            Bridge.CancelFaceRectanglePreview();
+                            _rectPreviewSession = false;
+                            Bridge.ClearSelectionRectangle();
+                            _dragging = false;
+                            _dragStarted = false;
+                            ReleaseCapture();
+                            handled = true;
+                        }
                         else if (_dragging && _activeDragMode == 2 && _dragStarted)
                         {
                             ReleaseCapture();
@@ -463,6 +517,7 @@ namespace HeatingMold.App
                     if ((int)wParam == 0x0D)
                     {
                         if (VertexEditMode) { handled = true; break; }   // 편집 중 Enter는 영역 확정으로 새지 않는다
+                        if (_dragging && _activeDragMode == 1) { handled = true; break; }   // 사각형 드래그 중 확정 금지
                         EnterPressed?.Invoke();
                         handled = true;
                     }
@@ -503,6 +558,7 @@ namespace HeatingMold.App
 
                 case WM_RBUTTONDOWN:
                     if (VertexEditMode || _vertexDragging) { handled = true; break; }
+                    if (_dragging && _activeDragMode == 1) { handled = true; break; }   // 사각형 선택 중 팬 금지(캐시 무효화 방지)
                     CancelPowerLeadPreview();
                     SetCapture(hwnd);
                     _panDragging = true;
@@ -581,6 +637,11 @@ namespace HeatingMold.App
                                 else if (_activeDragMode == 1)
                                 {
                                     Bridge.ClearHover();          // 사각형 선택 중 호버색 잔상 방지
+                                    if (!_rectPreviewSession)
+                                    {
+                                        Bridge.BeginFaceRectanglePreview();
+                                        _rectPreviewSession = true;
+                                    }
                                 }
                             }
                         }
@@ -593,6 +654,7 @@ namespace HeatingMold.App
                                 _lastSelectionPreviewX = x;
                                 _lastSelectionPreviewY = y;
                                 Bridge.SetSelectionRectangle(_downX, _downY, x, y);
+                                QueueFaceRectanglePreview(x, y);
                             }
                             else if (_activeDragMode == 2 &&
                                      (Math.Abs(x - _lastExclusionPreviewX) >= 4 || Math.Abs(y - _lastExclusionPreviewY) >= 4))
@@ -681,6 +743,8 @@ namespace HeatingMold.App
                             if (_activeDragMode == 0 && !ViewLocked) Bridge.RotateEnd();
                             else if (_activeDragMode == 1)
                             {
+                                StopFaceRectanglePreview();
+                                _rectPreviewSession = false;
                                 Bridge.ClearSelectionRectangle();
                                 int[] ids = Bridge.SelectFacesInRectangle(_downX, _downY, x, y);
                                 FacesRectanglePicked?.Invoke(ids);
@@ -721,6 +785,12 @@ namespace HeatingMold.App
                     _panDragging = false;
                     if (_activeDragMode == 1)
                     {
+                        StopFaceRectanglePreview();
+                        if (_rectPreviewSession)
+                        {
+                            Bridge.CancelFaceRectanglePreview();
+                            _rectPreviewSession = false;
+                        }
                         Bridge.ClearSelectionRectangle();
                     }
                     if (_activeDragMode == 2 && _dragStarted) ExclusionSketchCancelled?.Invoke();
@@ -730,6 +800,7 @@ namespace HeatingMold.App
                 case WM_MOUSEWHEEL:
                 {
                     if (VertexEditMode || _vertexDragging) { handled = true; break; }
+                    if (_dragging && _activeDragMode == 1) { handled = true; break; }   // 사각형 선택 중 줌 금지(캐시 무효화 방지)
                     int delta = (short)(((long)wParam >> 16) & 0xFFFF);
                     var point = new POINT
                     {

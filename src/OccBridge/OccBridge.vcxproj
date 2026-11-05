@@ -53,6 +53,7 @@
     <ClInclude Include="OccBridgeApi.h" />
     <ClInclude Include="WorkingSideNative.inc" />
     <ClInclude Include="AreaHighlightNative.inc" />
+    <ClInclude Include="FaceIdSelectionNative.inc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

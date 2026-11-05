@@ -279,6 +279,11 @@ public:
     /// <summary>면 선택(초록)만 해제. 확정 영역 하이라이트는 건드리지 않는다.</summary>
     static void ClearFaceSelection();
 
+    /// <summary>진단: face-ID 선택 이미지를 실제로 생성한 횟수(캐시 재사용 검증용)</summary>
+    static long long GetFaceIdBuildCount();
+    /// <summary>현재 선택된 face id 목록(정렬). 선택 상태를 바꾸지 않는다.</summary>
+    static array<int>^ GetSelectedFaceIds();
+
     /// <summary>호버 하이라이트 해제 + Redraw (마우스가 창을 벗어날 때)</summary>
     static void ClearHover();
 
@@ -301,6 +306,12 @@ public:
     static array<int>^ SelectFacesInRectangle(int x0, int y0, int x1, int y1);
     static void SetSelectionRectangle(int x0, int y0, int x1, int y1);
     static void ClearSelectionRectangle();
+    /// <summary>사각형 선택 프리뷰 세션 시작(기준 선택 보관). 이미 활성이면 무시.</summary>
+    static void BeginFaceRectanglePreview();
+    /// <summary>드래그 중 가시 면만 골라 하이라이트한다(실제 확정은 SelectFacesInRectangle).</summary>
+    static void PreviewFacesInRectangle(int x0, int y0, int x1, int y1);
+    /// <summary>프리뷰 취소 — 드래그 시작 시점의 선택으로 되돌린다.</summary>
+    static void CancelFaceRectanglePreview();
     static array<double>^ ScreenPointOnPlane(int x, int y, double ox, double oy, double oz, double nx, double ny, double nz);
     static bool AddExclusionOverlay(array<double>^ xyzFlat);
     static void SetExclusionPreview(array<double>^ xyzFlat);

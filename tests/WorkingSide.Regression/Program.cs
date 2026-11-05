@@ -269,8 +269,10 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
         Bridge.ClearHover();
         var coincidentRectangle=Bridge.SelectFacesInRectangle(
             coincidentCenter[0]-4,coincidentCenter[1]-4,coincidentCenter[0]+4,coincidentCenter[1]+4);
-        Check(coincidentRectangle!=null && coincidentRectangle.Contains(frontFace) && coincidentRectangle.Contains(backFace),
-            "rectangle pick includes the coincident back-facing face (OCCT native behavior)");
+        // 화면에 실제로 보이는 면만 남기므로, 같은 픽셀에 겹친 두 장은 한 장만 살아남는다.
+        Check(coincidentRectangle!=null && coincidentRectangle.Length==1 &&
+              (coincidentRectangle[0]==frontFace || coincidentRectangle[0]==backFace),
+            "rectangle pick keeps only the rasterized visible face of coincident sheets");
         Bridge.SetViewFrame(0,0,-1,0,1,0);
         var flippedCenter=Bridge.WorldToScreen(0,0,0);
         Check(flippedCenter!=null && Bridge.SelectFace(flippedCenter[0],flippedCenter[1],false)==backFace,
@@ -286,6 +288,36 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
         var farProbe=farFace>=0?Bridge.GetFaceNormal(farFace):null;
         Check(nearProbe!=null && farProbe!=null && Math.Abs(nearProbe[5])<1e-6 && Math.Abs(farProbe[5]+50)<1e-6 && nearFace!=farFace,
             "occluded click never falls through to the surface behind the nearest hit");
+        var stackedRectangle=Bridge.SelectFacesInRectangle(
+            stackedCenter[0]-8,stackedCenter[1]-8,stackedCenter[0]+8,stackedCenter[1]+8);
+        Check(stackedRectangle!=null && stackedRectangle.Contains(nearFace) && !stackedRectangle.Contains(farFace),
+            "rectangle pick excludes the face hidden behind the near sheet");
+        // 프리뷰: 드래그 중에는 하이라이트만 바뀌고, 취소하면 시작 시점 선택으로 돌아온다.
+        Bridge.ClearFaceSelection();
+        Bridge.SelectFace(stackedCenter[0],stackedCenter[1],false);
+        var beforePreview=Bridge.GetSelectedFaceIds();
+        Bridge.BeginFaceRectanglePreview();
+        Bridge.PreviewFacesInRectangle(stackedOuter[0]-8,stackedOuter[1]-8,stackedOuter[0]+8,stackedOuter[1]+8);
+        var duringPreview=Bridge.GetSelectedFaceIds();
+        Bridge.CancelFaceRectanglePreview();
+        var afterCancel=Bridge.GetSelectedFaceIds();
+        Check(beforePreview!=null && beforePreview.Length==1 && beforePreview[0]==nearFace,
+            "preview baseline captures the current face selection");
+        Check(duringPreview!=null && duringPreview.Length==1 && duringPreview[0]==farFace,
+            "preview highlights only the visible face inside the drag rectangle");
+        Check(afterCancel!=null && afterCancel.Length==1 && afterCancel[0]==nearFace,
+            "cancel restores the selection captured at drag start");
+        // 캐시 재사용: 카메라가 그대로면 사각형을 다시 질의해도 이미지를 다시 만들지 않는다.
+        long buildsBeforeRepeat=Bridge.GetFaceIdBuildCount();
+        Bridge.SelectFacesInRectangle(stackedOuter[0]-8,stackedOuter[1]-8,stackedOuter[0]+8,stackedOuter[1]+8);
+        long buildsAfterRepeat=Bridge.GetFaceIdBuildCount();
+        Bridge.SetViewFrame(0,0,-1,0,1,0);
+        Bridge.SelectFacesInRectangle(stackedOuter[0]-8,stackedOuter[1]-8,stackedOuter[0]+8,stackedOuter[1]+8);
+        long buildsAfterCamera=Bridge.GetFaceIdBuildCount();
+        Check(buildsAfterRepeat==buildsBeforeRepeat,
+            "rectangle query reuses the face-id image while the camera is unchanged");
+        Check(buildsAfterCamera==buildsAfterRepeat+1,
+            "camera change rebuilds the face-id image exactly once");
         Check(Bridge.LoadStep(Path.Combine(args[0],"exitSides.stp")),"load exit-side fixture (box plus detached sheet)");
         int boxTop=-1,boxBottom=-1,boxPlusX=-1,boxMinusX=-1,boxPlusY=-1,boxMinusY=-1,nakedSheet=-1;
         for (int id=0;;++id)
