@@ -121,6 +121,8 @@
 #include <TColStd_HArray1OfInteger.hxx>
 #include <Aspect_PolygonOffsetMode.hxx>
 #include <Graphic3d_Camera.hxx>
+#include <Graphic3d_CView.hxx>
+#include <Graphic3d_TypeOfBackground.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_ShadingAspect.hxx>
 #include <Prs3d_PointAspect.hxx>
@@ -2617,28 +2619,28 @@ namespace
     void BeginRectanglePreviewNative();
     void PreviewFacesRectangleNative(int x0, int y0, int x1, int y1);
     void EndRectanglePreviewNative(bool cancel);
-    std::vector<int> ApplySelectedFaceIdsNative(const std::vector<int>& faceIds);
+    bool ApplySelectedFaceIdsNative(const std::vector<int>& faceIds, std::vector<int>& applied);
     bool IsRectanglePreviewActiveNative();
     void ReleaseFaceIdCacheNative();
     void AbortRectanglePreviewNative();
 
     /// <summary>사각형 영역을 선택 전용 face-ID 이미지로 판정해 화면에 보이는 면만 적용한다.
-    /// 캐시/렌더에 실패하면 기존 선택을 그대로 둔다(가려진 면이 섞이는 이전 동작으로 되돌리지 않는다).</summary>
-    std::vector<int> SelectFacesRectangleNative(int x0, int y0, int x1, int y1)
+    /// false면 캐시/렌더 실패이며 기존 선택을 그대로 둔다. true + 빈 result는 유효한 빈 선택이다.</summary>
+    bool SelectFacesRectangleNative(int x0, int y0, int x1, int y1, std::vector<int>& result)
     {
-        std::vector<int> result;
-        if (g_ctx.IsNull() || g_view.IsNull() || g_aisShape.IsNull()) return result;
+        result.clear();
+        if (g_ctx.IsNull() || g_view.IsNull() || g_aisShape.IsNull()) return false;
 
         std::vector<int> visible;
         BeginRectanglePreviewNative();   // 활성 세션이 없으면 기준 선택을 보관한다
         if (!QueryVisibleFaceIdsNative(x0, y0, x1, y1, visible))
         {
             EndRectanglePreviewNative(true);
-            return result;
+            return false;
         }
-        result = ApplySelectedFaceIdsNative(visible);
+        ApplySelectedFaceIdsNative(visible, result);
         EndRectanglePreviewNative(false);
-        return result;
+        return true;
     }
 
     void SetSelectionRectangleNative(int x0, int y0, int x1, int y1)
@@ -2665,10 +2667,10 @@ namespace
 
     void ClearSelectionRectangleNative()
     {
-        if (!g_ctx.IsNull() && !g_selectionRubberBand.IsNull())
-            g_ctx->Remove(g_selectionRubberBand, Standard_False);
+        // 실제 화면 갱신은 호출 측(프리뷰 종료/확정)이 한 번만 수행한다.
+        if (g_ctx.IsNull() || g_selectionRubberBand.IsNull()) return;
+        g_ctx->Remove(g_selectionRubberBand, Standard_False);
         g_selectionRubberBand.Nullify();
-        if (!g_view.IsNull()) g_view->Redraw();
     }
 
     bool ScreenPointOnPlaneNative(int x, int y, const gp_Pnt& origin, const gp_Dir& normal, double* out)
@@ -3587,7 +3589,8 @@ array<double>^ Bridge::GetAutoAxis(int axis)
 
 array<int>^ Bridge::SelectFacesInRectangle(int x0, int y0, int x1, int y1)
 {
-    const std::vector<int> ids = SelectFacesRectangleNative(x0, y0, x1, y1);
+    std::vector<int> ids;
+    if (!SelectFacesRectangleNative(x0, y0, x1, y1, ids)) return nullptr;   // 실패 ≠ 유효한 빈 선택
     array<int>^ result = gcnew array<int>((int)ids.size());
     for (int i = 0; i < result->Length; ++i) result[i] = ids[(size_t)i];
     return result;

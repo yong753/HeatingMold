@@ -303,6 +303,8 @@ public:
     static void SetViewFrame(double dx, double dy, double dz, double ux, double uy, double uz);
     /// <summary>로드된 형상에서 자동 추정한 주축(0=X, 1=Y, 2=Z)</summary>
     static array<double>^ GetAutoAxis(int axis);
+    /// <summary>사각형 안에서 화면에 보이는 면만 선택한다. 실패(캐시/렌더) 시 null,
+    /// 성공 시 빈 배열일 수 있다(유효한 빈 선택).</summary>
     static array<int>^ SelectFacesInRectangle(int x0, int y0, int x1, int y1);
     static void SetSelectionRectangle(int x0, int y0, int x1, int y1);
     static void ClearSelectionRectangle();

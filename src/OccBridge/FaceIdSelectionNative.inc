@@ -51,9 +51,15 @@
     long long                 g_faceIdQueryCount = 0;
     bool                      g_faceIdBuildFailed = false;
 
-    // 사각형 선택 프리뷰 세션 — 취소 시 되돌릴 기준 선택
+    // 사각형 선택 프리뷰 세션 — 취소 시 되돌릴 기준 선택.
+    // owner handle은 Redisplay마다 재계산되어 stale해질 수 있으므로 face ID로 보관한다.
     bool g_rectPreviewActive = false;
-    std::vector<Handle(SelectMgr_EntityOwner)> g_rectBaselineOwners;
+    std::vector<int> g_rectBaselineFaceIds;
+    std::map<int, Handle(SelectMgr_EntityOwner)> g_rectOwnerMap;
+    bool g_rectOwnerMapValid = false;
+    std::vector<int> g_rectLastRequestedFaceIds;
+    std::vector<int> g_rectLastAppliedFaceIds;
+    bool g_rectHasApplied = false;
 
     Quantity_Color FaceIdColorNative(int code)
     {
@@ -74,9 +80,14 @@
 
     void ReleaseFaceIdCacheNative()
     {
-        if (!g_ctx.IsNull() && !g_faceIdShape.IsNull() && g_ctx->IsDisplayed(g_faceIdShape))
-            g_ctx->Remove(g_faceIdShape, Standard_False);
+        if (!g_ctx.IsNull() && !g_faceIdShape.IsNull())
+            g_ctx->Remove(g_faceIdShape, Standard_False);   // Erase된 객체도 context에는 남아 있다
         g_faceIdShape.Nullify();
+        if (!g_viewer.IsNull() && !g_faceIdLayerOwner.IsNull() &&
+            g_faceIdLayerOwner == g_viewer && g_faceIdLayer != Graphic3d_ZLayerId_UNKNOWN)
+            g_viewer->RemoveZLayer(g_faceIdLayer);
+        g_faceIdLayer = Graphic3d_ZLayerId_UNKNOWN;
+        g_faceIdLayerOwner.Nullify();
         g_faceIdCodes.clear();
         g_faceIdCodes.shrink_to_fit();
         g_faceIdTiles.clear();
@@ -91,7 +102,12 @@
     void AbortRectanglePreviewNative()
     {
         g_rectPreviewActive = false;
-        g_rectBaselineOwners.clear();
+        g_rectBaselineFaceIds.clear();
+        g_rectOwnerMap.clear();
+        g_rectOwnerMapValid = false;
+        g_rectLastRequestedFaceIds.clear();
+        g_rectLastAppliedFaceIds.clear();
+        g_rectHasApplied = false;
     }
 
     /// <summary>지금 카메라/뷰포트 상태를 캐시 키로 기록한다.</summary>
@@ -165,6 +181,41 @@
         return true;
     }
 
+    /// <summary>ID 덤프 동안만 뷰 배경을 불투명 검정으로 바꾼다. 배경 회색이 유효 코드로
+    /// 해석되면 빈 영역이 면으로 선택되므로, 성공/예외 모두 원래 배경으로 복원한다.</summary>
+    struct FaceIdBackgroundGuardNative
+    {
+        Handle(V3d_View) View;
+        Handle(Graphic3d_CView) Base;
+        Quantity_Color Color;
+        Graphic3d_TypeOfBackground Type;
+        bool Active;
+
+        FaceIdBackgroundGuardNative()
+            : Color(0.0, 0.0, 0.0, Quantity_TOC_RGB), Type(Graphic3d_TOB_NONE), Active(false) {}
+
+        void Apply()
+        {
+            if (View.IsNull() || Base.IsNull()) return;
+            Color = View->BackgroundColor();
+            Type = Base->BackgroundType();
+            View->SetBackgroundColor(Quantity_Color(0.0, 0.0, 0.0, Quantity_TOC_RGB));
+            Base->SetBackgroundType(Graphic3d_TOB_NONE);
+            Active = true;
+        }
+
+        ~FaceIdBackgroundGuardNative()
+        {
+            if (!Active || View.IsNull()) return;
+            try
+            {
+                View->SetBackgroundColor(Color);
+                if (!Base.IsNull()) Base->SetBackgroundType(Type);
+            }
+            catch (const Standard_Failure&) { }
+        }
+    };
+
     bool EnsureFaceIdCacheNative()
     {
         if (g_ctx.IsNull() || g_view.IsNull() || g_viewer.IsNull() || g_shape.IsNull()) return false;
@@ -194,6 +245,11 @@
                 g_faceIdLayerOwner = g_viewer;   // 뷰어가 바뀌면 레이어 ID도 다시 만든다
             }
 
+            FaceIdBackgroundGuardNative backgroundGuard;
+            backgroundGuard.View = g_view;
+            backgroundGuard.Base = g_view->View();
+            backgroundGuard.Apply();
+
             g_ctx->SetZLayer(g_faceIdShape, g_faceIdLayer);
             // 선택 모드 -1: 표시만 하고 선택 대상에는 넣지 않는다.
             g_ctx->Display(g_faceIdShape, AIS_Shaded, -1, Standard_False);
@@ -216,12 +272,11 @@
             if (static_cast<int>(image.SizeX()) != width || static_cast<int>(image.SizeY()) != height) return false;
 
             g_faceIdCodes.assign(static_cast<size_t>(width) * static_cast<size_t>(height), 0u);
-            const Standard_Size stride = image.SizeRowBytes();
-            const bool topDown = image.IsTopDown();
+            // Image_PixMap::Row()는 IsTopDown 플래그를 내부에서 정규화한다.
+            // 여기서 height-1-y를 다시 적용하면 상하가 뒤집힌다.
             for (int y = 0; y < height; ++y)
             {
-                const int rowIndex = topDown ? y : (height - 1 - y);
-                const Standard_Byte* row = image.Row(static_cast<Standard_Size>(rowIndex));
+                const Standard_Byte* row = image.Row(static_cast<Standard_Size>(y));
                 if (row == nullptr) return false;
                 unsigned int* dst = &g_faceIdCodes[static_cast<size_t>(y) * static_cast<size_t>(width)];
                 for (int x = 0; x < width; ++x)
@@ -233,7 +288,6 @@
                                  : 0u;
                 }
             }
-            (void)stride;
 
             const int tilesX = (width + kFaceIdTileSize - 1) / kFaceIdTileSize;
             const int tilesY = (height + kFaceIdTileSize - 1) / kFaceIdTileSize;
@@ -327,32 +381,58 @@
         return true;
     }
 
-    /// <summary>선택 owner 배열을 Replace 스킴으로 적용하고 실제 적용된 face id를 돌려준다.</summary>
-    std::vector<int> ApplySelectedFaceIdsNative(const std::vector<int>& faceIds)
+    /// <summary>프리뷰 세션 동안 owner handle을 재사용한다. Begin의 Redisplay 이후
+    /// 첫 적용에서 구축하고, 선택 변경(Select)만으로는 재계산되지 않는다.</summary>
+    bool EnsureRectOwnerMapNative()
     {
-        std::vector<int> applied;
-        if (g_ctx.IsNull()) return applied;
-        std::map<int, Handle(SelectMgr_EntityOwner)> owners;
-        BuildFaceOwnerMapNative(owners);
+        if (g_rectOwnerMapValid) return true;
+        g_rectOwnerMap.clear();
+        g_rectOwnerMapValid = BuildFaceOwnerMapNative(g_rectOwnerMap);
+        return g_rectOwnerMapValid;
+    }
+
+    /// <summary>선택 owner 배열을 Replace로 적용한다. 같은 집합을 반복 적용하지 않고,
+    /// applied는 실제 AIS 선택에서 다시 수집한 face id다. true = 선택 상태 변경됨.</summary>
+    bool ApplySelectedFaceIdsNative(const std::vector<int>& faceIds, std::vector<int>& applied)
+    {
+        applied.clear();
+        if (g_ctx.IsNull()) return false;
+        if (g_rectHasApplied && faceIds == g_rectLastRequestedFaceIds)
+        {
+            applied = g_rectLastAppliedFaceIds;
+            return false;
+        }
+
+        const bool mapReady = EnsureRectOwnerMapNative();
+        if (!mapReady && !faceIds.empty()) return false;   // 매핑 실패 시 기존 선택을 건드리지 않는다
+
         std::vector<Handle(SelectMgr_EntityOwner)> list;
         list.reserve(faceIds.size());
         for (int faceId : faceIds)
         {
-            const auto it = owners.find(faceId);
-            if (it == owners.end()) continue;
+            const auto it = g_rectOwnerMap.find(faceId);
+            if (it == g_rectOwnerMap.end()) continue;
             list.push_back(it->second);
-            applied.push_back(faceId);
         }
+
         if (list.empty())
         {
             g_ctx->ClearSelected(Standard_False);
-            return applied;
         }
-        NCollection_Array1<Handle(SelectMgr_EntityOwner)> array(1, static_cast<Standard_Integer>(list.size()));
-        for (size_t i = 0; i < list.size(); ++i)
-            array[static_cast<Standard_Integer>(i) + 1] = list[i];
-        g_ctx->Select(array, AIS_SelectionScheme_Replace);
-        return applied;
+        else
+        {
+            NCollection_Array1<Handle(SelectMgr_EntityOwner)> array(1, static_cast<Standard_Integer>(list.size()));
+            for (size_t i = 0; i < list.size(); ++i)
+                array[static_cast<Standard_Integer>(i) + 1] = list[i];
+            g_ctx->Select(array, AIS_SelectionScheme_Replace);
+        }
+
+        const std::set<int> actual = CollectSelectedFaceIdsNative();
+        applied.assign(actual.begin(), actual.end());
+        g_rectLastRequestedFaceIds = faceIds;
+        g_rectLastAppliedFaceIds = applied;
+        g_rectHasApplied = true;
+        return true;
     }
 
     /// <summary>프리뷰 하이라이트(LocalSelected) 표시 여부. 스타일 변경은 기존 프레젠테이션에
@@ -367,17 +447,21 @@
         style->ShadingAspect()->SetTransparency(transparency);
     }
 
-    /// <summary>선택 색상 오버라이드를 지운다(확정 영역 색은 보존).</summary>
+    /// <summary>선택 색상 오버라이드를 지운다(확정 영역 색은 보존). 실제 변경이 있을 때만 재계산한다.</summary>
     void ClearSelectionColorOverridesNative()
     {
         Handle(AIS_ColoredShape) colored = Handle(AIS_ColoredShape)::DownCast(g_aisShape);
         if (colored.IsNull()) return;
+        bool changed = false;
         for (int faceId : g_selectedFaceIds)
             if (faceId >= 0 && faceId < static_cast<int>(g_faces.size()) &&
                 g_confirmedFaceColors.count(faceId) == 0)
+            {
                 colored->UnsetCustomAspects(g_faces[faceId], Standard_True);
+                changed = true;
+            }
         g_selectedFaceIds.clear();
-        g_ctx->Redisplay(g_aisShape, Standard_False);
+        if (changed) g_ctx->Redisplay(g_aisShape, Standard_False);
     }
 
     bool IsRectanglePreviewActiveNative()
@@ -390,10 +474,15 @@
         if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
         if (g_rectPreviewActive) return;
         g_rectPreviewActive = true;
-        g_rectBaselineOwners.clear();
-        for (g_ctx->InitSelected(); g_ctx->MoreSelected(); g_ctx->NextSelected())
-            if (!g_ctx->SelectedOwner().IsNull())
-                g_rectBaselineOwners.push_back(g_ctx->SelectedOwner());
+
+        // 기준 선택은 face ID로 보관한다. Begin 안의 Redisplay가 owner handle을 교체할 수 있다.
+        const std::set<int> baseline = CollectSelectedFaceIdsNative();
+        g_rectBaselineFaceIds.assign(baseline.begin(), baseline.end());
+        g_rectOwnerMap.clear();
+        g_rectOwnerMapValid = false;
+        g_rectLastRequestedFaceIds.clear();
+        g_rectLastAppliedFaceIds.clear();
+        g_rectHasApplied = false;
 
         // 드래그 중에는 네이티브 하이라이트가 현재 프리뷰 집합을 표시한다.
         SetPreviewHighlightVisibleNative(true);
@@ -407,9 +496,12 @@
         if (g_ctx.IsNull() || g_view.IsNull()) return;
         BeginRectanglePreviewNative();
         std::vector<int> visible;
-        if (QueryVisibleFaceIdsNative(x0, y0, x1, y1, visible))
-            ApplySelectedFaceIdsNative(visible);
-        g_view->Redraw();
+        if (!QueryVisibleFaceIdsNative(x0, y0, x1, y1, visible)) return;   // 이전 프리뷰 유지
+        std::vector<int> applied;
+        if (ApplySelectedFaceIdsNative(visible, applied))
+            g_view->Redraw();           // 선택 하이라이트가 바뀌면 전체 장면 갱신
+        else
+            g_view->RedrawImmediate();  // 면 집합은 그대로, 테두리만 이동
     }
 
     /// <summary>프리뷰 종료. cancel=true면 드래그 시작 시점의 선택으로 되돌린다.</summary>
@@ -419,23 +511,43 @@
         if (!g_rectPreviewActive) return;
         if (cancel)
         {
-            if (g_rectBaselineOwners.empty())
+            if (EnsureRectOwnerMapNative())
             {
-                g_ctx->ClearSelected(Standard_False);
+                std::vector<Handle(SelectMgr_EntityOwner)> list;
+                list.reserve(g_rectBaselineFaceIds.size());
+                for (int faceId : g_rectBaselineFaceIds)
+                {
+                    const auto it = g_rectOwnerMap.find(faceId);
+                    if (it != g_rectOwnerMap.end()) list.push_back(it->second);
+                }
+                if (list.empty())
+                {
+                    g_ctx->ClearSelected(Standard_False);
+                }
+                else
+                {
+                    NCollection_Array1<Handle(SelectMgr_EntityOwner)> array(
+                        1, static_cast<Standard_Integer>(list.size()));
+                    for (size_t i = 0; i < list.size(); ++i)
+                        array[static_cast<Standard_Integer>(i) + 1] = list[i];
+                    g_ctx->Select(array, AIS_SelectionScheme_Replace);
+                }
             }
-            else
+            else if (!g_rectBaselineFaceIds.empty())
             {
-                NCollection_Array1<Handle(SelectMgr_EntityOwner)> array(
-                    1, static_cast<Standard_Integer>(g_rectBaselineOwners.size()));
-                for (size_t i = 0; i < g_rectBaselineOwners.size(); ++i)
-                    array[static_cast<Standard_Integer>(i) + 1] = g_rectBaselineOwners[i];
-                g_ctx->Select(array, AIS_SelectionScheme_Replace);
+                // owner를 복원할 수 없으면 프리뷰 선택을 남기지 않는다.
+                g_ctx->ClearSelected(Standard_False);
             }
         }
         SetPreviewHighlightVisibleNative(false);
         g_ctx->UnhilightSelected(Standard_False);   // 프리뷰 하이라이트 프레젠테이션 제거
         g_rectPreviewActive = false;
-        g_rectBaselineOwners.clear();
+        g_rectBaselineFaceIds.clear();
+        g_rectOwnerMap.clear();
+        g_rectOwnerMapValid = false;
+        g_rectLastRequestedFaceIds.clear();
+        g_rectLastAppliedFaceIds.clear();
+        g_rectHasApplied = false;
         UpdateSelectedFaceColors();                 // 실제 선택 기준으로 초록/확정색 재적용
         g_ctx->ClearDetected(Standard_False);
         g_lastHoverFace = -1;

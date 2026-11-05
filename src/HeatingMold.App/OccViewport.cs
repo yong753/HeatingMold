@@ -146,7 +146,6 @@ namespace HeatingMold.App
         private bool _dragStarted;
         private bool _trackingMouse;
         private int _downX, _downY;
-        private int _lastSelectionPreviewX, _lastSelectionPreviewY;
         private int _lastExclusionPreviewX, _lastExclusionPreviewY;
         private int _lastHover = -2;      // W5 — 호버 이벤트 중복 억제
         private int _activeDragMode; // 0=orbit, 1=rectangle selection, 2=exclusion sketch
@@ -231,8 +230,29 @@ namespace HeatingMold.App
             }
         }
 
-        public bool RectangleSelectionMode { get; set; }
-        public bool ExclusionSketchMode { get; set; }
+        private bool _rectangleSelectionMode;
+        public bool RectangleSelectionMode
+        {
+            get => _rectangleSelectionMode;
+            set
+            {
+                if (_rectangleSelectionMode == value) return;
+                if (!value) CancelFaceRectangleDrag();
+                _rectangleSelectionMode = value;
+            }
+        }
+
+        private bool _exclusionSketchMode;
+        public bool ExclusionSketchMode
+        {
+            get => _exclusionSketchMode;
+            set
+            {
+                if (_exclusionSketchMode == value) return;
+                if (!value) CancelFaceRectangleDrag();
+                _exclusionSketchMode = value;
+            }
+        }
 
         /// <summary>진행 중인 제외영역 사각형 드래그를 확정 없이 취소한다.
         /// 캡처 해제가 WM_CAPTURECHANGED 경로로 취소 통지와 미리보기 정리를 수행한다.</summary>
@@ -246,7 +266,17 @@ namespace HeatingMold.App
         /// 영역 탭에서만 Face 클릭/사각형 선택을 허용한다. 네이티브 선택은 이벤트보다 먼저
         /// 일어나므로 창 쪽에서 이벤트만 막아서는 부족하다.
         /// </summary>
-        public bool FaceSelectionEnabled { get; set; } = true;
+        private bool _faceSelectionEnabled = true;
+        public bool FaceSelectionEnabled
+        {
+            get => _faceSelectionEnabled;
+            set
+            {
+                if (_faceSelectionEnabled == value) return;
+                if (!value) CancelFaceRectangleDrag();
+                _faceSelectionEnabled = value;
+            }
+        }
 
         /// <summary>인출면 선택처럼 화면과 판정 기준을 일치시켜야 하는 모드에서 드래그 회전을 막는다.
         /// 줌/팬은 작업 프레임을 바꾸지 않으므로 허용한다.</summary>
@@ -367,12 +397,14 @@ namespace HeatingMold.App
 
         private void FlushFaceRectanglePreview(object sender, EventArgs e)
         {
-            if (!_rectPreviewPending || !_dragging || _activeDragMode != 1)
+            if (!_rectPreviewPending || !_dragging || _activeDragMode != 1 || !_rectPreviewSession)
             {
                 StopFaceRectanglePreview();
                 return;
             }
             _rectPreviewPending = false;
+            // 테두리와 면 프리뷰를 같은 tick에서 갱신하고, 화면 갱신은 native가 한 번만 결정한다.
+            Bridge.SetSelectionRectangle(_downX, _downY, _rectPreviewX, _rectPreviewY);
             Bridge.PreviewFacesInRectangle(_downX, _downY, _rectPreviewX, _rectPreviewY);
         }
 
@@ -380,6 +412,22 @@ namespace HeatingMold.App
         {
             _rectPreviewTimer?.Stop();
             _rectPreviewPending = false;
+        }
+
+        /// <summary>진행 중인 사각형 선택 드래그를 확정 없이 취소한다(모드/탭/크기 변경 공통).</summary>
+        private void CancelFaceRectangleDrag()
+        {
+            if (!_dragging || _activeDragMode != 1) return;
+            StopFaceRectanglePreview();
+            if (_rectPreviewSession)
+            {
+                Bridge.ClearSelectionRectangle();      // 종료 Redraw 전에 테두리를 먼저 제거한다
+                Bridge.CancelFaceRectanglePreview();   // 기준 선택 복원 + 화면 1회 갱신
+                _rectPreviewSession = false;
+            }
+            _dragging = false;
+            _dragStarted = false;
+            ReleaseCapture();
         }
 
         protected override HandleRef BuildWindowCore(HandleRef hwndParent)
@@ -458,6 +506,7 @@ namespace HeatingMold.App
         protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
         {
             base.OnRenderSizeChanged(sizeInfo);
+            CancelFaceRectangleDrag();
             CancelPowerLeadPreview();
             CancelVertexDrag();
             // 이 시점의 base 렌더는 자식 HWND 크기를 아직 갱신하지 않았을 수 있다.
@@ -469,6 +518,7 @@ namespace HeatingMold.App
         protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
         {
             base.OnDpiChanged(oldDpi, newDpi);
+            CancelFaceRectangleDrag();
             CancelVertexDrag();
             // DPI가 바뀌면 DIP 크기는 그대로여도 HWND 픽셀 크기가 달라진다.
             _syncedWidth = _syncedHeight = -1;
@@ -499,9 +549,16 @@ namespace HeatingMold.App
                         {
                             // 사각형 드래그 취소 — 드래그 시작 시점의 선택으로 되돌린다.
                             StopFaceRectanglePreview();
-                            Bridge.CancelFaceRectanglePreview();
-                            _rectPreviewSession = false;
-                            Bridge.ClearSelectionRectangle();
+                            Bridge.ClearSelectionRectangle();   // 종료 Redraw 전에 테두리 제거
+                            if (_rectPreviewSession)
+                            {
+                                Bridge.CancelFaceRectanglePreview();
+                                _rectPreviewSession = false;
+                            }
+                            else
+                            {
+                                Bridge.RedrawView();
+                            }
                             _dragging = false;
                             _dragStarted = false;
                             ReleaseCapture();
@@ -547,8 +604,6 @@ namespace HeatingMold.App
                     _downY = HiWord(lParam);
                     _lastExclusionPreviewX = _downX;
                     _lastExclusionPreviewY = _downY;
-                    _lastSelectionPreviewX = _downX;
-                    _lastSelectionPreviewY = _downY;
                     bool shift = (GetKeyState(0x10) & 0x8000) != 0;
                     // Face 선택이 꺼진 탭에서는 Shift+드래그가 사각형 선택으로 승격되지 않게 한다.
                     bool rectangleSelect = (shift || RectangleSelectionMode) && FaceSelectionEnabled;
@@ -648,12 +703,10 @@ namespace HeatingMold.App
                         if (_dragStarted)
                         {
                             if (_activeDragMode == 0 && !ViewLocked) Bridge.RotateMove(x, y);
-                            else if (_activeDragMode == 1 &&
-                                     (Math.Abs(x - _lastSelectionPreviewX) >= 4 || Math.Abs(y - _lastSelectionPreviewY) >= 4))
+                            else if (_activeDragMode == 1)
                             {
-                                _lastSelectionPreviewX = x;
-                                _lastSelectionPreviewY = y;
-                                Bridge.SetSelectionRectangle(_downX, _downY, x, y);
+                                // 4px 게이트 없이 최신 좌표만 저장한다. 실제 반영은 33ms tick에서
+                                // 테두리+면 프리뷰를 한 번에 처리한다.
                                 QueueFaceRectanglePreview(x, y);
                             }
                             else if (_activeDragMode == 2 &&
@@ -745,9 +798,9 @@ namespace HeatingMold.App
                             {
                                 StopFaceRectanglePreview();
                                 _rectPreviewSession = false;
-                                Bridge.ClearSelectionRectangle();
+                                Bridge.ClearSelectionRectangle();   // 테두리 제거(렌더 없음)
                                 int[] ids = Bridge.SelectFacesInRectangle(_downX, _downY, x, y);
-                                FacesRectanglePicked?.Invoke(ids);
+                                if (ids != null) FacesRectanglePicked?.Invoke(ids);   // 실패 시 기존 선택 유지
                             }
                             else if (_activeDragMode == 2)
                                 ExclusionSketchCompleted?.Invoke(_downX, _downY, x, y);
@@ -788,10 +841,10 @@ namespace HeatingMold.App
                         StopFaceRectanglePreview();
                         if (_rectPreviewSession)
                         {
+                            Bridge.ClearSelectionRectangle();      // 종료 Redraw 전에 테두리 제거
                             Bridge.CancelFaceRectanglePreview();
                             _rectPreviewSession = false;
                         }
-                        Bridge.ClearSelectionRectangle();
                     }
                     if (_activeDragMode == 2 && _dragStarted) ExclusionSketchCancelled?.Invoke();
                     _dragStarted = false;
