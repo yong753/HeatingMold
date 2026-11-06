@@ -391,7 +391,7 @@ bool CommitAreaHighlightNative(int areaId)
                 new TColStd_HArray1OfInteger(1, entry.mesh->NbNodes());
             for (Standard_Integer i = 1; i <= entry.mesh->NbNodes(); ++i) colors->SetValue(i, packed);
             presentation->SetColors(colors);
-            presentation->UnsetTransparency();
+            presentation->SetTransparency(kAreaFillTransparency);
             // 원본 면과 같은 위치이므로 기존 면 색칠과 동일한 폴리곤 오프셋으로 z-fighting을 피한다.
             presentation->SetPolygonOffsets(Aspect_POM_Fill, -2.0f, -2.0f);
             presentation->Attributes()->SetupOwnShadingAspect();

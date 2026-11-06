@@ -36,15 +36,18 @@ static class SidebarTabChecks
 
         Check(window.FindName("VertexEditModeBox") is CheckBox vertexBox &&
               vertexBox.Content as string == "발열경로 편집" &&
-              window.FindName("VertexUndoButton") is Button &&
-              window.FindName("VertexRedoButton") is Button,
-            "vertex edit controls live in the viewport toolbar under the heating-path name");
-        Check(tabs.Items.Count == 5 && tabs.SelectedIndex == 0,
-            "sidebar exposes five tabs and starts on the area tab");
+              window.FindName("VertexUndoButton") == null &&
+              window.FindName("VertexRedoButton") == null,
+            "vertex edit control lives in the viewport toolbar without undo/redo");
+        Check(tabs.Items.Count == 4 && tabs.SelectedIndex == 0,
+            "sidebar exposes four task tabs and starts on the area tab");
         Check(window.FindName("ActiveAreaSummaryText") == null &&
               tabs.Items.Cast<TabItem>().Select(t => t.Header as string)
-                  .SequenceEqual(new[] { "영역", "패턴", "편집", "결과", "전기" }),
-            "sidebar drops the active-area summary card and keeps labelled tabs");
+                  .SequenceEqual(new[] { "영역", "경로", "검토", "내보내기" }),
+            "sidebar uses task-oriented labels and keeps one active-area selector");
+        Check(window.FindName("ActiveAreaSelectorBox") is ComboBox &&
+              window.FindName("ActiveAreaStateText") is TextBlock,
+            "active-area selector and result state are available above every tab");
         Check(excludeBox.IsChecked != true && !excludeBox.IsEnabled && !clearExclusions.IsEnabled,
             "exclude controls start disabled in the viewport toolbar");
         Check(viewport.FaceSelectionEnabled && window.FindName("RegionPreviewPanel") == null,
@@ -54,7 +57,7 @@ static class SidebarTabChecks
         faceList.Items.Add("seed");
         tabs.SelectedIndex = 3;
 
-        Check(!viewport.FaceSelectionEnabled, "results tab disables viewport face selection");
+        Check(!viewport.FaceSelectionEnabled, "review and export tabs disable viewport face selection");
         Check(selected.Contains(11) && faceList.Items.Count == 1, "tab switch preserves pending face selection");
 
         int areaCount = areas.Count;
@@ -98,27 +101,25 @@ static class SidebarTabChecks
         Check(exclusions.Count == 1, "tab switch preserves exclusion data");
         Check(window.FindName("AnchorCandidateList") is ListBox, "pattern tab exposes the anchor candidate list");
 
-        tabs.SelectedIndex = 2;
+        tabs.SelectedIndex = 1;
         viewport.VertexEditMode = true;
         Invoke(window, "UpdateActionStates");
         Check(!excludeBox.IsEnabled, "vertex edit locks the exclude control");
         viewport.ConnectorEditMode = true;
         tabs.SelectedIndex = 0;
         Check(!viewport.VertexEditMode && !viewport.ConnectorEditMode,
-            "leaving the edit tab exits transient vertex/connector modes");
+            "leaving the path tab exits transient vertex/connector modes");
         Check(viewport.FaceSelectionEnabled,
             "returning to the area tab restores face selection");
         tabs.SelectedIndex = 1;
         viewport.VertexEditMode = true;
-        tabs.SelectedIndex = 3;
-        Check(!viewport.VertexEditMode, "vertex edit started outside the edit tab also exits on any tab switch");
+        tabs.SelectedIndex = 2;
+        Check(!viewport.VertexEditMode, "vertex edit started outside the area tab also exits on any tab switch");
 
-        var undo = Field<Stack<bool[]>>(window, "_connectorUndo");
-        undo.Push(new[] { true });
-        tabs.SelectedIndex = 3;
+        Check(typeof(MainWindow).GetField("_connectorUndo",
+                BindingFlags.Instance | BindingFlags.NonPublic) == null,
+            "connector undo history is removed");
         tabs.SelectedIndex = 0;
-        Check(undo.Count == 1, "committed connector history survives tab round-trip");
-        undo.Clear();
 
         Invoke(window, "OnFacePicked", 13, false);
         Check(selected.Contains(13), "area tab accepts face picks again");

@@ -316,6 +316,14 @@ namespace
     const Standard_Real kExitCandidateWidth = 2.0;
     const Standard_Real kExitCandidateHoverWidth = 4.0;
     int g_exitCandidateHighlighted = -1;
+    // 인출면 선택 모드에서 커서 아래 후보 면이 받는 호버 색 override (-1 = 없음).
+    // g_hoverColorFace와 분리해 W5 호버/선택 색과 서로 덮어쓰지 않게 한다.
+    int g_exitFaceHover = -1;
+    // 활성 작업영역의 인출면 지속 강조 (-1 = 없음). 영역 전환 시 교체된다.
+    int g_exitFaceHighlightFace = -1;
+    Quantity_Color g_exitFaceHighlightColor(1.00, 0.75, 0.75, Quantity_TOC_RGB);
+    // 활성 작업영역에서 선택된 인출 경계 edge의 지속 강조 (폴리라인).
+    Handle(AIS_Shape) g_exitEdgeHighlight;
     Handle(AIS_RubberBand) g_selectionRubberBand;
     int g_lastHoverFace = -1;      // W5 — 호버 하이라이트 중복 Redraw 억제
     bool g_faceHighlightsVisible = true;
@@ -341,22 +349,23 @@ namespace
     const Quantity_Color kSelectedFaceColor(0.12, 0.82, 0.38, Quantity_TOC_RGB);   // 선택 = 초록
     const Quantity_Color kConfirmedFaceColor(0.90, 0.16, 0.16, Quantity_TOC_RGB);  // 단일 영역 기본값
     const Quantity_Color kHeatingRouteColor(1.00, 0.10, 0.10, Quantity_TOC_RGB);   // 발열 경로 = 두꺼운 빨강
-    const Quantity_Color kConnectorRouteColor(0.10, 0.65, 1.00, Quantity_TOC_RGB); // 턴 커넥터 = 파랑 점선
+    const Quantity_Color kConnectorRouteColor(1.00, 0.10, 0.10, Quantity_TOC_RGB); // 턴 커넥터 = 발열선과 같은 빨강 점선
     const Quantity_Color kRouteEndpointColor(1.00, 0.05, 0.05, Quantity_TOC_RGB);  // 인출점/끝점 마커
     const Standard_Real kHeatingRouteWidth = 3.0;
+    const Standard_Real kAreaFillTransparency = 0.5;  // 발열면 채움 투명도 (0=불투명, 1=완전 투명)
 
-    void SetFaceColorOverride(int faceId, const Quantity_Color& color)
+    void SetFaceColorOverride(int faceId, const Quantity_Color& color, Standard_Real transparency = 0.0)
     {
         if (g_aisShape.IsNull() || faceId < 0 || faceId >= static_cast<int>(g_faces.size())) return;
         Handle(AIS_ColoredShape) colored = Handle(AIS_ColoredShape)::DownCast(g_aisShape);
         if (colored.IsNull()) return;
         colored->SetCustomColor(g_faces[faceId], color);
-        colored->SetCustomTransparency(g_faces[faceId], 0.0);
+        colored->SetCustomTransparency(g_faces[faceId], transparency);
         Handle(AIS_ColoredDrawer) faceStyle = colored->CustomAspects(g_faces[faceId]);
         faceStyle->SetupOwnShadingAspect();
         faceStyle->SetDisplayMode(AIS_Shaded);
         faceStyle->ShadingAspect()->SetColor(color);
-        faceStyle->ShadingAspect()->SetTransparency(0.0);
+        faceStyle->ShadingAspect()->SetTransparency(transparency);
         // The colored face is coincident with the model face. Bias its fill
         // toward the camera to avoid depth-buffer z-fighting.
         faceStyle->ShadingAspect()->Aspect()->SetPolygonOffsets(Aspect_POM_Fill, -2.0f, -2.0f);
@@ -375,11 +384,41 @@ namespace
     /// 사용자가 해제할 때까지 붉은색을 유지한다.
     /// </summary>
     void DropHoverFaceColorNative();
+    void DropExitFaceHoverNative();
 
     const Quantity_Color* ConfirmedFaceColor(int faceId)
     {
         const auto it = g_confirmedFaceColors.find(faceId);
         return it == g_confirmedFaceColors.end() ? nullptr : &it->second;
+    }
+
+    /// <summary>현재 활성 영역에서 지속 강조 중인 인출면인가.</summary>
+    bool IsExitFaceHighlightNative(int faceId)
+    {
+        return faceId >= 0 && faceId == g_exitFaceHighlightFace;
+    }
+
+    /// <summary>선택 소유를 제외한 나머지 소유자(확정 → 인출면 강조 → 없음) 순으로 색을 되돌린다.</summary>
+    void ApplyRemainingFaceColorNative(int faceId)
+    {
+        if (const Quantity_Color* confirmed = ConfirmedFaceColor(faceId))
+        {
+            SetFaceColorOverride(faceId, *confirmed, kAreaFillTransparency);
+            return;
+        }
+        if (IsExitFaceHighlightNative(faceId))
+        {
+            SetFaceColorOverride(faceId, g_exitFaceHighlightColor);
+            return;
+        }
+        ClearFaceColorOverride(faceId);
+    }
+
+    /// <summary>선택 중이 아니면 소유자 규칙으로 복원한다. 선택 중인 면은 선택색을 유지한다.</summary>
+    void RestoreFaceColorNative(int faceId)
+    {
+        if (g_selectedFaceIds.count(faceId) != 0) return;
+        ApplyRemainingFaceColorNative(faceId);
     }
 
     void UpdateSelectedFaceColors()
@@ -399,15 +438,14 @@ namespace
         }
         for (int faceId : g_selectedFaceIds)
             if (current.count(faceId) == 0)
-            {
-                if (const Quantity_Color* confirmed = ConfirmedFaceColor(faceId)) SetFaceColorOverride(faceId, *confirmed);
-                else ClearFaceColorOverride(faceId);
-            }
+                ApplyRemainingFaceColorNative(faceId);
         for (int faceId : current)
             if (g_selectedFaceIds.count(faceId) == 0)
             {
                 const Quantity_Color* confirmed = ConfirmedFaceColor(faceId);
-                SetFaceColorOverride(faceId, confirmed != nullptr ? *confirmed : kSelectedFaceColor);
+                SetFaceColorOverride(faceId,
+                    confirmed != nullptr ? *confirmed : kSelectedFaceColor,
+                    confirmed != nullptr ? kAreaFillTransparency : 0.0);
             }
         g_selectedFaceIds.swap(current);
         g_ctx->Redisplay(g_aisShape, Standard_False);
@@ -429,10 +467,11 @@ namespace
             if (colors.count(previous.first) == 0)
             {
                 if (g_selectedFaceIds.count(previous.first) != 0) SetFaceColorOverride(previous.first, kSelectedFaceColor);
+                else if (IsExitFaceHighlightNative(previous.first)) SetFaceColorOverride(previous.first, g_exitFaceHighlightColor);
                 else ClearFaceColorOverride(previous.first);
             }
         for (const auto& entry : colors)
-            SetFaceColorOverride(entry.first, entry.second);
+            SetFaceColorOverride(entry.first, entry.second, kAreaFillTransparency);
         g_confirmedFaceColors = colors;
         if (!colors.empty()) g_faceHighlightsVisible = true;
         g_ctx->Redisplay(g_aisShape, Standard_False);
@@ -451,6 +490,84 @@ namespace
         SetConfirmedFaceHighlightColorsNative(std::map<int, Quantity_Color>());
     }
 
+    /// <summary>활성 영역 인출면 하나를 영역 톤 색으로 지속 강조한다. 이전 인출면 강조는 교체된다.</summary>
+    void SetExitFaceHighlightNative(int faceId, const Quantity_Color& color)
+    {
+        if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
+        if (faceId >= static_cast<int>(g_faces.size())) faceId = -1;
+        const int previous = g_exitFaceHighlightFace;
+        if (previous == faceId)
+        {
+            g_exitFaceHighlightColor = color;
+            if (faceId >= 0 && g_selectedFaceIds.count(faceId) == 0 &&
+                g_confirmedFaceColors.count(faceId) == 0 &&
+                g_hoverColorFace != faceId && g_exitFaceHover != faceId)
+                SetFaceColorOverride(faceId, color);
+            g_ctx->Redisplay(g_aisShape, Standard_False);
+            if (!g_view.IsNull()) g_view->Redraw();
+            return;
+        }
+        g_exitFaceHighlightFace = -1;
+        if (previous >= 0) RestoreFaceColorNative(previous);
+        g_exitFaceHighlightFace = faceId;
+        g_exitFaceHighlightColor = color;
+        if (faceId >= 0 && g_selectedFaceIds.count(faceId) == 0 &&
+            g_confirmedFaceColors.count(faceId) == 0 &&
+            g_hoverColorFace != faceId && g_exitFaceHover != faceId)
+            SetFaceColorOverride(faceId, color);
+        g_ctx->Redisplay(g_aisShape, Standard_False);
+        if (!g_view.IsNull()) g_view->Redraw();
+    }
+
+    void ClearExitFaceHighlightNative()
+    {
+        const int faceId = g_exitFaceHighlightFace;
+        g_exitFaceHighlightFace = -1;
+        if (faceId < 0) return;
+        RestoreFaceColorNative(faceId);
+        if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
+        g_ctx->Redisplay(g_aisShape, Standard_False);
+        if (!g_view.IsNull()) g_view->Redraw();
+    }
+
+    /// <summary>활성 영역에서 선택된 인출 경계 edge 강조를 제거한다.</summary>
+    void ClearExitEdgeHighlightNative()
+    {
+        if (!g_ctx.IsNull() && !g_exitEdgeHighlight.IsNull())
+            g_ctx->Remove(g_exitEdgeHighlight, Standard_False);
+        g_exitEdgeHighlight.Nullify();
+        if (!g_view.IsNull()) g_view->Redraw();
+    }
+
+    /// <summary>인출 경계 edge 하나를 원색(무광) 폴리라인으로 지속 표시한다. 이전 표시는 교체된다.</summary>
+    void SetExitEdgeHighlightNative(const std::vector<double>& points, const Quantity_Color& color)
+    {
+        ClearExitEdgeHighlightNative();
+        if (g_ctx.IsNull() || g_view.IsNull()) return;
+        if (points.size() < 6 || points.size() % 3 != 0) return;
+        try
+        {
+            BRepBuilderAPI_MakePolygon polygon;
+            for (size_t i = 0; i + 2 < points.size(); i += 3)
+            {
+                if (!std::isfinite(points[i]) || !std::isfinite(points[i + 1]) || !std::isfinite(points[i + 2]))
+                    return;
+                polygon.Add(gp_Pnt(points[i], points[i + 1], points[i + 2]));
+            }
+            if (!polygon.IsDone()) return;
+            Handle(AIS_Shape) overlay = new AIS_Shape(polygon.Wire());
+            overlay->SetDisplayMode(AIS_WireFrame);
+            g_ctx->SetColor(overlay, color, Standard_False);
+            g_ctx->SetWidth(overlay, kExitCandidateHoverWidth, Standard_False);
+            g_ctx->Display(overlay, Standard_False);
+            g_ctx->SetZLayer(overlay, Graphic3d_ZLayerId_Topmost);
+            g_ctx->Deactivate(overlay, Standard_False);
+            g_exitEdgeHighlight = overlay;
+            g_view->Redraw();
+        }
+        catch (const Standard_Failure&) { }
+    }
+
     void HideFaceHighlightsNative()
     {
         if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
@@ -465,6 +582,14 @@ namespace
             g_confirmedFaceColors.count(g_hoverColorFace) == 0)
             colored->UnsetCustomAspects(g_faces[g_hoverColorFace], Standard_True);
         g_hoverColorFace = -1;
+        if (g_exitFaceHover >= 0 && g_exitFaceHover < static_cast<int>(g_faces.size()) &&
+            g_confirmedFaceColors.count(g_exitFaceHover) == 0)
+            colored->UnsetCustomAspects(g_faces[g_exitFaceHover], Standard_True);
+        g_exitFaceHover = -1;
+        if (g_exitFaceHighlightFace >= 0 && g_exitFaceHighlightFace < static_cast<int>(g_faces.size()) &&
+            g_confirmedFaceColors.count(g_exitFaceHighlightFace) == 0)
+            colored->UnsetCustomAspects(g_faces[g_exitFaceHighlightFace], Standard_True);
+        g_exitFaceHighlightFace = -1;
         g_selectedFaceIds.clear();
         g_confirmedFaceColors.clear();
         g_faceHighlightsVisible = false;
@@ -520,6 +645,9 @@ namespace
             g_ctx->ClearSelected(Standard_False);   // 이전 선택 해제 (해당 프레젠테이션 제거 전)
             g_ctx->ClearDetected(Standard_False);
         }
+        if (!g_ctx.IsNull() && !g_exitEdgeHighlight.IsNull())
+            g_ctx->Remove(g_exitEdgeHighlight, Standard_False);
+        g_exitEdgeHighlight.Nullify();
         if (!g_ctx.IsNull() && !g_aisShape.IsNull())
         {
             g_ctx->Remove(g_aisShape, Standard_False);
@@ -529,6 +657,8 @@ namespace
         g_confirmedFaceColors.clear();
         g_lastHoverFace = -1;
         g_hoverColorFace = -1;
+        g_exitFaceHover = -1;
+        g_exitFaceHighlightFace = -1;
     }
 
     bool LoadStepFile(const char* path)
@@ -1292,6 +1422,7 @@ namespace
                 if (!overlay.IsNull()) g_ctx->Remove(overlay, Standard_False);
         g_exitCandidateOverlays.clear();
         g_exitCandidateHighlighted = -1;
+        DropExitFaceHoverNative();
         if (!g_view.IsNull()) g_view->Redraw();
     }
 
@@ -2446,8 +2577,7 @@ namespace
         if (g_hoverColorFace < 0) return;
         const int faceId = g_hoverColorFace;
         g_hoverColorFace = -1;
-        if (g_selectedFaceIds.count(faceId) == 0 && g_confirmedFaceColors.count(faceId) == 0)
-            ClearFaceColorOverride(faceId);
+        RestoreFaceColorNative(faceId);
     }
 
     /// <summary>Hover colour = the AIS dynamic highlight colour, so hover looks unchanged.</summary>
@@ -2459,6 +2589,31 @@ namespace
             if (!style.IsNull()) return style->Color();
         }
         return Quantity_Color(0.0, 1.0, 1.0, Quantity_TOC_RGB);
+    }
+
+    /// <summary>인출면 선택 호버 색 override를 걷어낸다. 선택/확정 색은 각자 소유한다.</summary>
+    void DropExitFaceHoverNative()
+    {
+        if (g_exitFaceHover < 0) return;
+        const int faceId = g_exitFaceHover;
+        g_exitFaceHover = -1;
+        RestoreFaceColorNative(faceId);
+    }
+
+    /// <summary>인출면 선택 모드 — 커서 아래 후보 면만 호버색으로 강조한다.</summary>
+    void HighlightExitFaceNative(int faceId)
+    {
+        if (g_ctx.IsNull() || g_view.IsNull() || g_aisShape.IsNull()) return;
+        if (faceId < 0 || faceId >= static_cast<int>(g_faces.size())) faceId = -1;
+        if (faceId == g_exitFaceHover) return;
+        DropExitFaceHoverNative();
+        g_exitFaceHover = faceId;
+        if (faceId >= 0 && g_selectedFaceIds.count(faceId) == 0 &&
+            g_confirmedFaceColors.count(faceId) == 0 && !IsFaceInAreaHighlightNative(faceId) &&
+            !IsExitFaceHighlightNative(faceId))
+            SetFaceColorOverride(faceId, HoverFaceColorNative());
+        g_ctx->Redisplay(g_aisShape, Standard_False);
+        g_view->Redraw();
     }
 
     /// <summary>World point to client pixel. Read-only diagnostic used by the regression harness.</summary>
@@ -2514,15 +2669,16 @@ namespace
         const PickStatusNative status = PickFaceAtPixelNative(x, y, faceId);
         int idx = (status == PickStatusNative::Ok) ? faceId : -1;
         // 제외영역 클리핑 메시가 표시 중인 면은 통짜 색칠이 없으므로 호버에서 제외한다.
-        if (idx >= 0 && IsFaceInAreaHighlightNative(idx)) idx = -1;
+        // 지속 강조 중인 인출면도 소유 색을 유지하도록 호버 대상에서 뺀다.
+        if (idx >= 0 && (IsFaceInAreaHighlightNative(idx) || IsExitFaceHighlightNative(idx))) idx = -1;
         if (idx == g_lastHoverFace) return idx;
         const int previous = g_lastHoverFace;
         g_lastHoverFace = idx;
         if (previous == g_hoverColorFace) g_hoverColorFace = -1;
-        // Selected/confirmed faces keep their own colour (SetToHilightSelected(false) semantics).
-        if (previous >= 0 && g_selectedFaceIds.count(previous) == 0 && g_confirmedFaceColors.count(previous) == 0)
-            ClearFaceColorOverride(previous);
-        if (idx >= 0 && g_selectedFaceIds.count(idx) == 0 && g_confirmedFaceColors.count(idx) == 0)
+        // Selected/confirmed/exit-highlight owners keep their own colour (SetToHilightSelected(false) semantics).
+        if (previous >= 0) RestoreFaceColorNative(previous);
+        if (idx >= 0 && g_selectedFaceIds.count(idx) == 0 && g_confirmedFaceColors.count(idx) == 0 &&
+            !IsExitFaceHighlightNative(idx))
         {
             SetFaceColorOverride(idx, HoverFaceColorNative());
             g_hoverColorFace = idx;
@@ -3280,6 +3436,12 @@ void Bridge::HighlightExitCandidate(int index)
     catch (const Standard_Failure&) { }
 }
 
+void Bridge::HighlightExitFace(int faceId)
+{
+    try { HighlightExitFaceNative(faceId); }
+    catch (const Standard_Failure&) { }
+}
+
 int Bridge::PickExitCandidate(array<array<double>^>^ polylines, int x, int y, double pixelTolerance)
 {
     std::vector<std::vector<double>> native;
@@ -3737,6 +3899,34 @@ void Bridge::SetConfirmedFaceHighlightColors(array<int>^ faceIds, array<double>^
 void Bridge::ClearConfirmedFaceHighlights()
 {
     ClearConfirmedFaceHighlightsNative();
+}
+
+void Bridge::SetExitFaceHighlight(int faceId, double r, double g, double b)
+{
+    SetExitFaceHighlightNative(faceId, Quantity_Color(r, g, b, Quantity_TOC_RGB));
+}
+
+void Bridge::ClearExitFaceHighlight()
+{
+    ClearExitFaceHighlightNative();
+}
+
+void Bridge::SetExitEdgeHighlight(array<double>^ points, double r, double g, double b)
+{
+    std::vector<double> native;
+    if (points != nullptr && points->Length >= 6 && points->Length % 3 == 0)
+    {
+        native.resize(static_cast<size_t>(points->Length));
+        for (int i = 0; i < points->Length; ++i) native[static_cast<size_t>(i)] = points[i];
+    }
+    try { SetExitEdgeHighlightNative(native, Quantity_Color(r, g, b, Quantity_TOC_RGB)); }
+    catch (const Standard_Failure&) { }
+}
+
+void Bridge::ClearExitEdgeHighlight()
+{
+    try { ClearExitEdgeHighlightNative(); }
+    catch (const Standard_Failure&) { }
 }
 
 void Bridge::ClearFaceSelection()

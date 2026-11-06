@@ -176,8 +176,9 @@ static class Program
         SidebarTabChecks.Run(window);
         AreaHighlightChecks.Run(window);
         ExclusionExitChecks.Run(window);
-        VertexHistoryChecks.Run(window);
+        VertexEditChecks.Run(window);
         ElectricalRefreshChecks.Run(window);
+        PatternStateChecks.Run(window);
         GeometryRollbackChecks.Run(window);
         Check(typeof(Bridge).GetMethod("HlrProject")==null && typeof(Bridge).GetMethod("HlrEdges")!=null,
             "HLR smoke API removed while exporter HlrEdges remains");

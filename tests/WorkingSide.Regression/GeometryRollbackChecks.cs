@@ -125,8 +125,8 @@ static class GeometryRollbackChecks
         Check(prior != null, "a committed route exists before the failing rebuild");
 
         int stageBefore = (int)Field<object>(window, "_nextStageId");
-        var rebuild = typeof(MainWindow).GetMethod("RebuildNativePatternGeometry",
-            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var rebuild = typeof(MainWindow).GetMethods(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Single(m => m.Name == "RebuildNativePatternGeometry" && m.GetParameters().Length == 2);
         object[] args = { 0d, 0 };
         bool rebuilt = (bool)rebuild.Invoke(window, args)!;
         Check(!rebuilt, "discontinuous exclusion pieces fail the rebuild");

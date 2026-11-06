@@ -54,6 +54,30 @@ public partial class MainWindow
         SyncAnchorCandidateList(area);
     }
 
+    /// <summary>
+    /// 활성 영역의 인출 경계 edge를 영역 원색(무광)의 폴리라인으로 계속 강조한다.
+    /// 영역을 전환하면 이전 edge 강조는 교체되고, 인출면이 없으면 해제된다.
+    /// </summary>
+    private void ApplyActiveExitEdgeHighlight()
+    {
+        var area = _activeArea;
+        if (area == null || !area.HasExitFace || area.ExitChain3D == null || area.ExitChain3D.Count < 2)
+        {
+            Bridge.ClearExitEdgeHighlight();
+            return;
+        }
+        var points = new double[area.ExitChain3D.Count * 3];
+        for (int i = 0; i < area.ExitChain3D.Count; i++)
+        {
+            Vec3 p = area.ExitChain3D[i];
+            points[i * 3] = p.X;
+            points[i * 3 + 1] = p.Y;
+            points[i * 3 + 2] = p.Z;
+        }
+        Color c = area.Color;
+        Bridge.SetExitEdgeHighlight(points, c.R / 255.0, c.G / 255.0, c.B / 255.0);
+    }
+
     /// <summary>시작/종료점 후보 목록을 현재 영역 후보와 선택 상태에 맞춰 다시 만든다.</summary>
     private void SyncAnchorCandidateList(WorkingArea area)
     {
@@ -138,9 +162,10 @@ public partial class MainWindow
         ExitVertexEdit();
         area.Direction = direction;
         if (area.HasExitFace) RecomputeAnchorCandidates(area);
-        // 인출 후보가 재계산되어 기존 앵커가 사라졌으므로 편집 상태도 함께 정리한다.
-        ClearRouteEditState(area);
+        // 기존 결과는 아직 화면에 남아 있다. 수동 편집 표시도 실제 재생성이
+        // 성공할 때까지 유지해 '입력 조건 변경'과 '편집됨'을 함께 보여준다.
         SyncExitFaceUi(area);
+        UpdateActionStates();
         if (area.Pattern != null && GenerateHintText != null)
             GenerateHintText.Text = "배치 방향이 바뀌었습니다 — 패턴을 다시 생성해야 반영됩니다.";
         StatusText.Text = string.Format("{0} 영역 배치 방향: {1}", area.Name, DirectionLabel(direction));
@@ -202,21 +227,24 @@ public partial class MainWindow
             Viewport.ViewLocked = false;
         }
         Bridge.ClearExitCandidates();
+        Bridge.HighlightExitFace(-1);
         _exitCandidates.Clear();
         _exitCandidatePolylines = Array.Empty<double[]>();
         _exitCandidateHover = -1;
     }
 
-    /// <summary>인출면 선택 중 커서 이동 — 커서 아래 후보만 강조한다.</summary>
+    /// <summary>인출면 선택 중 커서 이동 — 커서 아래 후보 Edge와 후보 면을 강조한다.</summary>
     private void OnExitFacePickMoved(int x, int y)
     {
         if (_exitCandidatePolylines.Length == 0) return;
         int index = x < 0 || y < 0
             ? -1
             : Bridge.PickExitCandidate(_exitCandidatePolylines, x, y, 12.0);
-        if (index == _exitCandidateHover) return;
-        _exitCandidateHover = index;
-        Bridge.HighlightExitCandidate(index);
+        if (index != _exitCandidateHover)
+        {
+            _exitCandidateHover = index;
+            Bridge.HighlightExitCandidate(index);
+        }
     }
 
     private void OnExitFacePicked(int x, int y)
@@ -291,9 +319,11 @@ public partial class MainWindow
         area.ExitChain3D = chain3D;
         area.ExitChainFaceIds = chainFaceIds;
         RecomputeAnchorCandidates(area);
-        // 인출면이 실제로 바뀐 뒤에만 편집 상태를 지운다(피킹 취소 시에는 보존).
-        ClearRouteEditState(area);
+        // 피킹 취소 시에는 아무것도 바꾸지 않는다. 실제 인출면이 바뀐 경우에도
+        // 기존 결과가 화면에 남아 있으므로 재생성 성공 전에는 편집 표시를 지우지 않는다.
         SyncExitFaceUi(area);
+        ApplyActiveExitEdgeHighlight();
+        UpdateActionStates();
 
         if (area.HasExitAnchors)
             StatusText.Text = string.Format("{0} 영역 인출면 Face {1} · 길이 {2:F1}mm — 시작/종료점 후보가 목록에 표시됩니다",
@@ -322,14 +352,16 @@ public partial class MainWindow
         area.ExcludedCandidateFailure = null;
         area.ExcludedPlanKey = "";
         area.LastExitFailure = null;
-        ClearRouteEditState(area);
         SyncExitFaceUi(area);
+        ApplyActiveExitEdgeHighlight();
+        UpdateActionStates();
         StatusText.Text = "인출면 지정을 초기화했습니다 — 패턴은 다시 생성해야 합니다";
     }
 
     /// <summary>현재 마진/간격/방향에서 인출면 위에 놓을 수 있는 시작·종료점 쌍을 다시 계산한다.</summary>
     private void RecomputeAnchorCandidates(WorkingArea area)
     {
+        if (area == null) return;
         area.AnchorCandidates.Clear();
         area.ExcludedCandidates.Clear();
         area.ExcludedPlan = null;
@@ -338,9 +370,12 @@ public partial class MainWindow
         area.StartAnchor = null;
         area.EndAnchor = null;
         area.LastExitFailure = null;
-        if (area == null || !area.HasExitFace || area.Region.Count != 1) return;
-
-        TryGetParams(out double margin, out double spacing);
+        if (!area.HasExitFace || area.Region.Count != 1) return;
+        if (!TryGetParams(out double margin, out double spacing, out string parameterError))
+        {
+            area.LastExitFailure = parameterError;
+            return;
+        }
         var parameters = new PatternParams { Margin = margin, Spacing = spacing, Direction = area.Direction };
         if (area.Exclusions.Count > 0)
         {
@@ -453,7 +488,11 @@ public partial class MainWindow
             return null;
         }
 
-        TryGetParams(out double margin, out double spacing);
+        if (!TryGetParams(out double margin, out double spacing, out string parameterError))
+        {
+            failure = parameterError;
+            return null;
+        }
         string key = BuildExcludedPlanKey(area, margin, spacing);
         if (!string.Equals(area.ExcludedPlanKey, key, StringComparison.Ordinal))
             RecomputeAnchorCandidates(area);

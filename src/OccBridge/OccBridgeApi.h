@@ -190,6 +190,8 @@ public:
     static int PickExitCandidate(array<array<double>^>^ polylines, int x, int y, double pixelTolerance);
     /// <summary>후보 하나만 강조한다 (호버). index &lt; 0 이면 모든 후보를 기본 표시로 되돌린다.</summary>
     static void HighlightExitCandidate(int index);
+    /// <summary>인출면 선택 모드에서 후보 면 하나를 호버색으로 강조한다. faceId &lt; 0 이면 해제.</summary>
+    static void HighlightExitFace(int faceId);
     /// <summary>UV → 3D 매핑 (V5)</summary>
     static array<double>^ SampleUvTo3D(int faceIndex, double u, double v);
     /// <summary>Pick the nearest visible point on the selected faces only when it is on their trim boundary.</summary>
@@ -276,6 +278,12 @@ public:
     static void SetConfirmedFaceHighlightColors(array<int>^ faceIds, array<double>^ rgb);
     /// <summary>확정 영역 하이라이트 해제 — 선택된 면은 기존 초록색으로 되돌린다.</summary>
     static void ClearConfirmedFaceHighlights();
+    /// <summary>활성 작업영역의 인출면을 영역 톤 색으로 지속 강조한다. faceId &lt; 0이면 해제.</summary>
+    static void SetExitFaceHighlight(int faceId, double r, double g, double b);
+    static void ClearExitFaceHighlight();
+    /// <summary>활성 작업영역의 인출 경계 edge를 원색(무광) 폴리라인으로 지속 강조한다. 이전 강조는 교체된다.</summary>
+    static void SetExitEdgeHighlight(array<double>^ points, double r, double g, double b);
+    static void ClearExitEdgeHighlight();
     /// <summary>면 선택(초록)만 해제. 확정 영역 하이라이트는 건드리지 않는다.</summary>
     static void ClearFaceSelection();
 

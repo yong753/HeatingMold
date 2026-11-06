@@ -22,20 +22,46 @@ public partial class MainWindow
             Viewport.PowerLocationMode = false;
         }
         if (ConnectorEditModeBox != null) ConnectorEditModeBox.IsChecked = false;
-        _connectorUndo.Clear();
-        _connectorRedo.Clear();
         if (CircuitLengthGrid != null) CircuitLengthGrid.ItemsSource = null;
     }
 
     private void RefreshAreaList()
     {
-        if (ConfirmedAreasList == null) return;
         _suppressAreaSelection = true;
-        ConfirmedAreasList.ItemsSource = null;
-        ConfirmedAreasList.ItemsSource = _areas.ToList();
-        ConfirmedAreasList.SelectedItem = _activeArea;
-        _suppressAreaSelection = false;
+        _syncingAreaSelector = true;
+        try
+        {
+            if (ConfirmedAreasList != null)
+            {
+                ConfirmedAreasList.ItemsSource = null;
+                ConfirmedAreasList.ItemsSource = _areas.ToList();
+                ConfirmedAreasList.SelectedItem = _activeArea;
+            }
+            if (ActiveAreaSelectorBox != null)
+            {
+                ActiveAreaSelectorBox.ItemsSource = null;
+                ActiveAreaSelectorBox.ItemsSource = _areas.ToList();
+                ActiveAreaSelectorBox.SelectedItem = _activeArea;
+                ActiveAreaSelectorBox.IsEnabled = _areas.Count > 0;
+            }
+        }
+        finally
+        {
+            _syncingAreaSelector = false;
+            _suppressAreaSelection = false;
+        }
         RefreshElectricalTable();
+    }
+
+    private void ActiveAreaSelector_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingAreaSelector) return;
+        if (ActiveAreaSelectorBox?.SelectedItem is not WorkingArea area) return;
+        if (ReferenceEquals(area, _activeArea)) return;
+        ClearFaceSelectionOnly();
+        ActivateArea(area);
+        RefreshAreaList();
+        StatusText.Text = string.Format("{0} 작업영역 활성 — Face {1}개", area.Name, area.FaceIdSet.Count);
     }
 
     private void ConfirmedAreasList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -56,6 +82,7 @@ public partial class MainWindow
         if (ReferenceEquals(_activeArea, area)) return;
         ResetCircuitEditingUi();
         _activeArea = area;
+        SyncPatternInputs(area);
 
         if (area == null)
         {
@@ -71,7 +98,31 @@ public partial class MainWindow
 
         UpdateActiveAreaHighlight();
         SyncExitFaceUi(area);
+        ApplyActiveExitEdgeHighlight();
+        UpdateExportScopeText();
+        if (area != null && IsPatternInputStale(area))
+            StatusText.Text = string.Format("{0} 영역 — 입력 조건이 변경되었습니다 (이전 결과 표시 중)", area.Name);
         UpdateActionStates();
+    }
+
+    /// <summary>활성 영역 전환 시 그 영역의 배치 조건 초안을 화면에 복원한다.</summary>
+    private void SyncPatternInputs(WorkingArea area)
+    {
+        if (area == null) return;
+        // 두 값을 먼저 캡처해 두고, 복원 중 발생하는 TextChanged가 상대 필드의
+        // 아직 화면에 남은 값을 새 영역 초안에 덮어쓰지 않게 한다.
+        string marginText = area.MarginText ?? "";
+        string spacingText = area.SpacingText ?? "";
+        _suppressPatternInputWriteBack = true;
+        try
+        {
+            if (MarginBox != null && MarginBox.Text != marginText) MarginBox.Text = marginText;
+            if (SpacingBox != null && SpacingBox.Text != spacingText) SpacingBox.Text = spacingText;
+        }
+        finally
+        {
+            _suppressPatternInputWriteBack = false;
+        }
     }
 
     /// <summary>제외영역 변경이나 재생성 실패 시 복원할 경로 상태를 캡처한다.</summary>
@@ -93,7 +144,9 @@ public partial class MainWindow
         area.ExcludedCandidates,
         area.ExcludedPlan,
         area.ExcludedCandidateFailure,
-        area.ExcludedPlanKey);
+        area.ExcludedPlanKey,
+        area.AppliedInputs,
+        area.CommittedMapping);
 
     /// <summary>캡처한 경로 상태를 영역에 되돌린다. 제외 목록은 필요할 때만 복원한다.</summary>
     private static void RestoreAreaRouteState(WorkingArea area, AreaRouteSnapshot snapshot, bool restoreExclusions)
@@ -120,6 +173,8 @@ public partial class MainWindow
         area.ExcludedPlan = snapshot.ExcludedPlan;
         area.ExcludedCandidateFailure = snapshot.ExcludedCandidateFailure;
         area.ExcludedPlanKey = snapshot.ExcludedPlanKey;
+        area.AppliedInputs = snapshot.AppliedInputs;
+        area.CommittedMapping = snapshot.CommittedMapping;
     }
 
     private void ClearFaceSelectionOnly()
@@ -142,20 +197,28 @@ public partial class MainWindow
 
         if (!ConfirmDiscardRouteEdits(area, "작업영역 삭제")) return;
         ExitVertexEdit();
-        // 영역을 지우기 전에 채움 메시 표시를 먼저 제거한다(유령 하이라이트 방지).
-        if (area.AreaId > 0) Bridge.ClearAreaHighlight(area.AreaId);
         bool wasActive = ReferenceEquals(area, _activeArea);
-        _areas.Remove(area);
-        // 삭제된 영역을 참조하는 편집 이력은 남겨두지 않는다.
-        _vertexUndo.Remove(area);
-        _vertexRedo.Remove(area);
-        if (wasActive) ActivateArea(_areas.FirstOrDefault());
+        WorkingArea previousActive = _activeArea;
+        var remaining = _areas.Where(a => !ReferenceEquals(a, area)).ToList();
+        WorkingArea nextActive = wasActive ? remaining.FirstOrDefault() : previousActive;
 
+        // 후보 목록으로 네이티브 재구성을 먼저 검증한다. 성공 전에는
+        // _areas/활성 영역/하이라이트/표를 바꾸지 않으므로 실패 시 복원 코드가 필요 없다.
+        if (!RebuildNativePatternGeometry(remaining, null, out _, out _))
+        {
+            StatusText.Text = string.Format(
+                "{0} 영역을 삭제하지 못했습니다 — 기존 영역과 경로를 유지합니다", area.Name);
+            UpdateActionStates();
+            return;
+        }
+
+        if (area.AreaId > 0) Bridge.ClearAreaHighlight(area.AreaId);
+        _areas.Clear();
+        _areas.AddRange(remaining);
         ApplyAreaColors();
-        if (!RebuildNativePatternGeometry(out _, out _)) return;
-
-        if (!wasActive) UpdateActiveAreaHighlight();
+        ActivateArea(nextActive);
         RefreshAreaList();
+        UpdateCircuitTable();
         ClearFaceSelectionOnly();
         StatusText.Text = string.Format("{0} 작업영역을 삭제했습니다 — 남은 영역 {1}개", area.Name, _areas.Count);
         UpdateActionStates();
@@ -340,9 +403,10 @@ public partial class MainWindow
     /// <param name="exclusionMode">true면 제외영역이 잘라낸 연결선을 "ExcludedBridge" 종류로 넘긴다.</param>
     private RoutePieceResult StageCurvedRoutePiece(WorkingArea area, WorkingSideDefinition side,
         SerpentineRoutePiece piece, int index, int count, int stageId,
-        bool allowCachedSamples = true, bool exclusionMode = false)
+        bool allowCachedSamples = true, bool exclusionMode = false,
+        CommittedRouteContext mappingContext = null)
     {
-        var hit = BuildSurfaceMapDelegate(area, side);
+        var hit = BuildSurfaceMapDelegate(area, side, context: mappingContext);
         List<SurfaceMappedSample> samples = null;
         bool cached = allowCachedSamples;
         if (cached && !_pendingStageSamples.Remove((area, index), out samples))
@@ -385,14 +449,18 @@ public partial class MainWindow
             : piece.Kind.ToString();
 
     /// <summary>2D 인출 체인에서 가장 가까운 구간을 찾아 같은 구간 파라미터로 3D 점을 보간한다.</summary>
-    private static Vec3 PointOnExitChain3D(WorkingArea area, Vec2 datum, out int segmentIndex)
+    private static Vec3 PointOnExitChain3D(WorkingArea area, Vec2 datum, out int segmentIndex) =>
+        PointOnExitChain3D(area.ExitChain, area.ExitChain3D, datum, out segmentIndex);
+
+    private static Vec3 PointOnExitChain3D(IReadOnlyList<Vec2> chain, IReadOnlyList<Vec3> chain3D,
+        Vec2 datum, out int segmentIndex)
     {
         double bestDistance = double.MaxValue;
         int bestSegment = 1;
         double bestT = 0;
-        for (int i = 1; i < area.ExitChain.Count; i++)
+        for (int i = 1; i < chain.Count; i++)
         {
-            Vec2 a = area.ExitChain[i - 1], b = area.ExitChain[i];
+            Vec2 a = chain[i - 1], b = chain[i];
             double dx = b.X - a.X, dy = b.Y - a.Y;
             double lengthSquared = dx * dx + dy * dy;
             double t = lengthSquared <= 1e-18
@@ -403,7 +471,7 @@ public partial class MainWindow
             if (distance < bestDistance) { bestDistance = distance; bestSegment = i; bestT = t; }
         }
         segmentIndex = bestSegment;
-        Vec3 p0 = area.ExitChain3D[bestSegment - 1], p1 = area.ExitChain3D[bestSegment];
+        Vec3 p0 = chain3D[bestSegment - 1], p1 = chain3D[bestSegment];
         return new Vec3(p0.X + (p1.X - p0.X) * bestT,
                         p0.Y + (p1.Y - p0.Y) * bestT,
                         p0.Z + (p1.Z - p0.Z) * bestT);
@@ -414,12 +482,29 @@ public partial class MainWindow
     /// 기존 커밋 경로를 전부 교체하므로 영역 추가/삭제/재생성 시 이 경로만 사용한다.
     /// 실패하면 기존 네이티브 표시는 그대로 남는다.
     /// </summary>
-    private bool RebuildNativePatternGeometry(out double activeLength, out int activeCount)
+    private bool RebuildNativePatternGeometry(out double activeLength, out int activeCount) =>
+        RebuildNativePatternGeometry(_areas, null, out activeLength, out activeCount);
+
+    /// <summary>
+    /// 변경 대상 영역만 현재 조건을 쓰고, 나머지 영역은 마지막 성공 시점의 불변 매핑 조건을 쓴다.
+    /// 변경 대상의 초안/인출면 변경이 다른 영역의 기존 경로를 조용히 다시 매핑하지 않게 한다.
+    /// </summary>
+    private bool RebuildNativePatternGeometry(WorkingArea changedArea,
+        out double activeLength, out int activeCount) =>
+        RebuildNativePatternGeometry(_areas, changedArea, out activeLength, out activeCount);
+
+    private bool RebuildNativePatternGeometry(IReadOnlyList<WorkingArea> areas, WorkingArea changedArea,
+        out double activeLength, out int activeCount)
     {
         activeLength = 0;
         activeCount = 0;
         var side = _workingSide.Confirmed;
         if (side == null) return false;
+        // 대상 영역은 호출 시점의 확정 후보 상태를 쓴다. 다른 영역은 아래에서 각자의
+        // 마지막 성공 매핑 조건을 사용한다.
+        CommittedRouteContext changedContext = changedArea == null
+            ? null
+            : CommittedRouteContext.Capture(changedArea);
 
         var stagedRoutes = new List<int>();
         var finalIds = new List<int>();
@@ -430,8 +515,11 @@ public partial class MainWindow
 
         try
         {
-            foreach (var area in _areas)
+            foreach (var area in areas)
             {
+                CommittedRouteContext mappingContext = ReferenceEquals(area, changedArea)
+                    ? changedContext
+                    : (area.CommittedMapping ?? CommittedRouteContext.Capture(area));
                 if (area.Pattern != null && area.Pattern.RoutePieces.Count > 0)
                 {
                     int count = area.Pattern.RoutePieces.Count;
@@ -448,7 +536,8 @@ public partial class MainWindow
                         var piece = area.Pattern.RoutePieces[i];
                         RoutePieceResult shown = StageCurvedRoutePiece(
                             area, side, piece, i, count, stageId,
-                            exclusionMode: area.Exclusions.Count > 0);
+                            exclusionMode: area.Exclusions.Count > 0,
+                            mappingContext: mappingContext);
                         stagedRoutes.Add(stageId);
                         finalIds.Add(area.NativePieceIds[i]);
                         pieces.Add(shown);
@@ -490,7 +579,8 @@ public partial class MainWindow
                         int stageId = _nextStageId--;
                         RoutePieceResult shown = StageCurvedRoutePiece(
                             area, side, piece, i, flat.Count, stageId,
-                            allowCachedSamples: false, exclusionMode: true);
+                            allowCachedSamples: false, exclusionMode: true,
+                            mappingContext: mappingContext);
                         // 스테이징에 성공한 ID는 후속 검증보다 먼저 정리 목록에 넣는다.
                         // 그래야 연속성 검사가 실패해도 방금 만든 네이티브 객체를 폐기할 수 있다.
                         stagedRoutes.Add(stageId);
@@ -560,7 +650,11 @@ public partial class MainWindow
                 entry.Key.ProjectedPieces = entry.Value.Pieces;
                 entry.Key.RoutePieceLengths = entry.Value.Lengths;
             }
-            foreach (var area in _areas) ApplyAreaConnectorStates(area);
+            foreach (var area in areas)
+            {
+                area.CommittedMapping = CommittedRouteContext.Capture(area);
+                ApplyAreaConnectorStates(area);
+            }
 
             // 발열 경로 인출점/끝점 마커 — 각 영역 첫 조각의 Start, 마지막 조각의 End.
             var endpointPoints = new List<double>();
@@ -575,7 +669,7 @@ public partial class MainWindow
             }
             Bridge.SetRouteEndpoints(endpointPoints.ToArray());
 
-            if (_activeArea != null)
+            if (_activeArea != null && areas.Contains(_activeArea))
             {
                 if (_activeArea.Pattern != null)
                 {
@@ -609,7 +703,7 @@ public partial class MainWindow
             if (area.Pattern.RoutePieces[i].Kind != SerpentineRoutePieceKind.TurnConnector) continue;
             bool enabled = turn < area.TurnEnabled.Count ? area.TurnEnabled[turn] : true;
             // Rebuild 끝의 RedrawView가 일괄 반영한다 — 커넥터마다 Redraw하지 않는다.
-            Bridge.SetConnectorEnabled(area.NativePieceIds[i], enabled, 0.2, 0.8, 0.3, false);
+            Bridge.SetConnectorEnabled(area.NativePieceIds[i], enabled, 1.0, 0.1, 0.1, false);
             turn++;
         }
     }
@@ -642,6 +736,7 @@ public partial class MainWindow
             Bridge.ClearExclusionOverlays();
             Bridge.ClearAllAreaHighlights();
             Bridge.ClearConfirmedFaceHighlights();
+            Bridge.ClearExitEdgeHighlight();
         }
     }
 }

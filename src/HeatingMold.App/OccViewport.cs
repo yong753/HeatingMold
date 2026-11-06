@@ -719,6 +719,15 @@ namespace HeatingMold.App
                             handled = true;
                         }
                     }
+                    else if (_ready && ExitFacePickMode)
+                    {
+                        // 인출면 선택은 명시적 모달 동작이므로 회로 호버 등 다른
+                        // 모드보다 우선한다. 그렇지 않으면 패턴 생성 후
+                        // CircuitHoverMode가 켜져 있을 때 후보 강조가 멈춘다.
+                        // 인출면 후보 Edge 강조와 후보 면 하이라이트는
+                        // ExitFacePickMoved 처리기(MainWindow.ExitFace)가 소유한다.
+                        ExitFacePickMoved?.Invoke(x, y);
+                    }
                     else if (_ready && PowerLocationMode)
                     {
                         // Do not highlight/select faces or connectors while choosing destinations.
@@ -731,17 +740,6 @@ namespace HeatingMold.App
                     else if (_ready && CircuitHoverMode)
                     {
                         RoutePieceHovered?.Invoke(Bridge.PickRoutePiece(x, y));
-                    }
-                    else if (_ready && ExitFacePickMode)
-                    {
-                        // 인출면 선택 중에는 면 하이라이트 없이 Edge 후보만 강조한다.
-                        ExitFacePickMoved?.Invoke(x, y);
-                        Bridge.ClearHover();
-                        if (_lastHover != -1)
-                        {
-                            _lastHover = -1;
-                            FaceHovered?.Invoke(-1);
-                        }
                     }
                     else if (_ready)
                     {

@@ -27,7 +27,7 @@ public static class DxfExporter
     /// Place multiple orthographic views into one DXF, laid out left-to-right with a gap.
     /// When a spec table is supplied the document is written as R2010 so Korean text is stored as UTF-8.
     /// </summary>
-    public static void ExportViews(string path, IReadOnlyList<DxfView> views,
+    public static bool ExportViews(string path, IReadOnlyList<DxfView> views,
         double gap = 60, double dimOffset = 20, ElectricalSpecTable? specTable = null)
     {
         var doc = specTable == null ? new DxfDocument() : new DxfDocument(DxfVersion.AutoCad2010);
@@ -86,7 +86,9 @@ public static class DxfExporter
             AddElectricalSpecTable(doc, specLayer!, specStyle!,
                 new Vec2(0, -contentMaxY - 40), specTable);
 
-        doc.Save(path);
+        // netDxf Save returns false on a failed write and may throw for I/O errors.
+        // Callers must not treat a temp file's existence alone as success.
+        return doc.Save(path);
     }
 
     private static void AddElectricalSpecTable(DxfDocument doc, Layer layer, TextStyle style,

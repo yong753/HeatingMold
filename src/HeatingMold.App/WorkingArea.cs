@@ -25,6 +25,12 @@ internal sealed class WorkingArea
     /// <summary>사행 배치 방향(자동/프레임 X/프레임 Y).</summary>
     public PatternDirection Direction { get; set; } = PatternDirection.Auto;
 
+    /// <summary>영역별 마진 입력 문자열. 마지막 성공 생성 조건과는 별개의 UI 초안이다.</summary>
+    public string MarginText { get; set; } = "5";
+
+    /// <summary>영역별 간격 입력 문자열. 마지막 성공 생성 조건과는 별개의 UI 초안이다.</summary>
+    public string SpacingText { get; set; } = "50";
+
     /// <summary>인출면 CAD Face ID. -1이면 미지정.</summary>
     public int ExitFaceId { get; set; } = -1;
     public long ExitFaceRevision { get; set; }
@@ -77,6 +83,12 @@ internal sealed class WorkingArea
 
     /// <summary>생성 후 꼭지점 편집으로 경로가 수정되었는지. 재생성 시 삭제 경고에 사용한다.</summary>
     public bool RouteEdited { get; set; }
+
+    /// <summary>마지막 성공 생성에 사용한 배치 조건. null이면 아직 생성 이력이 없다.</summary>
+    public AppliedGenerationInputs AppliedInputs { get; set; }
+
+    /// <summary>마지막으로 성공적으로 표시된 경로의 매핑 조건. 다른 영역 재스테이징 시 사용한다.</summary>
+    public CommittedRouteContext CommittedMapping { get; set; }
 
     /// <summary>제외영역을 반영한 실제 발열영역(프레임 2D). 제외가 없으면 원본 Region을 그대로 돌려준다.</summary>
     public List<List<Vec2>> EffectiveRegion() =>

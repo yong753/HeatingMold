@@ -16,6 +16,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HeatingMold.Core", "src\Hea
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HeatingMold.Core.Tests", "tests\HeatingMold.Core.Tests\HeatingMold.Core.Tests.csproj", "{093FB941-F589-4680-8960-58B8DE88A71D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HeatingMold.App.Tests", "tests\HeatingMold.App.Tests\HeatingMold.App.Tests.csproj", "{BACA1D35-FC71-420A-90DC-E4EE319F584D}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HeatingMold.Export", "src\HeatingMold.Export\HeatingMold.Export.csproj", "{AC7A5E59-7EA7-4ADA-A109-214973F43D2B}"
 EndProject
 Global
@@ -33,6 +35,8 @@ Global
 		{093FB941-F589-4680-8960-58B8DE88A71D}.Release|x64.Build.0 = Release|Any CPU
 		{AC7A5E59-7EA7-4ADA-A109-214973F43D2B}.Release|x64.ActiveCfg = Release|Any CPU
 		{AC7A5E59-7EA7-4ADA-A109-214973F43D2B}.Release|x64.Build.0 = Release|Any CPU
+		{BACA1D35-FC71-420A-90DC-E4EE319F584D}.Release|x64.ActiveCfg = Release|Any CPU
+		{BACA1D35-FC71-420A-90DC-E4EE319F584D}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

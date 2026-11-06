@@ -16,30 +16,34 @@ public partial class MainWindow
     /// 0.5mm 선택면 스냅과 프레임 평면 대체 표시는 쓰지 않는다.
     /// </summary>
     private Func<Vec2, SurfaceMappedSample?> BuildSurfaceMapDelegate(
-        WorkingArea area, WorkingSideDefinition side, Vec2? movedAnchorDatum = null)
+        WorkingArea area, WorkingSideDefinition side, Vec2? movedAnchorDatum = null,
+        CommittedRouteContext context = null)
     {
-        int[] faces = SortedFaceIds(area);
+        context ??= CommittedRouteContext.Capture(area);
+        int[] faces = context.FaceIds;
+        bool hasChain3D = context.ExitChain.Count >= 2 &&
+                          context.ExitChain3D.Count == context.ExitChain.Count;
         var anchors = new List<(Vec2 Datum, Vec3 Point, int FaceId)>();
 
         void AddAnchor(Vec2 datum)
         {
-            if (!area.HasExitChain3D || area.ExitChain.Count < 2) return;
-            if (Serpentine.DistanceToChain(area.ExitChain, datum) > 0.05) return;
+            if (!hasChain3D) return;
+            if (Serpentine.DistanceToChain(context.ExitChain, datum) > 0.05) return;
             foreach (var existing in anchors)
                 if (Math.Abs(existing.Datum.X - datum.X) <= 1e-9 &&
                     Math.Abs(existing.Datum.Y - datum.Y) <= 1e-9) return;
-            Vec3 point = PointOnExitChain3D(area, datum, out int segment);
-            int faceId = segment >= 1 && segment - 1 < area.ExitChainFaceIds.Count
-                ? area.ExitChainFaceIds[segment - 1]
-                : area.ExitFaceId;
+            Vec3 point = PointOnExitChain3D(context.ExitChain, context.ExitChain3D, datum, out int segment);
+            int faceId = segment >= 1 && segment - 1 < context.ExitChainFaceIds.Count
+                ? context.ExitChainFaceIds[segment - 1]
+                : context.ExitFaceId;
             anchors.Add((datum, point, faceId));
         }
 
         if (movedAnchorDatum.HasValue) AddAnchor(movedAnchorDatum.Value);
-        if (area.HasExitAnchors)
+        if (context.StartAnchor.HasValue && context.EndAnchor.HasValue)
         {
-            AddAnchor(area.StartAnchor.Value);
-            AddAnchor(area.EndAnchor.Value);
+            AddAnchor(context.StartAnchor.Value);
+            AddAnchor(context.EndAnchor.Value);
         }
         if (area.Pattern != null && area.Pattern.RoutePieces.Count > 0)
         {

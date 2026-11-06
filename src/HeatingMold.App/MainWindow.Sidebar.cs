@@ -7,14 +7,15 @@ namespace HeatingMold.App;
 
 /// <summary>
 /// 사이드바 탭 구성과 탭 전환 정책.
-/// 탭 이동은 화면과 일시적 입력 모드만 바꾸고, 확정 영역·패턴·편집 이력 같은 작업 데이터는
+/// 탭 이동은 화면과 일시적 입력 모드만 바꾸고, 확정 영역·패턴 같은 작업 데이터는
 /// 절대 초기화하지 않는다. 초기화가 필요한 경로는 기존 영역/모델 수명주기 함수만 사용한다.
 /// </summary>
 public partial class MainWindow
 {
     private const int AreaTabIndex = 0;
     private const int PatternTabIndex = 1;
-    private const int EditTabIndex = 2;
+    private const int ReviewTabIndex = 2;
+    private const int ExportTabIndex = 3;
 
     private bool _sidebarInitialized;
     private int _activeSidebarTabIndex = AreaTabIndex;
@@ -80,17 +81,15 @@ public partial class MainWindow
     }
 
     /// <summary>탭을 떠날 때 그 탭의 일시적 입력 모드만 종료한다.
-    /// 확정 데이터(패턴·경로·Undo/Redo·접속 길이)는 건드리지 않는다.</summary>
+    /// 확정 데이터(패턴·경로·접속 길이)는 건드리지 않는다.</summary>
     private void ExitTransientModeForTab(int tabIndex)
     {
         switch (tabIndex)
         {
             case PatternTabIndex:
-                // 인출면 후보 강조/선택 모드만 종료한다. 확정된 인출면과 시작점은 유지된다.
+                // 인출면 후보 강조/선택 모드와 회로 분할 모드를 종료한다.
+                // 확정된 인출면·시작점·회로 설정은 유지된다.
                 CancelExitFacePick();
-                break;
-
-            case EditTabIndex:
                 if (Viewport != null) Viewport.ConnectorEditMode = false;
                 if (ConnectorEditModeBox != null && ConnectorEditModeBox.IsChecked == true)
                     ConnectorEditModeBox.IsChecked = false;

@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -20,11 +23,20 @@ namespace HeatingMold.App
     {
         private readonly HashSet<int> _selectedFaceIds = new();
         private string _multiFaceRegionFailure;
-        private readonly Stack<bool[]> _connectorUndo = new(), _connectorRedo = new();
+        private string _modelFileName = "";
+        private string _modelPath = "";
+        private long _modelRevision;
+        // 영역 전환 시 프로그램이 입력 상자를 복원하는 동안 TextChanged가 초안을 덮어쓰지 않게 한다.
+        private bool _suppressPatternInputWriteBack;
+        // 네이티브 호출은 UI 스레드에서 동기 실행된다. 중복 클릭/중첩 이벤트가
+        // 같은 네이티브 스테이징/커밋을 다시 시작하지 않도록 단일 작업 게이트를 둔다.
+        private bool _isBusy;
+        private string _busyOperation = "";
 
         // 확정된 작업영역 목록. 항목을 추가/삭제해도 기존 영역과 패턴은 유지된다.
         private readonly List<WorkingArea> _areas = new();
         private WorkingArea _activeArea;
+        private bool _syncingAreaSelector;
         // 제외영역 채움 메시(AreaHighlight) 키 — 영역 인스턴스마다 1씩 증가.
         private int _nextAreaId;
         private int _nextNativePieceId;
@@ -32,14 +44,14 @@ namespace HeatingMold.App
         private bool _suppressAreaSelection;
         private static readonly Color[] AreaColors =
         {
-            Color.FromRgb(0xE6, 0x28, 0x28), // A 빨강
-            Color.FromRgb(0x25, 0x63, 0xEB), // B 파랑
-            Color.FromRgb(0x16, 0xA3, 0x4A), // C 초록
-            Color.FromRgb(0xEA, 0x58, 0x0C), // D 주황
-            Color.FromRgb(0x7C, 0x3A, 0xED), // E 보라
-            Color.FromRgb(0x0D, 0x94, 0x88), // F 청록
-            Color.FromRgb(0xDB, 0x27, 0x77), // G 자홍
-            Color.FromRgb(0x92, 0x40, 0x0E), // H 갈색
+            Color.FromRgb(0xFF, 0x00, 0x00), // A 빨강
+            Color.FromRgb(0x00, 0x00, 0xFF), // B 파랑
+            Color.FromRgb(0x00, 0xFF, 0x00), // C 초록
+            Color.FromRgb(0xFF, 0x80, 0x00), // D 주황
+            Color.FromRgb(0x80, 0x00, 0xFF), // E 보라
+            Color.FromRgb(0x00, 0xFF, 0xFF), // F 청록
+            Color.FromRgb(0xFF, 0x00, 0xFF), // G 자홍
+            Color.FromRgb(0xFF, 0xFF, 0x00), // H 노랑
         };
         private sealed class CircuitLengthRow { public string Circuit { get; set; } public double HeatingLength { get; set; } public double LeadLength { get; set; } public double TotalLength => HeatingLength + LeadLength; }
         private sealed record PendingLead(int CircuitIndex, bool IsStart, Vec3 Start);
@@ -117,15 +129,48 @@ namespace HeatingMold.App
                     : Visibility.Visible;
         }
 
+        private bool TryEnterBusy(string operation)
+        {
+            if (_isBusy)
+            {
+                StatusText.Text = string.IsNullOrEmpty(_busyOperation)
+                    ? "다른 작업이 진행 중입니다 — 완료된 뒤 다시 시도하세요"
+                    : _busyOperation + " 작업이 진행 중입니다 — 완료된 뒤 다시 시도하세요";
+                return false;
+            }
+            _isBusy = true;
+            _busyOperation = operation;
+            UpdateActionStates();
+            return true;
+        }
+
+        private void ExitBusy()
+        {
+            _isBusy = false;
+            _busyOperation = "";
+            UpdateActionStates();
+        }
+
         // 사이드바 요약/버튼은 현재 선택·확정 상태와 항상 일치해야 한다.
         private void UpdateActionStates()
         {
             int selected = _selectedFaceIds.Count;
             bool vertexActive = Viewport != null && Viewport.VertexEditMode;
+            bool patternInputValid = TryGetParams(out _, out _, out string patternInputError);
+            bool activeStale = _activeArea != null && IsPatternInputStale(_activeArea);
             // 편집 중에는 영역 구성/생성/삭제로 경로와 핸들이 어긋나지 않게 막는다.
-            if (ConfirmAreaButton != null) ConfirmAreaButton.IsEnabled = selected > 0 && !vertexActive;
-            if (ClearConfirmedAreaButton != null) ClearConfirmedAreaButton.IsEnabled = _activeArea != null && !vertexActive;
-            if (GenerateButton != null) GenerateButton.IsEnabled = _activeArea != null && !vertexActive;
+            if (ConfirmAreaButton != null) ConfirmAreaButton.IsEnabled = selected > 0 && !vertexActive && !_isBusy;
+            if (ClearConfirmedAreaButton != null) ClearConfirmedAreaButton.IsEnabled = _activeArea != null && !vertexActive && !_isBusy;
+            if (GenerateButton != null)
+                GenerateButton.IsEnabled = _activeArea != null && !vertexActive && patternInputValid && !_isBusy;
+            if (ExportButton != null) ExportButton.IsEnabled = !_isBusy;
+            if (OpenButton != null) OpenButton.IsEnabled = !_isBusy;
+            if (OpenExampleButton != null) OpenExampleButton.IsEnabled = !_isBusy;
+            if (PatternInputErrorText != null)
+            {
+                PatternInputErrorText.Text = patternInputValid ? "" : patternInputError;
+                PatternInputErrorText.Visibility = patternInputValid ? Visibility.Collapsed : Visibility.Visible;
+            }
             if (SelectionSummaryText != null)
                 SelectionSummaryText.Text = selected > 0
                     ? string.Format("선택 {0}개 · 새 작업영역 확정 대기", selected)
@@ -135,22 +180,51 @@ namespace HeatingMold.App
             if (GenerateHintText != null)
                 GenerateHintText.Text = _activeArea == null
                     ? "작업 영역을 확정해야 생성할 수 있습니다."
-                    : string.Format("{0} 영역에 발열 경로를 생성합니다.", _activeArea.Name);
+                    : !patternInputValid
+                        ? "입력 오류를 수정한 뒤 생성할 수 있습니다."
+                        : activeStale
+                            ? (_activeArea.RouteEdited
+                                ? "입력 조건이 변경되었습니다 — 수동 편집된 이전 결과가 표시 중이며 재생성해야 반영됩니다."
+                                : "입력 조건이 변경되었습니다 — 이전 결과가 표시 중이며 재생성해야 반영됩니다.")
+                            : string.Format("{0} 영역에 발열 경로를 생성합니다.", _activeArea.Name);
 
             bool vertexEligible = _activeArea?.Pattern != null
                 && _activeArea.Pattern.RoutePieces.Count > 0
-                && _activeArea.Paths.Count == 0;
-            if (VertexEditModeBox != null) VertexEditModeBox.IsEnabled = vertexEligible || vertexActive;
-            if (VertexUndoButton != null) VertexUndoButton.IsEnabled = vertexActive && VertexUndoCount(_activeArea) > 0;
-            if (VertexRedoButton != null) VertexRedoButton.IsEnabled = vertexActive && VertexRedoCount(_activeArea) > 0;
+                && _activeArea.Paths.Count == 0
+                && !activeStale;
+            if (VertexEditModeBox != null) VertexEditModeBox.IsEnabled = (vertexEligible || vertexActive) && !_isBusy;
+            if (ConnectorEditModeBox != null)
+                ConnectorEditModeBox.IsEnabled = !_isBusy
+                    && !_powerEditingLocked
+                    && _activeArea?.Pattern != null
+                    && !activeStale;
 
             // 제외 도구는 확정 작업영역이 있을 때만, 다른 편집/전원 대기 중에는 비활성화한다.
-            bool exclusionEligible = ExclusionEligible() && !vertexActive && !_powerEditingLocked;
+            bool exclusionEligible = ExclusionEligible() && !vertexActive && !_powerEditingLocked && !_isBusy;
             if (ExcludeModeBox != null) ExcludeModeBox.IsEnabled = exclusionEligible;
             if (ClearExclusionsButton != null)
                 ClearExclusionsButton.IsEnabled = _activeArea != null
                     && _activeArea.Exclusions.Count > 0
-                    && !_powerEditingLocked;
+                    && !_powerEditingLocked
+                    && !_isBusy;
+
+            if (ActiveAreaStateText != null)
+                ActiveAreaStateText.Text = _activeArea == null
+                    ? (_areas.Count == 0 ? "영역 없음" : "선택 없음")
+                    : AreaResultState(_activeArea);
+        }
+
+        /// <summary>영역 목록/선택기에 표시할 결과 상태. 입력 초안과 적용 조건을 구분한다.</summary>
+        private string AreaResultState(WorkingArea area)
+        {
+            if (area == null) return "영역 없음";
+            if (area.Pattern == null)
+                return area.PatternDisplayed ? "경로 표시 중" : "미생성";
+            bool stale = IsPatternInputStale(area);
+            if (stale && area.RouteEdited) return "재생성 필요 · 수동 편집됨";
+            if (stale) return "재생성 필요";
+            if (area.RouteEdited) return "수동 편집됨";
+            return "생성 완료";
         }
 
         private void ConfirmArea_Click(object sender, RoutedEventArgs e) => ConfirmWorkingArea();
@@ -200,13 +274,24 @@ namespace HeatingMold.App
             }
 
             string mold = OcctEnv.FindMoldStp();
-            if (mold != null) LoadFile(mold);
-            else StatusText.Text = "뷰어 준비 — '열기'로 STEP 파일 선택";
+            if (mold != null) StatusText.Text = "뷰어 준비 — STEP 열기 또는 예제 열기로 모델을 선택하세요";
+            else StatusText.Text = "뷰어 준비 — 'STEP 열기'로 모델 파일을 선택하세요";
+        }
+
+        private void OpenExample_Click(object sender, RoutedEventArgs e)
+        {
+            string mold = OcctEnv.FindMoldStp();
+            if (string.IsNullOrEmpty(mold))
+            {
+                StatusText.Text = "예제 STEP을 찾을 수 없습니다 — STEP 열기로 파일을 선택하세요";
+                return;
+            }
+            LoadFile(mold);
         }
 
         private void LoadFile(string path)
         {
-            if (!ConfirmDiscardAllRouteEdits("모델 열기")) return;
+            if (!ConfirmDiscardSession("모델 열기")) return;
             ExitVertexEdit();
             ResetWorkingSide();
             CancelPowerSetup();
@@ -215,6 +300,9 @@ namespace HeatingMold.App
             {
                 ClearAllAreas(clearNative: true);
                 _multiFaceRegionFailure = null;
+                _modelFileName = "";
+                _modelPath = "";
+                if (ModelPathText != null) ModelPathText.Text = "모델 없음";
                 ExitExclusionSketch();
                 Viewport.RectangleSelectionMode = false;
                 StatusText.Text = "로드 실패: " + path;
@@ -226,6 +314,14 @@ namespace HeatingMold.App
                 return;
             }
             sw.Stop();
+            _modelFileName = Path.GetFileNameWithoutExtension(path);
+            _modelPath = path;
+            if (ModelPathText != null)
+            {
+                ModelPathText.Text = path;
+                ModelPathText.ToolTip = path;
+            }
+            _modelRevision = Bridge.GetModelRevision();
             // 새 모델이 로드된 뒤에만 편집 표시를 지운다(로드 실패 분기는 아래에서 별도 처리).
             ClearAllRouteEditStates();
 
@@ -243,18 +339,126 @@ namespace HeatingMold.App
             ReturnToAreaTab();
         }
 
-        private void TryGetParams(out double margin, out double spacing)
+        private bool TryGetParams(out double margin, out double spacing, out string error)
         {
-            margin = 5; spacing = 50;
-            if (!double.TryParse(MarginBox.Text, out margin) || margin < 0) margin = 5;
-            if (!double.TryParse(SpacingBox.Text, out spacing) || spacing <= 0) spacing = 50;
+            margin = 0;
+            spacing = 0;
+            string marginError = null, spacingError = null;
+            bool marginOk = NumericInputValidator.TryMargin(MarginBox?.Text ?? "", out margin, out marginError);
+            bool spacingOk = NumericInputValidator.TrySpacing(SpacingBox?.Text ?? "", out spacing, out spacingError);
+            error = !marginOk ? marginError + " (mm)" : !spacingOk ? spacingError + " (mm)" : null;
+            return marginOk && spacingOk;
+        }
+
+        /// <summary>영역에 보관된 입력 초안을 같은 규칙으로 해석한다(비활성 영역 포함).</summary>
+        private static bool TryParseAreaParams(string marginText, string spacingText,
+            out double margin, out double spacing)
+        {
+            margin = 0;
+            spacing = 0;
+            if (!NumericInputValidator.TryMargin(marginText ?? "", out margin, out _)) return false;
+            return NumericInputValidator.TrySpacing(spacingText ?? "", out spacing, out _);
+        }
+
+        /// <summary>마지막 성공 생성/편집 시점의 원본 조건 지문을 만든다.</summary>
+        private string BuildRouteContextKey(WorkingArea area)
+        {
+            if (area == null) return "";
+            var inv = CultureInfo.InvariantCulture;
+            var side = _workingSide?.Confirmed;
+            var sb = new StringBuilder();
+            sb.Append(_modelRevision).Append('|')
+              .Append(side?.Id.Value ?? -1).Append('|')
+              .Append(side?.Revision.Value ?? -1).Append('|')
+              .Append(area.ExitFaceId).Append('|').Append(area.ExitFaceRevision).Append('|');
+
+            sb.Append("F:");
+            foreach (int faceId in area.FaceIdSet.OrderBy(id => id)) sb.Append(faceId).Append(',');
+            sb.Append("|R:");
+            foreach (var ring in area.Region)
+                foreach (Vec2 p in ring)
+                    sb.Append(p.X.ToString("R", inv)).Append(',').Append(p.Y.ToString("R", inv)).Append(';');
+            sb.Append("|C:");
+            foreach (Vec2 p in area.ExitChain)
+                sb.Append(p.X.ToString("R", inv)).Append(',').Append(p.Y.ToString("R", inv)).Append(';');
+            sb.Append("|C3:");
+            foreach (Vec3 p in area.ExitChain3D)
+                sb.Append(p.X.ToString("R", inv)).Append(',').Append(p.Y.ToString("R", inv)).Append(',')
+                  .Append(p.Z.ToString("R", inv)).Append(';');
+            sb.Append("|CF:");
+            foreach (int faceId in area.ExitChainFaceIds) sb.Append(faceId).Append(',');
+            sb.Append("|A:");
+            AppendAnchor(sb, area.StartAnchor, inv);
+            sb.Append(';');
+            AppendAnchor(sb, area.EndAnchor, inv);
+            sb.Append("|X:");
+            foreach (var e in area.Exclusions)
+                sb.Append(e.MinX.ToString("R", inv)).Append(',')
+                  .Append(e.MinY.ToString("R", inv)).Append(',')
+                  .Append(e.MaxX.ToString("R", inv)).Append(',')
+                  .Append(e.MaxY.ToString("R", inv)).Append(';');
+            return sb.ToString();
+        }
+
+        private static void AppendAnchor(StringBuilder sb, Vec2? anchor, CultureInfo inv)
+        {
+            if (!anchor.HasValue) { sb.Append('-'); return; }
+            sb.Append(anchor.Value.X.ToString("R", inv)).Append(',')
+              .Append(anchor.Value.Y.ToString("R", inv));
+        }
+
+        private AppliedGenerationInputs CaptureAppliedInputs(WorkingArea area, double margin, double spacing) =>
+            new()
+            {
+                Margin = margin,
+                Spacing = spacing,
+                Direction = area.Direction,
+                RouteContextKey = BuildRouteContextKey(area)
+            };
+
+        /// <summary>표시 중인 경로가 현재 입력 초안이나 원본 조건보다 오래되었는지 판단한다.</summary>
+        internal bool IsPatternInputStale(WorkingArea area)
+        {
+            if (area?.Pattern == null) return false;
+            // 생성 출처를 알 수 없는 결과는 최신으로 간주하지 않는다.
+            if (area.AppliedInputs == null) return true;
+            if (!TryParseAreaParams(area.MarginText, area.SpacingText, out double margin, out double spacing))
+                return true;
+            AppliedGenerationInputs applied = area.AppliedInputs;
+            return Math.Abs(margin - applied.Margin) > 1e-9 ||
+                   Math.Abs(spacing - applied.Spacing) > 1e-9 ||
+                   area.Direction != applied.Direction ||
+                   !string.Equals(BuildRouteContextKey(area), applied.RouteContextKey, StringComparison.Ordinal);
+        }
+
+        // 입력 문자열은 영역별 초안으로 보존한다. 프로그램이 영역 전환 중 상자를 복원할 때는
+        // 아직 화면에 남아 있는 다른 필드 값을 되쓰지 않도록 변경된 필드만 기록한다.
+        private void PatternInput_Changed(object sender, TextChangedEventArgs e)
+        {
+            if (_suppressPatternInputWriteBack) return;
+            if (_activeArea != null)
+            {
+                if (ReferenceEquals(sender, MarginBox)) _activeArea.MarginText = MarginBox.Text;
+                else if (ReferenceEquals(sender, SpacingBox)) _activeArea.SpacingText = SpacingBox.Text;
+                // 버튼만 비활성화하고 진행 중인 편집 제스처를 남겨두면 확정 시점에
+                // 이전 결과를 새 조건으로 덮어쓸 수 있으므로 즉시 종료한다.
+                if (IsPatternInputStale(_activeArea))
+                {
+                    if (Viewport != null && Viewport.VertexEditMode) ExitVertexEdit();
+                    if (ConnectorEditModeBox?.IsChecked == true) ConnectorEditModeBox.IsChecked = false;
+                    if (Viewport != null) Viewport.ConnectorEditMode = false;
+                }
+            }
+            UpdateActionStates();
         }
 
         private void Generate_Click(object sender, RoutedEventArgs e)
         {
             if (_activeArea == null) { StatusText.Text = "Face 선택 후 Enter로 작업영역을 확정하세요"; return; }
             if (!WorkingGenerationReady()) return;
-            GenerateMultiFace();
+            if (!TryEnterBusy("패턴 생성")) return;
+            try { GenerateMultiFace(); }
+            finally { ExitBusy(); }
         }
 
         private void OnFaceHovered(int faceIndex)
@@ -404,7 +608,7 @@ namespace HeatingMold.App
             }
 
             // 3) 경로 재생성이 실패하면 표시까지 이전 상태로 되돌린다.
-            if (!RebuildNativePatternGeometry(out _, out _))
+            if (!RebuildNativePatternGeometry(area, out _, out _))
             {
                 RestoreAreaRouteState(area, previous, restoreExclusions: true);
                 Bridge.DiscardAreaHighlight(area.AreaId);
@@ -554,7 +758,10 @@ namespace HeatingMold.App
                 Name = NextAreaName(),
                 Color = NextAreaColor(),
                 Frame = frame,
-                AreaId = ++_nextAreaId
+                AreaId = ++_nextAreaId,
+                // 새 영역은 현재 화면에 입력된 배치 조건을 초안으로 이어받는다.
+                MarginText = MarginBox?.Text ?? "5",
+                SpacingText = SpacingBox?.Text ?? "50"
             };
             area.FaceIdSet.UnionWith(_selectedFaceIds);
             area.Region.Add(region[0]);
@@ -648,6 +855,10 @@ namespace HeatingMold.App
         {
             if (_activeArea != null && !ConfirmDiscardRouteEdits(_activeArea, "패턴 재생성")) return;
             ExitVertexEdit();
+            // 같은 경로 탭에서 생성하므로 진행 중인 회로 분할 모드도 명시적으로 끝낸다.
+            if (Viewport != null) Viewport.ConnectorEditMode = false;
+            if (ConnectorEditModeBox != null && ConnectorEditModeBox.IsChecked == true)
+                ConnectorEditModeBox.IsChecked = false;
             CancelPowerSetup();
             if (!WorkingGenerationReady()) return;
             var area = _activeArea;
@@ -656,7 +867,11 @@ namespace HeatingMold.App
                 StatusText.Text = _multiFaceRegionFailure ?? "작업영역을 먼저 확정하세요";
                 return;
             }
-            TryGetParams(out double margin, out double spacing);
+            if (!TryGetParams(out double margin, out double spacing, out string parameterError))
+            {
+                StatusText.Text = parameterError;
+                return;
+            }
             if (!double.TryParse(InsertionDepthBox.Text, out double insertionDepth) ||
                 !double.IsFinite(insertionDepth) || insertionDepth < 0)
             {
@@ -787,10 +1002,8 @@ namespace HeatingMold.App
                 area.ProjectedPieces = new List<RoutePieceResult>();
             }
             area.PatternDisplayed = false;
-            _connectorUndo.Clear();
-            _connectorRedo.Clear();
 
-            if (!RebuildNativePatternGeometry(out double total, out int projectedCount))
+            if (!RebuildNativePatternGeometry(area, out double total, out int projectedCount))
             {
                 RestoreAreaRouteState(area, previous, restoreExclusions: false);
                 SyncExitFaceUi(area);
@@ -799,6 +1012,7 @@ namespace HeatingMold.App
 
             // 재생성이 성공한 뒤에만 기존 편집 표시/이력을 지운다 — 실패 시 편집 내용은 보존된다.
             ClearRouteEditState(area);
+            area.AppliedInputs = CaptureAppliedInputs(area, margin, spacing);
 
             projectedCount = routePiecesMode ? area.Pattern.RoutePieces.Count : area.Paths.Count;
             area.PatternDisplayed = projectedCount > 0;
@@ -845,8 +1059,17 @@ namespace HeatingMold.App
         private void ConnectorEditMode_Changed(object sender, RoutedEventArgs e)
         {
             SerpentineResult pattern = _activeArea?.Pattern;
-            bool enabled = ConnectorEditModeBox.IsChecked == true && pattern != null && pattern.RoutePieces.Count > 0;
-            if (ConnectorEditModeBox.IsChecked == true && !enabled) { ConnectorEditModeBox.IsChecked = false; StatusText.Text = "먼저 턴 커넥터가 있는 패턴을 생성하세요"; return; }
+            bool unavailable = pattern == null || pattern.RoutePieces.Count == 0;
+            bool stale = _activeArea != null && IsPatternInputStale(_activeArea);
+            bool enabled = ConnectorEditModeBox.IsChecked == true && !unavailable && !stale;
+            if (ConnectorEditModeBox.IsChecked == true && !enabled)
+            {
+                ConnectorEditModeBox.IsChecked = false;
+                StatusText.Text = stale
+                    ? "입력 조건이 변경되었습니다 — 패턴을 다시 생성한 뒤 회로를 분할하세요"
+                    : "먼저 턴 커넥터가 있는 패턴을 생성하세요";
+                return;
+            }
             // 꼭지점 편집과 회로 분할은 상호 배타 — 편집 중에는 뷰포트가 꼭지점 입력을 우선 처리한다.
             if (enabled && Viewport.VertexEditMode) ExitVertexEdit();
             if (enabled && ExcludeModeBox.IsChecked == true) ExcludeModeBox.IsChecked = false;
@@ -870,12 +1093,19 @@ namespace HeatingMold.App
         {
             var area = _activeArea;
             if (!Viewport.ConnectorEditMode || area?.Pattern == null) return;
+            if (IsPatternInputStale(area))
+            {
+                Viewport.ConnectorEditMode = false;
+                if (ConnectorEditModeBox != null) ConnectorEditModeBox.IsChecked = false;
+                StatusText.Text = "입력 조건이 변경되었습니다 — 패턴을 다시 생성한 뒤 회로를 분할하세요";
+                return;
+            }
             int local = Array.IndexOf(area.NativePieceIds, id);
             if (local < 0) return;
             var connectors = area.Pattern.RoutePieces.Select((p, i) => (p, i)).Where(x => x.p.Kind == SerpentineRoutePieceKind.TurnConnector).ToList();
             int ci = connectors.FindIndex(x => x.i == local);
             if (ci < 0) return;
-            _connectorUndo.Push(area.TurnEnabled.ToArray()); _connectorRedo.Clear(); area.TurnEnabled[ci] = !area.TurnEnabled[ci];
+            area.TurnEnabled[ci] = !area.TurnEnabled[ci];
             ApplyConnectorStates();
         }
         private void ApplyConnectorStates()
@@ -898,22 +1128,26 @@ namespace HeatingMold.App
         private void UpdateCircuitTable()
         {
             if (CircuitLengthGrid == null) return;
-            var area = _activeArea;
-            if (area?.Pattern == null)
+            // 전기 사양표·내보내기와 같은 검토 스냅샷을 사용한다. 회로 ID는 영역명-회로번호로 구분한다.
+            ReviewSnapshot snapshot = BuildReviewSnapshot();
+            var rows = new List<CircuitLengthRow>();
+            foreach (ReviewAreaEntry entry in snapshot.Entries)
             {
-                CircuitLengthGrid.ItemsSource = null;
-                RefreshElectricalTable();
-                return;
+                bool reference = entry.State is ReviewAreaState.Stale or ReviewAreaState.Unverified;
+                if (entry.State != ReviewAreaState.Ready && !reference) continue;
+                if (reference && !HasUsableLengths(entry.Area, out _)) continue;
+                string prefix = string.IsNullOrEmpty(entry.Area.Name) ? "A-" : entry.Area.Name + "-";
+                rows.AddRange(GetCircuitLengths(entry.Area, prefix)
+                    .Select(x => new CircuitLengthRow
+                    {
+                        Circuit = (reference ? "[참고] " : "") + x.CircuitId,
+                        HeatingLength = x.HeatingLengthMm,
+                        LeadLength = x.LeadLengthMm
+                    }));
             }
-
-            CircuitLengthGrid.ItemsSource = GetCircuitLengths(area)
-                .Select(x => new CircuitLengthRow
-                {
-                    Circuit = x.CircuitId,
-                    HeatingLength = x.HeatingLengthMm,
-                    LeadLength = x.LeadLengthMm
-                })
-                .ToList();
+            CircuitLengthGrid.ItemsSource = rows.Count == 0 ? null : rows;
+            if (ExpandedCircuitGrid != null)
+                ExpandedCircuitGrid.ItemsSource = rows.Count == 0 ? null : rows;
             RefreshElectricalTable();
         }
 
@@ -1019,25 +1253,6 @@ namespace HeatingMold.App
             if (_pendingLeads.Count == 0) { Viewport.PowerLocationMode = false; SetPowerEditingLock(false); }
             StatusText.Text = _pendingLeads.Count == 0 ? "전원 연결 경로 완료 — 실제 3D 접속 길이를 회로별 합계에 반영했습니다" : PowerPrompt();
         }
-        private void ConnectorUndo_Click(object sender, RoutedEventArgs e)
-        {
-            var area = _activeArea;
-            if (area?.Pattern == null || _connectorUndo.Count == 0) return;
-            _connectorRedo.Push(area.TurnEnabled.ToArray());
-            area.TurnEnabled.Clear();
-            area.TurnEnabled.AddRange(_connectorUndo.Pop());
-            ApplyConnectorStates();
-        }
-        private void ConnectorRedo_Click(object sender, RoutedEventArgs e)
-        {
-            var area = _activeArea;
-            if (area?.Pattern == null || _connectorRedo.Count == 0) return;
-            _connectorUndo.Push(area.TurnEnabled.ToArray());
-            area.TurnEnabled.Clear();
-            area.TurnEnabled.AddRange(_connectorRedo.Pop());
-            ApplyConnectorStates();
-        }
-
         private void ClearExclusions_Click(object sender, RoutedEventArgs e)
         {
             var area = _activeArea;
@@ -1058,7 +1273,7 @@ namespace HeatingMold.App
             area.TurnEnabled = new List<bool>();
             area.PatternDisplayed = false;
             Bridge.ClearExclusionOverlays();
-            if (!RebuildNativePatternGeometry(out _, out _))
+            if (!RebuildNativePatternGeometry(area, out _, out _))
             {
                 RestoreAreaRouteState(area, previous, restoreExclusions: true);
                 UpdateActiveAreaHighlight();
@@ -1110,35 +1325,146 @@ namespace HeatingMold.App
 
         private void Export_Click(object sender, RoutedEventArgs e)
         {
-            WorkingArea active = _activeArea;
-            if (active?.Pattern == null)
+            if (!TryEnterBusy("DXF 내보내기")) return;
+            try { ExportDxfCore(); }
+            finally { ExitBusy(); }
+        }
+
+        private void ExportDxfCore()
+        {
+            // 대화상자를 열기 전에 같은 검토 스냅샷으로 출력 가능 여부를 확정한다.
+            ReviewSnapshot preflight = BuildReviewSnapshot();
+            if (!preflight.CanExport)
             {
-                StatusText.Text = active?.PatternDisplayed == true
-                    ? "다중 Face/제외영역 DXF 출력은 아직 지원하지 않습니다"
-                    : "먼저 [패턴 생성]을 실행하세요";
+                StatusText.Text = "DXF 내보내기 불가 — " + preflight.BlockReason;
                 return;
             }
-            string root = OcctEnv.RepoRoot ?? ".";
-            string dir = Path.Combine(root, "output");
-            Directory.CreateDirectory(dir);
-            string file = Path.Combine(dir, "heat_pattern.dxf");
+            long modelRevisionBeforeDialog = _modelRevision;
 
+            string suffix = _reviewCurrentAreaOnly && _activeArea != null
+                ? "_" + _activeArea.Name
+                : "";
+            string defaultName = SanitizeFileName(
+                (string.IsNullOrEmpty(_modelFileName) ? "heat_pattern" : _modelFileName) + suffix + "_검토") + ".dxf";
+            var dialog = new SaveFileDialog
+            {
+                Title = "DXF 내보내기",
+                Filter = "DXF 파일 (*.dxf)|*.dxf|모든 파일 (*.*)|*.*",
+                DefaultExt = ".dxf",
+                AddExtension = true,
+                OverwritePrompt = true,
+                FileName = defaultName
+            };
+            if (dialog.ShowDialog(this) != true)
+            {
+                StatusText.Text = "DXF 내보내기를 취소했습니다";
+                return;
+            }
+
+            string file = dialog.FileName;
+            string temp = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
-                if (!TryBuildCurrentElectricalTable(out ElectricalSpecTable spec, out _, out _))
-                {
-                    StatusText.Text = "전기 사양을 계산할 수 없습니다 — 입력값과 발열 경로를 확인하세요";
-                    return;
-                }
+                if (string.IsNullOrWhiteSpace(file))
+                    throw new IOException("저장 경로가 비어 있습니다. 다시 선택하세요.");
+                if (!string.Equals(Path.GetExtension(file), ".dxf", StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("DXF 확장자(.dxf)로 저장하세요.");
+                if (!string.IsNullOrEmpty(_modelPath) &&
+                    string.Equals(Path.GetFullPath(file), Path.GetFullPath(_modelPath),
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("원본 STEP 파일과 같은 경로에는 저장할 수 없습니다. 다른 이름을 선택하세요.");
+                if (_modelRevision != modelRevisionBeforeDialog)
+                    throw new IOException("모델이 변경되어 내보내기를 중단했습니다. 다시 검토한 뒤 저장하세요.");
+
+                // 대화상자 동안 초안/영역/전기 입력이 바뀌었을 수 있으므로 다시 계산한다.
+                ReviewSnapshot snapshot = BuildReviewSnapshot();
+                if (!snapshot.CanExport)
+                    throw new IOException("내보내기 조건이 바뀌었습니다 — " + snapshot.BlockReason);
+
                 var views = BuildViews();
-                DxfExporter.ExportViews(file, views, specTable: spec);
-                StatusText.Text = "DXF 저장 — " + file;
+                if (views.Count != 4 || views.Any(v => v.VisibleEdges.Count == 0))
+                    throw new IOException(
+                        "금형 4방향 투상선을 만들지 못했습니다. 모델 로드 상태와 자동 축을 확인하세요.");
+
+                // 대화상자에서 동의한 시점의 대상 상태를 기록한다. 쓰기 직후 이 상태가
+                // 달라졌다면 사용자가 동의한 파일이 아니므로 덮어쓰지 않는다.
+                bool destinationExisted = File.Exists(file);
+                DateTime destinationWriteUtc = default;
+                long destinationLength = 0;
+                if (destinationExisted)
+                {
+                    var before = new FileInfo(file);
+                    destinationWriteUtc = before.LastWriteTimeUtc;
+                    destinationLength = before.Length;
+                }
+
+                string directory = Path.GetDirectoryName(file);
+                if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+
+                // 최종 파일에 바로 쓰지 않는다. 기존 파일은 교체가 성공할 때까지 그대로 둔다.
+                if (!DxfExporter.ExportViews(temp, views, specTable: snapshot.Table))
+                    throw new IOException("DXF 작성기가 저장을 완료하지 못했습니다.");
+                if (!File.Exists(temp) || new FileInfo(temp).Length == 0)
+                    throw new IOException("DXF 임시 파일이 생성되지 않았습니다.");
+
+                bool existsNow = File.Exists(file);
+                if (destinationExisted)
+                {
+                    if (!existsNow)
+                        throw new IOException("선택한 대상 파일이 삭제되었습니다. 다시 내보내세요.");
+                    var now = new FileInfo(file);
+                    if (now.LastWriteTimeUtc != destinationWriteUtc || now.Length != destinationLength)
+                        throw new IOException("선택한 대상 파일이 그 사이 변경되었습니다. 다시 내보내세요.");
+                    try
+                    {
+                        File.Replace(temp, file, null);
+                    }
+                    catch (Exception replaceError) when (replaceError is IOException ||
+                        replaceError is UnauthorizedAccessException ||
+                        replaceError is PlatformNotSupportedException)
+                    {
+                        throw new IOException(
+                            "기존 파일을 안전하게 교체하지 못했습니다. 다른 저장 위치를 선택하세요.", replaceError);
+                    }
+                }
+                else
+                {
+                    if (existsNow)
+                        throw new IOException("선택한 경로에 다른 파일이 생성되었습니다. 다시 내보내세요.");
+                    File.Move(temp, file);
+                }
+                StatusText.Text = "DXF 저장 완료 — " + file;
             }
             catch (Exception ex)
             {
                 StatusText.Text = "DXF 저장 실패: " + ex.Message;
                 ErrorReporter.ShowError("DXF 저장 실패 — " + file, ex);
             }
+            finally
+            {
+                try { if (File.Exists(temp)) File.Delete(temp); }
+                catch { /* 임시 파일 정리 실패는 저장 결과를 덮지 않는다. */ }
+            }
+        }
+
+        private static string SanitizeFileName(string name)
+        {
+            char[] invalid = Path.GetInvalidFileNameChars();
+            var builder = new System.Text.StringBuilder(name.Length);
+            foreach (char c in name) builder.Append(invalid.Contains(c) ? '_' : c);
+            string cleaned = builder.ToString().Trim();
+            return string.IsNullOrEmpty(cleaned) ? "heat_pattern" : cleaned;
+        }
+
+        protected override void OnClosing(CancelEventArgs e)
+        {
+            // 오프스크린 회귀 하네스는 Show 없이 창을 만들고 닫으므로 확인 대화상자를 띄우지 않는다.
+            if (IsVisible && !ConfirmDiscardSession("앱 종료"))
+            {
+                e.Cancel = true;
+                return;
+            }
+            base.OnClosing(e);
         }
 
         private void StandardView_Click(object sender, RoutedEventArgs e)

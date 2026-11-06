@@ -14,7 +14,8 @@ namespace HeatingMold.App;
 /// </summary>
 public partial class MainWindow
 {
-    private sealed record VertexEditSnapshot(
+    /// <summary>커밋 실패 시에만 사용하는 복구 스냅샷. 성공한 편집은 이력으로 보관하지 않는다.</summary>
+    private sealed record VertexCommitRollbackSnapshot(
         WorkingArea Area,
         SerpentineResult Pattern,
         List<RoutePieceResult> Projected,
@@ -29,8 +30,6 @@ public partial class MainWindow
     private readonly Dictionary<(WorkingArea Area, int PieceIndex), List<SurfaceMappedSample>> _pendingStageSamples = new();
     /// <summary>변경되지 않은 조각의 표본. 편집 세션 동안 재사용해 확정 시 전체 재매핑을 피한다.</summary>
     private readonly Dictionary<(WorkingArea Area, int PieceIndex), List<SurfaceMappedSample>> _vertexBaselineSamples = new();
-    private readonly Dictionary<WorkingArea, Stack<VertexEditSnapshot>> _vertexUndo = new();
-    private readonly Dictionary<WorkingArea, Stack<VertexEditSnapshot>> _vertexRedo = new();
     private List<RouteVertexGroup> _vertexGroups = new();
     private int _vertexHover = -1;
     // 표시 인덱스 → _vertexGroups 인덱스. 매핑에 실패한 꼭지점은 핸들을 만들지 않는다.
@@ -59,6 +58,8 @@ public partial class MainWindow
         { RejectVertexEdit("먼저 발열 경로를 생성하세요"); return; }
         if (area.Paths.Count > 0)
         { RejectVertexEdit("제외영역 경로는 발열경로 편집을 지원하지 않습니다 — 제외영역을 지우고 다시 생성하세요"); return; }
+        if (IsPatternInputStale(area))
+        { RejectVertexEdit("입력 조건이 변경되었습니다 — 패턴을 다시 생성한 뒤 편집하세요"); return; }
         if (!WorkingGenerationReady()) { RejectVertexEdit("작업면/모델 상태가 준비되지 않았습니다"); return; }
         var side = _workingSide.Confirmed;
         if (side == null) { RejectVertexEdit("작업면이 확정되지 않았습니다"); return; }
@@ -248,7 +249,7 @@ public partial class MainWindow
         Bridge.ClearRoutePreview();
         Bridge.HighlightVertexHandle(-1);
         if (group < 0 || group >= _vertexGroups.Count) return;
-        // 이동 없는 클릭은 전체 재생성/이력 기록을 무시한다.
+        // 이동 없는 클릭은 전체 재생성을 무시한다.
         if (!TryViewportPointOnFrame(x, y, out Vec2 uv, out _))
         {
             RefreshVertexHandles();
@@ -422,6 +423,15 @@ public partial class MainWindow
     private void CommitVertex(Vec2 datum)
     {
         var area = _activeArea;
+        if (area?.Pattern == null) return;
+        // 미리보기 중 초안/인출면/앵커가 바뀌어 표시 결과의 원본 조건이 달라졌다면
+        // 이전 결과를 새 조건에 덮어쓰지 않고 편집을 거부한다.
+        if (IsPatternInputStale(area))
+        {
+            ExitVertexEdit();
+            StatusText.Text = "입력 조건이 변경되어 편집을 적용하지 않았습니다 — 패턴을 다시 생성한 뒤 편집하세요";
+            return;
+        }
         // 확정 시에만 밀집 표본화(0.1mm 간격)로 엄격 검증하고, 그 표본을 스테이징에서 재사용한다.
         if (!TryBuildVertexCandidate(datum, out SerpentineResult candidate, out Vec2 applied,
                 out string failure, out bool anchor, out bool isStart,
@@ -431,7 +441,7 @@ public partial class MainWindow
             return;
         }
 
-        VertexEditSnapshot before = CaptureVertexSnapshot(area);
+        VertexCommitRollbackSnapshot before = CaptureVertexRollback(area);
         area.Pattern = candidate;
         if (anchor)
         {
@@ -442,19 +452,21 @@ public partial class MainWindow
         foreach (KeyValuePair<int, List<SurfaceMappedSample>> entry in mappedPieces)
             _pendingStageSamples[(area, entry.Key)] = entry.Value;
         bool rebuilt;
-        try { rebuilt = RebuildNativePatternGeometry(out _, out _); }
+        try { rebuilt = RebuildNativePatternGeometry(area, out _, out _); }
         finally { _pendingStageSamples.Clear(); }
         if (!rebuilt)
         {
-            RestoreVertexSnapshot(before);
+            RestoreVertexRollback(before);
             return;
         }
         // 방금 스테이징에 쓴 표본을 다음 확정의 기준으로 승격한다.
         foreach (KeyValuePair<int, List<SurfaceMappedSample>> entry in mappedPieces)
             _vertexBaselineSamples[(area, entry.Key)] = entry.Value;
         area.RouteEdited = true;
-        UndoStack(area).Push(before);
-        RedoStack(area).Clear();
+        // 수동 편집도 현재 인출면/앵커 조건으로 표시된 결과다. 생성 입력 초안과의
+        // 비교에서 편집 자체가 '재생성 필요'로 오인되지 않게 원본 지문만 갱신한다.
+        if (area.AppliedInputs != null)
+            area.AppliedInputs = CaptureAppliedInputs(area, area.AppliedInputs.Margin, area.AppliedInputs.Spacing);
         _vertexGroups = RouteVertexGroups.Build(area.Pattern.RoutePieces).ToList();
         UpdateExitLeadLengths(area);
         UpdateCircuitTable();
@@ -463,59 +475,11 @@ public partial class MainWindow
         UpdateActionStates();
     }
 
-    private void VertexUndo_Click(object sender, RoutedEventArgs e) => ApplyVertexHistory(undo: true);
-
-    private void VertexRedo_Click(object sender, RoutedEventArgs e) => ApplyVertexHistory(undo: false);
-
-    private void ApplyVertexHistory(bool undo)
-    {
-        var area = _activeArea;
-        if (area == null) return;
-        Stack<VertexEditSnapshot> source = undo ? UndoStack(area) : RedoStack(area);
-        Stack<VertexEditSnapshot> target = undo ? RedoStack(area) : UndoStack(area);
-        if (source.Count == 0) return;
-        VertexEditSnapshot snapshot = source.Pop();
-        if (!ReferenceEquals(snapshot.Area, area))
-        {
-            source.Clear();
-            StatusText.Text = "편집 이력은 현재 작업영역의 것만 사용할 수 있습니다";
-            return;
-        }
-
-        VertexEditSnapshot current = CaptureVertexSnapshot(area);
-        // 복원할 패턴은 현재 표본과 다르므로 두 캐시를 모두 비운다. 남겨 두면
-        // 되돌린 경로가 아니라 되돌리기 직전 경로의 표본으로 다시 스테이징된다.
-        _pendingStageSamples.Clear();
-        _vertexBaselineSamples.Clear();
-        // 이력의 상태를 실제 영역에 먼저 적용한 뒤 그 형상으로 네이티브 표시를 다시 만든다.
-        RestoreVertexSnapshot(snapshot);
-        if (!RebuildNativePatternGeometry(out _, out _))
-        {
-            // 커밋 전 단계 실패는 기존 네이티브 표시를 그대로 남긴다 — 재시도 불필요.
-            RestoreVertexSnapshot(current);
-            _pendingStageSamples.Clear();
-            _vertexBaselineSamples.Clear();
-            source.Push(snapshot);
-            StatusText.Text = undo ? "Undo 실패 — 경로를 되돌리지 못했습니다" : "Redo 실패 — 경로를 되돌리지 못했습니다";
-            return;
-        }
-
-        target.Push(current);
-        _vertexGroups = area.Pattern != null
-            ? RouteVertexGroups.Build(area.Pattern.RoutePieces).ToList()
-            : new List<RouteVertexGroup>();
-        UpdateExitLeadLengths(area);
-        UpdateCircuitTable();
-        RefreshVertexHandles();
-        StatusText.Text = undo ? "발열경로 편집 Undo" : "발열경로 편집 Redo";
-        UpdateActionStates();
-    }
-
-    private static VertexEditSnapshot CaptureVertexSnapshot(WorkingArea area) => new(
+    private static VertexCommitRollbackSnapshot CaptureVertexRollback(WorkingArea area) => new(
         area, area.Pattern, area.ProjectedPieces, area.NativePieceIds, area.RoutePieceLengths, area.LeadLengths,
         area.StartAnchor, area.EndAnchor, area.RouteEdited);
 
-    private void RestoreVertexSnapshot(VertexEditSnapshot snapshot)
+    private void RestoreVertexRollback(VertexCommitRollbackSnapshot snapshot)
     {
         WorkingArea area = snapshot.Area;
         area.Pattern = snapshot.Pattern;
@@ -544,8 +508,6 @@ public partial class MainWindow
     {
         if (area == null) return;
         area.RouteEdited = false;
-        if (_vertexUndo.TryGetValue(area, out Stack<VertexEditSnapshot> undoStack)) undoStack.Clear();
-        if (_vertexRedo.TryGetValue(area, out Stack<VertexEditSnapshot> redoStack)) redoStack.Clear();
     }
 
     private bool ConfirmDiscardAllRouteEdits(string action)
@@ -559,36 +521,21 @@ public partial class MainWindow
         return result == MessageBoxResult.Yes;
     }
 
+    /// <summary>모델 교체·앱 종료 전에 저장되지 않는 작업 세션 전체의 손실을 확인한다.</summary>
+    private bool ConfirmDiscardSession(string action)
+    {
+        if (_areas.Count == 0) return true;
+        MessageBoxResult result = MessageBox.Show(this,
+            action + " 작업을 계속하면 현재 작업 세션(영역 " + _areas.Count
+            + "개, 생성 경로, 입력 조건)이 사라집니다." + Environment.NewLine
+            + "이 앱은 작업 세션 저장을 지원하지 않으며 DXF 내보내기는 세션 저장이 아닙니다."
+            + Environment.NewLine + "계속할까요?",
+            "작업 세션 손실", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+        return result == MessageBoxResult.Yes;
+    }
+
     private void ClearAllRouteEditStates()
     {
         foreach (WorkingArea area in _areas) area.RouteEdited = false;
-        _vertexUndo.Clear();
-        _vertexRedo.Clear();
     }
-
-    private Stack<VertexEditSnapshot> UndoStack(WorkingArea area)
-    {
-        if (!_vertexUndo.TryGetValue(area, out Stack<VertexEditSnapshot> stack))
-        {
-            stack = new Stack<VertexEditSnapshot>();
-            _vertexUndo[area] = stack;
-        }
-        return stack;
-    }
-
-    private Stack<VertexEditSnapshot> RedoStack(WorkingArea area)
-    {
-        if (!_vertexRedo.TryGetValue(area, out Stack<VertexEditSnapshot> stack))
-        {
-            stack = new Stack<VertexEditSnapshot>();
-            _vertexRedo[area] = stack;
-        }
-        return stack;
-    }
-
-    private int VertexUndoCount(WorkingArea area) =>
-        area != null && _vertexUndo.TryGetValue(area, out Stack<VertexEditSnapshot> stack) ? stack.Count : 0;
-
-    private int VertexRedoCount(WorkingArea area) =>
-        area != null && _vertexRedo.TryGetValue(area, out Stack<VertexEditSnapshot> stack) ? stack.Count : 0;
 }

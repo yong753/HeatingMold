@@ -26,4 +26,6 @@ internal sealed record AreaRouteSnapshot(
     List<ExcludedAnchorCandidate> ExcludedCandidates,
     ExcludedAnchorCandidate ExcludedPlan,
     SerpentineComponentsFailureReason? ExcludedCandidateFailure,
-    string ExcludedPlanKey);
+    string ExcludedPlanKey,
+    AppliedGenerationInputs AppliedInputs,
+    CommittedRouteContext CommittedMapping);

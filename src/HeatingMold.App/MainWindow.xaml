@@ -46,6 +46,17 @@
             <Setter Property="Padding" Value="12"/>
             <Setter Property="Margin" Value="0,6,0,10"/>
         </Style>
+        <Style x:Key="FocusRing" TargetType="{x:Type Control}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate>
+                        <Rectangle Margin="1" Stroke="{StaticResource AccentBrush}" StrokeThickness="2"
+                                   StrokeDashArray="2 1" RadiusX="3" RadiusY="3" SnapsToDevicePixels="True"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="ValueBox" TargetType="TextBox">
             <Setter Property="Height" Value="28"/>
             <Setter Property="Padding" Value="6,4"/>
@@ -53,6 +64,8 @@
             <Setter Property="BorderBrush" Value="{StaticResource LineBrush}"/>
             <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
             <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
+            <Setter Property="IsUndoEnabled" Value="False"/>
         </Style>
 
         <Style x:Key="FlatButton" TargetType="Button">
@@ -64,6 +77,7 @@
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -98,6 +112,7 @@
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -142,6 +157,7 @@
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TabItem">
@@ -179,12 +195,21 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="HeatingMold" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="ModelPathText" Text="모델 없음" Style="{StaticResource Hint}"
+                               VerticalAlignment="Center" Margin="16,0,0,0" MaxWidth="620"
+                               TextTrimming="CharacterEllipsis"
+                               AutomationProperties.Name="현재 모델 경로"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
                             VerticalAlignment="Center">
                     <Button x:Name="OpenButton" Content="STEP 열기…" Click="Open_Click"
+                            AutomationProperties.Name="STEP 모델 열기"
                             Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"/>
+                    <Button x:Name="OpenExampleButton" Content="예제 열기" Click="OpenExample_Click"
+                            AutomationProperties.Name="예제 모델 열기"
+                            Style="{StaticResource FlatButton}" Margin="0,0,8,0"/>
                     <Button x:Name="StandardViewButton" Content="표준 뷰 ▾" Click="StandardViewMenu_Click"
+                            AutomationProperties.Name="표준 뷰 선택"
                             Style="{StaticResource FlatButton}">
                         <Button.ContextMenu>
                             <ContextMenu>
@@ -223,6 +248,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
                 <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}"
                         BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="8,4">
@@ -231,12 +257,6 @@
                             <CheckBox x:Name="VertexEditModeBox" Content="발열경로 편집"
                                       VerticalAlignment="Center"
                                       Checked="VertexEditMode_Changed" Unchecked="VertexEditMode_Changed"/>
-                            <Button x:Name="VertexUndoButton" Content="경로 Undo"
-                                    Click="VertexUndo_Click" Style="{StaticResource CompactButton}"
-                                    Margin="10,0,4,0" VerticalAlignment="Center"/>
-                            <Button x:Name="VertexRedoButton" Content="경로 Redo"
-                                    Click="VertexRedo_Click" Style="{StaticResource CompactButton}"
-                                    VerticalAlignment="Center"/>
                             <TextBlock Text="작업 정면에서 발열경로의 꼭지점을 드래그해 수정합니다. 편집 후 패턴을 다시 생성하면 편집 내용은 사라집니다."
                                        Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0"
                                        TextTrimming="CharacterEllipsis"/>
@@ -255,6 +275,24 @@
                     </StackPanel>
                 </Border>
                 <local:OccViewport x:Name="Viewport" Grid.Row="1"/>
+                <!-- 넓은 검토 표: 네이티브 뷰포트 위에 겹치지 않는 형제 행으로만 배치한다. -->
+                <Expander x:Name="ReviewPaneExpander" Grid.Row="2" Header="검토 표 펼치기"
+                          IsExpanded="False" Margin="8,4,8,8"
+                          AutomationProperties.Name="넓은 검토 표 펼치기">
+                    <DataGrid x:Name="ExpandedCircuitGrid"
+                              AutomationProperties.Name="넓은 검토 영역 회로별 길이"
+                              IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                              MaxHeight="220" FontSize="11"
+                              HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="회로" Binding="{Binding Circuit}" Width="180"/>
+                            <DataGridTextColumn Header="발열사 (mm)" Binding="{Binding HeatingLength, StringFormat=F1}" Width="120"/>
+                            <DataGridTextColumn Header="접속 (mm)" Binding="{Binding LeadLength, StringFormat=F1}" Width="110"/>
+                            <DataGridTextColumn Header="합계 (mm)" Binding="{Binding TotalLength, StringFormat=F1}" Width="110"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Expander>
             </Grid>
 
             <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
@@ -265,6 +303,7 @@
                     BorderBrush="{StaticResource LineBrush}" BorderThickness="1,0,0,0">
                 <Grid>
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
@@ -280,7 +319,32 @@
                         </StackPanel>
                     </Border>
 
-                    <TabControl x:Name="SidebarTabs" Grid.Row="1" Margin="10,10,6,0"
+                    <!-- 공통: 현재 작업 영역 선택. 탭을 오가도 같은 영역을 유지한다. -->
+                    <Border Grid.Row="1" Style="{StaticResource Card}" Margin="14,8,14,0">
+                        <StackPanel>
+                            <Grid>
+                                <TextBlock Text="현재 작업 영역" Style="{StaticResource FieldLabel}"
+                                           FontWeight="SemiBold"/>
+                                <TextBlock x:Name="ActiveAreaStateText" Text="영역 없음"
+                                           HorizontalAlignment="Right" Style="{StaticResource Hint}"/>
+                            </Grid>
+                            <ComboBox x:Name="ActiveAreaSelectorBox" Height="28" Margin="0,4,0,0"
+                                      AutomationProperties.Name="현재 작업 영역 선택"
+                                      SelectionChanged="ActiveAreaSelector_Changed">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Border Width="10" Height="10" CornerRadius="2" Margin="0,0,6,0"
+                                                    VerticalAlignment="Center" Background="{Binding Swatch}"/>
+                                            <TextBlock Text="{Binding Label}" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                        </StackPanel>
+                    </Border>
+
+                    <TabControl x:Name="SidebarTabs" Grid.Row="2" Margin="10,10,6,0"
                                 Background="Transparent" BorderThickness="0"
                                 SelectionChanged="SidebarTabs_SelectionChanged">
                         <!-- 1. 작업 영역 -->
@@ -320,8 +384,8 @@
                             </ScrollViewer>
                         </TabItem>
 
-                        <!-- 2. 패턴 생성 -->
-                        <TabItem Header="패턴" Style="{StaticResource SidebarTabItem}">
+                        <!-- 2. 경로 생성과 경로 도구 -->
+                        <TabItem Header="경로" Style="{StaticResource SidebarTabItem}">
                             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                                           Padding="4,8,10,12">
                                 <Border Style="{StaticResource Card}">
@@ -373,52 +437,49 @@
                                             </Grid.ColumnDefinitions>
                                             <StackPanel>
                                                 <TextBlock Text="마진 (mm)" Style="{StaticResource FieldLabel}"/>
-                                                <TextBox x:Name="MarginBox" Text="5" Style="{StaticResource ValueBox}"/>
+                                                <TextBox x:Name="MarginBox" Text="5" Style="{StaticResource ValueBox}"
+                                                         AutomationProperties.Name="마진 밀리미터"
+                                                         TextChanged="PatternInput_Changed"/>
                                             </StackPanel>
                                             <StackPanel Grid.Column="2">
-                                                <TextBlock Text="간격 (mm)" Style="{StaticResource FieldLabel}"/>
-                                                <TextBox x:Name="SpacingBox" Text="50" Style="{StaticResource ValueBox}"/>
+                                                <TextBlock Text="경로 중심 간격 (mm)" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox x:Name="SpacingBox" Text="50" Style="{StaticResource ValueBox}"
+                                                         AutomationProperties.Name="경로 중심 간격 밀리미터"
+                                                         TextChanged="PatternInput_Changed"/>
                                             </StackPanel>
                                         </Grid>
+                                        <TextBlock x:Name="PatternInputErrorText" Foreground="#B42318"
+                                                   FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
+                                                   AutomationProperties.LiveSetting="Polite"
+                                                   Visibility="Collapsed"/>
                                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                                             <TextBlock Text="삽입 깊이" Style="{StaticResource FieldLabel}"
                                                        VerticalAlignment="Center" Margin="0,0,8,0"/>
                                             <TextBox x:Name="InsertionDepthBox" Text="0" Width="60"
                                                      IsReadOnly="True" IsTabStop="False" Style="{StaticResource ValueBox}"
+                                                     AutomationProperties.Name="삽입 깊이(현재 0밀리미터 고정)"
                                                      Background="#F3F4F6" Foreground="{StaticResource TextSecondaryBrush}"
                                                      ToolTip="현재 작업 방향 기하 검증은 깊이 0만 지원합니다. 기존 깊이 이동 알고리즘은 마이그레이션 대기 중입니다."/>
                                             <TextBlock Text="mm · 깊이 0만 지원" Style="{StaticResource Hint}"
                                                        VerticalAlignment="Center" Margin="8,0,0,0"/>
                                         </StackPanel>
                                         <Button x:Name="GenerateButton" Content="패턴 생성" Click="Generate_Click"
+                                                AutomationProperties.Name="발열 경로 생성"
                                                 Style="{StaticResource PrimaryButton}" Margin="0,10,0,0"/>
                                         <TextBlock x:Name="GenerateHintText" Text="작업 영역을 확정해야 생성할 수 있습니다."
                                                    Style="{StaticResource Hint}"/>
-                                    </StackPanel>
-                                </Border>
-                            </ScrollViewer>
-                        </TabItem>
 
-                        <!-- 3. 회로·경로 편집 -->
-                        <TabItem Header="편집" Style="{StaticResource SidebarTabItem}">
-                            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                                          Padding="4,8,10,12">
-                                <Border Style="{StaticResource Card}">
-                                    <StackPanel>
+                                        <Separator Margin="0,12,0,8"/>
+                                        <TextBlock Text="경로 도구" Style="{StaticResource FieldLabel}"
+                                                   FontWeight="SemiBold"/>
                                         <CheckBox x:Name="ConnectorEditModeBox" Content="회로 분할"
+                                                  AutomationProperties.Name="회로 분할 편집 모드"
                                                   Checked="ConnectorEditMode_Changed"
                                                   Unchecked="ConnectorEditMode_Changed"/>
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="연결 구간을 클릭해 회로를 분할하거나 다시 연결합니다. 회로별 길이는 결과 탭에 반영됩니다."/>
-                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                            <Button Content="Undo" Click="ConnectorUndo_Click"
-                                                    Style="{StaticResource CompactButton}" Margin="0,0,6,0"/>
-                                            <Button Content="Redo" Click="ConnectorRedo_Click"
-                                                    Style="{StaticResource CompactButton}"/>
-                                        </StackPanel>
-                                        <Separator Margin="0,10,0,8"/>
+                                                   Text="연결 구간을 클릭해 회로를 분할하거나 다시 연결합니다. 회로별 길이는 검토 탭에 반영됩니다."/>
                                         <TextBlock Text="전원 연결" Style="{StaticResource FieldLabel}"
-                                                   FontWeight="SemiBold"/>
+                                                   FontWeight="SemiBold" Margin="0,10,0,0"/>
                                         <TextBlock x:Name="PowerMigrationHint" Style="{StaticResource Hint}"
                                                    Text="전원 연결 설정은 경로 마이그레이션 완료 후 활성화됩니다 (현재 비활성)."/>
                                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
@@ -433,15 +494,27 @@
                             </ScrollViewer>
                         </TabItem>
 
-                        <!-- 4. 결과 -->
-                        <TabItem Header="결과" Style="{StaticResource SidebarTabItem}">
+                        <!-- 3. 검토 -->
+                        <TabItem Header="검토" Style="{StaticResource SidebarTabItem}">
                             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                                           Padding="4,8,10,12">
                                 <Border Style="{StaticResource Card}">
                                     <StackPanel>
+                                        <TextBlock Text="검토 범위" Style="{StaticResource FieldLabel}"
+                                                   FontWeight="SemiBold"/>
+                                        <ComboBox x:Name="ReviewScopeBox" Height="28" SelectedIndex="0"
+                                                  Margin="0,2,0,8"
+                                                  AutomationProperties.Name="검토 및 내보내기 범위"
+                                                  SelectionChanged="ReviewScope_Changed">
+                                            <ComboBoxItem Content="전체 영역"/>
+                                            <ComboBoxItem Content="현재 영역"/>
+                                        </ComboBox>
                                         <TextBlock Text="회로별 길이 (mm)" Style="{StaticResource FieldLabel}"
                                                    FontWeight="SemiBold"/>
+                                        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,4"
+                                                   Text="전기 사양표와 같은 검토 범위입니다. 회로 ID는 영역명-회로번호입니다."/>
                                         <DataGrid x:Name="CircuitLengthGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                                                  AutomationProperties.Name="전체 영역 회로별 길이"
                                                   Height="150" HeadersVisibility="Column" RowHeaderWidth="0"
                                                   GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#EDEFF2"
                                                   BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
@@ -454,26 +527,13 @@
                                                 <DataGridTextColumn Header="합계" Binding="{Binding TotalLength, StringFormat=F1}" Width="*"/>
                                             </DataGrid.Columns>
                                         </DataGrid>
-                                        <Button Content="DXF 투상도 내보내기" Click="Export_Click"
-                                                Style="{StaticResource FlatButton}" Margin="0,10,0,0"/>
-                                        <TextBlock Style="{StaticResource Hint}"
-                                                   Text="금형 4면 투상도(+히든선)와 전기 사양표를 output\heat_pattern.dxf로 저장합니다. 발열 경로는 아직 포함되지 않습니다."/>
-                                    </StackPanel>
-                                </Border>
-                            </ScrollViewer>
-                        </TabItem>
-
-                        <!-- 5. 전기 -->
-                        <TabItem Header="전기" Style="{StaticResource SidebarTabItem}">
-                            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                                          Padding="4,8,10,12">
-                                <Border Style="{StaticResource Card}">
-                                    <StackPanel>
+                                        <Separator Margin="0,12,0,8"/>
                                         <TextBlock Text="전기 사양" Style="{StaticResource SectionTitle}"/>
                                         <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0"
-                                                   Text="아래 표는 DXF 내보내기에 동일한 구성으로 포함됩니다."/>
+                                                   Text="전선·전압 조건은 모든 작업 영역에 공통 적용됩니다. 아래 표와 DXF 사양표는 위에서 선택한 검토 범위를 따릅니다."/>
                                         <TextBlock Text="발열사 프리셋" Style="{StaticResource FieldLabel}" Margin="0,8,0,3"/>
                                         <ComboBox x:Name="WirePresetBox" Height="28" SelectedIndex="0"
+                                                  AutomationProperties.Name="발열사 프리셋"
                                                   SelectionChanged="WirePreset_Changed">
                                             <ComboBoxItem Content="Case 1 — SUS 316L, Ø0.3 mm, 4 Ω/m"/>
                                             <ComboBoxItem Content="Case 2 — SUS 316L, Ø0.15 mm, 8 Ω/m"/>
@@ -508,6 +568,7 @@
                                         <TextBlock x:Name="ElectricalSummaryText" Style="{StaticResource Hint}"
                                                    Margin="0,8,0,4" Text="생성된 발열 경로가 없습니다"/>
                                         <DataGrid x:Name="ElectricalSpecGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                                                  AutomationProperties.Name="전체 영역 전기 사양"
                                                   Height="260" HeadersVisibility="Column" RowHeaderWidth="0"
                                                   GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#EDEFF2"
                                                   BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
@@ -536,6 +597,32 @@
                                         </DataGrid>
                                         <TextBlock Style="{StaticResource Hint}"
                                                    Text="L은 가열부 길이(인출부 제외)이며 외부 리드 저항은 반영하지 않습니다. P = V²/(rL), R = rL, I = V/R."/>
+                                    </StackPanel>
+                                </Border>
+                            </ScrollViewer>
+                        </TabItem>
+
+                        <!-- 4. 내보내기 -->
+                        <TabItem Header="내보내기" Style="{StaticResource SidebarTabItem}">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                          Padding="4,8,10,12">
+                                <Border Style="{StaticResource Card}">
+                                    <StackPanel>
+                                        <TextBlock Text="DXF 내보내기" Style="{StaticResource SectionTitle}"/>
+                                        <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0"
+                                                   Text="현재 세션의 검토 결과를 하나의 DXF로 저장합니다."/>
+                                        <TextBlock x:Name="ExportScopeText" Style="{StaticResource Hint}"
+                                                   Margin="0,6,0,0"
+                                                   Text="내보내기 범위: 전체 영역 전기 사양표"/>
+                                        <Button x:Name="ExportButton" Content="DXF 내보내기…" Click="Export_Click"
+                                                AutomationProperties.Name="검토 결과 DXF 내보내기"
+                                                Style="{StaticResource PrimaryButton}" Margin="0,10,0,0"/>
+                                        <TextBlock x:Name="ExportIncludeText" Style="{StaticResource Hint}" Margin="0,8,0,0"
+                                                   Text="포함: 전체 금형의 4방향 투상도·숨은선, 검토 범위의 전기 사양표."/>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="미포함: 발열 경로 형상, 3D STEP, 작업 세션 데이터."/>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="작업 세션은 저장되지 않습니다. DXF 내보내기는 세션 저장이 아닙니다."/>
                                     </StackPanel>
                                 </Border>
                             </ScrollViewer>
