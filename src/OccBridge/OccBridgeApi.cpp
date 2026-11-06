@@ -3948,6 +3948,41 @@ long long Bridge::GetFaceIdBuildCount()
     return g_faceIdBuildCount;
 }
 
+array<int>^ Bridge::SelectFaceIds(array<int>^ faceIds)
+{
+    if (faceIds == nullptr) return nullptr;
+    std::vector<int> requested;
+    requested.reserve(faceIds->Length);
+    for each (int id in faceIds)
+        if (id >= 0) requested.push_back(id);
+
+    std::vector<int> applied;
+    if (!SelectFaceIdsNative(requested, applied)) return nullptr;
+
+    array<int>^ result = gcnew array<int>((int)applied.size());
+    for (size_t i = 0; i < applied.size(); ++i) result[(int)i] = applied[i];
+    return result;
+}
+
+System::String^ Bridge::GetDisplayDiagnostic()
+{
+    int routes = 0, displayed = 0, connectors = 0, enabled = 0;
+    for (const auto& piece : g_routePieces)
+    {
+        ++routes;
+        if (!g_ctx.IsNull() && g_ctx->IsDisplayed(piece.second.ais)) ++displayed;
+        if (piece.second.connector) ++connectors;
+        if (piece.second.enabled) ++enabled;
+    }
+    const int selected = (int)CollectSelectedFaceIdsNative().size();
+    const int markers = (int)g_routeEndpointMarkers.size();
+    const int worldOverlays = (int)g_worldOverlays.size();
+    return System::String::Format(
+        System::Globalization::CultureInfo::InvariantCulture,
+        "routes={0} displayed={1} connectors={2} enabled={3} markers={4} selected={5} worldOverlays={6}",
+        routes, displayed, connectors, enabled, markers, selected, worldOverlays);
+}
+
 void Bridge::ClearHover()
 {
     ClearHoverNative();

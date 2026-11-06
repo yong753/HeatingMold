@@ -433,6 +433,51 @@
         return true;
     }
 
+    // 전방 선언: 정의는 아래 선택 색상 갱신부에 있다.
+    void ClearSelectionColorOverridesNative();
+
+    /// <summary>테스트/자동화 전용: face ID 목록으로 네이티브 선택을 Replace한다.
+    /// 사각형 프리뷰 캐시(g_rect*)와 무관하게 owner map을 새로 만들고, 실제 AIS 선택에서
+    /// 다시 수집한 face id를 applied로 돌려준다. 선택 색/하이라이트도 같은 경로로 갱신한다.</summary>
+    bool SelectFaceIdsNative(const std::vector<int>& faceIds, std::vector<int>& applied)
+    {
+        applied.clear();
+        if (g_ctx.IsNull() || g_aisShape.IsNull()) return false;
+
+        std::map<int, Handle(SelectMgr_EntityOwner)> owners;
+        if (!BuildFaceOwnerMapNative(owners)) return false;
+
+        std::vector<Handle(SelectMgr_EntityOwner)> list;
+        list.reserve(faceIds.size());
+        for (int faceId : faceIds)
+        {
+            const auto it = owners.find(faceId);
+            if (it != owners.end()) list.push_back(it->second);
+        }
+
+        // 이전 선택의 색 오버라이드를 먼저 지워야 확정 영역 색과 섞이지 않는다.
+        ClearSelectionColorOverridesNative();
+        if (list.empty())
+        {
+            g_ctx->ClearSelected(Standard_False);
+        }
+        else
+        {
+            NCollection_Array1<Handle(SelectMgr_EntityOwner)> array(1, static_cast<Standard_Integer>(list.size()));
+            for (size_t i = 0; i < list.size(); ++i)
+                array[static_cast<Standard_Integer>(i) + 1] = list[i];
+            g_ctx->Select(array, AIS_SelectionScheme_Replace);
+        }
+
+        g_ctx->HilightSelected(Standard_False);
+        UpdateSelectedFaceColors();
+        if (!g_view.IsNull()) g_view->Redraw();
+
+        const std::set<int> actual = CollectSelectedFaceIdsNative();
+        applied.assign(actual.begin(), actual.end());
+        return true;
+    }
+
     /// <summary>프리뷰 하이라이트(LocalSelected) 표시 여부. 스타일 변경은 기존 프레젠테이션에
     /// 자동 반영되지 않으므로 호출 측이 Unhilight/Hilight로 재구성한다.</summary>
     void SetPreviewHighlightVisibleNative(bool visible)

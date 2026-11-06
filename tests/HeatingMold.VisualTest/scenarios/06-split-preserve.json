@@ -1,0 +1,300 @@
+{
+  "schemaVersion": 2,
+  "name": "06-split-preserve",
+  "description": "A 분할 후 B 조건 변경·재생성 시 A의 분할 상태와 C가 보존되는지 확인",
+  "model": {
+    "path": "resource/Mold_Solids.stp",
+    "sha256": "9FF44A610102168C97871E158FB153DF6A9043C2D6CA7DD6C5D58F2375E7085C",
+    "faceCount": 574,
+    "solidCount": 30
+  },
+  "areas": [
+    {
+      "alias": "A",
+      "faceIds": [9],
+      "marginMm": 5,
+      "spacingMm": 10,
+      "direction": 0,
+      "exit": {
+        "faceId": 79,
+        "startPoint3D": [1628.67, -1515.75, -3895.55],
+        "endPoint3D": [1629.82, -1416.67, -3963.90],
+        "toleranceMm": 1.0
+      },
+      "anchor": {
+        "index": 0,
+        "startUv": [415.907, 228.042],
+        "endUv": [416.718, 298.042],
+        "toleranceMm": 0.5
+      },
+      "expect": {
+        "pieces": 17,
+        "turns": 7,
+        "circuits": 2,
+        "disabledTurns": 1,
+        "exitFaceId": 79,
+        "lengthMm": 5266.022,
+        "lengthToleranceMm": 1.0,
+        "marginMm": 5,
+        "spacingMm": 10
+      }
+    },
+    {
+      "alias": "B",
+      "faceIds": [27],
+      "marginMm": 5,
+      "spacingMm": 12,
+      "direction": 0,
+      "exit": { "faceId": 34, "toleranceMm": 1.0 },
+      "anchor": {
+        "index": 0,
+        "startUv": [513.341, 4.49],
+        "endUv": [-434.657, -302.634],
+        "toleranceMm": 0.5
+      },
+      "expect": {
+        "pieces": 161,
+        "turns": 79,
+        "circuits": 1,
+        "disabledTurns": 0,
+        "exitFaceId": 34,
+        "lengthMm": 3242.436,
+        "lengthToleranceMm": 1.0,
+        "marginMm": 5,
+        "spacingMm": 12
+      }
+    },
+    {
+      "alias": "C",
+      "faceIds": [76],
+      "marginMm": 8,
+      "spacingMm": 10,
+      "direction": 0,
+      "exit": { "faceId": 81, "toleranceMm": 1.0 },
+      "anchor": {
+        "index": 0,
+        "startUv": [416.011, 225.547],
+        "endUv": [416.822, 295.547],
+        "toleranceMm": 0.5
+      },
+      "expect": {
+        "pieces": 17,
+        "turns": 7,
+        "circuits": 1,
+        "disabledTurns": 0,
+        "exitFaceId": 81,
+        "lengthMm": 4996.288,
+        "lengthToleranceMm": 1.0,
+        "marginMm": 8,
+        "spacingMm": 10
+      }
+    }
+  ],
+  "steps": [
+    {
+      "id": "06.1",
+      "name": "면 9 선택",
+      "action": "selectFaces",
+      "faces": [9]
+    },
+    {
+      "id": "06.2",
+      "name": "영역 A 확정",
+      "action": "confirmArea",
+      "area": "A"
+    },
+    {
+      "id": "06.3",
+      "name": "A 조건 입력 5/10",
+      "action": "setAreaInputs",
+      "area": "A",
+      "marginMm": 5,
+      "spacingMm": 10,
+      "direction": 0
+    },
+    {
+      "id": "06.4",
+      "name": "A 인출면 79·앵커 0",
+      "action": "pickExit",
+      "area": "A"
+    },
+    {
+      "id": "06.5",
+      "name": "A 발열경로 생성",
+      "action": "generate",
+      "area": "A",
+      "expect": {
+        "pieces": 17,
+        "turns": 7,
+        "circuits": 1,
+        "disabledTurns": 0,
+        "exitFaceId": 79,
+        "lengthMm": 5266.022,
+        "lengthToleranceMm": 1.0
+      }
+    },
+    {
+      "id": "06.6",
+      "name": "면 27 선택",
+      "action": "selectFaces",
+      "faces": [27]
+    },
+    {
+      "id": "06.7",
+      "name": "영역 B 확정",
+      "action": "confirmArea",
+      "area": "B"
+    },
+    {
+      "id": "06.8",
+      "name": "B 조건 입력 5/10",
+      "action": "setAreaInputs",
+      "area": "B",
+      "marginMm": 5,
+      "spacingMm": 10,
+      "direction": 0
+    },
+    {
+      "id": "06.9",
+      "name": "B 인출면 34·앵커 0",
+      "action": "pickExit",
+      "area": "B",
+      "anchor": {
+        "index": 0,
+        "startUv": [524.341, 8.053],
+        "endUv": [-445.657, -306.197],
+        "toleranceMm": 0.5
+      }
+    },
+    {
+      "id": "06.10",
+      "name": "B 발열경로 생성(5/10)",
+      "action": "generate",
+      "area": "B",
+      "expect": {
+        "pieces": 197,
+        "turns": 97,
+        "circuits": 1,
+        "disabledTurns": 0,
+        "exitFaceId": 34,
+        "lengthMm": 3767.323,
+        "lengthToleranceMm": 1.0
+      }
+    },
+    {
+      "id": "06.11",
+      "name": "면 76 선택",
+      "action": "selectFaces",
+      "faces": [76]
+    },
+    {
+      "id": "06.12",
+      "name": "영역 C 확정",
+      "action": "confirmArea",
+      "area": "C"
+    },
+    {
+      "id": "06.13",
+      "name": "C 조건 입력 8/10",
+      "action": "setAreaInputs",
+      "area": "C",
+      "marginMm": 8,
+      "spacingMm": 10,
+      "direction": 0
+    },
+    {
+      "id": "06.14",
+      "name": "C 인출면 81·앵커 0",
+      "action": "pickExit",
+      "area": "C"
+    },
+    {
+      "id": "06.15",
+      "name": "C 발열경로 생성",
+      "action": "generate",
+      "area": "C"
+    },
+    {
+      "id": "06.16",
+      "name": "A로 복귀",
+      "action": "activateArea",
+      "area": "A"
+    },
+    {
+      "id": "06.17",
+      "name": "A 연결구간 0 분할",
+      "action": "splitTurn",
+      "area": "A",
+      "turnIndex": 0
+    },
+    {
+      "id": "06.18",
+      "name": "A 분할 상태 확인(회로 2)",
+      "action": "checkArea",
+      "area": "A",
+      "expect": {
+        "pieces": 17,
+        "turns": 7,
+        "circuits": 2,
+        "disabledTurns": 1,
+        "lengthMm": 5266.022,
+        "lengthToleranceMm": 1.0
+      }
+    },
+    {
+      "id": "06.19",
+      "name": "B로 이동",
+      "action": "activateArea",
+      "area": "B"
+    },
+    {
+      "id": "06.20",
+      "name": "B 간격 초안 12로 변경",
+      "action": "setAreaInputs",
+      "area": "B",
+      "spacingMm": 12
+    },
+    {
+      "id": "06.21",
+      "name": "B 간격 12 기준 인출점 재선택",
+      "action": "pickExit",
+      "area": "B",
+      "anchor": {
+        "index": 0,
+        "startUv": [513.341, 4.49],
+        "endUv": [-434.657, -302.634],
+        "toleranceMm": 0.5
+      }
+    },
+    {
+      "id": "06.22",
+      "name": "B 간격 12로 재생성",
+      "action": "generate",
+      "area": "B"
+    },
+    {
+      "id": "06.23",
+      "name": "A 분할·회로 2 보존 확인",
+      "action": "checkArea",
+      "area": "A"
+    },
+    {
+      "id": "06.24",
+      "name": "C 경로 보존 확인",
+      "action": "checkArea",
+      "area": "C"
+    },
+    {
+      "id": "06.25",
+      "name": "전체 영역 상태 검사",
+      "action": "checkAllAreas"
+    },
+    {
+      "id": "06.26",
+      "name": "전체 DXF 저장·재읽기",
+      "action": "exportDxf",
+      "fileName": "result.dxf",
+      "scope": 0
+    }
+  ]
+}

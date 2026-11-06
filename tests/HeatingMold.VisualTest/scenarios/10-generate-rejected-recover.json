@@ -1,0 +1,183 @@
+{
+  "schemaVersion": 2,
+  "name": "10-generate-rejected-recover",
+  "description": "B 마진 1000 생성 거부 → 기존 결과 보존 → 정상 조건 복구·재생성",
+  "model": {
+    "path": "resource/Mold_Solids.stp",
+    "sha256": "9FF44A610102168C97871E158FB153DF6A9043C2D6CA7DD6C5D58F2375E7085C",
+    "faceCount": 574,
+    "solidCount": 30
+  },
+  "areas": [
+    {
+      "alias": "A",
+      "faceIds": [9],
+      "marginMm": 5,
+      "spacingMm": 10,
+      "direction": 0,
+      "exit": {
+        "faceId": 79,
+        "startPoint3D": [1628.67, -1515.75, -3895.55],
+        "endPoint3D": [1629.82, -1416.67, -3963.90],
+        "toleranceMm": 1.0
+      },
+      "anchor": { "index": 0 },
+      "expect": {
+        "pieces": 17,
+        "turns": 7,
+        "circuits": 1,
+        "disabledTurns": 0,
+        "exitFaceId": 79,
+        "lengthMm": 5266.022,
+        "lengthToleranceMm": 1.0,
+        "marginMm": 5,
+        "spacingMm": 10
+      }
+    },
+    {
+      "alias": "B",
+      "faceIds": [27],
+      "marginMm": 5,
+      "spacingMm": 10,
+      "direction": 0,
+      "exit": {
+        "faceId": 34
+      },
+      "anchor": {
+        "index": 0,
+        "startUv": [524.341, 8.053],
+        "endUv": [-445.657, -306.197],
+        "toleranceMm": 0.5
+      },
+      "expect": {
+        "pieces": 197,
+        "turns": 97,
+        "circuits": 1,
+        "disabledTurns": 0,
+        "exitFaceId": 34,
+        "lengthMm": 3767.323,
+        "lengthToleranceMm": 1.0,
+        "marginMm": 5,
+        "spacingMm": 10
+      }
+    }
+  ],
+  "steps": [
+    {
+      "id": "10.1",
+      "name": "면 9 선택",
+      "action": "selectFaces",
+      "faces": [9]
+    },
+    {
+      "id": "10.2",
+      "name": "영역 A 확정",
+      "action": "confirmArea",
+      "area": "A"
+    },
+    {
+      "id": "10.3",
+      "name": "A 조건 입력 5/10",
+      "action": "setAreaInputs",
+      "area": "A",
+      "marginMm": 5,
+      "spacingMm": 10,
+      "direction": 0
+    },
+    {
+      "id": "10.4",
+      "name": "A 인출면 79·앵커 0",
+      "action": "pickExit",
+      "area": "A"
+    },
+    {
+      "id": "10.5",
+      "name": "A 기본 생성",
+      "action": "generate",
+      "area": "A"
+    },
+    {
+      "id": "10.6",
+      "name": "면 27 선택",
+      "action": "selectFaces",
+      "faces": [27]
+    },
+    {
+      "id": "10.7",
+      "name": "영역 B 확정",
+      "action": "confirmArea",
+      "area": "B"
+    },
+    {
+      "id": "10.8",
+      "name": "B 조건 입력 5/10",
+      "action": "setAreaInputs",
+      "area": "B",
+      "marginMm": 5,
+      "spacingMm": 10,
+      "direction": 0
+    },
+    {
+      "id": "10.9",
+      "name": "B 인출면 34·앵커 0",
+      "action": "pickExit",
+      "area": "B"
+    },
+    {
+      "id": "10.10",
+      "name": "B 기본 생성",
+      "action": "generate",
+      "area": "B"
+    },
+    {
+      "id": "10.11",
+      "name": "B 마진 1000 입력",
+      "action": "setAreaInputs",
+      "area": "B",
+      "marginMm": 1000,
+      "spacingMm": 10
+    },
+    {
+      "id": "10.12",
+      "name": "B 생성 거부",
+      "action": "generate",
+      "area": "B",
+      "outcome": "rejected"
+    },
+    {
+      "id": "10.13",
+      "name": "B 이전 결과·적용 조건 보존",
+      "action": "expectAreaInputs",
+      "area": "B",
+      "marginMm": 1000,
+      "spacingMm": 10,
+      "expect": { "marginMm": 5, "spacingMm": 10 }
+    },
+    {
+      "id": "10.14",
+      "name": "A 불변 확인",
+      "action": "checkArea",
+      "area": "A"
+    },
+    {
+      "id": "10.15",
+      "name": "B 정상 조건 복구·재생성",
+      "action": "generate",
+      "area": "B",
+      "marginMm": 5,
+      "spacingMm": 10
+    },
+    {
+      "id": "10.16",
+      "name": "전체 상태 검사",
+      "action": "checkAllAreas"
+    },
+    {
+      "id": "10.17",
+      "name": "DXF 저장·재읽기",
+      "action": "exportDxf",
+      "fileName": "result.dxf",
+      "scope": 0
+    }
+  ]
+}

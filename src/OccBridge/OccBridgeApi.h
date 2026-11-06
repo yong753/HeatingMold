@@ -291,6 +291,11 @@ public:
     static long long GetFaceIdBuildCount();
     /// <summary>현재 선택된 face id 목록(정렬). 선택 상태를 바꾸지 않는다.</summary>
     static array<int>^ GetSelectedFaceIds();
+    /// <summary>테스트/자동화: face ID 목록으로 네이티브 선택을 교체한다.
+    /// 실제 AIS 선택에서 다시 수집한 face id를 반환한다. 실패 시 null.</summary>
+    static array<int>^ SelectFaceIds(array<int>^ faceIds);
+    /// <summary>표시 진단(테스트용): 경로/연결구간/활성구간/끝점 마커/선택 면/월드 오버레이 개수.</summary>
+    static System::String^ GetDisplayDiagnostic();
 
     /// <summary>호버 하이라이트 해제 + Redraw (마우스가 창을 벗어날 때)</summary>
     static void ClearHover();

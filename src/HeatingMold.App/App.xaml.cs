@@ -1,7 +1,9 @@
 using System;
+using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
+using HeatingMold.App.VisualTesting;
 
 namespace HeatingMold.App
 {
@@ -14,8 +16,45 @@ namespace HeatingMold.App
             AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
             TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
 
-            // Bridge(OCCT) 호출 전에 third_party DLL 경로를 PATH에 추가 (창 생성 전)
-            OcctEnv.Setup();
+            // 시각 테스트 옵션은 StartupUri가 MainWindow를 만들기 전에 확정한다.
+            // 잘못된 옵션/시나리오는 일반 앱으로 폴백하지 않고 실패 결과만 남긴 뒤 종료한다.
+            VisualTestOptions visualOptions = null;
+            try
+            {
+                visualOptions = VisualTestOptions.Parse(e.Args);
+                if (visualOptions.Enabled)
+                {
+                    if (!string.IsNullOrEmpty(visualOptions.Error))
+                    {
+                        VisualTestReport.WriteStartupFailure(visualOptions.RunDirectory, visualOptions.Error);
+                        Shutdown(2);
+                        Environment.Exit(2);
+                        return;
+                    }
+
+                    VisualTestSession session = VisualTestSession.Prepare(visualOptions);
+                    // Bridge(OCCT) 호출 전에 third_party DLL 경로를 PATH에 추가한다.
+                    OcctEnv.Setup();
+                    // Setup이 기본 로그 경로를 설정하므로 viewer 초기화 전에 실행 폴더로 덮어쓴다.
+                    Environment.SetEnvironmentVariable("HEATINGMOLD_OCC_LOG",
+                        Path.Combine(visualOptions.RunDirectory, "occ_viewer_log.txt"));
+                    session.Report.WriteRun();
+                    VisualTestSession.Current = session;
+                }
+                else
+                {
+                    OcctEnv.Setup();
+                }
+            }
+            catch (Exception ex)
+            {
+                VisualTestReport.WriteStartupFailure(visualOptions?.RunDirectory,
+                    "시각 테스트 시작 실패: " + ex);
+                Shutdown(2);
+                Environment.Exit(2);
+                return;
+            }
+
             base.OnStartup(e);
         }
 

@@ -25,6 +25,18 @@ public static class ErrorReporter
     /// <summary>When set by regression harnesses, logs errors to stderr instead of showing a modal dialog.</summary>
     public static bool SuppressDialogs { get; set; }
 
+    /// <summary>
+    /// 오류/경고가 접수될 때마다 알린다. 표시 방식은 바꾸지 않으며,
+    /// 시각 테스트가 실패를 놓치지 않도록 관찰하는 용도로만 쓴다.
+    /// </summary>
+    public static event Action<string, ErrorLevel> Reported;
+
+    /// <summary>모달 오류 창이 현재 표시 중인지 여부.</summary>
+    public static bool IsShowing
+    {
+        get { lock (Gate) return _showing; }
+    }
+
     public static void ShowError(string context, string message)
         => Show(context, message, ErrorLevel.Error);
 
@@ -46,6 +58,9 @@ public static class ErrorReporter
 
     private static void Show(string context, string detail, ErrorLevel level)
     {
+        // 표시 동작보다 먼저 알림만 보낸다. 핸들러 예외가 원래 오류 표시를 막지 않게 한다.
+        try { Reported?.Invoke(context ?? "", level); } catch (Exception) { }
+
         if (SuppressDialogs)
         {
             try { Console.Error.WriteLine("[" + level + "] " + (context ?? "") + ": " + (detail ?? "")); }

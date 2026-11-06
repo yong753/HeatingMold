@@ -137,7 +137,7 @@ public partial class MainWindow
             blockReason = "준비되지 않은 영역: " + string.Join(", ",
                 entries.Where(e => e.State != ReviewAreaState.Ready)
                     .Select(e => string.Format("{0}({1})", e.Area.Name, ReviewStateLabel(e.State))));
-        else if (electricalError != null)
+        else if (!string.IsNullOrEmpty(electricalError))
             blockReason = "전기 입력 오류 — " + electricalError;
         else if (table == null || table.Rows.Count == 0)
             blockReason = "내보낼 회로가 없습니다";
@@ -224,6 +224,7 @@ public partial class MainWindow
 
         wire = new HeatingWireSpec { DiameterMm = diameter, ResistanceOhmPerMeter = resistance };
         supply = new PowerSupplySpec { VoltageV = voltage };
+        error = null;
         return true;
     }
 

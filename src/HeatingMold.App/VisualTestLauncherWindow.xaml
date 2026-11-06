@@ -1,0 +1,88 @@
+<Window x:Class="HeatingMold.App.VisualTestLauncherWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="시각 테스트 실행"
+        Width="660" Height="470"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Background="#F7F8FA" FontFamily="Malgun Gothic, Segoe UI" FontSize="12" Foreground="#1F2328">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,16">
+            <TextBlock Text="시각 테스트 실행" FontSize="18" FontWeight="SemiBold"/>
+            <TextBlock Text="현재 창은 그대로 두고, 새 HeatingMold 창에서 실제 기능을 순서대로 실행합니다."
+                       Foreground="#55606C" Margin="0,6,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="112"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="시나리오 JSON"
+                       VerticalAlignment="Center" Margin="0,0,12,10"/>
+            <TextBox x:Name="ScenarioPathBox" Grid.Row="0" Grid.Column="1" Height="30"
+                     VerticalContentAlignment="Center" Padding="6,0" Margin="0,0,8,10"
+                     AutomationProperties.Name="시각 테스트 시나리오 경로"/>
+            <Button Grid.Row="0" Grid.Column="2" Content="찾아보기…" Padding="12,3"
+                    Click="BrowseScenario_Click" Margin="0,0,0,10"/>
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="결과 폴더"
+                       VerticalAlignment="Center" Margin="0,0,12,10"/>
+            <TextBox x:Name="RunDirectoryBox" Grid.Row="1" Grid.Column="1" Height="30"
+                     VerticalContentAlignment="Center" Padding="6,0" Margin="0,0,8,10"
+                     AutomationProperties.Name="시각 테스트 결과 폴더"/>
+            <Button Grid.Row="1" Grid.Column="2" Content="찾아보기…" Padding="12,3"
+                    Click="BrowseRunDirectory_Click" Margin="0,0,0,10"/>
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="관찰 시간(초)"
+                       VerticalAlignment="Center" Margin="0,0,12,10"/>
+            <StackPanel Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2"
+                        Orientation="Horizontal" Margin="0,0,0,10">
+                <TextBox x:Name="HoldSecondsBox" Width="72" Height="30"
+                         VerticalContentAlignment="Center" Padding="6,0"
+                         AutomationProperties.Name="단계별 관찰 시간"/>
+                <TextBlock Text="각 단계 결과를 화면에 유지하는 시간 (0~60)"
+                           Foreground="#6B7480" VerticalAlignment="Center" Margin="10,0,0,0"/>
+            </StackPanel>
+
+            <CheckBox x:Name="StepModeCheckBox" Grid.Row="3" Grid.Column="1"
+                      Content="한 단계씩 실행 (상단 진행 바의 [다음 단계]를 누를 때까지 대기)"
+                      VerticalContentAlignment="Center"
+                      AutomationProperties.Name="한 단계씩 실행"/>
+        </Grid>
+
+        <Border Grid.Row="2" Background="#EEF3F8" BorderBrush="#D4DDE6"
+                BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,8,0,0"
+                VerticalAlignment="Top">
+            <TextBlock TextWrapping="Wrap" Foreground="#42505E"
+                       Text="테스트가 시작되면 새 창의 사이드바와 3D 뷰포트 입력이 잠깁니다. 상단 진행 바에서 일시정지·다음 단계·중단을 제어할 수 있고, 완료 후에도 결과 화면이 유지됩니다. 결과와 DXF는 위 폴더에 기록됩니다."/>
+        </Border>
+
+        <TextBlock x:Name="StatusText" Grid.Row="3" Foreground="#B3261E"
+                   TextWrapping="Wrap" Margin="0,12,0,8" MinHeight="20"/>
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="취소" Padding="18,5" Margin="0,0,8,0" Click="Cancel_Click"/>
+            <Button x:Name="RunButton" Content="새 창에서 실행" Padding="18,5"
+                    Click="Run_Click" IsDefault="True"
+                    AutomationProperties.Name="시각 테스트 시작"/>
+        </StackPanel>
+    </Grid>
+</Window>

@@ -1,0 +1,405 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using System.Threading.Tasks;
+using HeatingMold.App.VisualTesting;
+using Xunit;
+
+namespace HeatingMold.App.Tests
+{
+    public sealed class VisualScenarioTests
+    {
+        [Fact]
+        public void Load_AcceptsValidScenarioAndResolvesModel()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string scenarioPath = WriteScenario(temp, model, sha256: VisualScenario.ComputeSha256(model));
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(error);
+            Assert.NotNull(scenario);
+            Assert.Equal(Path.GetFullPath(model), scenario.ResolvedModelPath);
+            Assert.Equal(VisualScenario.ComputeSha256(model), scenario.ActualModelSha256);
+        }
+
+        [Fact]
+        public void Load_RejectsHashMismatch()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string scenarioPath = WriteScenario(temp, model, sha256: new string('0', 64));
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(scenario);
+            Assert.Contains("SHA-256", error);
+        }
+
+        [Fact]
+        public void Load_RejectsDuplicateFaceIds()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string scenarioPath = WriteScenario(temp, model, sha256: VisualScenario.ComputeSha256(model),
+                faceIds: "[1, 1]");
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(scenario);
+            Assert.Contains("중복", error);
+        }
+
+        [Fact]
+        public void Load_RejectsDirectInputPresetWithoutValues()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string scenarioPath = WriteScenario(temp, model, sha256: VisualScenario.ComputeSha256(model),
+                electrical: "\"presetIndex\": 2, \"voltageV\": 220, \"reviewScope\": 0");
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(scenario);
+            Assert.Contains("diameterMm", error);
+        }
+
+        [Fact]
+        public void Load_RejectsUnsupportedSchema()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string scenarioPath = WriteScenario(temp, model, sha256: VisualScenario.ComputeSha256(model),
+                schemaVersion: 3);
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(scenario);
+            Assert.Contains("schemaVersion", error);
+        }
+
+        [Fact]
+        public void Load_AcceptsV2AreasAndActions()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string json = "{" +
+                "\"schemaVersion\":2," +
+                "\"name\":\"v2-test\"," +
+                "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1],\"marginMm\":5,\"spacingMm\":10,\"direction\":0," +
+                "\"exit\":{\"faceId\":3},\"anchor\":{\"index\":0},\"expect\":{\"pieces\":2}}]," +
+                "\"steps\":[" +
+                "{\"id\":\"1\",\"action\":\"selectFaces\",\"faces\":[1]}," +
+                "{\"id\":\"2\",\"action\":\"confirmArea\",\"area\":\"A\"}," +
+                "{\"id\":\"3\",\"action\":\"generate\",\"area\":\"A\"}]" +
+                "}";
+            string scenarioPath = temp.WriteFile("scenario.json", json);
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(error);
+            Assert.NotNull(scenario);
+            Assert.Single(scenario.Areas);
+            Assert.Equal(3, scenario.Steps.Length);
+            Assert.Equal("A", scenario.Areas[0].Alias);
+        }
+
+        [Fact]
+        public void Load_RejectsDuplicateV2Alias()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string json = "{" +
+                "\"schemaVersion\":2," +
+                "\"name\":\"v2-test\"," +
+                "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
+                "\"areas\":[" +
+                "{\"alias\":\"A\",\"faceIds\":[1],\"exit\":{\"faceId\":3}}," +
+                "{\"alias\":\"A\",\"faceIds\":[2],\"exit\":{\"faceId\":4}}]," +
+                "\"steps\":[{\"id\":\"1\",\"action\":\"selectFaces\",\"faces\":[1]}]" +
+                "}";
+            string scenarioPath = temp.WriteFile("scenario.json", json);
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(scenario);
+            Assert.Contains("alias", error);
+        }
+
+        private static string WriteScenario(TempDirectory temp, string model, string sha256,
+            int schemaVersion = 1, string faceIds = "[1, 2]",
+            string electrical = "\"presetIndex\": 0, \"voltageV\": 220, \"reviewScope\": 0")
+        {
+            string json = "{" +
+                "\"schemaVersion\":" + schemaVersion + "," +
+                "\"name\":\"test\"," +
+                "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + sha256 + "\",\"faceCount\":2,\"solidCount\":1}," +
+                "\"area\":{\"faceIds\":" + faceIds + ",\"marginMm\":5,\"spacingMm\":10,\"direction\":0}," +
+                "\"exit\":{\"faceId\":3}," +
+                "\"split\":{\"turnIndex\":0}," +
+                "\"electrical\":{" + electrical + "}" +
+                "}";
+            return temp.WriteFile("scenario.json", json);
+        }
+    }
+
+    public sealed class VisualTestOptionsTests
+    {
+        [Fact]
+        public void Parse_WithoutVisualOption_LeavesNormalAppUntouched()
+        {
+            VisualTestOptions options = VisualTestOptions.Parse(new[] { "file.stp" });
+
+            Assert.False(options.Enabled);
+            Assert.Null(options.Error);
+        }
+
+        [Fact]
+        public void Parse_AcceptsAbsoluteRunDirectoryAndDefaults()
+        {
+            using var temp = new TempDirectory();
+            string scenario = temp.WriteFile("scenario.json", "{}");
+            string run = Path.Combine(temp.Path, "run");
+
+            VisualTestOptions options = VisualTestOptions.Parse(new[]
+            {
+                "--visual-test", scenario, "--visual-run-dir", run
+            });
+
+            Assert.True(options.Enabled);
+            Assert.Null(options.Error);
+            Assert.Equal(Path.GetFullPath(run), options.RunDirectory);
+            Assert.Equal(3, options.HoldSeconds);
+            Assert.False(options.StepMode);
+        }
+
+        [Fact]
+        public void Parse_RejectsRelativeRunDirectory()
+        {
+            using var temp = new TempDirectory();
+            string scenario = temp.WriteFile("scenario.json", "{}");
+
+            VisualTestOptions options = VisualTestOptions.Parse(new[]
+            {
+                "--visual-test", scenario, "--visual-run-dir", "relative/run"
+            });
+
+            Assert.True(options.Enabled);
+            Assert.Contains("절대 경로", options.Error);
+        }
+
+        [Fact]
+        public void Parse_KeepsRequestedRunDirectoryWhenScenarioIsMissing()
+        {
+            using var temp = new TempDirectory();
+            string missing = Path.Combine(temp.Path, "missing.json");
+            string run = Path.Combine(temp.Path, "run");
+
+            VisualTestOptions options = VisualTestOptions.Parse(new[]
+            {
+                "--visual-test", missing, "--visual-run-dir", run
+            });
+
+            Assert.True(options.Enabled);
+            Assert.Contains("찾을 수 없습니다", options.Error);
+            Assert.Equal(Path.GetFullPath(run), options.RunDirectory);
+        }
+
+        [Fact]
+        public void Parse_RejectsDuplicateOption()
+        {
+            using var temp = new TempDirectory();
+            string scenario = temp.WriteFile("scenario.json", "{}");
+
+            VisualTestOptions options = VisualTestOptions.Parse(new[]
+            {
+                "--visual-test", scenario, "--visual-test", scenario
+            });
+
+            Assert.True(options.Enabled);
+            Assert.Contains("중복", options.Error);
+        }
+
+        [Fact]
+        public void Parse_RejectsHoldOutsideRange()
+        {
+            using var temp = new TempDirectory();
+            string scenario = temp.WriteFile("scenario.json", "{}");
+
+            VisualTestOptions options = VisualTestOptions.Parse(new[]
+            {
+                "--visual-test", scenario, "--visual-hold-seconds", "61"
+            });
+
+            Assert.True(options.Enabled);
+            Assert.Contains("0~60", options.Error);
+        }
+    }
+
+    public sealed class VisualTestReportTests
+    {
+        [Fact]
+        public void Finish_WritesAtomicResultWithSteps()
+        {
+            using var temp = new TempDirectory();
+            var report = new VisualTestReport(temp.Path, new VisualScenario
+            {
+                Name = "test",
+                Model = new VisualModelSpec { FaceCount = 1, SolidCount = 1 },
+                ResolvedModelPath = "model.stp",
+                ActualModelSha256 = new string('a', 64)
+            });
+            report.WriteRun();
+            report.StartStep(0, "first");
+            report.EndStep(new VisualStepRecord
+            {
+                Index = 0,
+                Name = "first",
+                Success = true,
+                Detail = "ok"
+            });
+
+            report.Finish(new VisualTestRunResult { Status = "Completed", Automation = "Completed" });
+
+            string path = Path.Combine(temp.Path, "result.json");
+            Assert.True(File.Exists(path));
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
+            Assert.Equal("Completed", document.RootElement.GetProperty("Status").GetString());
+            Assert.Equal(1, document.RootElement.GetProperty("Steps").GetArrayLength());
+            Assert.True(File.Exists(Path.Combine(temp.Path, "steps.jsonl")));
+        }
+
+        [Fact]
+        public void Finish_RefusesToOverwriteExistingResult()
+        {
+            using var temp = new TempDirectory();
+            File.WriteAllText(Path.Combine(temp.Path, "result.json"), "{}");
+            var report = new VisualTestReport(temp.Path, new VisualScenario { Name = "test" });
+
+            Assert.Throws<IOException>(() =>
+                report.Finish(new VisualTestRunResult { Status = "Completed" }));
+        }
+    }
+
+    public sealed class VisualTestRunnerTests
+    {
+        [Fact]
+        public async Task Run_StopsAfterFailureAndDoesNotExecuteLaterSteps()
+        {
+            using var temp = new TempDirectory();
+            var report = new VisualTestReport(temp.Path, new VisualScenario { Name = "test" });
+            int executed = 0;
+            var runner = new VisualTestRunner(
+                new[] { "first", "second", "third" },
+                (index, token) =>
+                {
+                    executed++;
+                    return Task.FromResult(index == 0
+                        ? VisualStepOutcome.Ok("first ok")
+                        : VisualStepOutcome.Fail("intentional failure"));
+                },
+                report, holdSeconds: 0, stepMode: false, takeReportedError: () => null);
+
+            runner.Start();
+            await runner.Completion;
+
+            Assert.Equal(2, executed);
+            string json = File.ReadAllText(Path.Combine(temp.Path, "result.json"));
+            using JsonDocument document = JsonDocument.Parse(json);
+            Assert.Equal("Failed", document.RootElement.GetProperty("Status").GetString());
+            Assert.Equal(2, document.RootElement.GetProperty("Steps").GetArrayLength());
+            Assert.Contains("intentional failure", document.RootElement.GetProperty("Error").GetString());
+        }
+
+        [Fact]
+        public async Task RequestNext_IsIgnoredWhilePaused()
+        {
+            using var temp = new TempDirectory();
+            var report = new VisualTestReport(temp.Path, new VisualScenario { Name = "test" });
+            int executed = 0;
+            var runner = new VisualTestRunner(
+                new[] { "first", "second" },
+                (index, token) =>
+                {
+                    executed++;
+                    return Task.FromResult(VisualStepOutcome.Ok("ok " + index));
+                },
+                report, holdSeconds: 0, stepMode: true, takeReportedError: () => null);
+
+            runner.Start();
+            for (int i = 0; i < 200 && runner.State != VisualTestRunnerState.WaitingForNext; i++)
+                await Task.Delay(10);
+            Assert.Equal(VisualTestRunnerState.WaitingForNext, runner.State);
+
+            runner.Pause();
+            runner.RequestNext();
+            await Task.Delay(150);
+            Assert.Equal(1, executed);
+
+            runner.Resume();
+            runner.RequestNext();
+            for (int i = 0; i < 200 && (executed < 2 || runner.State != VisualTestRunnerState.WaitingForNext); i++)
+                await Task.Delay(10);
+            Assert.Equal(2, executed);
+            Assert.Equal(VisualTestRunnerState.WaitingForNext, runner.State);
+
+            runner.RequestNext();
+            await runner.Completion;
+
+            Assert.Equal(2, executed);
+            Assert.Equal(VisualTestRunnerState.Completed, runner.State);
+        }
+
+        [Fact]
+        public async Task Run_CompletesAllSteps()
+        {
+            using var temp = new TempDirectory();
+            var report = new VisualTestReport(temp.Path, new VisualScenario { Name = "test" });
+            int executed = 0;
+            var runner = new VisualTestRunner(
+                new[] { "first", "second" },
+                (index, token) =>
+                {
+                    executed++;
+                    return Task.FromResult(VisualStepOutcome.Ok("ok " + index));
+                },
+                report, holdSeconds: 0, stepMode: false, takeReportedError: () => null);
+
+            runner.Start();
+            await runner.Completion;
+
+            Assert.Equal(2, executed);
+            string json = File.ReadAllText(Path.Combine(temp.Path, "result.json"));
+            using JsonDocument document = JsonDocument.Parse(json);
+            Assert.Equal("Completed", document.RootElement.GetProperty("Status").GetString());
+            Assert.Equal("second", document.RootElement.GetProperty("LastCompletedStep").GetString());
+        }
+    }
+
+    internal sealed class TempDirectory : IDisposable
+    {
+        public string Path { get; }
+
+        public TempDirectory()
+        {
+            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "HeatingMoldTests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(Path);
+        }
+
+        public string WriteFile(string name, string content)
+        {
+            string path = System.IO.Path.Combine(Path, name);
+            File.WriteAllText(path, content);
+            return path;
+        }
+
+        public void Dispose()
+        {
+            try { Directory.Delete(Path, recursive: true); } catch (Exception) { }
+        }
+    }
+}

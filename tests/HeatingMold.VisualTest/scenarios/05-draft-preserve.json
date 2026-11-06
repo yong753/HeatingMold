@@ -1,0 +1,213 @@
+{
+  "schemaVersion": 2,
+  "name": "05-draft-preserve",
+  "description": "A/B 생성 후 A 마진 초안만 8로 변경(미생성) → B로 이동 → A 복귀 시 초안·stale 유지 확인 → 앵커 재선택 후 A만 재생성, B 불변",
+  "model": {
+    "path": "resource/Mold_Solids.stp",
+    "sha256": "9FF44A610102168C97871E158FB153DF6A9043C2D6CA7DD6C5D58F2375E7085C",
+    "faceCount": 574,
+    "solidCount": 30
+  },
+  "areas": [
+    {
+      "alias": "A",
+      "faceIds": [9],
+      "marginMm": 8,
+      "spacingMm": 10,
+      "direction": 0,
+      "exit": {
+        "faceId": 79,
+        "startPoint3D": [1628.67, -1515.75, -3895.55],
+        "endPoint3D": [1629.82, -1416.67, -3963.90],
+        "toleranceMm": 1.0
+      },
+      "anchor": {
+        "index": 0,
+        "startUv": [415.907, 228.027],
+        "endUv": [416.718, 298.027],
+        "toleranceMm": 0.5
+      },
+      "expect": {
+        "pieces": 17,
+        "turns": 7,
+        "circuits": 1,
+        "disabledTurns": 0,
+        "exitFaceId": 79,
+        "lengthMm": 5030.996,
+        "lengthToleranceMm": 1.0,
+        "marginMm": 8,
+        "spacingMm": 10
+      }
+    },
+    {
+      "alias": "B",
+      "faceIds": [27],
+      "marginMm": 5,
+      "spacingMm": 10,
+      "direction": 0,
+      "exit": { "faceId": 34, "toleranceMm": 1.0 },
+      "anchor": { "index": 0 },
+      "expect": {
+        "pieces": 197,
+        "turns": 97,
+        "circuits": 1,
+        "disabledTurns": 0,
+        "exitFaceId": 34,
+        "lengthMm": 3767.323,
+        "lengthToleranceMm": 1.0,
+        "marginMm": 5,
+        "spacingMm": 10
+      }
+    }
+  ],
+  "steps": [
+    {
+      "id": "05.1",
+      "name": "면 9 선택",
+      "action": "selectFaces",
+      "faces": [9]
+    },
+    {
+      "id": "05.2",
+      "name": "영역 A 확정",
+      "action": "confirmArea",
+      "area": "A"
+    },
+    {
+      "id": "05.3",
+      "name": "A 기본 조건 5/10 입력",
+      "action": "setAreaInputs",
+      "area": "A",
+      "marginMm": 5,
+      "spacingMm": 10,
+      "direction": 0
+    },
+    {
+      "id": "05.4",
+      "name": "A 인출면 79·앵커 0",
+      "action": "pickExit",
+      "area": "A"
+    },
+    {
+      "id": "05.5",
+      "name": "A 기본 조건으로 생성",
+      "action": "generate",
+      "area": "A",
+      "expect": {
+        "pieces": 17,
+        "turns": 7,
+        "circuits": 1,
+        "disabledTurns": 0,
+        "exitFaceId": 79,
+        "lengthMm": 5266.022,
+        "lengthToleranceMm": 1.0,
+        "marginMm": 5,
+        "spacingMm": 10
+      }
+    },
+    {
+      "id": "05.6",
+      "name": "면 27 선택",
+      "action": "selectFaces",
+      "faces": [27]
+    },
+    {
+      "id": "05.7",
+      "name": "영역 B 확정·기본 조건",
+      "action": "confirmArea",
+      "area": "B"
+    },
+    {
+      "id": "05.8",
+      "name": "B 조건 5/10 입력",
+      "action": "setAreaInputs",
+      "area": "B",
+      "marginMm": 5,
+      "spacingMm": 10,
+      "direction": 0
+    },
+    {
+      "id": "05.9",
+      "name": "B 인출면 34·앵커 0",
+      "action": "pickExit",
+      "area": "B"
+    },
+    {
+      "id": "05.10",
+      "name": "B 발열경로 생성",
+      "action": "generate",
+      "area": "B"
+    },
+    {
+      "id": "05.11",
+      "name": "A 마진 초안만 8로 변경",
+      "action": "setAreaInputs",
+      "area": "A",
+      "marginMm": 8,
+      "spacingMm": 10,
+      "direction": 0
+    },
+    {
+      "id": "05.12",
+      "name": "A 초안 8/10·stale 확인(적용은 5/10 유지)",
+      "action": "expectAreaInputs",
+      "area": "A",
+      "marginMm": 8,
+      "spacingMm": 10,
+      "direction": 0,
+      "expect": { "marginMm": 5, "spacingMm": 10 }
+    },
+    {
+      "id": "05.13",
+      "name": "B로 이동",
+      "action": "activateArea",
+      "area": "B"
+    },
+    {
+      "id": "05.14",
+      "name": "B 경로·조건 불변 확인",
+      "action": "checkArea",
+      "area": "B"
+    },
+    {
+      "id": "05.15",
+      "name": "A 복귀",
+      "action": "activateArea",
+      "area": "A"
+    },
+    {
+      "id": "05.16",
+      "name": "A 복귀 후 초안 8/10 유지 확인",
+      "action": "expectAreaInputs",
+      "area": "A",
+      "marginMm": 8,
+      "spacingMm": 10,
+      "direction": 0,
+      "expect": { "marginMm": 5, "spacingMm": 10 }
+    },
+    {
+      "id": "05.17",
+      "name": "A 마진 8 기준 앵커 재선택",
+      "action": "pickExit",
+      "area": "A"
+    },
+    {
+      "id": "05.18",
+      "name": "A 마진 8로 재생성",
+      "action": "generate",
+      "area": "A"
+    },
+    {
+      "id": "05.19",
+      "name": "전체 영역 상태 검사",
+      "action": "checkAllAreas"
+    },
+    {
+      "id": "05.20",
+      "name": "DXF 저장·재읽기",
+      "action": "exportDxf",
+      "fileName": "result.dxf",
+      "scope": 0
+    }
+  ]
+}

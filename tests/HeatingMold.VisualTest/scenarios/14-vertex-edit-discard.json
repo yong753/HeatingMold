@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 2,
+  "name": "14-vertex-edit-discard",
+  "description": "A 수동 꼭지점 이동 → 재생성 취소(편집 보존) → 재생성 동의(편집 폐기·원조건 복귀)",
+  "model": {
+    "path": "resource/Mold_Solids.stp",
+    "sha256": "9FF44A610102168C97871E158FB153DF6A9043C2D6CA7DD6C5D58F2375E7085C",
+    "faceCount": 574,
+    "solidCount": 30
+  },
+  "areas": [
+    {
+      "alias": "A",
+      "faceIds": [9],
+      "marginMm": 5,
+      "spacingMm": 10,
+      "direction": 0,
+      "exit": {
+        "faceId": 79,
+        "startPoint3D": [1628.67, -1515.75, -3895.55],
+        "endPoint3D": [1629.82, -1416.67, -3963.90],
+        "toleranceMm": 1.0
+      },
+      "anchor": { "index": 0 },
+      "expect": {
+        "pieces": 17,
+        "turns": 7,
+        "circuits": 1,
+        "disabledTurns": 0,
+        "exitFaceId": 79,
+        "lengthMm": 5266.022,
+        "lengthToleranceMm": 1.0,
+        "marginMm": 5,
+        "spacingMm": 10,
+        "routeEdited": false
+      }
+    }
+  ],
+  "steps": [
+    {
+      "id": "14.1",
+      "name": "면 9 선택",
+      "action": "selectFaces",
+      "faces": [9]
+    },
+    {
+      "id": "14.2",
+      "name": "영역 A 확정",
+      "action": "confirmArea",
+      "area": "A"
+    },
+    {
+      "id": "14.3",
+      "name": "A 조건 5/10",
+      "action": "setAreaInputs",
+      "area": "A",
+      "marginMm": 5,
+      "spacingMm": 10,
+      "direction": 0
+    },
+    {
+      "id": "14.4",
+      "name": "A 인출면 79·앵커 0",
+      "action": "pickExit",
+      "area": "A"
+    },
+    {
+      "id": "14.5",
+      "name": "A 기본 생성",
+      "action": "generate",
+      "area": "A"
+    },
+    {
+      "id": "14.6",
+      "name": "A 초기 상태 확인",
+      "action": "checkArea",
+      "area": "A"
+    },
+    {
+      "id": "14.7",
+      "name": "꼭지점 1을 +Y로 1mm 이동",
+      "action": "moveVertex",
+      "area": "A",
+      "vertexIndex": 1,
+      "offsetMm": [0, 1]
+    },
+    {
+      "id": "14.8",
+      "name": "편집 후 상태 확인",
+      "action": "checkArea",
+      "area": "A",
+      "expect": {
+        "pieces": 17,
+        "turns": 7,
+        "circuits": 1,
+        "disabledTurns": 0,
+        "exitFaceId": 79,
+        "routeEdited": true
+      }
+    },
+    {
+      "id": "14.9",
+      "name": "재생성 요청 — 편집 폐기 취소",
+      "action": "generate",
+      "area": "A",
+      "confirm": "no",
+      "confirmAction": "패턴 재생성",
+      "outcome": "rejected"
+    },
+    {
+      "id": "14.10",
+      "name": "취소 후 편집 보존 확인",
+      "action": "checkArea",
+      "area": "A",
+      "expect": {
+        "pieces": 17,
+        "turns": 7,
+        "circuits": 1,
+        "disabledTurns": 0,
+        "exitFaceId": 79,
+        "routeEdited": true
+      }
+    },
+    {
+      "id": "14.11",
+      "name": "재생성 요청 — 편집 폐기 동의",
+      "action": "generate",
+      "area": "A",
+      "confirm": "yes",
+      "confirmAction": "패턴 재생성"
+    },
+    {
+      "id": "14.12",
+      "name": "전체 영역 상태 검사",
+      "action": "checkAllAreas"
+    },
+    {
+      "id": "14.13",
+      "name": "DXF 저장·재읽기",
+      "action": "exportDxf",
+      "fileName": "result.dxf",
+      "scope": 0
+    }
+  ]
+}

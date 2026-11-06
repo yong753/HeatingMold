@@ -113,19 +113,9 @@ public partial class MainWindow
     private void AnchorCandidateList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressAnchorSelection) return;
-        var area = _activeArea;
-        if (area == null || AnchorCandidateList?.SelectedItem is not AnchorCandidateRow row) return;
-        area.StartAnchor = row.Start;
-        area.EndAnchor = row.End;
-        area.LastExitFailure = null;
-        area.ExcludedPlan = area.Exclusions.Count > 0
-            ? area.ExcludedCandidates.FirstOrDefault(c =>
-                Dist(c.Start, row.Start) <= 1e-4 && Dist(c.End, row.End) <= 1e-4)
-            : null;
-        SyncExitFaceUi(area);
-        UpdateActionStates();
-        StatusText.Text = string.Format("시작 ({0:F1}, {1:F1}) → 종료 ({2:F1}, {3:F1}) · 각도 {4:F0}° — 반대쪽 끝은 레인 위상으로 결정됩니다",
-            row.Start.X, row.Start.Y, row.End.X, row.End.Y, row.AngleDeg);
+        if (AnchorCandidateList?.SelectedItem is not AnchorCandidateRow row) return;
+        if (!ApplyAnchorCandidate(row.Start, row.End, out string error))
+            StatusText.Text = error;
     }
 
     private string DescribeExitState(WorkingArea area)
@@ -264,6 +254,35 @@ public partial class MainWindow
             return; // 선택 모드 유지
         }
 
+        if (!ApplyExitCandidate(index, out string error))
+        {
+            StatusText.Text = error;
+            return;
+        }
+
+        double length = 0;
+        for (int i = 1; i < area.ExitChain.Count; i++) length += Dist(area.ExitChain[i - 1], area.ExitChain[i]);
+        if (area.HasExitAnchors)
+            StatusText.Text = string.Format("{0} 영역 인출면 Face {1} · 길이 {2:F1}mm — 시작/종료점 후보가 목록에 표시됩니다",
+                area.Name, area.ExitFaceId, length);
+        else
+            StatusText.Text = area.LastExitFailure ?? "인출면은 지정됐지만 사용 가능한 시작/종료점 후보가 없습니다";
+    }
+
+    /// <summary>
+    /// 후보 목록의 인덱스를 실제 인출면 상태에 적용한다. UI는 좌표 픽으로,
+    /// 시각 테스트는 FaceId/좌표 지문으로 인덱스를 찾은 뒤 이 공통 경로를 호출한다.
+    /// </summary>
+    private bool ApplyExitCandidate(int index, out string error)
+    {
+        error = null;
+        var area = _activeArea;
+        if (area == null || index < 0 || index >= _exitCandidates.Count)
+        {
+            error = "선택한 인출면 후보를 찾을 수 없습니다";
+            return false;
+        }
+
         var chosen = _exitCandidates[index];
         int pointCount = chosen.Points.Length / 3;
         int[] segmentFaceIds = chosen.SegmentFaceIds;
@@ -295,22 +314,20 @@ public partial class MainWindow
             if (!consistent)
             {
                 CancelExitFacePick();
-                StatusText.Text = "선택한 인출 측면의 구간 면 정보가 일관되지 않습니다 — 다른 구간을 선택하세요";
-                return;
+                error = "선택한 인출 측면의 구간 면 정보가 일관되지 않습니다 — 다른 구간을 선택하세요";
+                return false;
             }
             chain.Add(p);
             chain3D.Add(p3);
             chainFaceIds.Add(segment >= 0 ? segment : (chainFaceIds.Count > 0 ? chainFaceIds[^1] : chosen.FaceId));
             lastKept = k;
         }
-        double length = 0;
-        for (int i = 1; i < chain.Count; i++) length += Dist(chain[i - 1], chain[i]);
 
         CancelExitFacePick();
         if (chain.Count < 2)
         {
-            StatusText.Text = "선택한 인출 측면의 경계선을 투영하지 못했습니다 — 다른 구간을 선택하세요";
-            return;
+            error = "선택한 인출 측면의 경계선을 투영하지 못했습니다 — 다른 구간을 선택하세요";
+            return false;
         }
 
         area.ExitFaceId = chosen.FaceId;
@@ -324,12 +341,42 @@ public partial class MainWindow
         SyncExitFaceUi(area);
         ApplyActiveExitEdgeHighlight();
         UpdateActionStates();
+        return true;
+    }
 
-        if (area.HasExitAnchors)
-            StatusText.Text = string.Format("{0} 영역 인출면 Face {1} · 길이 {2:F1}mm — 시작/종료점 후보가 목록에 표시됩니다",
-                area.Name, chosen.FaceId, length);
-        else
-            StatusText.Text = area.LastExitFailure ?? "인출면은 지정됐지만 사용 가능한 시작/종료점 후보가 없습니다";
+    /// <summary>
+    /// 시작/종료점 후보를 실제 영역 상태에 적용한다. 후보 목록에 없는 좌표는 거부한다.
+    /// </summary>
+    private bool ApplyAnchorCandidate(Vec2 start, Vec2 end, out string error)
+    {
+        error = null;
+        var area = _activeArea;
+        if (area == null)
+        {
+            error = "활성 작업영역이 없습니다";
+            return false;
+        }
+
+        AnchoredCandidate candidate = area.AnchorCandidates.FirstOrDefault(c =>
+            Dist(c.Start, start) <= 1e-6 && Dist(c.End, end) <= 1e-6);
+        if (candidate == null)
+        {
+            error = "요청한 시작/종료점 후보가 현재 목록에 없습니다";
+            return false;
+        }
+
+        area.StartAnchor = candidate.Start;
+        area.EndAnchor = candidate.End;
+        area.LastExitFailure = null;
+        area.ExcludedPlan = area.Exclusions.Count > 0
+            ? area.ExcludedCandidates.FirstOrDefault(c =>
+                Dist(c.Start, candidate.Start) <= 1e-4 && Dist(c.End, candidate.End) <= 1e-4)
+            : null;
+        SyncExitFaceUi(area);
+        UpdateActionStates();
+        StatusText.Text = string.Format("시작 ({0:F1}, {1:F1}) → 종료 ({2:F1}, {3:F1}) · 각도 {4:F0}° — 반대쪽 끝은 레인 위상으로 결정됩니다",
+            candidate.Start.X, candidate.Start.Y, candidate.End.X, candidate.End.Y, candidate.AngleDeg);
+        return true;
     }
 
     private void ClearExitFace_Click(object sender, RoutedEventArgs e)

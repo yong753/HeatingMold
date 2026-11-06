@@ -10,6 +10,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using HeatingMold.App.VisualTesting;
 using HeatingMold.Core.Electrical;
 using HeatingMold.Core.Geometry;
 using HeatingMold.Core.Model;
@@ -240,6 +241,11 @@ namespace HeatingMold.App
         // 뷰포트 HWND에 포커스가 없는 경우(WPF 쪽 포커스)를 위한 Enter 확정 경로.
         private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
         {
+            if (_visualTestInputLocked)
+            {
+                e.Handled = true;
+                return;
+            }
             if (e.Key == Key.Escape && Viewport != null && Viewport.ExitFacePickMode)
             {
                 CancelExitFacePick();
@@ -276,10 +282,14 @@ namespace HeatingMold.App
             string mold = OcctEnv.FindMoldStp();
             if (mold != null) StatusText.Text = "뷰어 준비 — STEP 열기 또는 예제 열기로 모델을 선택하세요";
             else StatusText.Text = "뷰어 준비 — 'STEP 열기'로 모델 파일을 선택하세요";
+
+            if (VisualTestSession.Current != null)
+                Dispatcher.BeginInvoke(new Action(StartVisualTestIfConfigured));
         }
 
         private void OpenExample_Click(object sender, RoutedEventArgs e)
         {
+            if (_visualTestInputLocked) return;
             string mold = OcctEnv.FindMoldStp();
             if (string.IsNullOrEmpty(mold))
             {
@@ -560,19 +570,32 @@ namespace HeatingMold.App
                 StatusText.Text = "제외 사각형을 작업 평면에 투영할 수 없습니다";
                 return;
             }
+            AddActiveAreaExclusion(a, b, out _);
+        }
+
+        /// <summary>
+        /// 작업 평면 사각형을 활성 영역의 제외영역으로 추가한다. 화면 좌표 핸들러와
+        /// 시각 테스트가 같은 본문을 통과하도록 분리했다. 추가는 기존 경로를 무효화하며
+        /// 새 경로를 자동 생성하지 않는다.
+        /// </summary>
+        internal bool AddActiveAreaExclusion(Vec2 a, Vec2 b, out string error)
+        {
+            error = null;
             double minX = Math.Min(a.X, b.X), maxX = Math.Max(a.X, b.X);
             double minY = Math.Min(a.Y, b.Y), maxY = Math.Max(a.Y, b.Y);
             if (maxX - minX < 0.5 || maxY - minY < 0.5)
             {
-                StatusText.Text = "제외 사각형이 너무 작습니다";
-                return;
+                error = "제외 사각형이 너무 작습니다";
+                StatusText.Text = error;
+                return false;
             }
             if (_activeArea == null)
             {
-                StatusText.Text = "제외영역을 추가하려면 먼저 작업영역을 확정하세요";
-                return;
+                error = "제외영역을 추가하려면 먼저 작업영역을 확정하세요";
+                StatusText.Text = error;
+                return false;
             }
-            if (!ConfirmDiscardRouteEdits(_activeArea, "제외영역 추가")) return;
+            if (!ConfirmDiscardRouteEdits(_activeArea, "제외영역 추가")) return false;
             ExitVertexEdit();
             var area = _activeArea;
             var rect = (minX, minY, maxX, maxY);
@@ -584,8 +607,9 @@ namespace HeatingMold.App
             if (!StageAreaHighlightMesh(area))
             {
                 RestoreAreaExclusions(area, previous.Exclusions);
-                StatusText.Text = "제외영역 표시를 생성하지 못했습니다 — 이전 제외영역/경로를 유지했습니다";
-                return;
+                error = "제외영역 표시를 생성하지 못했습니다 — 이전 제외영역/경로를 유지했습니다";
+                StatusText.Text = error;
+                return false;
             }
 
             // 2) 스테이징이 성공한 뒤에만 이 영역의 기존 경로를 무효화한다.
@@ -603,8 +627,9 @@ namespace HeatingMold.App
                 Bridge.DiscardAreaHighlight(area.AreaId);
                 RestoreAreaRouteState(area, previous, restoreExclusions: true);
                 UpdateActiveAreaHighlight();
-                StatusText.Text = "제외영역 표시를 적용하지 못했습니다 — 이전 제외영역/경로를 유지했습니다";
-                return;
+                error = "제외영역 표시를 적용하지 못했습니다 — 이전 제외영역/경로를 유지했습니다";
+                StatusText.Text = error;
+                return false;
             }
 
             // 3) 경로 재생성이 실패하면 표시까지 이전 상태로 되돌린다.
@@ -613,7 +638,8 @@ namespace HeatingMold.App
                 RestoreAreaRouteState(area, previous, restoreExclusions: true);
                 Bridge.DiscardAreaHighlight(area.AreaId);
                 UpdateActiveAreaHighlight();
-                return;
+                error = "제외영역 추가 후 네이티브 경로 상태를 갱신하지 못했습니다";
+                return false;
             }
             ClearRouteEditState(area);
             if (area.HasExitFace)
@@ -627,6 +653,7 @@ namespace HeatingMold.App
             StatusText.Text = area.HasExitFace && !area.HasExitAnchors && !string.IsNullOrEmpty(area.LastExitFailure)
                 ? area.LastExitFailure
                 : string.Format("모델 뷰포트 제외영역 추가 — {0}개", area.Exclusions.Count);
+            return true;
         }
 
         /// <summary>제외 목록을 스냅샷으로 되돌린다.</summary>
@@ -1255,9 +1282,16 @@ namespace HeatingMold.App
         }
         private void ClearExclusions_Click(object sender, RoutedEventArgs e)
         {
+            RemoveActiveAreaExclusions(out _);
+        }
+
+        /// <summary>활성 영역의 모든 제외 사각형을 지운다. 제거도 새 경로를 자동 생성하지 않는다.</summary>
+        internal bool RemoveActiveAreaExclusions(out string error)
+        {
+            error = null;
             var area = _activeArea;
-            if (area == null) { StatusText.Text = "작업영역이 없습니다"; return; }
-            if (!ConfirmDiscardRouteEdits(area, "제외영역 지우기")) return;
+            if (area == null) { error = "작업영역이 없습니다"; StatusText.Text = error; return false; }
+            if (!ConfirmDiscardRouteEdits(area, "제외영역 지우기")) return false;
             ExitVertexEdit();
             CancelPowerSetup();
             // 롤백 스냅샷 — 실패 시 제외 목록/경로/표시를 이전 그대로 되돌린다.
@@ -1277,7 +1311,8 @@ namespace HeatingMold.App
             {
                 RestoreAreaRouteState(area, previous, restoreExclusions: true);
                 UpdateActiveAreaHighlight();
-                return;
+                error = "제외영역 제거 후 네이티브 경로 상태를 갱신하지 못했습니다";
+                return false;
             }
             // 경로 재생성 성공 후에만 채움 메시를 걷어내고 Face 색칠로 되돌린다.
             UpdateActiveAreaHighlight();   // 제외 0: ClearAreaHighlight + ApplyAreaColors
@@ -1290,6 +1325,7 @@ namespace HeatingMold.App
             UpdateCircuitTable();
             UpdateActionStates();
             StatusText.Text = string.Format("{0} 영역의 제외 사각형을 모두 지웠습니다", area.Name);
+            return true;
         }
 
         private List<DxfView> BuildViews()
@@ -1326,42 +1362,65 @@ namespace HeatingMold.App
         private void Export_Click(object sender, RoutedEventArgs e)
         {
             if (!TryEnterBusy("DXF 내보내기")) return;
-            try { ExportDxfCore(); }
+            try { ExportDxfCore(null, out _); }
             finally { ExitBusy(); }
         }
 
-        private void ExportDxfCore()
+        private enum ExportDxfResult
         {
+            Success,
+            Canceled,
+            Rejected,
+            Failed
+        }
+
+        /// <summary>
+        /// DXF 저장의 공통 경로. explicitPath가 있으면 저장 대화상자만 생략하고
+        /// 검토/재검사/4투상/임시파일/원자적 교체 보호 로직은 그대로 공유한다.
+        /// </summary>
+        private ExportDxfResult ExportDxfCore(string explicitPath, out string error)
+        {
+            error = null;
             // 대화상자를 열기 전에 같은 검토 스냅샷으로 출력 가능 여부를 확정한다.
             ReviewSnapshot preflight = BuildReviewSnapshot();
             if (!preflight.CanExport)
             {
+                error = preflight.BlockReason;
                 StatusText.Text = "DXF 내보내기 불가 — " + preflight.BlockReason;
-                return;
+                return ExportDxfResult.Rejected;
             }
             long modelRevisionBeforeDialog = _modelRevision;
 
-            string suffix = _reviewCurrentAreaOnly && _activeArea != null
-                ? "_" + _activeArea.Name
-                : "";
-            string defaultName = SanitizeFileName(
-                (string.IsNullOrEmpty(_modelFileName) ? "heat_pattern" : _modelFileName) + suffix + "_검토") + ".dxf";
-            var dialog = new SaveFileDialog
+            string file;
+            if (explicitPath != null)
             {
-                Title = "DXF 내보내기",
-                Filter = "DXF 파일 (*.dxf)|*.dxf|모든 파일 (*.*)|*.*",
-                DefaultExt = ".dxf",
-                AddExtension = true,
-                OverwritePrompt = true,
-                FileName = defaultName
-            };
-            if (dialog.ShowDialog(this) != true)
+                file = explicitPath;
+            }
+            else
             {
-                StatusText.Text = "DXF 내보내기를 취소했습니다";
-                return;
+                string suffix = _reviewCurrentAreaOnly && _activeArea != null
+                    ? "_" + _activeArea.Name
+                    : "";
+                string defaultName = SanitizeFileName(
+                    (string.IsNullOrEmpty(_modelFileName) ? "heat_pattern" : _modelFileName) + suffix + "_검토") + ".dxf";
+                var dialog = new SaveFileDialog
+                {
+                    Title = "DXF 내보내기",
+                    Filter = "DXF 파일 (*.dxf)|*.dxf|모든 파일 (*.*)|*.*",
+                    DefaultExt = ".dxf",
+                    AddExtension = true,
+                    OverwritePrompt = true,
+                    FileName = defaultName
+                };
+                if (dialog.ShowDialog(this) != true)
+                {
+                    error = "사용자가 저장을 취소했습니다";
+                    StatusText.Text = "DXF 내보내기를 취소했습니다";
+                    return ExportDxfResult.Canceled;
+                }
+                file = dialog.FileName;
             }
 
-            string file = dialog.FileName;
             string temp = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
@@ -1434,11 +1493,14 @@ namespace HeatingMold.App
                     File.Move(temp, file);
                 }
                 StatusText.Text = "DXF 저장 완료 — " + file;
+                return ExportDxfResult.Success;
             }
             catch (Exception ex)
             {
+                error = ex.Message;
                 StatusText.Text = "DXF 저장 실패: " + ex.Message;
                 ErrorReporter.ShowError("DXF 저장 실패 — " + file, ex);
+                return ExportDxfResult.Failed;
             }
             finally
             {
@@ -1503,6 +1565,7 @@ namespace HeatingMold.App
 
         private void Open_Click(object sender, RoutedEventArgs e)
         {
+            if (_visualTestInputLocked) return;
             var dlg = new OpenFileDialog { Filter = "STEP (*.stp;*.step)|*.stp;*.step|모든 파일 (*.*)|*.*" };
             if (dlg.ShowDialog(this) == true) LoadFile(dlg.FileName);
         }

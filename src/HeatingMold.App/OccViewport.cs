@@ -137,6 +137,24 @@ namespace HeatingMold.App
         private const int WM_CAPTURECHANGED = 0x0215;
         private const int WM_KEYDOWN = 0x0100;
 
+        private static bool IsUserInputMessage(int msg)
+        {
+            switch (msg)
+            {
+                case WM_KEYDOWN:
+                case WM_LBUTTONDOWN:
+                case WM_LBUTTONUP:
+                case WM_RBUTTONDOWN:
+                case WM_RBUTTONUP:
+                case WM_MOUSEMOVE:
+                case WM_MOUSEWHEEL:
+                case WM_MOUSELEAVE:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         private IntPtr _hwnd;
         private bool _ready;
         private int _syncedWidth = -1, _syncedHeight = -1;   // 마지막으로 OCCT에 반영한 클라이언트 크기(px)
@@ -281,6 +299,31 @@ namespace HeatingMold.App
         /// <summary>인출면 선택처럼 화면과 판정 기준을 일치시켜야 하는 모드에서 드래그 회전을 막는다.
         /// 줌/팬은 작업 프레임을 바꾸지 않으므로 허용한다.</summary>
         public bool ViewLocked { get; set; }
+
+        private bool _inputLocked;
+        /// <summary>
+        /// 시각 테스트가 실제 기능을 호출하는 동안 사용자의 원시 마우스/키 입력을 막는다.
+        /// 그리기/크기/캡처 해제 같은 수명주기 메시지는 통과시킨다.
+        /// </summary>
+        public bool InputLocked
+        {
+            get => _inputLocked;
+            set
+            {
+                if (_inputLocked == value) return;
+                if (value)
+                {
+                    CancelVertexDrag();
+                    CancelPowerLeadPreview();
+                    CancelFaceRectangleDrag();
+                    _dragging = false;
+                    _panDragging = false;
+                    _dragStarted = false;
+                    try { ReleaseCapture(); } catch (Exception) { }
+                }
+                _inputLocked = value;
+            }
+        }
 
         private bool _vertexEditMode;
         private bool _vertexDragging;
@@ -527,6 +570,12 @@ namespace HeatingMold.App
 
         protected override IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
+            if (_inputLocked && IsUserInputMessage(msg))
+            {
+                handled = true;
+                return IntPtr.Zero;
+            }
+
             switch (msg)
             {
                 case WM_KEYDOWN:

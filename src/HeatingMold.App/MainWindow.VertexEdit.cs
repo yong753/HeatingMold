@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using HeatingMold.App.VisualTesting;
 using HeatingMold.Core.Geometry;
 using HeatingMold.OccBridge;
 
@@ -497,6 +498,7 @@ public partial class MainWindow
     private bool ConfirmDiscardRouteEdits(WorkingArea area, string action)
     {
         if (area == null || !area.RouteEdited) return true;
+        if (VisualTestSession.Current != null) return ResolveVisualTestConfirm(action);
         MessageBoxResult result = MessageBox.Show(this,
             action + " 작업을 계속하면 " + area.Name + " 영역의 발열경로 편집 내용이 삭제됩니다."
             + Environment.NewLine + "계속할까요?",
@@ -514,6 +516,7 @@ public partial class MainWindow
     {
         var edited = _areas.Where(a => a.RouteEdited).ToList();
         if (edited.Count == 0) return true;
+        if (VisualTestSession.Current != null) return ResolveVisualTestConfirm(action);
         MessageBoxResult result = MessageBox.Show(this,
             action + " 작업을 계속하면 " + string.Join(", ", edited.Select(a => a.Name))
             + " 영역의 발열경로 편집 내용이 삭제됩니다." + Environment.NewLine + "계속할까요?",
@@ -525,6 +528,7 @@ public partial class MainWindow
     private bool ConfirmDiscardSession(string action)
     {
         if (_areas.Count == 0) return true;
+        if (VisualTestSession.Current != null) return ResolveVisualTestConfirm(action);
         MessageBoxResult result = MessageBox.Show(this,
             action + " 작업을 계속하면 현재 작업 세션(영역 " + _areas.Count
             + "개, 생성 경로, 입력 조건)이 사라집니다." + Environment.NewLine

@@ -186,6 +186,32 @@
     </Window.Resources>
 
     <DockPanel>
+        <Border x:Name="VisualTestBar" DockPanel.Dock="Top" Visibility="Collapsed"
+                Background="#FFF7E6" BorderBrush="#E0A800" BorderThickness="0,0,0,1" Padding="16,8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="VisualTestStepText" Text="시각 테스트" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="VisualTestDetailText" Text="" Foreground="#6B4E00"
+                               Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
+                    <ProgressBar x:Name="VisualTestProgress" Height="4" Margin="0,6,0,0"
+                                 Minimum="0" Maximum="100" Value="0"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
+                            Margin="16,0,0,0">
+                    <Button x:Name="VisualTestPauseButton" Content="일시정지" Click="VisualTestPause_Click"
+                            Style="{StaticResource FlatButton}" Margin="0,0,6,0"/>
+                    <Button x:Name="VisualTestNextButton" Content="다음 단계" Click="VisualTestNext_Click"
+                            Style="{StaticResource PrimaryButton}" Margin="0,0,6,0" IsEnabled="False"/>
+                    <Button x:Name="VisualTestStopButton" Content="중단" Click="VisualTestStop_Click"
+                            Style="{StaticResource FlatButton}"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
         <Border DockPanel.Dock="Top" Background="{StaticResource SurfaceBrush}"
                 BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="16,9">
             <Grid>
@@ -202,6 +228,9 @@
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
                             VerticalAlignment="Center">
+                    <Button x:Name="VisualTestButton" Content="시각 테스트…" Click="VisualTest_Click"
+                            AutomationProperties.Name="시각 테스트 실행"
+                            Style="{StaticResource FlatButton}" Margin="0,0,8,0"/>
                     <Button x:Name="OpenButton" Content="STEP 열기…" Click="Open_Click"
                             AutomationProperties.Name="STEP 모델 열기"
                             Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"/>
@@ -630,6 +659,10 @@
                     </TabControl>
                 </Grid>
             </Border>
+
+            <Border x:Name="VisualTestInputShield" Grid.ColumnSpan="3" Panel.ZIndex="50"
+                    Background="#01000000" Visibility="Collapsed"
+                    AutomationProperties.Name="시각 테스트 입력 잠금"/>
         </Grid>
     </DockPanel>
 </Window>
