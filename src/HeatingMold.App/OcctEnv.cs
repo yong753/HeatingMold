@@ -55,14 +55,13 @@ namespace HeatingMold.App
         }
 
         /// <summary>
-        /// 기본 로드 모델 경로.
-        /// Mold_Solids.stp = Mold.stp 에서 자유 곡면 바디(SURFACE.135 / SURFACE.142)를
-        /// 제품 구조에서 분리한 파일. 솔리드 30개 / 574면만 로드되어 중복 면이 없다.
-        /// 생성: tools/step-cleanup/remove-surface-bodies.ps1
+        /// 기본 로드 모델 경로. Mold_Solids.stp = 구 Mold.stp 에서 자유 곡면 바디
+        /// (SURFACE.135 / SURFACE.142)를 제품 구조에서 분리한 파일. 솔리드 30개 / 574면만
+        /// 로드되어 중복 면이 없다. 구 원본 Mold.stp는 저장소에서 제거되었다.
         /// </summary>
         public static string FindMoldStp()
         {
-            string[] candidates = { "Mold_Solids.stp", "Mold.stp" };
+            string[] candidates = { "Mold_Solids.stp" };
             foreach (string name in candidates)
             {
                 if (RepoRoot != null)

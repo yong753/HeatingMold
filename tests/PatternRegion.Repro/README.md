@@ -1,5 +1,10 @@
 ﻿# Pattern region projection repro ??faces {18, 74, 597, 598}
 
+> **Historical only:** This repro requires the removed original `resource/Mold.stp`.
+> The current app and visual test use `resource/Mold_Solids.stp`, which has different
+> face numbers. This harness is retained as analysis history and is not part of the
+> current test flow.
+
 Reproduces the field failure:
 
 ```

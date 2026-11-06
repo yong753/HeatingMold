@@ -1,5 +1,9 @@
 # Phase 1 — Curved-surface route mapping
 
+> **Historical verification note:** the commands below reference the removed original
+> `resource/Mold.stp`. Current builds use `resource/Mold_Solids.stp`; the recorded
+> face IDs are not valid for the cleaned model.
+
 Status: implemented on branch `feature/phase1-curved-surface-routing`, commit `f4a5444`.
 
 ## Purpose
