@@ -45,6 +45,7 @@
     int                       g_faceIdWidth = 0;
     int                       g_faceIdHeight = 0;
     long long                 g_faceIdModelRevision = -1;
+    long long                 g_faceIdMeshEpoch = -1;
     bool                      g_faceIdCacheValid = false;
     FaceIdCameraKeyNative     g_faceIdCameraKey;
     long long                 g_faceIdBuildCount = 0;
@@ -94,6 +95,7 @@
         g_faceIdWidth = 0;
         g_faceIdHeight = 0;
         g_faceIdModelRevision = -1;
+        g_faceIdMeshEpoch = -1;
         g_faceIdCacheValid = false;
         g_faceIdBuildFailed = false;
     }
@@ -227,6 +229,7 @@
 
         if (g_faceIdCacheValid &&
             g_faceIdModelRevision == g_modelRevision &&
+            g_faceIdMeshEpoch == g_meshEpoch &&
             g_faceIdWidth == width && g_faceIdHeight == height &&
             SameFaceIdCameraNative(width, height))
             return true;
@@ -317,6 +320,7 @@
             g_faceIdWidth = width;
             g_faceIdHeight = height;
             g_faceIdModelRevision = g_modelRevision;
+            g_faceIdMeshEpoch = g_meshEpoch;
             CaptureFaceIdCameraKeyNative(width, height);
             g_faceIdCacheValid = true;
             ++g_faceIdBuildCount;
@@ -389,27 +393,29 @@
         return g_rectOwnerMapValid;
     }
 
-    /// <summary>선택 owner 배열을 Replace로 적용한다. 같은 집합을 반복 적용하지 않고,
-    /// applied는 실제 AIS 선택에서 다시 수집한 face id다. true = 선택 상태 변경됨.</summary>
-    bool ApplySelectedFaceIdsNative(const std::vector<int>& faceIds, std::vector<int>& applied)
+    /// <summary>선택 owner 배열을 Replace로 적용한다.
+    /// 모든 요청 face의 owner를 먼저 확보한 뒤에만 선택을 바꾼다(부분 적용 금지).
+    /// 반환값이 Failed면 기존 선택은 그대로다.</summary>
+    FaceApplyStatusNative ApplySelectedFaceIdsNative(const std::vector<int>& faceIds, std::vector<int>& applied)
     {
         applied.clear();
-        if (g_ctx.IsNull()) return false;
+        if (g_ctx.IsNull()) return FaceApply_Failed;
         if (g_rectHasApplied && faceIds == g_rectLastRequestedFaceIds)
         {
             applied = g_rectLastAppliedFaceIds;
-            return false;
+            return FaceApply_Unchanged;
         }
 
-        const bool mapReady = EnsureRectOwnerMapNative();
-        if (!mapReady && !faceIds.empty()) return false;   // 매핑 실패 시 기존 선택을 건드리지 않는다
+        if (!EnsureRectOwnerMapNative() && !faceIds.empty())
+            return FaceApply_Failed;   // 매핑 실패 시 기존 선택을 건드리지 않는다
 
         std::vector<Handle(SelectMgr_EntityOwner)> list;
         list.reserve(faceIds.size());
         for (int faceId : faceIds)
         {
             const auto it = g_rectOwnerMap.find(faceId);
-            if (it == g_rectOwnerMap.end()) continue;
+            if (it == g_rectOwnerMap.end())
+                return FaceApply_Failed;   // 일부만 적용하지 않는다
             list.push_back(it->second);
         }
 
@@ -427,10 +433,13 @@
 
         const std::set<int> actual = CollectSelectedFaceIdsNative();
         applied.assign(actual.begin(), actual.end());
+        const std::set<int> requested(faceIds.begin(), faceIds.end());
+        if (actual != requested) return FaceApply_Failed;   // 실제 선택과 불일치 = 실패
+
         g_rectLastRequestedFaceIds = faceIds;
         g_rectLastAppliedFaceIds = applied;
         g_rectHasApplied = true;
-        return true;
+        return FaceApply_Applied;
     }
 
     // 전방 선언: 정의는 아래 선택 색상 갱신부에 있다.
@@ -541,7 +550,8 @@
         std::vector<int> visible;
         if (!QueryVisibleFaceIdsNative(x0, y0, x1, y1, visible)) return;   // 이전 프리뷰 유지
         std::vector<int> applied;
-        if (ApplySelectedFaceIdsNative(visible, applied))
+        const FaceApplyStatusNative status = ApplySelectedFaceIdsNative(visible, applied);
+        if (status == FaceApply_Applied)
             g_view->Redraw();           // 선택 하이라이트가 바뀌면 전체 장면 갱신
         else
             g_view->RedrawImmediate();  // 면 집합은 그대로, 테두리만 이동

@@ -282,8 +282,13 @@ long long CreateWorkingNative(double nx, double ny, double nz, double xx, double
         ctx->intersector = std::make_unique<IntCurvesFace_ShapeIntersector>();
         ctx->intersector->Load(g_shape, Precision::Confusion());
         // Rebuild once per preview, never per hover. Absolute deflection, explicit angular control.
+        // 모델 revision은 그대로인데 삼각분할만 다시 만들어지므로, 진행 중인 사각형
+        // 프리뷰를 먼저 기준 선택으로 되돌리고 선택 캐시를 무효화한다.
+        if (IsRectanglePreviewActiveNative()) EndRectanglePreviewNative(true);
+        InvalidateFaceSelectionCachesNative();
         BRepTools::Clean(g_shape);
         BRepMesh_IncrementalMesh mesh(g_shape, ctx->deflection, Standard_False, 0.1, Standard_True);
+        InvalidateFaceSelectionCachesNative();
         if (!mesh.IsDone()) return 0;
         for (const auto& face : g_faces) {
             TopLoc_Location loc;

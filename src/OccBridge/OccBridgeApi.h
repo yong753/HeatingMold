@@ -366,6 +366,17 @@ public:
 
     /// <summary>진단: face-ID 선택 이미지를 실제로 생성한 횟수(캐시 재사용 검증용)</summary>
     static long long GetFaceIdBuildCount();
+    /// <summary>진단: 마지막 사각형 보충 통계
+    /// [status, 후보면, 후보타일, 렌더패스, 출력픽셀, 투영삼각형, 후보픽셀, 투영ms, 렌더ms, 전체ms]</summary>
+    static array<double>^ GetFaceSelectionRefineStats();
+    /// <summary>진단/자동화 전용: 직교 카메라 상태를 직접 지정한다(eye, center, up, scale).</summary>
+    static bool SetCameraState(array<double>^ eye, array<double>^ center, array<double>^ up, double scale);
+    /// <summary>진단 전용: 지정 기본 픽셀 영역을 8배로 다시 렌더해 디코드되는 face id를 반환한다.</summary>
+    static array<int>^ DebugProbeFaceIdRegion(int x0, int y0, int x1, int y1);
+    /// <summary>진단 전용: 마지막 사각형 질의에서 기본 해상도 이미지가 돌려준 face id.</summary>
+    static array<int>^ DebugGetLastRectangleBaseFaceIds();
+    /// <summary>진단 전용: 다음 보충 렌더 이미지를 지정 경로에 저장한다(빈 문자열이면 해제).</summary>
+    static void DebugSetFaceRefineDumpPath(System::String^ path);
     /// <summary>현재 선택된 face id 목록(정렬). 선택 상태를 바꾸지 않는다.</summary>
     static array<int>^ GetSelectedFaceIds();
     /// <summary>테스트/자동화: face ID 목록으로 네이티브 선택을 교체한다.

@@ -98,6 +98,7 @@
 
 // 사각형 선택 가시성(face ID 이미지 캐시) — TKService/TKV3d
 #include <Image_PixMap.hxx>
+#include <Image_AlienPixMap.hxx>
 #include <Image_Format.hxx>
 #include <V3d_ImageDumpOptions.hxx>
 #include <Graphic3d_BufferType.hxx>
@@ -162,10 +163,21 @@ namespace
     TopTools_IndexedMapOfShape g_faceMap;   // W3 픽킹: g_faces와 같은 순회로 구축 (인덱스 1:1)
     gp_Dir g_autoAxes[3] = { gp::DX(), gp::DY(), gp::DZ() };
     long long g_modelRevision = 0;
+    // 형상/삼각분할 세대. 작업면 생성처럼 모델 revision은 그대로인데 mesh만 다시
+    // 만들어지는 경로가 있으므로, mesh에 의존하는 선택 캐시는 이 값으로 무효화한다.
+    long long g_meshEpoch = 0;
     void InvalidateWorkingContexts();
     // 사각형 선택 가시성 캐시/프리뷰 (FaceIdSelectionNative.inc 에서 정의)
     void ReleaseFaceIdCacheNative();
     void AbortRectanglePreviewNative();
+    void InvalidateFaceSelectionCachesNative();
+    /// <summary>선택 적용 결과. Failed는 기존 선택을 건드리지 않았다는 뜻이다.</summary>
+    enum FaceApplyStatusNative
+    {
+        FaceApply_Unchanged = 0,
+        FaceApply_Applied = 1,
+        FaceApply_Failed = -1
+    };
 
     bool TryGetSupplementalAxes(const Handle(StepData_StepModel)& model)
     {
@@ -611,8 +623,11 @@ namespace
     void MeshShapeNative(double linearDeflection)
     {
         if (g_shape.IsNull()) return;
+        // 삼각분할이 바뀌면 face-ID 이미지/투영 캐시는 무효다.
+        InvalidateFaceSelectionCachesNative();
         BRepMesh_IncrementalMesh mesher(g_shape, linearDeflection, Standard_False, 0.5, Standard_False);
         (void)mesher;   // 생성자가 Perform까지 수행
+        InvalidateFaceSelectionCachesNative();
     }
 
     /// <summary>W2/W3 — 표시 상태(모드/경계/색) 구성 + 면 선택 모드 활성화</summary>
@@ -3110,13 +3125,21 @@ namespace
     void BeginRectanglePreviewNative();
     void PreviewFacesRectangleNative(int x0, int y0, int x1, int y1);
     void EndRectanglePreviewNative(bool cancel);
-    bool ApplySelectedFaceIdsNative(const std::vector<int>& faceIds, std::vector<int>& applied);
+    FaceApplyStatusNative ApplySelectedFaceIdsNative(const std::vector<int>& faceIds, std::vector<int>& applied);
     bool IsRectanglePreviewActiveNative();
     void ReleaseFaceIdCacheNative();
     void AbortRectanglePreviewNative();
+    // 마우스를 놓은 뒤에만 호출되는 국소 고해상도 보충 (FaceIdSelectionRefinementNative.inc)
+    void RefineRectangleSelectionNative(int x0, int y0, int x1, int y1,
+                                        const std::vector<int>& baseFaceIds,
+                                        std::set<int>& supplemental);
+    // 진단 전용: 지정 영역을 8배로 다시 렌더해 디코드되는 face id를 반환한다.
+    std::vector<int> ProbeFaceIdRegionNative(int x0, int y0, int x1, int y1);
 
     /// <summary>사각형 영역을 선택 전용 face-ID 이미지로 판정해 화면에 보이는 면만 적용한다.
-    /// false면 캐시/렌더 실패이며 기존 선택을 그대로 둔다. true + 빈 result는 유효한 빈 선택이다.</summary>
+    /// 마우스를 놓은 시점에는 기본 해상도에서 픽셀을 얻지 못한 얇은 면을 국소 고해상도로
+    /// 한 번 더 확인한다(전체 모델 깊이 유지 → 완전히 가려진 면은 여전히 제외).
+    /// false면 캐시/렌더/적용 실패이며 기존 선택을 그대로 둔다. true + 빈 result는 유효한 빈 선택이다.</summary>
     bool SelectFacesRectangleNative(int x0, int y0, int x1, int y1, std::vector<int>& result)
     {
         result.clear();
@@ -3129,7 +3152,20 @@ namespace
             EndRectanglePreviewNative(true);
             return false;
         }
-        ApplySelectedFaceIdsNative(visible, result);
+
+        std::set<int> supplemental;
+        RefineRectangleSelectionNative(x0, y0, x1, y1, visible, supplemental);
+
+        std::set<int> merged(visible.begin(), visible.end());
+        merged.insert(supplemental.begin(), supplemental.end());
+        const std::vector<int> finalIds(merged.begin(), merged.end());
+
+        if (ApplySelectedFaceIdsNative(finalIds, result) == FaceApply_Failed)
+        {
+            EndRectanglePreviewNative(true);   // 드래그 시작 전 선택으로 복구
+            result.clear();
+            return false;
+        }
         EndRectanglePreviewNative(false);
         return true;
     }
@@ -3344,6 +3380,7 @@ namespace
 #include "WorkingSideNative.inc"
 #include "AreaHighlightNative.inc"
 #include "FaceIdSelectionNative.inc"
+#include "FaceIdSelectionRefinementNative.inc"
 
 #include "ExitEdgeQueriesNative.inc"
 }
@@ -4460,6 +4497,86 @@ array<int>^ Bridge::GetSelectedFaceIds()
 long long Bridge::GetFaceIdBuildCount()
 {
     return g_faceIdBuildCount;
+}
+
+array<double>^ Bridge::GetFaceSelectionRefineStats()
+{
+    array<double>^ stats = gcnew array<double>(10);
+    stats[0] = static_cast<double>(g_faceRefineStats.Status);
+    stats[1] = static_cast<double>(g_faceRefineStats.CandidateFaces);
+    stats[2] = static_cast<double>(g_faceRefineStats.CandidateTiles);
+    stats[3] = static_cast<double>(g_faceRefineStats.RenderPasses);
+    stats[4] = static_cast<double>(g_faceRefineStats.OutputPixels);
+    stats[5] = static_cast<double>(g_faceRefineStats.ProjectedTriangles);
+    stats[6] = static_cast<double>(g_faceRefineStats.CandidatePixels);
+    stats[7] = g_faceRefineStats.ProjectMs;
+    stats[8] = g_faceRefineStats.RenderMs;
+    stats[9] = g_faceRefineStats.TotalMs;
+    return stats;
+}
+
+array<int>^ Bridge::DebugProbeFaceIdRegion(int x0, int y0, int x1, int y1)
+{
+    std::vector<int> ids = ProbeFaceIdRegionNative(x0, y0, x1, y1);
+    array<int>^ result = gcnew array<int>(static_cast<int>(ids.size()));
+    for (int i = 0; i < static_cast<int>(ids.size()); ++i) result[i] = ids[i];
+    return result;
+}
+
+array<int>^ Bridge::DebugGetLastRectangleBaseFaceIds()
+{
+    array<int>^ result = gcnew array<int>(static_cast<int>(g_faceRefineLastBaseIds.size()));
+    for (int i = 0; i < static_cast<int>(g_faceRefineLastBaseIds.size()); ++i)
+        result[i] = g_faceRefineLastBaseIds[i];
+    return result;
+}
+
+void Bridge::DebugSetFaceRefineDumpPath(System::String^ path)
+{
+    if (System::String::IsNullOrEmpty(path))
+    {
+        g_faceRefineDumpPath.clear();
+        return;
+    }
+    System::IntPtr ptr = System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(path);
+    try
+    {
+        g_faceRefineDumpPath = static_cast<const char*>(ptr.ToPointer());
+    }
+    finally
+    {
+        System::Runtime::InteropServices::Marshal::FreeHGlobal(ptr);
+    }
+}
+
+bool Bridge::SetCameraState(array<double>^ eye, array<double>^ center, array<double>^ up, double scale)
+{
+    if (g_view.IsNull()) return false;
+    if (eye == nullptr || center == nullptr || up == nullptr) return false;
+    if (eye->Length != 3 || center->Length != 3 || up->Length != 3) return false;
+    if (!(scale > 0.0)) return false;
+
+    Standard_Integer width = 0, height = 0;
+    if (!g_view->Window().IsNull()) g_view->Window()->Size(width, height);
+
+    try
+    {
+        Handle(Graphic3d_Camera) camera = new Graphic3d_Camera();
+        camera->SetEyeAndCenter(gp_Pnt(eye[0], eye[1], eye[2]),
+                                gp_Pnt(center[0], center[1], center[2]));
+        camera->SetUp(gp_Dir(up[0], up[1], up[2]));
+        camera->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+        camera->SetScale(scale);
+        if (width > 0 && height > 0)
+            camera->SetAspect(static_cast<Standard_Real>(width) / static_cast<Standard_Real>(height));
+        g_view->SetCamera(camera);
+        if (!g_view.IsNull()) g_view->Redraw();
+        return true;
+    }
+    catch (const Standard_Failure&)
+    {
+        return false;
+    }
 }
 
 array<int>^ Bridge::SelectFaceIds(array<int>^ faceIds)
