@@ -433,22 +433,24 @@
                                                 </ComboBox>
                                             </StackPanel>
                                             <StackPanel Grid.Column="2">
-                                                <TextBlock Text="인출면 · 시작/종료점" Style="{StaticResource FieldLabel}"/>
+                                                <TextBlock Text="인출점 · 경계 Edge" Style="{StaticResource FieldLabel}"/>
                                                 <StackPanel Orientation="Horizontal">
-                                                    <Button x:Name="PickExitFaceButton" Content="인출면 선택"
-                                                            Click="PickExitFace_Click" Padding="10,3"/>
+                                                    <Button x:Name="PickStartExitButton" Content="시작점 선택"
+                                                            Click="PickStartExit_Click" Padding="8,3"/>
+                                                    <Button x:Name="PickEndExitButton" Content="종료점 선택"
+                                                            Click="PickEndExit_Click" Padding="8,3" Margin="6,0,0,0"/>
                                                     <Button x:Name="ClearExitFaceButton" Content="초기화"
-                                                            Click="ClearExitFace_Click" Padding="10,3" Margin="6,0,0,0"/>
+                                                            Click="ClearExitFace_Click" Padding="8,3" Margin="6,0,0,0"/>
                                                 </StackPanel>
                                             </StackPanel>
                                         </Grid>
-                                        <TextBlock x:Name="ExitFaceStatusText" Text="인출면 미지정 — 인출면 선택 후 외곽선에 강조된 인출 측면을 클릭하세요"
+                                        <TextBlock x:Name="ExitFaceStatusText" Text="인출점 미지정 — 적용영역 외곽 Edge를 클릭해 시작점과 종료점을 선택하세요"
                                                    Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,6,0,0"/>
                                         <TextBlock Text="시작/종료점 후보" Style="{StaticResource FieldLabel}"
-                                                   FontWeight="SemiBold" Margin="0,8,0,2"/>
+                                                   FontWeight="SemiBold" Margin="0,8,0,2" Visibility="Collapsed"/>
                                         <ListBox x:Name="AnchorCandidateList" MinHeight="26" MaxHeight="120"
                                                  BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
-                                                 Background="White"
+                                                 Background="White" Visibility="Collapsed"
                                                  SelectionChanged="AnchorCandidateList_SelectionChanged">
                                             <ListBox.ItemTemplate>
                                                 <DataTemplate>

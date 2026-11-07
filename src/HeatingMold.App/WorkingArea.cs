@@ -63,6 +63,13 @@ internal sealed class WorkingArea
     /// <summary>원본 edge의 작업평면 투영 질의. 표시용 체인과는 독립된 설계 제약이다.</summary>
     public IExitBoundary2D ExitBoundary { get; set; }
 
+    /// <summary>적용영역 전체 외곽 경계의 원본 CAD edge 질의. 인출점 직접 선택은 이 경계만 쓴다.</summary>
+    public IExitBoundary2D RegionExitBoundary { get; set; }
+
+    /// <summary>사용자가 외곽 Edge 위에서 직접 고른 시작/종료 인출점. 원본 edge/parameter binding을 포함한다.</summary>
+    public ExitBoundaryPoint? SelectedStartExit { get; set; }
+    public ExitBoundaryPoint? SelectedEndExit { get; set; }
+
     /// <summary>적용영역 전체 경계의 정확 CAD 판정. 표시/생성용 Region 폴리곤과 독립이다.</summary>
     public ExactRegionContainment RegionBoundary { get; set; }
 
@@ -119,6 +126,13 @@ internal sealed class WorkingArea
     /// <summary>제외영역을 반영한 실제 발열영역(프레임 2D). 제외가 없으면 원본 Region을 그대로 돌려준다.</summary>
     public List<List<Vec2>> EffectiveRegion() =>
         Exclusions.Count == 0 ? Region : RegionOps.SubtractRectangles(Region, Exclusions);
+
+    /// <summary>적용영역 외곽 경계의 원본 CAD 참조와 표시 체인이 준비되었는지.</summary>
+    public bool HasExitBoundary => ExitBoundary != null && ExitChain.Count >= 2 && ExitEdgeRefs.Count > 0;
+
+    /// <summary>새 인출점 방식의 생성 준비: 두 점이 모두 원본 edge binding을 가져야 한다.</summary>
+    public bool HasSelectedExits => RegionExitBoundary != null && HasExitBoundary
+        && SelectedStartExit?.Binding.HasValue == true && SelectedEndExit?.Binding.HasValue == true;
 
     public bool HasExitAnchors => HasExitFace && StartAnchor.HasValue && EndAnchor.HasValue &&
         SelectedAnchorCandidate?.StartBinding.HasValue == true && SelectedAnchorCandidate?.EndBinding.HasValue == true;

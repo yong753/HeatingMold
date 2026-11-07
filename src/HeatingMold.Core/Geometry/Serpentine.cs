@@ -686,6 +686,43 @@ public static class Serpentine
             direction, candidate, boundary);
     }
 
+    private static bool IsFinite(Vec2 point) =>
+        double.IsFinite(point.X) && double.IsFinite(point.Y);
+
+    /// <summary>사용자가 직접 고른 두 인출점으로 사행 경로를 생성한다.
+    /// 몸통 경로는 인출면 방향/레인 끝에 맞춰 줄이지 않고, 첫/마지막 발열선의 양 끝만
+    /// 선택점으로 교체한다. 따라서 첫/마지막 레인은 비스듬할 수 있고 조각 수는 늘지 않는다.</summary>
+    public static AnchoredResult GenerateWithSelectedExits(
+        IReadOnlyList<Vec2> outer,
+        IReadOnlyList<IReadOnlyList<Vec2>>? holes,
+        PatternParams p,
+        PatternDirection direction,
+        ExitBoundaryPoint start,
+        ExitBoundaryPoint end,
+        IExitBoundary2D? boundary = null)
+    {
+        if (outer.Count < 3 || p.Spacing <= 0) return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
+        if (!IsFinite(start.Point) || !IsFinite(end.Point)
+            || start.Point.DistanceTo(end.Point) <= AnchorMatchTolerance)
+            return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
+        if (!TryValidateSelectedExit(boundary, start, out ExitBoundaryPoint savedStart, out var failure)
+            || !TryValidateSelectedExit(boundary, end, out ExitBoundaryPoint savedEnd, out failure))
+            return AnchoredResult.Fail(AnchoredFailureReason.ExitBoundaryConflict, failure);
+
+        double angleDeg = ResolveAngleDeg(outer, direction);
+        double rad = angleDeg * Math.PI / 180.0;
+        List<Vec2> outerLocal = Rotate(outer, -rad);
+        List<List<Vec2>>? holesLocal = holes?.Select(h => Rotate(h, -rad)).ToList();
+        List<List<Vec2>> region = RegionOps.BuildPatternRegion(outerLocal, holesLocal, p.Margin);
+        if (region.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
+        if (region.Count != 1) return AnchoredResult.Fail(AnchoredFailureReason.RegionSplit);
+
+        LocalRoute route = BuildLocalRoute(region, p, true);
+        if (route.Pieces.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
+        SerpentineResult world = ToWorld(route, rad, angleDeg);
+        return TrimToSelectedExits(world, savedStart, savedEnd, boundary);
+    }
+
     private static AnchoredResult GenerateAnchoredCore(
         IReadOnlyList<Vec2> outer,
         IReadOnlyList<IReadOnlyList<Vec2>>? holes,
@@ -954,6 +991,129 @@ public static class Serpentine
                 candidate.AngleDeg, laneCount, 0, out CircuitRoute? trimmed, out _))
             return AnchoredResult.Fail(AnchoredFailureReason.ExitBoundaryConflict);
         return AnchoredResult.Ok((trimmed! with { CandidateId = candidate.CandidateId }).ToResult());
+    }
+
+    /// <summary>제외영역이 있는 영역에서도 사용자가 고른 두 인출점을 그대로 사용한다.
+    /// 시작/종료 후보 비용은 쓰지 않고, 모든 레인 노드를 한 번에 방문하는 완전 경로만 채택한다.
+    /// 첫/마지막 발열선의 끝점만 선택점으로 교체하며 조각 수는 유지한다.</summary>
+    public static AnchoredResult GenerateComponentsWithSelectedExits(
+        IReadOnlyList<Vec2> outer,
+        IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
+        PatternParams p,
+        PatternDirection direction,
+        ExitBoundaryPoint start,
+        ExitBoundaryPoint end,
+        IExitBoundary2D? boundary = null)
+    {
+        if (outer.Count < 3 || p.Spacing <= 0) return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
+        if (!IsFinite(start.Point) || !IsFinite(end.Point)
+            || start.Point.DistanceTo(end.Point) <= AnchorMatchTolerance)
+            return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
+        if (!TryValidateSelectedExit(boundary, start, out ExitBoundaryPoint savedStart, out var failure)
+            || !TryValidateSelectedExit(boundary, end, out ExitBoundaryPoint savedEnd, out failure))
+            return AnchoredResult.Fail(AnchoredFailureReason.ExitBoundaryConflict, failure);
+        ArgumentNullException.ThrowIfNull(exclusions);
+        var exclusionList = exclusions.ToList();
+
+        double angleDeg = ResolveAngleDeg(outer, direction);
+        double rad = angleDeg * Math.PI / 180.0;
+        List<Vec2> localOuter = Rotate(outer, -rad);
+        List<(double MinX, double MinY, double MaxX, double MaxY)> rotatedExclusions =
+            RotateExclusions(exclusionList, -rad);
+        List<List<Vec2>> region = RegionOps.SubtractRectangles(
+            RegionOps.BuildPatternRegion(localOuter, null, p.Margin), rotatedExclusions);
+        if (region.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
+
+        SerpentineResult world;
+        if (rotatedExclusions.Count == 0)
+        {
+            LocalRoute route = BuildLocalRoute(region, p, true);
+            if (route.Pieces.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
+            world = ToWorld(route, rad, angleDeg);
+        }
+        else
+        {
+            int outerRingCount = region.Count(r => r.Count >= 3 && RegionOps.SignedArea(r) > 0);
+            if (outerRingCount >= 2)
+                return AnchoredResult.Fail(AnchoredFailureReason.RegionSplit);
+
+            double minY = region.Min(r => r.Min(v => v.Y)), maxY = region.Max(r => r.Max(v => v.Y));
+            double height = maxY - minY;
+            int lanes = Math.Max(1, (int)Math.Floor((height + 1e-9) / p.Spacing));
+            double y0 = minY + (height - (lanes - 1) * p.Spacing) / 2.0;
+            var laneY = new double[lanes];
+            for (int k = 0; k < lanes; k++) laneY[k] = y0 + k * p.Spacing;
+
+            var components = GroupComponents(region);
+            if (components.Count != 1)
+                return AnchoredResult.Fail(AnchoredFailureReason.RegionSplit);
+
+            var byLane = new List<LaneIntervalNode>[lanes];
+            for (int k = 0; k < lanes; k++)
+            {
+                byLane[k] = new List<LaneIntervalNode>();
+                foreach ((double X0, double X1) interval in ScanlineIntervals(components[0], laneY[k]))
+                    byLane[k].Add(new LaneIntervalNode(k, laneY[k], interval.X0, interval.X1));
+            }
+            var trace = TraceLaneChains(byLane);
+            if (trace.Failure is { } traceFailure)
+                return AnchoredResult.Fail(MapComponentsFailure(traceFailure));
+            // 부분 사슬을 이어 붙이면 조각 경계가 끊긴다. 정확히 하나의 완전 사슬만 허용한다.
+            if (trace.Chains.Count != 1)
+                return AnchoredResult.Fail(AnchoredFailureReason.NoCompletePath);
+            List<SerpentineRoutePiece> worldPieces = trace.Chains[0].Select(piece => piece with
+            {
+                Points = piece.Points.Select(point => point.Rotate(rad)).ToList(),
+            }).ToList();
+            int laneCount = byLane.SelectMany(nodes => nodes).Select(node => node.Lane).Distinct().Count();
+            world = BuildPatternFromPieces(worldPieces, angleDeg, laneCount);
+        }
+
+        return TrimToSelectedExits(world, savedStart, savedEnd, boundary);
+    }
+
+    private static AnchoredFailureReason MapComponentsFailure(SerpentineComponentsFailureReason failure) =>
+        failure switch
+        {
+            SerpentineComponentsFailureReason.NoLanes => AnchoredFailureReason.NoLanes,
+            SerpentineComponentsFailureReason.SplitByExclusion => AnchoredFailureReason.RegionSplit,
+            SerpentineComponentsFailureReason.InvalidInput => AnchoredFailureReason.InvalidInput,
+            _ => AnchoredFailureReason.NoCompletePath,
+        };
+
+    private static bool TryValidateSelectedExit(IExitBoundary2D? boundary, ExitBoundaryPoint point,
+        out ExitBoundaryPoint saved, out ExitBoundaryFailureReason? failure)
+    {
+        saved = point;
+        failure = null;
+        if (boundary == null) return true;
+        if (!point.Binding.HasValue)
+        {
+            failure = ExitBoundaryFailureReason.MissingReference;
+            return false;
+        }
+        ExitBoundaryResolution result = ExitBoundaryConstraint.EvaluateSaved(boundary, point.Binding, point.Point);
+        if (!result.Succeeded)
+        {
+            failure = result.Failure;
+            return false;
+        }
+        saved = result.Point!.Value;
+        return true;
+    }
+
+    private static AnchoredResult TrimToSelectedExits(SerpentineResult world, ExitBoundaryPoint start,
+        ExitBoundaryPoint end, IExitBoundary2D? boundary)
+    {
+        if (world.RoutePieces.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
+        if (!CircuitRouteBuilder.TryTrimToExit(world.RoutePieces, start, end,
+                world.AngleDeg, world.LaneCount, world.NominalLaneCount,
+                out CircuitRoute? trimmed, out _))
+            return boundary != null
+                ? AnchoredResult.Fail(AnchoredFailureReason.ExitBoundaryConflict,
+                    ExitBoundaryFailureReason.GeometryFailure)
+                : AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
+        return AnchoredResult.Ok(trimmed!.ToResult());
     }
 
     private static Vec2 PointOnNode(LaneIntervalNode node, int endpoint) =>
@@ -1432,6 +1592,7 @@ public enum AnchoredFailureReason
     AnchorNotAtLaneEnd,
     ParityConflict,
     ExitBoundaryConflict,
+    NoCompletePath,
 }
 
 public sealed record AnchoredResult(SerpentineResult? Pattern, AnchoredFailureReason? Failure)

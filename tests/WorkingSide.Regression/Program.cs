@@ -190,6 +190,7 @@ static class Program
         SidebarTabChecks.Run(window);
         AreaHighlightChecks.Run(window);
         RunGroup("ExclusionExitChecks", () => ExclusionExitChecks.Run(window, args[0]));
+        RunGroup("SelectedExitChecks", () => SelectedExitChecks.Run(window, args[0]));
         RunGroup("VertexEditChecks", () => VertexEditChecks.Run(window, args[0]));
         RunGroup("ElectricalRefreshChecks", () => ElectricalRefreshChecks.Run(window));
         RunGroup("PatternStateChecks", () => PatternStateChecks.Run(window));

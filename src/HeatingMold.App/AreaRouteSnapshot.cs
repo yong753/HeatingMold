@@ -33,5 +33,8 @@ internal sealed record AreaRouteSnapshot(
     AppliedGenerationInputs AppliedInputs,
     CommittedRouteContext CommittedMapping,
     IExitBoundary2D ExitBoundary,
+    IExitBoundary2D RegionExitBoundary,
+    ExitBoundaryPoint? SelectedStartExit,
+    ExitBoundaryPoint? SelectedEndExit,
     AnchoredCandidate SelectedAnchorCandidate,
     bool RouteEdited);

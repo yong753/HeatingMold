@@ -25,6 +25,14 @@ public partial class MainWindow
     private double[][] _exitCandidatePolylines = Array.Empty<double[]>();
     private int _exitCandidateHover = -1;
 
+    /// <summary>현재 인출점 픽 역할. 0=시작, 1=종료, -1=없음.</summary>
+    private int _exitPointPickRole = -1;
+    /// <summary>인출점 픽 중 작업 정면으로 전환하기 전의 카메라 스냅샷.</summary>
+    private WorkingPresentation _exitPointPresentation;
+    private bool _exitPointPresentationHeld;
+    /// <summary>커서 픽 허용 거리(mm, 작업 평면). 정확 CAD 판정 tolerance와 별개다.</summary>
+    private const double ExitPointPickTolerance = 5.0;
+
     /// <summary>표시 좌표가 같아도 원본 edge/경로가 다를 수 있으므로 후보 DTO 자체를 보관한다.</summary>
     private sealed record AnchorCandidateRow(int Index, string Label, AnchoredCandidate Candidate);
     private bool _suppressAnchorSelection;
@@ -44,14 +52,23 @@ public partial class MainWindow
             DirectionBox.IsEnabled = area != null;
             _suppressDirectionChange = false;
         }
-        if (PickExitFaceButton != null)
+        bool boundaryReady = area != null && area.Region.Count == 1 && area.RegionExitBoundary != null;
+        if (PickStartExitButton != null)
         {
-            PickExitFaceButton.IsEnabled = area != null && area.Region.Count == 1;
-            PickExitFaceButton.Content = area != null && area.HasExitFace ? "인출면 다시 선택" : "인출면 선택";
+            PickStartExitButton.IsEnabled = boundaryReady;
+            PickStartExitButton.Content = area?.SelectedStartExit.HasValue == true ? "시작점 다시 선택" : "시작점 선택";
         }
-        if (ClearExitFaceButton != null) ClearExitFaceButton.IsEnabled = area != null && area.HasExitFace;
+        if (PickEndExitButton != null)
+        {
+            PickEndExitButton.IsEnabled = boundaryReady;
+            PickEndExitButton.Content = area?.SelectedEndExit.HasValue == true ? "종료점 다시 선택" : "종료점 선택";
+        }
+        if (ClearExitFaceButton != null)
+            ClearExitFaceButton.IsEnabled = area != null
+                && (area.SelectedStartExit.HasValue || area.SelectedEndExit.HasValue);
         if (ExitFaceStatusText != null) ExitFaceStatusText.Text = DescribeExitState(area);
         SyncAnchorCandidateList(area);
+        if (_exitPointPickRole < 0) UpdateSelectedExitMarkers(area);
     }
 
     /// <summary>
@@ -61,7 +78,7 @@ public partial class MainWindow
     private void ApplyActiveExitEdgeHighlight()
     {
         var area = _activeArea;
-        if (area == null || !area.HasExitFace || area.ExitChain3D == null || area.ExitChain3D.Count < 2)
+        if (area == null || area.ExitBoundary == null || area.ExitChain3D == null || area.ExitChain3D.Count < 2)
         {
             Bridge.ClearExitEdgeHighlight();
             return;
@@ -126,15 +143,19 @@ public partial class MainWindow
     private string DescribeExitState(WorkingArea area)
     {
         if (area == null) return "작업영역을 먼저 선택하세요";
-        if (!string.IsNullOrEmpty(area.LastExitFailure)) return area.LastExitFailure;
-        if (!area.HasExitFace) return "인출면 미지정 — 인출면 선택 후 외곽선에 강조된 인출 측면을 클릭하세요";
-        if (!area.HasExitAnchors)
-            return area.AnchorCandidates.Count == 0
-                ? "인출면은 지정됐지만 사행 경로 양 끝이 이 면에 닿지 않습니다"
-                : "후보 목록에서 시작/종료점 쌍을 선택하세요";
-        Vec2 s = area.StartAnchor.Value, t = area.EndAnchor.Value;
-        return string.Format("인출면 Face {0} · 시작 ({1:F1}, {2:F1}) → 종료 ({3:F1}, {4:F1})",
-            area.ExitFaceId, s.X, s.Y, t.X, t.Y);
+        if (area.RegionExitBoundary == null)
+            return "적용영역 외곽 경계가 없습니다 — 영역을 다시 확정하세요";
+        if (!string.IsNullOrEmpty(area.LastExitFailure) && area.HasSelectedExits)
+            return area.LastExitFailure;
+        bool hasStart = area.SelectedStartExit.HasValue;
+        bool hasEnd = area.SelectedEndExit.HasValue;
+        if (!hasStart && !hasEnd)
+            return "시작점과 종료점을 선택하세요 — 적용영역 외곽 Edge 위 점을 클릭합니다";
+        if (!hasStart) return "시작점을 선택하세요 — 외곽 Edge 위 점을 클릭합니다";
+        if (!hasEnd) return "종료점을 선택하세요 — 외곽 Edge 위 점을 클릭합니다";
+        Vec2 s = area.SelectedStartExit.Value.Point, t = area.SelectedEndExit.Value.Point;
+        return string.Format("인출점 — 시작 ({0:F1}, {1:F1}) → 종료 ({2:F1}, {3:F1}) · 외곽 Edge 기준",
+            s.X, s.Y, t.X, t.Y);
     }
 
     private void DirectionBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -155,8 +176,17 @@ public partial class MainWindow
         if (area.Direction == direction) return;
 
         ExitVertexEdit();
+        CancelExitFacePick();
         area.Direction = direction;
-        if (area.HasExitFace) RecomputeAnchorCandidates(area);
+        // 방향은 몸통 경로만 바꾼다. 사용자가 고른 두 인출점은 유지하고,
+        // 그 점을 전제로 만든 후보/계획만 무효화한다.
+        area.AnchorCandidates.Clear();
+        area.SelectedAnchorCandidate = null;
+        area.ExcludedCandidates.Clear();
+        area.ExcludedPlan = null;
+        area.ExcludedCandidateFailure = null;
+        area.ExcludedPlanKey = "";
+        area.LastExitFailure = null;
         // 기존 결과는 아직 화면에 남아 있다. 수동 편집 표시도 실제 재생성이
         // 성공할 때까지 유지해 '입력 조건 변경'과 '편집됨'을 함께 보여준다.
         SyncExitFaceUi(area);
@@ -172,6 +202,185 @@ public partial class MainWindow
         PatternDirection.FrameY => "세로 (Frame Y)",
         _ => "자동 (장축)"
     };
+
+    private void PickStartExit_Click(object sender, RoutedEventArgs e) => BeginExitPointPick(0);
+
+    private void PickEndExit_Click(object sender, RoutedEventArgs e) => BeginExitPointPick(1);
+
+    /// <summary>적용영역 외곽 원본 Edge 위에서 시작/종료 인출점을 직접 고른다.</summary>
+    private void BeginExitPointPick(int role)
+    {
+        var area = _activeArea;
+        if (area == null) { StatusText.Text = "작업영역을 먼저 선택하세요"; return; }
+        if (area.Region.Count != 1 || area.RegionExitBoundary == null || area.ExitEdgeRefs.Count == 0)
+        {
+            StatusText.Text = "하나로 연결된 적용영역의 외곽 경계에서만 인출점을 지정할 수 있습니다";
+            return;
+        }
+        if (!ConfirmDiscardRouteEdits(area, role == 0 ? "시작 인출점 변경" : "종료 인출점 변경")) return;
+        ExitVertexEdit();
+        if (Viewport == null || !Viewport.IsReady) return;
+
+        // 다른 뷰포트 편집 모드와 상호 배타.
+        Viewport.ConnectorEditMode = false;
+        if (ConnectorEditModeBox != null) ConnectorEditModeBox.IsChecked = false;
+        CancelPowerSetup();
+        ExitExclusionSketch();
+        Viewport.RectangleSelectionMode = false;
+        Viewport.PowerLocationMode = false;
+        Viewport.CircuitHoverMode = false;
+        Bridge.ClearHover();
+        CancelExitFacePick();
+
+        var side = _workingSide?.Confirmed;
+        if (side == null) { StatusText.Text = "작업면이 확정되지 않았습니다"; return; }
+
+        _exitPointPickRole = role;
+        _exitCandidates.Clear();
+        _exitCandidatePolylines = Array.Empty<double[]>();
+        _exitCandidateHover = -1;
+
+        // 화면 픽은 현재 카메라에서 작업 평면으로 투영한다. 정면으로 전환하면
+        // 경사진 작업면에서도 커서와 원본 Edge의 대응이 안정적이다.
+        _exitPointPresentation = Bridge.CaptureWorkingPresentation();
+        _exitPointPresentationHeld = _exitPointPresentation != null;
+        if (!Bridge.ReturnToWorkingFront(side.Id.Value, side.Revision.Value))
+        {
+            CancelExitFacePick();
+            StatusText.Text = "작업 정면으로 전환하지 못했습니다 — 인출점을 선택할 수 없습니다";
+            return;
+        }
+
+        Viewport.ExitFacePickMode = true;
+        Viewport.ViewLocked = true;
+        ApplyActiveExitEdgeHighlight();
+        UpdateSelectedExitMarkers(area);
+        StatusText.Text = role == 0
+            ? "적용영역 외곽 Edge에서 시작 인출점을 클릭하세요 (Esc 취소)"
+            : "적용영역 외곽 Edge에서 종료 인출점을 클릭하세요 (Esc 취소)";
+    }
+
+    private bool TryProjectExitPoint(WorkingArea area, int x, int y,
+        out ExitBoundaryPoint point, out string error)
+    {
+        point = default;
+        error = null;
+        if (area?.RegionExitBoundary == null || !TryViewportPointOnFrame(x, y, out Vec2 datum, out _))
+        {
+            error = "작업 평면 위의 점을 찾지 못했습니다";
+            return false;
+        }
+        ExitBoundaryResolution resolution = area.RegionExitBoundary.Project(datum, ExitPointPickTolerance);
+        if (!resolution.Succeeded)
+        {
+            error = ExplainExitBoundaryFailure(resolution.Failure);
+            return false;
+        }
+        point = resolution.Point!.Value;
+        return true;
+    }
+
+    private static bool TryEvaluateSelectedExit3D(WorkingArea area, ExitBoundaryPoint point, out Vec3 position)
+    {
+        position = default;
+        if (area?.RegionExitBoundary is not CadExitBoundary2D boundary || !point.Binding.HasValue) return false;
+        ExitEdgeHit hit = boundary.EvaluateNative(point.Binding.Value);
+        if (hit?.Status != ExitEdgeQueryStatus.Hit || hit.Point is not { Length: >= 3 }) return false;
+        position = new Vec3(hit.Point[0], hit.Point[1], hit.Point[2]);
+        return double.IsFinite(position.X) && double.IsFinite(position.Y) && double.IsFinite(position.Z);
+    }
+
+    private static double[] ExitMarkerWire(Vec3 center, ProjectionFrame frame, bool diamond)
+    {
+        const double radius = 4.0;
+        Vec3 x = frame.AxisX * radius, y = frame.AxisY * radius;
+        Vec3[] points = diamond
+            ? new[] { center + x, center + y, center - x, center - y, center + x }
+            : new[] { center + x + y, center - x + y, center - x - y, center + x - y, center + x + y };
+        var flat = new double[points.Length * 3];
+        for (int i = 0; i < points.Length; i++)
+        {
+            flat[i * 3] = points[i].X;
+            flat[i * 3 + 1] = points[i].Y;
+            flat[i * 3 + 2] = points[i].Z;
+        }
+        return flat;
+    }
+
+    /// <summary>선택된 두 인출점을 각각 사각형(시작)/다이아몬드(종료) 마커로 표시한다.</summary>
+    private void UpdateSelectedExitMarkers(WorkingArea area)
+    {
+        if (area == null)
+        {
+            Bridge.ClearExitCandidates();
+            return;
+        }
+        var polylines = new List<double[]>();
+        if (area.SelectedStartExit.HasValue
+            && TryEvaluateSelectedExit3D(area, area.SelectedStartExit.Value, out Vec3 start))
+            polylines.Add(ExitMarkerWire(start, area.Frame, diamond: false));
+        if (area.SelectedEndExit.HasValue
+            && TryEvaluateSelectedExit3D(area, area.SelectedEndExit.Value, out Vec3 end))
+            polylines.Add(ExitMarkerWire(end, area.Frame, diamond: true));
+        if (polylines.Count == 0) Bridge.ClearExitCandidates();
+        else Bridge.ShowExitCandidates(polylines.ToArray());
+        ApplyActiveExitEdgeHighlight();
+    }
+
+    private void OnExitPointPickMoved(int x, int y)
+    {
+        var area = _activeArea;
+        if (area?.RegionExitBoundary == null) return;
+        if (x < 0 || y < 0)
+        {
+            ApplyActiveExitEdgeHighlight();
+            return;
+        }
+        if (!TryProjectExitPoint(area, x, y, out ExitBoundaryPoint point, out string error))
+        {
+            ApplyActiveExitEdgeHighlight();
+            StatusText.Text = error + " — 외곽 Edge에 더 가까이 클릭하세요 (Esc 취소)";
+            return;
+        }
+        if (TryEvaluateSelectedExit3D(area, point, out Vec3 position))
+            Bridge.SetExitEdgeHighlight(ExitMarkerWire(position, area.Frame, diamond: true), 1.0, 0.55, 0.0);
+        StatusText.Text = string.Format("{0} 인출점 후보: ({1:F1}, {2:F1}) — 클릭하여 지정 (Esc 취소)",
+            _exitPointPickRole == 0 ? "시작" : "종료", point.Point.X, point.Point.Y);
+    }
+
+    private void OnExitPointPicked(int x, int y)
+    {
+        var area = _activeArea;
+        if (area == null || _exitPointPickRole < 0) return;
+        if (!TryProjectExitPoint(area, x, y, out ExitBoundaryPoint point, out string error))
+        {
+            StatusText.Text = error + " — 선택 모드를 유지합니다 (Esc 취소)";
+            return;
+        }
+
+        if (_exitPointPickRole == 0) area.SelectedStartExit = point;
+        else area.SelectedEndExit = point;
+        area.LastExitFailure = null;
+        // 후보 쌍/제외 계획은 이전 점 기준이므로 무효화한다. 선택한 점 자체는 유지한다.
+        area.AnchorCandidates.Clear();
+        area.SelectedAnchorCandidate = null;
+        area.ExcludedCandidates.Clear();
+        area.ExcludedPlan = null;
+        area.ExcludedCandidateFailure = null;
+        area.ExcludedPlanKey = "";
+        // 기존 UI/검증 경로와의 호환을 위해 좌표도 함께 갱신한다.
+        area.StartAnchor = area.SelectedStartExit?.Point;
+        area.EndAnchor = area.SelectedEndExit?.Point;
+
+        CancelExitFacePick();
+        SyncExitFaceUi(area);
+        UpdateActionStates();
+        StatusText.Text = area.HasSelectedExits
+            ? "시작/종료 인출점이 지정되었습니다 — 경로를 생성하세요"
+            : area.SelectedStartExit.HasValue
+                ? "시작 인출점이 지정되었습니다 — 종료점을 선택하세요"
+                : "종료 인출점이 지정되었습니다 — 시작점을 선택하세요";
+    }
 
     private void PickExitFace_Click(object sender, RoutedEventArgs e)
     {
@@ -216,6 +425,7 @@ public partial class MainWindow
 
     private void CancelExitFacePick()
     {
+        _exitPointPickRole = -1;
         if (Viewport != null)
         {
             Viewport.ExitFacePickMode = false;
@@ -226,11 +436,25 @@ public partial class MainWindow
         _exitCandidates.Clear();
         _exitCandidatePolylines = Array.Empty<double[]>();
         _exitCandidateHover = -1;
+        if (_exitPointPresentationHeld && _exitPointPresentation != null)
+        {
+            Bridge.RestoreWorkingPresentation(_exitPointPresentation.Id);
+            Bridge.ReleaseWorkingPresentation(_exitPointPresentation.Id);
+        }
+        _exitPointPresentation = null;
+        _exitPointPresentationHeld = false;
+        UpdateSelectedExitMarkers(_activeArea);
     }
 
-    /// <summary>인출면 선택 중 커서 이동 — 커서 아래 후보 Edge와 후보 면을 강조한다.</summary>
+    /// <summary>인출점 선택 중 커서 이동 — 커서 아래 원본 Edge 위치를 미리 보여준다.</summary>
     private void OnExitFacePickMoved(int x, int y)
     {
+        if (_exitPointPickRole >= 0)
+        {
+            OnExitPointPickMoved(x, y);
+            return;
+        }
+
         if (_exitCandidatePolylines.Length == 0) return;
         int index = x < 0 || y < 0
             ? -1
@@ -244,6 +468,12 @@ public partial class MainWindow
 
     private void OnExitFacePicked(int x, int y)
     {
+        if (_exitPointPickRole >= 0)
+        {
+            OnExitPointPicked(x, y);
+            return;
+        }
+
         var area = _activeArea;
         if (area == null || _exitCandidates.Count == 0)
         {
@@ -502,16 +732,11 @@ public partial class MainWindow
     {
         var area = _activeArea;
         if (area == null) return;
-        if (!ConfirmDiscardRouteEdits(area, "인출면 초기화")) return;
+        if (!ConfirmDiscardRouteEdits(area, "인출점 초기화")) return;
         ExitVertexEdit();
         CancelExitFacePick();
-        area.ExitFaceId = -1;
-        area.ExitFaceRevision = 0;
-        area.ExitChain = new List<Vec2>();
-        area.ExitChain3D = new List<Vec3>();
-        area.ExitChainFaceIds = new List<int>();
-        area.ExitEdgeRefs = new List<ExitEdgeReference>();
-        area.ExitBoundary = null;
+        area.SelectedStartExit = null;
+        area.SelectedEndExit = null;
         area.SelectedAnchorCandidate = null;
         area.StartAnchor = null;
         area.EndAnchor = null;
@@ -521,10 +746,21 @@ public partial class MainWindow
         area.ExcludedCandidateFailure = null;
         area.ExcludedPlanKey = "";
         area.LastExitFailure = null;
+        // 새 방식에서는 적용영역 외곽 경계를 유지하고 선택점만 지운다.
+        // 예전 인출면 방식으로 만든 영역이면 기존 필드까지 초기화한다.
+        if (area.RegionExitBoundary == null)
+        {
+            area.ExitFaceId = -1;
+            area.ExitFaceRevision = 0;
+            area.ExitChain = new List<Vec2>();
+            area.ExitChain3D = new List<Vec3>();
+            area.ExitChainFaceIds = new List<int>();
+            area.ExitEdgeRefs = new List<ExitEdgeReference>();
+            area.ExitBoundary = null;
+        }
         SyncExitFaceUi(area);
-        ApplyActiveExitEdgeHighlight();
         UpdateActionStates();
-        StatusText.Text = "인출면 지정을 초기화했습니다 — 패턴은 다시 생성해야 합니다";
+        StatusText.Text = "인출점을 초기화했습니다 — 패턴은 다시 생성해야 합니다";
     }
 
     /// <summary>현재 마진/간격/방향에서 인출면 위에 놓을 수 있는 시작·종료점 쌍을 다시 계산한다.</summary>
@@ -769,7 +1005,11 @@ public partial class MainWindow
             "적용영역이 분리되어 하나의 사행 경로로 연결할 수 없습니다",
         AnchoredFailureReason.NoLanes =>
             "마진/간격 조건에서 생성되는 레인이 없습니다",
+        AnchoredFailureReason.NoCompletePath =>
+            "선택한 인출점과 제외영역 조건으로 모든 레인을 잇는 완전 경로를 만들 수 없습니다 — 제외영역을 줄이거나 간격/방향을 조정하세요",
         AnchoredFailureReason.ExitBoundaryConflict => ExplainExitBoundaryFailure(boundaryFailure),
-        _ => "인출면 기준 경로를 생성할 수 없습니다"
+        AnchoredFailureReason.InvalidInput =>
+            "선택한 인출점 또는 영역 입력이 올바르지 않습니다",
+        _ => "선택한 인출점 기준 경로를 생성할 수 없습니다"
     };
 }

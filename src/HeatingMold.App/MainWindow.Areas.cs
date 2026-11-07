@@ -151,6 +151,9 @@ public partial class MainWindow
         area.AppliedInputs,
         area.CommittedMapping,
         area.ExitBoundary,
+        area.RegionExitBoundary,
+        area.SelectedStartExit,
+        area.SelectedEndExit,
         area.SelectedAnchorCandidate,
         area.RouteEdited);
 
@@ -185,6 +188,9 @@ public partial class MainWindow
         area.AppliedInputs = snapshot.AppliedInputs;
         area.CommittedMapping = snapshot.CommittedMapping;
         area.ExitBoundary = snapshot.ExitBoundary;
+        area.RegionExitBoundary = snapshot.RegionExitBoundary;
+        area.SelectedStartExit = snapshot.SelectedStartExit;
+        area.SelectedEndExit = snapshot.SelectedEndExit;
         area.SelectedAnchorCandidate = snapshot.SelectedAnchorCandidate;
         area.RouteEdited = snapshot.RouteEdited;
     }

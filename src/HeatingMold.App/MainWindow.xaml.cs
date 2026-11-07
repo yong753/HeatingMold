@@ -403,6 +403,10 @@ namespace HeatingMold.App
             AppendAnchor(sb, area.StartAnchor, inv);
             sb.Append(';');
             AppendAnchor(sb, area.EndAnchor, inv);
+            sb.Append("|SX:");
+            AppendSelectedExit(sb, area.SelectedStartExit, inv);
+            sb.Append(';');
+            AppendSelectedExit(sb, area.SelectedEndExit, inv);
             sb.Append("|AC:");
             AppendCandidateIdentity(sb, area.SelectedAnchorCandidate?.CandidateId);
             sb.Append(',');
@@ -453,6 +457,16 @@ namespace HeatingMold.App
         {
             if (candidateId == null) { sb.Append('-'); return; }
             sb.Append(candidateId.Length).Append(':').Append(candidateId);
+        }
+
+        private static void AppendSelectedExit(StringBuilder sb, ExitBoundaryPoint? point, CultureInfo inv)
+        {
+            if (!point.HasValue) { sb.Append('-'); return; }
+            ExitBoundaryPoint value = point.Value;
+            AppendAnchor(sb, value.Point, inv);
+            sb.Append('/').Append(value.SegmentIndex).Append('/')
+              .Append(value.SegmentParameter.ToString("R", inv)).Append('/');
+            AppendExitBinding(sb, value.Binding, inv);
         }
 
         private static void AppendExitReferences(StringBuilder sb, IEnumerable<ExitEdgeReference> references,
@@ -834,7 +848,9 @@ namespace HeatingMold.App
             }
 
             if (!TryBuildSelectedRegion(out List<List<Vec2>> region, out ProjectionFrame frame,
-                    out ExactRegionContainment regionBoundary))
+                    out ExactRegionContainment regionBoundary, out CadExitBoundary2D exitBoundary,
+                    out List<Vec2> sourceChain2D, out List<Vec3> sourceChain3D,
+                    out ExitEdgeReference[] sourceRefs))
             {
                 // 후보 구성 실패 시 기존 확정 영역·경로·하이라이트를 그대로 둔다.
                 ErrorReporter.ShowError("작업영역 확정 실패",
@@ -856,6 +872,16 @@ namespace HeatingMold.App
             area.FaceIdSet.UnionWith(_selectedFaceIds);
             area.Region.Add(region[0]);
             area.RegionBoundary = regionBoundary;
+            // 인출점 직접 선택은 인출면이 아니라 적용영역 전체 외곽 Edge를 쓴다.
+            // source-order 표시 체인과 원본 edge 참조를 함께 보관해야 2D/3D/parameter가 일치한다.
+            area.ExitBoundary = exitBoundary;
+            area.RegionExitBoundary = exitBoundary;
+            area.ExitChain = sourceChain2D;
+            area.ExitChain3D = sourceChain3D;
+            area.ExitEdgeRefs = sourceRefs.ToList();
+            area.ExitChainFaceIds = new List<int>();
+            area.ExitFaceId = -1;
+            area.ExitFaceRevision = 0;
             _areas.Add(area);
             _multiFaceRegionFailure = null;
 
@@ -872,11 +898,17 @@ namespace HeatingMold.App
         // 현재 선택으로 확정 후보 영역을 계산만 한다. 성공 시에만 호출자가 게시하고,
         // 실패해도 기존 확정 표시(하이라이트/경로/2D 영역)는 건드리지 않는다.
         private bool TryBuildSelectedRegion(out List<List<Vec2>> region, out ProjectionFrame frame,
-            out ExactRegionContainment boundary)
+            out ExactRegionContainment boundary, out CadExitBoundary2D exitBoundary,
+            out List<Vec2> sourceChain2D, out List<Vec3> sourceChain3D,
+            out ExitEdgeReference[] sourceRefs)
         {
             region = new List<List<Vec2>>();
             frame = null;
             boundary = null;
+            exitBoundary = null;
+            sourceChain2D = new List<Vec2>();
+            sourceChain3D = new List<Vec3>();
+            sourceRefs = Array.Empty<ExitEdgeReference>();
             _multiFaceRegionFailure = null;
             if (_selectedFaceIds.Count == 0)
             {
@@ -930,8 +962,11 @@ namespace HeatingMold.App
             var confirmedSide = _workingSide.Confirmed;
             boundary = new ExactRegionContainment(new CadRegionBoundary2D(
                 confirmedSide.Id.Value, confirmedSide.Revision.Value, boundaryReferences));
+            exitBoundary = new CadExitBoundary2D(
+                confirmedSide.Id.Value, confirmedSide.Revision.Value, boundaryReferences);
 
-            List<Vec2> projected = firstPts.Select(fixedFrame.Project).ToList();
+            List<Vec2> projectedSource = firstPts.Select(fixedFrame.Project).ToList();
+            List<Vec2> projected = new(projectedSource);
             if (projected.Count < 3 || Math.Abs(RegionOps.SignedArea(projected)) < 1e-8)
             {
                 _multiFaceRegionFailure = "원본 통합 경계를 작업 평면에 유효하게 투영하지 못했습니다";
@@ -939,6 +974,11 @@ namespace HeatingMold.App
             }
             if (RegionOps.SignedArea(projected) < 0) projected.Reverse();
             region.Add(projected);
+            // source-order 체인은 원본 edge 참조의 StartIndex/EndIndex와 1:1로 대응해야 한다.
+            // Region 폴리곤은 CCW로 뒤집지만, 인출점 표시/하이라이트용 체인은 뒤집지 않는다.
+            sourceChain2D = projectedSource;
+            sourceChain3D = firstPts;
+            sourceRefs = boundaryReferences;
             frame = fixedFrame;
             return true;
         }
@@ -1003,6 +1043,7 @@ namespace HeatingMold.App
         {
             if (_activeArea != null && !ConfirmDiscardRouteEdits(_activeArea, "패턴 재생성")) return;
             ExitVertexEdit();
+            CancelExitFacePick();
             // 같은 경로 탭에서 생성하므로 진행 중인 회로 분할 모드도 명시적으로 끝낸다.
             if (Viewport != null) Viewport.ConnectorEditMode = false;
             if (ConnectorEditModeBox != null && ConnectorEditModeBox.IsChecked == true)
@@ -1040,16 +1081,13 @@ namespace HeatingMold.App
             var candidate = ForkAreaRoute(area);
             var paths = new List<IReadOnlyList<Vec2>>();
             SerpentineResult editablePattern = null;
-            if (!candidate.HasExitFace)
+            // 기존 인출면/후보 기반 영역은 회귀 검사와 기존 문서 호환을 위해 종전 경로를 유지한다.
+            // 새 영역은 RegionExitBoundary + 두 선택점(HasSelectedExits)으로만 생성한다.
+            bool legacyAnchored = !candidate.HasSelectedExits && candidate.HasExitAnchors;
+            if (!candidate.HasSelectedExits && !legacyAnchored)
             {
                 StatusText.Text = candidate.LastExitFailure
-                    ?? "인출면이 지정되지 않았습니다 — 인출면과 시작/종료점을 먼저 지정하세요";
-                return;
-            }
-            if (!candidate.HasExitAnchors)
-            {
-                StatusText.Text = candidate.LastExitFailure
-                    ?? "인출면의 시작/종료점이 지정되지 않았습니다 — 후보 목록에서 시작/종료점을 선택하세요";
+                    ?? "시작/종료 인출점이 지정되지 않았습니다 — 적용영역 외곽 Edge에서 두 점을 먼저 선택하세요";
                 return;
             }
             var parameters = new PatternParams { Margin = margin, Spacing = spacing, Direction = candidate.Direction };
@@ -1057,39 +1095,77 @@ namespace HeatingMold.App
             {
                 if (candidate.Exclusions.Count > 0)
                 {
-                    // 제외영역이 있어도 인출면 앵커를 고정한 단일 사행 경로를 생성한다.
-                    var plan = TryPrepareExcludedPlan(candidate, out string planFailure);
-                    if (plan == null)
+                    if (legacyAnchored)
                     {
-                        SyncExitFaceUi(area);
-                        StatusText.Text = planFailure;
-                        return;
+                        var plan = TryPrepareExcludedPlan(candidate, out string planFailure);
+                        if (plan == null)
+                        {
+                            SyncExitFaceUi(area);
+                            StatusText.Text = planFailure;
+                            return;
+                        }
+                        var anchored = Serpentine.GenerateAnchoredComponents(candidate.Region[0], candidate.Exclusions,
+                            parameters, candidate.ExitChain, plan, candidate.Direction, boundary: candidate.ExitBoundary);
+                        if (!anchored.Succeeded)
+                        {
+                            SyncExitFaceUi(area);
+                            StatusText.Text = ExplainAnchoredFailure(anchored.Failure, anchored.BoundaryFailure);
+                            return;
+                        }
+                        editablePattern = anchored.Pattern;
+                        if (editablePattern.Path.Count >= 2) paths.Add(editablePattern.Path);
                     }
-                    var anchored = Serpentine.GenerateAnchoredComponents(candidate.Region[0], candidate.Exclusions,
-                        parameters, candidate.ExitChain, plan, candidate.Direction, boundary: candidate.ExitBoundary);
-                    if (!anchored.Succeeded)
+                    else
                     {
-                        SyncExitFaceUi(area);
-                        StatusText.Text = ExplainAnchoredFailure(anchored.Failure, anchored.BoundaryFailure);
-                        return;
+                        // 제외영역이 있어도 선택한 두 인출점을 고정하고, 모든 레인을 방문하는
+                        // 하나의 완전 경로만 사용한다. 후보/계획 재계산으로 점을 바꾸지 않는다.
+                        var anchored = Serpentine.GenerateComponentsWithSelectedExits(candidate.Region[0],
+                            candidate.Exclusions, parameters, candidate.Direction,
+                            candidate.SelectedStartExit.Value, candidate.SelectedEndExit.Value,
+                            boundary: candidate.RegionExitBoundary);
+                        if (!anchored.Succeeded)
+                        {
+                            SyncExitFaceUi(area);
+                            StatusText.Text = ExplainAnchoredFailure(anchored.Failure, anchored.BoundaryFailure);
+                            return;
+                        }
+                        editablePattern = anchored.Pattern;
+                        if (editablePattern.Path.Count >= 2) paths.Add(editablePattern.Path);
                     }
-                    editablePattern = anchored.Pattern;
-                    if (editablePattern.Path.Count >= 2) paths.Add(editablePattern.Path);
                 }
                 else
                 {
-                    // 인출면이 지정되면 앵커 경로만 사용한다. 실패해도 무앵커 경로로 조용히 대체하지 않는다.
-                    var anchored = Serpentine.GenerateAnchored(candidate.Region[0], null, parameters,
-                        candidate.ExitChain, candidate.StartAnchor.Value, candidate.EndAnchor.Value, candidate.Direction,
-                        boundary: candidate.ExitBoundary, candidate: candidate.SelectedAnchorCandidate);
-                    if (!anchored.Succeeded)
+                    if (legacyAnchored)
                     {
-                        SyncExitFaceUi(area);
-                        StatusText.Text = ExplainAnchoredFailure(anchored.Failure, anchored.BoundaryFailure);
-                        return;
+                        // 기존 인출면이 지정된 영역은 종전 고정 경로를 그대로 사용한다.
+                        var anchored = Serpentine.GenerateAnchored(candidate.Region[0], null, parameters,
+                            candidate.ExitChain, candidate.StartAnchor.Value, candidate.EndAnchor.Value, candidate.Direction,
+                            boundary: candidate.ExitBoundary, candidate: candidate.SelectedAnchorCandidate);
+                        if (!anchored.Succeeded)
+                        {
+                            SyncExitFaceUi(area);
+                            StatusText.Text = ExplainAnchoredFailure(anchored.Failure, anchored.BoundaryFailure);
+                            return;
+                        }
+                        editablePattern = anchored.Pattern;
+                        if (editablePattern.Path.Count >= 2) paths.Add(editablePattern.Path);
                     }
-                    editablePattern = anchored.Pattern;
-                    if (editablePattern.Path.Count >= 2) paths.Add(editablePattern.Path);
+                    else
+                    {
+                        // 선택점은 첫/마지막 발열선 끝만 교체한다. 실패해도 무앵커 경로로 대체하지 않는다.
+                        var anchored = Serpentine.GenerateWithSelectedExits(candidate.Region[0], null,
+                            parameters, candidate.Direction,
+                            candidate.SelectedStartExit.Value, candidate.SelectedEndExit.Value,
+                            boundary: candidate.RegionExitBoundary);
+                        if (!anchored.Succeeded)
+                        {
+                            SyncExitFaceUi(area);
+                            StatusText.Text = ExplainAnchoredFailure(anchored.Failure, anchored.BoundaryFailure);
+                            return;
+                        }
+                        editablePattern = anchored.Pattern;
+                        if (editablePattern.Path.Count >= 2) paths.Add(editablePattern.Path);
+                    }
                 }
             }
             catch (Exception ex)

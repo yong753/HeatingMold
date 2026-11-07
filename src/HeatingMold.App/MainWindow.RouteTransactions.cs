@@ -36,6 +36,9 @@ public partial class MainWindow
             EndAnchor = source.EndAnchor,
             ExitEdgeRefs = source.ExitEdgeRefs.Select(CadExitBoundary2D.CopyReference).ToList(),
             ExitBoundary = source.ExitBoundary,
+            RegionExitBoundary = source.RegionExitBoundary,
+            SelectedStartExit = source.SelectedStartExit,
+            SelectedEndExit = source.SelectedEndExit,
             RegionBoundary = source.RegionBoundary,
             SelectedAnchorCandidate = source.SelectedAnchorCandidate,
             Circuits = source.Circuits.Select(route => route with
@@ -110,6 +113,9 @@ public partial class MainWindow
             EndAnchor = context.EndAnchor,
             ExitEdgeRefs = context.ExitEdgeRefs.Select(CadExitBoundary2D.CopyReference).ToList(),
             Boundary = context.Boundary,
+            RegionBoundary = context.RegionBoundary,
+            SelectedStartExit = context.SelectedStartExit,
+            SelectedEndExit = context.SelectedEndExit,
             SelectedAnchorCandidate = context.SelectedAnchorCandidate,
             StartExits = context.StartExits.ToList(),
             EndExits = context.EndExits.ToList(),
@@ -521,6 +527,9 @@ public partial class MainWindow
         target.EndAnchor = candidate.EndAnchor;
         target.ExitEdgeRefs = candidate.ExitEdgeRefs;
         target.ExitBoundary = candidate.ExitBoundary;
+        target.RegionExitBoundary = candidate.RegionExitBoundary;
+        target.SelectedStartExit = candidate.SelectedStartExit;
+        target.SelectedEndExit = candidate.SelectedEndExit;
         target.SelectedAnchorCandidate = candidate.SelectedAnchorCandidate;
         target.Circuits = candidate.Circuits;
         target.CircuitPieceIndices = candidate.CircuitPieceIndices;

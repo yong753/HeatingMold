@@ -22,6 +22,9 @@ internal sealed class CommittedRouteContext
     public Vec2? EndAnchor { get; init; }
     public List<ExitEdgeReference> ExitEdgeRefs { get; init; } = new();
     public IExitBoundary2D Boundary { get; init; }
+    public IExitBoundary2D RegionBoundary { get; init; }
+    public ExitBoundaryPoint? SelectedStartExit { get; init; }
+    public ExitBoundaryPoint? SelectedEndExit { get; init; }
     public AnchoredCandidate SelectedAnchorCandidate { get; init; }
     public List<CircuitExitPoint> StartExits { get; init; } = new();
     public List<CircuitExitPoint> EndExits { get; init; } = new();
@@ -40,6 +43,9 @@ internal sealed class CommittedRouteContext
         EndAnchor = area.EndAnchor,
         ExitEdgeRefs = area.ExitEdgeRefs.Select(CadExitBoundary2D.CopyReference).ToList(),
         Boundary = area.ExitBoundary,
+        RegionBoundary = area.RegionExitBoundary,
+        SelectedStartExit = area.SelectedStartExit,
+        SelectedEndExit = area.SelectedEndExit,
         SelectedAnchorCandidate = area.SelectedAnchorCandidate,
         StartExits = area.Circuits.Select(c => c.StartExit).ToList(),
         EndExits = area.Circuits.Select(c => c.EndExit).ToList(),
