@@ -1197,10 +1197,14 @@ namespace HeatingMold.App
                 anchorSource = "auto";
             }
 
-            if (!ApplyAnchorCandidate(anchor.Start, anchor.End, out string anchorError))
+            if (!ApplyAnchorCandidate(anchor, out string anchorError))
                 return VisualStepOutcome.Fail(anchorError);
 
             Require(area.HasExitAnchors, "시작/종료점이 적용되지 않았습니다.");
+            Require(ReferenceEquals(area.SelectedAnchorCandidate, anchor) &&
+                area.SelectedAnchorCandidate.StartBinding == anchor.StartBinding &&
+                area.SelectedAnchorCandidate.EndBinding == anchor.EndBinding,
+                "선택한 후보 identity/원본 edge binding이 보존되지 않았습니다.");
             Require(string.IsNullOrEmpty(area.LastExitFailure), "인출면 처리 실패 사유가 남아 있습니다: " + area.LastExitFailure);
             Require(area.ExitChain.Count >= 2, "인출 경계선이 유효하지 않습니다.");
 
@@ -1214,6 +1218,9 @@ namespace HeatingMold.App
                 ["exitChainPoints"] = area.ExitChain.Count.ToString(CultureInfo.InvariantCulture),
                 ["exitLengthMm"] = exitLength.ToString("0.###", CultureInfo.InvariantCulture),
                 ["anchorSource"] = anchorSource,
+                ["candidateId"] = anchor.CandidateId,
+                ["startEdgeKey"] = anchor.StartBinding.Value.EdgeKey.ToString(CultureInfo.InvariantCulture),
+                ["endEdgeKey"] = anchor.EndBinding.Value.EdgeKey.ToString(CultureInfo.InvariantCulture),
                 ["anchor"] = string.Format(CultureInfo.InvariantCulture, "({0:0.###},{1:0.###})->({2:0.###},{3:0.###})",
                     anchor.Start.X, anchor.Start.Y, anchor.End.X, anchor.End.Y)
             };

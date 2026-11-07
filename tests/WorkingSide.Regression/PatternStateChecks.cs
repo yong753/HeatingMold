@@ -46,9 +46,58 @@ static class PatternStateChecks
             AngleDeg = 0,
             TotalLength = path.Zip(path.Skip(1), (a, b) => a.DistanceTo(b)).Sum(),
             RoutePieces = new[] { new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, 0, path) },
-            StartExit = new CircuitExitPoint(CircuitExitRole.Start, path[0], 0, 0),
+            StartExit = new CircuitExitPoint(CircuitExitRole.Start, path[0], 0, 0)
+            {
+                Binding = new ExitEdgeBinding(1, 1, 1, 1, 0, 20, 0, false),
+            },
             EndExit = new CircuitExitPoint(CircuitExitRole.End, path[^1], 0, 1)
+            {
+                Binding = new ExitEdgeBinding(1, 1, 1, 1, 0, 20, 20, false),
+            }
         };
+    }
+
+    /// <summary>검토 범위가 요구하는 원본 경계 계약을 만족하는 결정적 mock.
+    /// 저장 parameter p를 2D 점 (-10+p, 0)으로 평가한다.</summary>
+    private sealed class MockReviewBoundary : IExitBoundary2D
+    {
+        public ExitBoundaryResolution Project(Vec2 point, double tolerance)
+        {
+            var projected = new Vec2(Math.Clamp(point.X, -10.0, 10.0), 0);
+            double distance = point.DistanceTo(projected);
+            return distance > tolerance
+                ? ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.NoIntersection)
+                : ExitBoundaryResolution.Ok(new ExitBoundaryPoint(projected, 0, 0)
+                {
+                    Binding = new ExitEdgeBinding(1, 1, 1, 1, 0, 20, projected.X + 10.0, false),
+                });
+        }
+
+        public ExitBoundaryResolution ResolveOutward(Vec2 endpoint, Vec2 next, double tolerance)
+        {
+            Vec2 direction = endpoint - next;
+            if (direction.Length <= tolerance)
+                return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.DegenerateSegment);
+            if (Math.Abs(direction.Y) > tolerance)
+                return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.NoIntersection);
+            double t = -endpoint.Y / direction.Y;
+            var hit = endpoint + direction * t;
+            if (hit.X < -10 - tolerance || hit.X > 10 + tolerance)
+                return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.NoIntersection);
+            return ExitBoundaryResolution.Ok(new ExitBoundaryPoint(hit, 0, 0)
+            {
+                Binding = new ExitEdgeBinding(1, 1, 1, 1, 0, 20, hit.X + 10.0, false),
+            });
+        }
+
+        public ExitBoundaryResolution ProjectBound(ExitEdgeBinding binding, Vec2 point, double tolerance) =>
+            Project(point, tolerance);
+
+        public ExitBoundaryResolution Evaluate(ExitEdgeBinding binding) =>
+            ExitBoundaryResolution.Ok(new ExitBoundaryPoint(new Vec2(-10 + binding.Parameter, 0), 0, 0)
+            {
+                Binding = binding,
+            });
     }
 
     static object Area(object window, Type areaType, WorkingSideDefinition side, string name, int id)
@@ -63,6 +112,7 @@ static class PatternStateChecks
             new[] { new Vec2(-10, 0), new Vec2(10, 0) });
         ((List<List<Vec2>>)areaType.GetProperty("Region")!.GetValue(value)!).Add(new()
             { new(-12, -8), new(12, -8), new(12, 8), new(-12, 8) });
+        areaType.GetProperty("ExitBoundary")!.SetValue(value, new MockReviewBoundary());
         ((IList)Field<object>(window, "_areas")).Add(value);
         return value;
     }
@@ -167,19 +217,38 @@ static class PatternStateChecks
             "current-area export warns that other areas are excluded");
         scopeBox.SelectedIndex = 0;
 
+        // (d)에서 위조한 음수 조각 ID는 네이티브에 존재하지 않으므로, 다음 삭제 검증의
+        // oldIds에서 제거해 차등 커밋이 실제 존재하지 않는 ID 삭제를 시도하지 않게 한다.
+        areaType.GetProperty("NativePieceIds")!.SetValue(a, Array.Empty<int>());
+        areaType.GetProperty("RoutePieceLengths")!.SetValue(a, Array.Empty<double>());
+        areaType.GetProperty("NativePieceIds")!.SetValue(b, Array.Empty<int>());
+        areaType.GetProperty("RoutePieceLengths")!.SetValue(b, Array.Empty<double>());
+
         selector.SelectedItem = b;
         Check(ReferenceEquals(Field<object>(window, "_activeArea"), b),
             "selecting an area in the persistent selector activates it");
         Invoke(window, "ActivateArea", a);
         Invoke(window, "RefreshAreaList");
 
-        // 삭제 후보를 목록에서 먼저 제거한 뒤 재구성이 실패하면 목록과 활성 영역을 복구해야 한다.
+        // 삭제는 남은 영역 중 확정 상태(CommittedMapping 존재)만 재검증한다. 확정 영역의
+        // 준비가 실패하면 목록과 활성 영역을 바꾸지 않고 유지해야 한다.
         object good = Area(window, areaType, side, "PatternDeleteGood", 4503);
         areaType.GetProperty("Pattern")!.SetValue(good, Pattern(new Vec2(-10, 0), new Vec2(10, 0)));
+        RefreshCircuits(good);
         object bad = Area(window, areaType, side, "PatternDeleteBad", 4504);
-        areaType.GetProperty("Pattern")!.SetValue(bad, Pattern(new Vec2(1000, 1000), new Vec2(1100, 1000)));
-        Invoke(window, "ActivateArea", good);
+        areaType.GetProperty("Pattern")!.SetValue(bad, Pattern(new Vec2(-10, 0), new Vec2(10, 0)));
+        RefreshCircuits(bad);
+        // bad를 확정 상태로 위장하되 길이 배열을 어긋나게 만들어 확정 재검증이 실패하게 한다.
+        var capture = typeof(MainWindow).Assembly.GetType("HeatingMold.App.CommittedRouteContext")!;
+        areaType.GetProperty("CommittedMapping")!.SetValue(bad,
+            capture.GetMethod("Capture", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!
+                .Invoke(null, new[] { bad }));
+        areaType.GetProperty("NativePieceIds")!.SetValue(bad, new[] { -4504 });
+        areaType.GetProperty("RoutePieceLengths")!.SetValue(bad, Array.Empty<double>());
+        // good/bad를 목록 상자에 반영한 뒤 실제로 good을 선택해야 삭제 대상이 good이 된다.
+        Invoke(window, "RefreshAreaList");
         ((ListBox)window.FindName("ConfirmedAreasList")).SelectedItem = good;
+        Invoke(window, "ActivateArea", good);
 
         var areas = (IList)Field<object>(window, "_areas");
         int before = areas.Count;
@@ -190,6 +259,19 @@ static class PatternStateChecks
             "failed area deletion restores the previously active area");
         Check(((TextBlock)window.FindName("StatusText")).Text.Contains("유지"),
             "failed area deletion reports that the existing areas were retained");
+
+        // 확정 재검증이 성공하면 삭제가 진행되고 남은 초안은 건드리지 않는다.
+        areaType.GetProperty("CommittedMapping")!.SetValue(bad, null);
+        areaType.GetProperty("NativePieceIds")!.SetValue(bad, Array.Empty<int>());
+        areaType.GetProperty("RoutePieceLengths")!.SetValue(bad, Array.Empty<double>());
+        Invoke(window, "DeleteSelectedArea_Click", null!, null!);
+        // 성공 시 _areas 필드가 새 목록으로 교체되므로 검증은 현재 필드에서 다시 읽는다.
+        var remaining = (IList)Field<object>(window, "_areas");
+        Check(remaining.Count == before - 1 && !remaining.Contains(good),
+            "successful area deletion removes the selected area from the list");
+        Check(remaining.Contains(bad) && Field<object>(window, "_activeArea") != null
+            && !ReferenceEquals(Field<object>(window, "_activeArea"), good),
+            "successful area deletion retains untouched drafts and activates the remainder");
 
         areas.Remove(bad);
         Invoke(window, "ClearAllAreas", false);

@@ -145,6 +145,8 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "ProjectedExitCurveNative.inc"
+#include "ExitEdgeMatchingNative.inc"
 
 using namespace System;
 using namespace System::Collections::Generic;
@@ -291,10 +293,14 @@ namespace
     std::map<int, Handle(AIS_Shape)> g_powerLeads;
     Handle(AIS_Shape) g_powerLeadPreview;
     Handle(AIS_Point) g_powerDestinationPreview;
-    struct RoutePieceOverlay { Handle(AIS_Shape) ais; bool connector; bool enabled; Quantity_Color color; double width; };
+    struct RoutePieceOverlay {
+        Handle(AIS_Shape) ais; bool connector; bool enabled; Quantity_Color color; double width;
+        long long contextId = 0, revision = 0;
+    };
     std::map<int, RoutePieceOverlay> g_routePieces;
     struct StagedWorkingPolyline { Handle(AIS_Shape) ais; long long contextId, revision; };
     std::map<int, StagedWorkingPolyline> g_stagedWorkingPolylines;
+    std::map<long long, std::vector<StagedWorkingPolyline>> g_committedWorkingPolylines;
     std::map<int, std::pair<long long,long long>> g_stagedWorkingRouteOwners;
     // 발열 경로 인출점/끝점 마커. 경로를 지울 때 함께 제거한다.
     std::vector<Handle(AIS_Point)> g_routeEndpointMarkers;
@@ -950,19 +956,22 @@ namespace
         TopoDS_Edge edge;
         long long revision = 0;
         int faceId = -1;
-        // 이 경계 Edge를 소유한 선택 면. 2D 데이텀을 실제 3D 점으로 올릴 때 사용한다.
         int supportFaceId = -1;
+        struct Binding { double first, last; int faceId, supportFaceId; };
+        std::vector<Binding> bindings;
     };
 
     // 후보 조회 때마다 새로 만들어지는 sewing Edge를 영속 참조로 쓰지 않는다.
     // 원본 Edge 사본과 revision을 보관하고, 모델이 바뀔 때만 비운다.
     std::map<long long, StoredExitEdge> g_exitEdges;
-    long long g_nextExitEdgeKey = 1;
+    TopTools_IndexedMapOfShape g_exitSourceEdges;
+    TopTools_IndexedMapOfShape g_exitSourceVertices;
 
     void ClearExitEdgeStoreNative()
     {
         g_exitEdges.clear();
-        g_nextExitEdgeKey = 1;
+        g_exitSourceEdges.Clear();
+        g_exitSourceVertices.Clear();
     }
 
     struct NativeExitSide
@@ -986,57 +995,9 @@ namespace
     /// Sewing 사본 경계 Edge에 대응하는 원본(선택 면) Edge를 찾는다.
     /// 후보는 선택 면 집합의 실제 외곽 Edge로 제한한다(내부 공유 Edge/이음선 제외).
     /// </summary>
-    bool FindOriginalBoundaryEdge(const TopoDS_Edge& boundaryEdge,
-                                  const std::vector<TopoDS_Edge>& candidates,
-                                  double tolerance,
-                                  TopoDS_Edge& original)
-    {
-        if (boundaryEdge.IsNull()) return false;
-        const double targetLength = EdgeLengthNative(boundaryEdge);
-        if (targetLength <= 0.0) return false;
-        double first = 0.0, last = 0.0;
-        Handle(Geom_Curve) boundaryCurve;
-        try { boundaryCurve = BRep_Tool::Curve(boundaryEdge, first, last); }
-        catch (const Standard_Failure&) { return false; }
-        if (boundaryCurve.IsNull() || !std::isfinite(first) || !std::isfinite(last) || last <= first)
-            return false;
-
-        double bestDistance = tolerance;
-        bool found = false;
-        for (const TopoDS_Edge& candidate : candidates)
-        {
-            if (candidate.IsNull()) continue;
-            if (candidate.IsSame(boundaryEdge)) { original = candidate; return true; }
-            const double candidateLength = EdgeLengthNative(candidate);
-            if (candidateLength <= 0.0 || std::fabs(candidateLength - targetLength) > tolerance) continue;
-            double cf = 0.0, cl = 0.0;
-            Handle(Geom_Curve) candidateCurve;
-            try { candidateCurve = BRep_Tool::Curve(candidate, cf, cl); }
-            catch (const Standard_Failure&) { continue; }
-            if (candidateCurve.IsNull() || !std::isfinite(cf) || !std::isfinite(cl) || cl <= cf) continue;
-
-            double maxDistance = 0.0;
-            bool matched = true;
-            for (int k = 1; k <= 3; ++k)
-            {
-                const gp_Pnt sample = boundaryCurve->Value(first + (last - first) * (k / 4.0));
-                GeomAPI_ProjectPointOnCurve projector(sample, candidateCurve, cf, cl);
-                if (projector.NbPoints() == 0) { matched = false; break; }
-                maxDistance = std::max(maxDistance, projector.LowerDistance());
-            }
-            if (matched && maxDistance <= tolerance && maxDistance < bestDistance)
-            {
-                bestDistance = maxDistance;
-                original = candidate;
-                found = true;
-            }
-        }
-        return found;
-    }
-
     /// <summary>
     /// 주어진 원본 Edge를 실제로 소유한 선택 면을 찾는다.
-    /// EvaluateExitEdge가 작업평면이 아니라 선택 면 위에서 3D 데이텀을 구하는 데 쓴다.
+    /// 경계 Hit의 실제 선택 지지면을 반환하기 위한 위상 조회다. 2D 검색에는 사용하지 않는다.
     /// </summary>
     int FindSupportFaceForEdge(const TopoDS_Edge& edge, const std::set<int>& selected)
     {
@@ -1055,20 +1016,10 @@ namespace
     /// 일치하는 면이 없으면 -1 (모델 끝의 나체 Edge).
     /// </summary>
     int FindAdjacentOriginalFace(const TopoDS_Edge& boundaryEdge, const std::set<int>& selected,
-                                 double tolerance)
+                                  double tolerance, const TopoDS_Edge* original = nullptr)
     {
         if (boundaryEdge.IsNull()) return -1;
-        const double targetLength = EdgeLengthNative(boundaryEdge);
-        if (targetLength <= 0.0) return -1;
-        double first = 0.0, last = 0.0;
-        Handle(Geom_Curve) boundaryCurve;
-        try { boundaryCurve = BRep_Tool::Curve(boundaryEdge, first, last); }
-        catch (const Standard_Failure&) { return -1; }
-        if (boundaryCurve.IsNull() || !std::isfinite(first) || !std::isfinite(last) || last <= first)
-            return -1;
-
-        int bestFace = -1;
-        double bestDistance = tolerance;
+        std::set<int> topologyFaces, geometryFaces;
         for (int faceId = 0; faceId < static_cast<int>(g_faces.size()); ++faceId)
         {
             if (selected.count(faceId) != 0) continue;
@@ -1076,33 +1027,16 @@ namespace
             {
                 const TopoDS_Edge candidate = TopoDS::Edge(ex.Current());
                 if (candidate.IsNull()) continue;
-                // Sewing 사본이 원본 Edge를 그대로 재사용한 경우: 위상 동일성으로 즉시 확정.
-                if (candidate.IsSame(boundaryEdge)) return faceId;
-                const double candidateLength = EdgeLengthNative(candidate);
-                if (candidateLength <= 0.0 || std::fabs(candidateLength - targetLength) > tolerance) continue;
-                double cf = 0.0, cl = 0.0;
-                Handle(Geom_Curve) candidateCurve;
-                try { candidateCurve = BRep_Tool::Curve(candidate, cf, cl); }
-                catch (const Standard_Failure&) { continue; }
-                if (candidateCurve.IsNull() || !std::isfinite(cf) || !std::isfinite(cl) || cl <= cf) continue;
-
-                double maxDistance = 0.0;
-                bool matched = true;
-                for (int k = 1; k <= 3; ++k)
-                {
-                    const gp_Pnt sample = boundaryCurve->Value(first + (last - first) * (k / 4.0));
-                    GeomAPI_ProjectPointOnCurve projector(sample, candidateCurve, cf, cl);
-                    if (projector.NbPoints() == 0) { matched = false; break; }
-                    maxDistance = std::max(maxDistance, projector.LowerDistance());
-                }
-                if (matched && maxDistance <= tolerance && maxDistance < bestDistance)
-                {
-                    bestDistance = maxDistance;
-                    bestFace = faceId;
-                }
+                if (candidate.IsSame(boundaryEdge) || (original && candidate.IsSame(*original)))
+                { topologyFaces.insert(faceId); continue; }
+                HeatingMoldExitNative::SourceInterval match;
+                if (HeatingMoldExitNative::MatchSourceInterval(boundaryEdge, candidate, tolerance, match))
+                    geometryFaces.insert(faceId);
             }
         }
-        return bestFace;
+        if (topologyFaces.size() == 1) return *topologyFaces.begin();
+        if (!topologyFaces.empty()) return -2; // non-manifold/ambiguous
+        return geometryFaces.size() == 1 ? *geometryFaces.begin() : (geometryFaces.empty() ? -1 : -2);
     }
 
     /// <summary>run에 점을 추가하고 실제로 저장된 점 인덱스를 반환한다. 좌표는 중복 제거해 xyz에, 면 id는 구간 시작 인덱스로 기록한다.</summary>
@@ -1212,6 +1146,44 @@ namespace
     const double kExitJunctionAngle2dDegrees = 15.0;
     const double kExitJunctionWindow = 1.0;
     const double kExitPlaneDirectionEpsilon = 1e-7;
+
+    bool ExitReferenceCoverage(const NativeExitSide& run)
+    {
+        const int count = static_cast<int>(run.xyz.size() / 3);
+        if (count < 2 || run.edgeRefs.empty()) return false;
+        std::vector<int> coverage(static_cast<size_t>(count - 1), 0);
+        for (const auto& ref : run.edgeRefs) {
+            if (ref.key <= 0 || ref.revision != g_modelRevision || ref.faceId < 0 ||
+                ref.startIndex < 0 || ref.endIndex >= count || ref.endIndex <= ref.startIndex ||
+                ref.lastParameter <= ref.firstParameter) return false;
+            for (int i = ref.startIndex; i < ref.endIndex; ++i) ++coverage[i];
+        }
+        for (int covered : coverage) if (covered != 1) return false;
+        for (const auto& start : run.segmentStarts) if (start.faceId < 0) return false;
+        return true;
+    }
+
+    long long StoreOriginalExitEdge(const HeatingMoldExitNative::SourceInterval& source,
+        int faceId, int supportFaceId)
+    {
+        const long long key = g_exitSourceEdges.Add(source.edge);
+        auto entry = g_exitEdges.find(key);
+        if (entry == g_exitEdges.end()) {
+            StoredExitEdge stored;
+            stored.edge = source.edge; stored.revision = g_modelRevision;
+            stored.faceId = faceId; stored.supportFaceId = supportFaceId;
+            entry = g_exitEdges.emplace(key, stored).first;
+            TopoDS_Vertex first, last;
+            TopExp::Vertices(source.edge, first, last, Standard_False);
+            if (!first.IsNull()) g_exitSourceVertices.Add(first);
+            if (!last.IsNull()) g_exitSourceVertices.Add(last);
+        }
+        for (const auto& binding : entry->second.bindings)
+            if (binding.first == source.first && binding.last == source.last &&
+                binding.faceId == faceId && binding.supportFaceId == supportFaceId) return key;
+        entry->second.bindings.push_back({source.first, source.last, faceId, supportFaceId});
+        return key;
+    }
 
     gp_Vec ProjectExitDirection(const gp_Vec& direction, const gp_Vec& viewNormal)
     {
@@ -1395,14 +1367,23 @@ namespace
 
             // 각 경계 Edge 반대편의 원본 면 (-1 = 나체 Edge). 봉합선(use==2)이 인덱스를
             // 밀지 않도록 edgeMap 인덱스로 직접 보관한다.
+            const auto inverse = HeatingMoldExitNative::SewingSourceInverse(sewing, originalBoundaryEdges, edgeMap);
+            std::vector<HeatingMoldExitNative::SourceInterval> sourceMatches(static_cast<size_t>(edgeMap.Extent()));
+            std::vector<bool> sourceValid(static_cast<size_t>(edgeMap.Extent()), false);
             std::vector<int> adjacent(edgeMap.Extent(), -1);
             for (size_t i = 0; i < boundaryEdges.size(); ++i)
             {
-                const int match = FindAdjacentOriginalFace(boundaryEdges[i], selected, geometryMatchTolerance);
-                adjacent[boundaryIndices[i] - 1] = match;
+                const int index = boundaryIndices[i] - 1;
+                bool ambiguous = false;
+                sourceValid[index] = HeatingMoldExitNative::FindUniqueSourceInterval(boundaryEdges[i], originalBoundaryEdges,
+                    inverse[index], geometryMatchTolerance, sourceMatches[index], ambiguous);
+                const int match = FindAdjacentOriginalFace(boundaryEdges[i], selected, geometryMatchTolerance,
+                    sourceValid[index] ? &sourceMatches[index].edge : nullptr);
+                adjacent[index] = match;
                 g_exitSideDiagnostic += "edge" + std::to_string(i) +
                     " len=" + std::to_string(EdgeLengthNative(boundaryEdges[i])) +
-                    " adjacent=" + std::to_string(match) + "\n";
+                    " adjacent=" + std::to_string(match) +
+                    (sourceValid[index] ? " source=bound\n" : (ambiguous ? " reject(ambiguous-source)\n" : " reject(missing-source)\n"));
             }
 
             TopTools_IndexedMapOfShape vertexMap;
@@ -1469,20 +1450,32 @@ namespace
                     const int faceId = (mapIndex > 0 && mapIndex <= static_cast<int>(adjacent.size()))
                         ? adjacent[mapIndex - 1] : -1;
 
+                    if (faceId < 0 || mapIndex <= 0 || !sourceValid[mapIndex - 1]) {
+                        // A naked/unmapped interval is a break, never an unbound bridge
+                        // hidden inside an otherwise valid candidate.
+                        if (current.faceId >= 0 && current.xyz.size() >= 6) runs.push_back(std::move(current));
+                        current = NativeExitSide();
+                        continue;
+                    }
+                    const auto& source = sourceMatches[mapIndex - 1];
+                    const bool reversed = source.reversed != (edge.Orientation() == TopAbs_REVERSED);
+
                     std::vector<gp_Pnt> points;
                     bool sampled = false;
                     try
                     {
-                        BRepAdaptor_Curve curve(edge);
+                        double originalFirst = 0.0, originalLast = 0.0;
+                        const Handle(Geom_Curve) originalCurve = BRep_Tool::Curve(source.edge, originalFirst, originalLast);
+                        const TopoDS_Edge displayEdge = BRepBuilderAPI_MakeEdge(originalCurve, source.first, source.last).Edge();
+                        BRepAdaptor_Curve curve(displayEdge);
                         GCPnts_QuasiUniformDeflection sampler(curve, deflection);
                         if (sampler.IsDone() && sampler.NbPoints() >= 2 && sampler.NbPoints() <= 100000)
                         {
                             sampled = true;
-                            const bool reverse = edge.Orientation() == TopAbs_REVERSED;
                             const int count = sampler.NbPoints();
                             for (int k = 1; k <= count; ++k)
                             {
-                                const gp_Pnt p = sampler.Value(reverse ? count - k + 1 : k);
+                                const gp_Pnt p = sampler.Value(reversed ? count - k + 1 : k);
                                 if (!std::isfinite(p.X()) || !std::isfinite(p.Y()) || !std::isfinite(p.Z()))
                                 { sampled = false; break; }
                                 points.push_back(p);
@@ -1498,16 +1491,10 @@ namespace
                         current = NativeExitSide();
                         continue;
                     }
-                    if (faceId < 0)
-                    {
-                        // No matching neighbour face (naked edge). Keep the samples as a
-                        // bridge so a single unmatched edge does not split one exit side.
-                        // Runs that never meet a matched face are dropped below, so naked
-                        // boundaries still produce no candidate.
-                        for (const gp_Pnt& p : points) AppendExitPoint(current, -1, p);
-                        continue;
-                    }
-                    if (current.faceId >= 0 && current.faceId != faceId)
+                    const bool disconnected = current.xyz.size() >= 3 &&
+                        gp_Pnt(current.xyz[current.xyz.size() - 3], current.xyz[current.xyz.size() - 2],
+                            current.xyz[current.xyz.size() - 1]).Distance(points.front()) > HeatingMoldExitNative::GeometryEpsilon;
+                    if (current.faceId >= 0 && (current.faceId != faceId || disconnected))
                     {
                         if (current.xyz.size() >= 6) runs.push_back(std::move(current));
                         current = NativeExitSide();
@@ -1516,54 +1503,32 @@ namespace
                     NativeExitSide piece;
                     piece.faceId = faceId;
                     for (const gp_Pnt& p : points) AppendExitPoint(piece, faceId, p);
-                    TopoDS_Edge original;
-                    if (FindOriginalBoundaryEdge(edge, originalBoundaryEdges,
-                                                 geometryMatchTolerance, original))
-                    {
-                        double originalFirst = 0.0, originalLast = 0.0;
-                        Handle(Geom_Curve) originalCurve;
-                        try { originalCurve = BRep_Tool::Curve(original, originalFirst, originalLast); }
-                        catch (const Standard_Failure&) { originalCurve.Nullify(); }
-                        if (!originalCurve.IsNull() && std::isfinite(originalFirst) &&
-                            std::isfinite(originalLast) && originalLast > originalFirst &&
-                            points.size() >= 2)
-                        {
-                            GeomAPI_ProjectPointOnCurve startProjector(
-                                points.front(), originalCurve, originalFirst, originalLast);
-                            GeomAPI_ProjectPointOnCurve endProjector(
-                                points.back(), originalCurve, originalFirst, originalLast);
-                            if (startProjector.NbPoints() > 0 && endProjector.NbPoints() > 0)
-                            {
-                                const long long key = g_nextExitEdgeKey++;
-                                StoredExitEdge stored;
-                                stored.edge = original;
-                                stored.revision = g_modelRevision;
-                                stored.faceId = faceId;
-                                stored.supportFaceId = FindSupportFaceForEdge(original, selected);
-                                g_exitEdges.emplace(key, stored);
-
-                                NativeExitEdgeRef ref;
-                                ref.revision = g_modelRevision;
-                                ref.key = key;
-                                ref.faceId = faceId;
-                                ref.firstParameter = originalFirst;
-                                ref.lastParameter = originalLast;
-                                ref.reversed = endProjector.LowerDistanceParameter() <
-                                               startProjector.LowerDistanceParameter();
-                                ref.startIndex = 0;
-                                ref.endIndex = static_cast<int>(piece.xyz.size() / 3) - 1;
-                                if (ref.endIndex > ref.startIndex)
-                                    piece.edgeRefs.push_back(ref);
-                            }
-                        }
+                    const int supportFace = FindSupportFaceForEdge(source.edge, selected);
+                    if (supportFace < 0) {
+                        g_exitSideDiagnostic += "reject(missing-support-face)\n";
+                        if (current.faceId >= 0 && current.xyz.size() >= 6) runs.push_back(std::move(current));
+                        current = NativeExitSide(); continue;
                     }
+                    NativeExitEdgeRef ref;
+                    ref.revision = g_modelRevision;
+                    ref.key = StoreOriginalExitEdge(source, faceId, supportFace);
+                    ref.faceId = faceId;
+                    ref.firstParameter = source.first;
+                    ref.lastParameter = source.last;
+                    ref.reversed = reversed;
+                    ref.startIndex = 0;
+                    ref.endIndex = static_cast<int>(piece.xyz.size() / 3) - 1;
+                    piece.edgeRefs.push_back(ref);
                     current.faceId = faceId;
                     AppendExitRun(current, piece);
                 }
                 if (current.faceId >= 0 && current.xyz.size() >= 6) runs.push_back(std::move(current));
 
                 // 닫힌 루프: 마지막 run과 첫 run이 같은 면이면 하나로 합친다.
-                if (runs.size() >= 2 && runs.front().faceId == runs.back().faceId)
+                if (runs.size() >= 2 && runs.front().faceId == runs.back().faceId &&
+                    gp_Pnt(runs.back().xyz[runs.back().xyz.size() - 3], runs.back().xyz[runs.back().xyz.size() - 2],
+                        runs.back().xyz[runs.back().xyz.size() - 1]).Distance(
+                            gp_Pnt(runs.front().xyz[0], runs.front().xyz[1], runs.front().xyz[2])) <= HeatingMoldExitNative::GeometryEpsilon)
                 {
                     const NativeExitSide head = runs.front();
                     AppendExitRun(runs.back(), head);
@@ -1575,7 +1540,7 @@ namespace
                 {
                     std::vector<NativeExitSide> joined;
                     for (auto& run : runs) joined.push_back(std::move(run));
-                    const double contactTolerance = 2.0 * sewingTolerance;
+                    const double contactTolerance = HeatingMoldExitNative::GeometryEpsilon;
                     bool merged = true;
                     while (merged && joined.size() >= 2)
                     {
@@ -1605,7 +1570,10 @@ namespace
                     }
                     runs.swap(joined);
                 }
-                for (auto& run : runs) sides.push_back(std::move(run));
+                for (auto& run : runs) {
+                    if (!ExitReferenceCoverage(run)) { g_exitSideDiagnostic += "reject(incomplete-original-reference-coverage)\n"; continue; }
+                    sides.push_back(std::move(run));
+                }
             }
             return !sides.empty();
         }
@@ -1986,27 +1954,39 @@ namespace
     }
 
     // 인출점/끝점을 눈에 띄는 원형 점으로 표시한다. xyz는 [x,y,z,...] 평면 배열.
-    void SetRouteEndpointsNative(const std::vector<double>& xyz)
+    bool SetRouteEndpointsNative(const std::vector<double>& xyz)
     {
-        ClearRouteEndpointMarkersNative();
-        if (g_ctx.IsNull() || xyz.empty() || xyz.size() % 3 != 0) return;
-        for (size_t i = 0; i < xyz.size(); i += 3) {
-            if (!std::isfinite(xyz[i]) || !std::isfinite(xyz[i + 1]) || !std::isfinite(xyz[i + 2])) continue;
-            Handle(AIS_Point) marker = new AIS_Point(new Geom_CartesianPoint(xyz[i], xyz[i + 1], xyz[i + 2]));
-            marker->SetMarker(Aspect_TOM_O_POINT);
-            marker->SetColor(kRouteEndpointColor);
-            Handle(Prs3d_PointAspect) pointAspect = marker->Attributes()->PointAspect();
-            if (pointAspect.IsNull()) {
-                pointAspect = new Prs3d_PointAspect(Aspect_TOM_O_POINT, kRouteEndpointColor, 6.0);
-                marker->Attributes()->SetPointAspect(pointAspect);
-            } else {
-                pointAspect->SetScale(6.0);
+        if (xyz.size() % 3 != 0 || (g_ctx.IsNull() && !xyz.empty())) return false;
+        for (double value : xyz) if (!std::isfinite(value)) return false;
+        std::vector<Handle(AIS_Point)> next;
+        try {
+            next.reserve(xyz.size() / 3);
+            for (size_t i = 0; i < xyz.size(); i += 3) {
+                Handle(AIS_Point) marker = new AIS_Point(new Geom_CartesianPoint(xyz[i], xyz[i + 1], xyz[i + 2]));
+                marker->SetMarker(Aspect_TOM_O_POINT);
+                marker->SetColor(kRouteEndpointColor);
+                Handle(Prs3d_PointAspect) pointAspect = marker->Attributes()->PointAspect();
+                if (pointAspect.IsNull()) {
+                    pointAspect = new Prs3d_PointAspect(Aspect_TOM_O_POINT, kRouteEndpointColor, 6.0);
+                    marker->Attributes()->SetPointAspect(pointAspect);
+                } else pointAspect->SetScale(6.0);
+                next.push_back(marker);
             }
-            g_ctx->Display(marker, Standard_False);
-            g_ctx->SetZLayer(marker, Graphic3d_ZLayerId_Topmost);
-            g_ctx->Deactivate(marker, Standard_False);
-            g_routeEndpointMarkers.push_back(marker);
+            for (const auto& marker : next) {
+                g_ctx->Display(marker, Standard_False);
+                g_ctx->SetZLayer(marker, Graphic3d_ZLayerId_Topmost);
+                g_ctx->Deactivate(marker, Standard_False);
+            }
+        } catch (...) {
+            if (!g_ctx.IsNull()) for (const auto& marker : next) { try { g_ctx->Remove(marker, Standard_False); } catch (...) {} }
+            return false;
         }
+        g_routeEndpointMarkers.swap(next);
+        bool success = true;
+        if (!g_ctx.IsNull()) for (const auto& marker : next) {
+            try { g_ctx->Remove(marker, Standard_False); } catch (...) { success = false; }
+        }
+        return success;
     }
 
     void ClearRoutePiecesNative()
@@ -2330,6 +2310,7 @@ namespace
                 g_ctx->Remove(overlay, Standard_False);
         }
         g_worldOverlays.clear();
+        g_committedWorkingPolylines.clear();
         for (const auto& staged : g_stagedWorkingPolylines)
             if (!g_ctx.IsNull()) g_ctx->Remove(staged.second.ais,Standard_False);
         g_stagedWorkingPolylines.clear();
@@ -3209,230 +3190,7 @@ namespace
 #include "AreaHighlightNative.inc"
 #include "FaceIdSelectionNative.inc"
 
-    enum class ExitEdgeStatusNative
-    {
-        Hit = 0,
-        Miss = 1,
-        Ambiguous = 2,
-        InvalidInput = 3,
-        StaleContext = 4,
-        GeometryFailure = 5
-    };
-
-    /// <summary>
-    /// 작업평면 2D 데이텀을 원본 Edge 위로 평가한다.
-    /// 후보 Polyline이 아니라 저장된 원본 곡선에 투영하므로 곡선 Edge에서도 정확하다.
-    /// 범위 밖/모호/무효는 실패하며 다른 Edge로 대체하지 않는다.
-    /// </summary>
-    bool EvaluateExitEdgeNative(long long id, long long revision,
-                                long long edgeRevision, long long edgeKey,
-                                double u, double v, double tolerance,
-                                int& status, gp_Pnt& point, gp_Vec& tangent,
-                                double& parameter, int& faceId,
-                                double& datumU, double& datumV)
-    {
-        status = static_cast<int>(ExitEdgeStatusNative::InvalidInput);
-        faceId = -1;
-        parameter = 0.0;
-        datumU = 0.0;
-        datumV = 0.0;
-        if (!std::isfinite(u) || !std::isfinite(v) ||
-            !std::isfinite(tolerance) || tolerance < 0.0)
-            return false;
-
-        const auto context = g_working.find(id);
-        if (context == g_working.end() || context->second->revision != revision ||
-            revision != g_modelRevision)
-        {
-            status = static_cast<int>(ExitEdgeStatusNative::StaleContext);
-            return false;
-        }
-        if (edgeRevision != g_modelRevision)
-        {
-            status = static_cast<int>(ExitEdgeStatusNative::StaleContext);
-            return false;
-        }
-        const auto stored = g_exitEdges.find(edgeKey);
-        if (stored == g_exitEdges.end() || stored->second.revision != g_modelRevision ||
-            stored->second.edge.IsNull())
-        {
-            status = static_cast<int>(ExitEdgeStatusNative::StaleContext);
-            return false;
-        }
-
-        const WorkingNative* ctx = context->second.get();
-        const TopoDS_Edge& edge = stored->second.edge;
-        double first = 0.0, last = 0.0;
-        Handle(Geom_Curve) curve;
-        try { curve = BRep_Tool::Curve(edge, first, last); }
-        catch (const Standard_Failure&)
-        {
-            status = static_cast<int>(ExitEdgeStatusNative::GeometryFailure);
-            return false;
-        }
-        if (curve.IsNull() || !std::isfinite(first) || !std::isfinite(last) || last <= first)
-        {
-            status = static_cast<int>(ExitEdgeStatusNative::GeometryFailure);
-            return false;
-        }
-
-        try
-        {
-            // 2D 데이텀을 작업평면 위 3D 점으로 만들면, 작업평면 밖에 있는 경계 Edge를
-            // normal 방향으로 빗나가게 된다. 경계 Edge를 소유한 선택 면에 먼저 매핑해
-            // 실제 표면 위 3D 점을 구한 뒤 원본 곡선에 투영한다.
-            gp_Pnt target;
-            bool haveTarget = false;
-            if (stored->second.supportFaceId >= 0)
-            {
-                std::vector<int> faces{ stored->second.supportFaceId };
-                double mapped[3] = { 0, 0, 0 };
-                int mappedFace = -1;
-                if (MapWorkingPointOntoFacesNative(id, revision, faces, u, v,
-                                                   mapped, mappedFace) == WorkingStatusNative::Hit)
-                {
-                    target = gp_Pnt(mapped[0], mapped[1], mapped[2]);
-                    haveTarget = true;
-                }
-            }
-            if (!haveTarget)
-                target = ctx->origin.Translated(gp_Vec(ctx->x) * u + gp_Vec(ctx->y) * v);
-            GeomAPI_ProjectPointOnCurve projector(target, curve, first, last);
-            const int solutions = projector.NbPoints();
-            if (solutions <= 0)
-            {
-                // Open-edge clamp: points just beyond a trim end evaluate to that end point.
-                // This is not a parameter substitution for the rest of the curve; if the
-                // clamped endpoint is farther than tolerance, the query is still a miss.
-                const double ends[2] = { first, last };
-                const gp_Pnt firstPoint = curve->Value(first);
-                const gp_Pnt lastPoint = curve->Value(last);
-                if (firstPoint.Distance(lastPoint) <= 1e-7)
-                {
-                    status = static_cast<int>(ExitEdgeStatusNative::Miss);
-                    return false;
-                }
-                double bestEndpointDistance = 1e100;
-                double secondEndpointDistance = 1e100;
-                double bestEndpointParameter = first;
-                gp_Pnt bestEndpointPoint;
-                gp_Vec bestEndpointTangent;
-                for (int e = 0; e < 2; ++e)
-                {
-                    gp_Pnt candidate;
-                    gp_Vec derivative;
-                    curve->D1(ends[e], candidate, derivative);
-                    if (!std::isfinite(candidate.X()) || !std::isfinite(candidate.Y()) ||
-                        !std::isfinite(candidate.Z()) || derivative.SquareMagnitude() < 1e-24)
-                    {
-                        status = static_cast<int>(ExitEdgeStatusNative::GeometryFailure);
-                        return false;
-                    }
-                    const gp_Vec rel(ctx->origin, candidate);
-                    const double du = rel.Dot(gp_Vec(ctx->x));
-                    const double dv = rel.Dot(gp_Vec(ctx->y));
-                    const double distance = std::hypot(du - u, dv - v);
-                    if (distance < bestEndpointDistance)
-                    {
-                        secondEndpointDistance = bestEndpointDistance;
-                        bestEndpointDistance = distance;
-                        bestEndpointParameter = ends[e];
-                        bestEndpointPoint = candidate;
-                        bestEndpointTangent = derivative;
-                    }
-                    else if (distance < secondEndpointDistance)
-                    {
-                        secondEndpointDistance = distance;
-                    }
-                }
-                if (bestEndpointDistance > tolerance)
-                {
-                    status = static_cast<int>(ExitEdgeStatusNative::Miss);
-                    return false;
-                }
-                if (secondEndpointDistance <= tolerance &&
-                    std::fabs(secondEndpointDistance - bestEndpointDistance) <= 1e-3)
-                {
-                    status = static_cast<int>(ExitEdgeStatusNative::Ambiguous);
-                    return false;
-                }
-                bestEndpointTangent.Normalize();
-                const gp_Vec rel(ctx->origin, bestEndpointPoint);
-                datumU = rel.Dot(gp_Vec(ctx->x));
-                datumV = rel.Dot(gp_Vec(ctx->y));
-                point = bestEndpointPoint;
-                tangent = bestEndpointTangent;
-                parameter = bestEndpointParameter;
-                faceId = stored->second.faceId;
-                status = static_cast<int>(ExitEdgeStatusNative::Hit);
-                return true;
-            }
-
-            int best = 0;
-            double bestPlanar = 1e100;
-            for (int i = 1; i <= solutions; ++i)
-            {
-                const gp_Pnt candidate = projector.Point(i);
-                const gp_Vec rel(ctx->origin, candidate);
-                const double du = rel.Dot(gp_Vec(ctx->x));
-                const double dv = rel.Dot(gp_Vec(ctx->y));
-                const double distance = std::hypot(du - u, dv - v);
-                if (distance < bestPlanar)
-                {
-                    bestPlanar = distance;
-                    best = i;
-                }
-            }
-            if (best == 0 || bestPlanar > tolerance)
-            {
-                status = static_cast<int>(ExitEdgeStatusNative::Miss);
-                return false;
-            }
-
-            // 같은 데이텀에 근접한 서로 다른 해가 있으면 어느 쪽인지 임의로 고르지 않는다.
-            for (int i = 1; i <= solutions; ++i)
-            {
-                if (i == best) continue;
-                const gp_Pnt candidate = projector.Point(i);
-                const gp_Vec rel(ctx->origin, candidate);
-                const double du = rel.Dot(gp_Vec(ctx->x));
-                const double dv = rel.Dot(gp_Vec(ctx->y));
-                const double distance = std::hypot(du - u, dv - v);
-                if (distance <= tolerance && std::fabs(distance - bestPlanar) <= 1e-3)
-                {
-                    status = static_cast<int>(ExitEdgeStatusNative::Ambiguous);
-                    return false;
-                }
-            }
-
-            const double t = projector.LowerDistanceParameter();
-            gp_Pnt evaluated;
-            gp_Vec firstDerivative;
-            curve->D1(t, evaluated, firstDerivative);
-            if (!std::isfinite(evaluated.X()) || !std::isfinite(evaluated.Y()) ||
-                !std::isfinite(evaluated.Z()) || firstDerivative.SquareMagnitude() < 1e-24)
-            {
-                status = static_cast<int>(ExitEdgeStatusNative::GeometryFailure);
-                return false;
-            }
-            firstDerivative.Normalize();
-
-            const gp_Vec rel(ctx->origin, evaluated);
-            datumU = rel.Dot(gp_Vec(ctx->x));
-            datumV = rel.Dot(gp_Vec(ctx->y));
-            point = evaluated;
-            tangent = firstDerivative;
-            parameter = t;
-            faceId = stored->second.faceId;
-            status = static_cast<int>(ExitEdgeStatusNative::Hit);
-            return true;
-        }
-        catch (const Standard_Failure&)
-        {
-            status = static_cast<int>(ExitEdgeStatusNative::GeometryFailure);
-            return false;
-        }
-    }
+#include "ExitEdgeQueriesNative.inc"
 }
 #pragma managed(pop)
 
@@ -3853,39 +3611,103 @@ array<ExitSideCandidate^>^ Bridge::GetBoundaryExitSides(array<int>^ faceIds, dou
     return result;
 }
 
-ExitEdgeHit^ Bridge::EvaluateExitEdge(long long id, long long revision,
-                                      long long edgeRevision, long long edgeKey,
-                                      double u, double v, double tolerance)
+static NativeExitEdgeRef CopyExitReference(ExitEdgeReference^ reference)
+{
+    NativeExitEdgeRef native;
+    native.revision = reference->Revision; native.key = reference->EdgeKey;
+    native.faceId = reference->FaceId;
+    native.firstParameter = reference->FirstParameter; native.lastParameter = reference->LastParameter;
+    native.reversed = reference->Reversed;
+    native.startIndex = reference->StartIndex; native.endIndex = reference->EndIndex;
+    return native;
+}
+bool Bridge::CommitWorkingRouteGeometryDelta(long long id, long long revision, array<int>^ stagedRouteIds,
+    array<int>^ finalRouteIds, array<int>^ stagedPolylineIds, array<int>^ retainedRouteIds, array<int>^ deletedRouteIds)
+{
+    if (stagedRouteIds == nullptr || finalRouteIds == nullptr || stagedPolylineIds == nullptr ||
+        retainedRouteIds == nullptr || deletedRouteIds == nullptr) return false;
+    try {
+        std::vector<int> staged, finals, lines, retained, deleted;
+        for each (int value in stagedRouteIds) staged.push_back(value);
+        for each (int value in finalRouteIds) finals.push_back(value);
+        for each (int value in stagedPolylineIds) lines.push_back(value);
+        for each (int value in retainedRouteIds) retained.push_back(value);
+        for each (int value in deletedRouteIds) deleted.push_back(value);
+        return CommitWorkingGeometryDeltaNative(id, revision, staged, finals, lines, retained, deleted);
+    } catch (...) { return false; }
+}
+
+static ExitEdgeHit^ ManagedExitHit(long long id, long long revision, long long edgeKey, const ExitEdgeHitNative& native)
 {
     auto result = gcnew ExitEdgeHit();
-    result->Status = ExitEdgeQueryStatus::InvalidInput;
+    result->Status = static_cast<ExitEdgeQueryStatus>(native.status);
+    result->FaceId = native.faceId;
+    result->ContextId = id; result->ContextRevision = revision;
+    result->EdgeKey = edgeKey; result->Revision = revision;
+    if (native.status != ExitEdgeStatusNative::Hit) return result;
+    result->VertexKey = native.vertexKey;
+    result->Parameter = native.parameter;
+    result->Point = gcnew array<double>{native.point.X(), native.point.Y(), native.point.Z()};
+    result->Tangent = gcnew array<double>{native.tangent.X(), native.tangent.Y(), native.tangent.Z()};
+    result->DatumPoint = gcnew array<double>{native.datum.X(), native.datum.Y()};
+    return result;
+}
+
+static ExitEdgeHit^ FailedExitHit(ExitEdgeQueryStatus status)
+{
+    auto result = gcnew ExitEdgeHit();
+    result->Status = status;
     result->FaceId = -1;
-    try
-    {
-        int status = static_cast<int>(ExitEdgeQueryStatus::InvalidInput);
-        gp_Pnt point;
-        gp_Vec tangent;
-        double parameter = 0.0, datumU = 0.0, datumV = 0.0;
-        int faceId = -1;
-        if (!EvaluateExitEdgeNative(id, revision, edgeRevision, edgeKey, u, v, tolerance,
-                                    status, point, tangent, parameter, faceId, datumU, datumV))
-        {
-            result->Status = static_cast<ExitEdgeQueryStatus>(status);
-            return result;
-        }
-        result->Status = ExitEdgeQueryStatus::Hit;
-        result->FaceId = faceId;
-        result->Parameter = parameter;
-        result->Point = gcnew array<double>{point.X(), point.Y(), point.Z()};
-        result->Tangent = gcnew array<double>{tangent.X(), tangent.Y(), tangent.Z()};
-        result->DatumPoint = gcnew array<double>{datumU, datumV};
+    return result;
+}
+
+ExitEdgeHit^ Bridge::EvaluateExitEdge(long long id, long long revision,
+    long long edgeRevision, long long edgeKey, double u, double v, double tolerance)
+{
+    if (!std::isfinite(u) || !std::isfinite(v) || !std::isfinite(tolerance) || tolerance < 0.0)
+        return FailedExitHit(ExitEdgeQueryStatus::InvalidInput);
+    try {
+        return ManagedExitHit(id, revision, edgeKey,
+            EvaluateExitEdgeLegacyNative(id, revision, edgeRevision, edgeKey, u, v, tolerance));
+    } catch (...) { return FailedExitHit(ExitEdgeQueryStatus::GeometryFailure); }
+}
+
+ExitEdgeHit^ Bridge::ProjectExitEdge(long long id, long long revision, ExitEdgeReference^ reference,
+    double u, double v, double tolerance)
+{
+    if (reference == nullptr) return FailedExitHit(ExitEdgeQueryStatus::MissingReference);
+    try {
+        return ManagedExitHit(id, revision, reference->EdgeKey,
+            ProjectExitEdgeNative(id, revision, CopyExitReference(reference), u, v, tolerance));
+    } catch (...) { return FailedExitHit(ExitEdgeQueryStatus::GeometryFailure); }
+}
+
+ExitEdgeHit^ Bridge::EvaluateExitEdgeParameter(long long id, long long revision, ExitEdgeReference^ reference,
+    double parameter)
+{
+    if (reference == nullptr) return FailedExitHit(ExitEdgeQueryStatus::MissingReference);
+    try {
+        return ManagedExitHit(id, revision, reference->EdgeKey,
+            EvaluateExitEdgeParameterNative(id, revision, CopyExitReference(reference), parameter));
+    } catch (...) { return FailedExitHit(ExitEdgeQueryStatus::GeometryFailure); }
+}
+
+ExitEdgeRayResult^ Bridge::IntersectExitEdgeRay(long long id, long long revision, ExitEdgeReference^ reference,
+    double u, double v, double du, double dv, double tolerance)
+{
+    auto result = gcnew ExitEdgeRayResult();
+    result->Hits = gcnew array<ExitEdgeHit^>(0);
+    if (reference == nullptr) { result->Status = ExitEdgeQueryStatus::MissingReference; return result; }
+    try {
+        std::vector<ExitEdgeHitNative> hits;
+        result->Status = static_cast<ExitEdgeQueryStatus>(IntersectExitEdgeRayNative(id, revision, CopyExitReference(reference),
+            u, v, du, dv, tolerance, hits));
+        if (result->Status != ExitEdgeQueryStatus::Hit) return result;
+        result->Hits = gcnew array<ExitEdgeHit^>(static_cast<int>(hits.size()));
+        for (int i = 0; i < result->Hits->Length; ++i)
+            result->Hits[i] = ManagedExitHit(id, revision, reference->EdgeKey, hits[i]);
         return result;
-    }
-    catch (...)
-    {
-        result->Status = ExitEdgeQueryStatus::GeometryFailure;
-        return result;
-    }
+    } catch (...) { result->Status = ExitEdgeQueryStatus::GeometryFailure; return result; }
 }
 
 void Bridge::ShowExitCandidates(array<array<double>^>^ polylines)
@@ -4063,14 +3885,16 @@ void Bridge::ClearRoutePreview()
 
 void Bridge::SetRouteEndpoints(array<double>^ xyzFlat)
 {
-    std::vector<double> xyz;
-    if (xyzFlat != nullptr)
-    {
-        xyz.resize(xyzFlat->Length);
-        for (int i = 0; i < xyzFlat->Length; ++i) xyz[i] = xyzFlat[i];
-    }
-    SetRouteEndpointsNative(xyz);
+    SetRouteEndpointsNoRedraw(xyzFlat);
     if (!g_view.IsNull()) g_view->Redraw();
+}
+bool Bridge::SetRouteEndpointsNoRedraw(array<double>^ xyzFlat)
+{
+    try {
+        std::vector<double> xyz;
+        if (xyzFlat != nullptr) { xyz.reserve(xyzFlat->Length); for each (double value in xyzFlat) xyz.push_back(value); }
+        return SetRouteEndpointsNative(xyz);
+    } catch (...) { return false; }
 }
 
 array<double>^ Bridge::ProjectPowerLead(int leadId, array<double>^ sourceAndDestination,
@@ -4211,6 +4035,11 @@ void Bridge::SetShapeColor(double r, double g, double b)
 void Bridge::RedrawView()
 {
     if (!g_view.IsNull()) g_view->Redraw();
+}
+bool Bridge::TryRedrawView()
+{
+    if (g_view.IsNull()) return false;
+    try { g_view->Redraw(); return true; } catch (...) { return false; }
 }
 
 void Bridge::ClearOverlays()

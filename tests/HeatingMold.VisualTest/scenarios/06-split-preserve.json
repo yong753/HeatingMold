@@ -1,4 +1,4 @@
-{
+﻿{
   "schemaVersion": 2,
   "name": "06-split-preserve",
   "description": "A 분할 후 B 조건 변경·재생성 시 A의 분할 상태와 C가 보존되는지 확인",
@@ -33,7 +33,7 @@
         "circuits": 2,
         "disabledTurns": 1,
         "exitFaceId": 79,
-        "lengthMm": 5276.04,
+        "lengthMm": 5263.892,
         "lengthToleranceMm": 1.0,
         "marginMm": 5,
         "spacingMm": 10
@@ -237,7 +237,7 @@
         "turns": 7,
         "circuits": 2,
         "disabledTurns": 1,
-        "lengthMm": 5276.04,
+        "lengthMm": 5263.892,
         "lengthToleranceMm": 1.0
       }
     },

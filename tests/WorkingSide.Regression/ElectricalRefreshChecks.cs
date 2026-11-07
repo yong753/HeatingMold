@@ -48,8 +48,10 @@ static class ElectricalRefreshChecks
         areaType.GetProperty("AreaId")!.SetValue(area, 4302);
         ((IList)areaType.GetProperty("Exclusions")!.GetValue(area)!).Add((0d, -2d, 4d, 2d));
         areaType.GetProperty("Pattern")!.SetValue(area, Pattern(new Vec2(-8, 0), new Vec2(8, 0)));
-        areaType.GetProperty("NativePieceIds")!.SetValue(area, new[] { 9101 });
-        areaType.GetProperty("RoutePieceLengths")!.SetValue(area, new[] { 16.0 });
+        // 네이티브에 실제 존재하지 않는 조각 ID를 위조하면 새 차등 커밋의 삭제 검증이
+        // 실패해 무효화가 차단되므로, 확정 경로가 없는 초안 상태로 시작한다.
+        areaType.GetProperty("NativePieceIds")!.SetValue(area, Array.Empty<int>());
+        areaType.GetProperty("RoutePieceLengths")!.SetValue(area, Array.Empty<double>());
         areaType.GetProperty("PatternDisplayed")!.SetValue(area, true);
         ((IList)Field<object>(window, "_areas")).Add(area);
         Invoke(window, "ActivateArea", area);

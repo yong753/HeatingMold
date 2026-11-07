@@ -70,8 +70,8 @@ public partial class MainWindow
         if (area?.Pattern == null) { reason = "발열 경로가 없습니다"; return false; }
         if (area.Circuits == null || area.Circuits.Count == 0)
         {
-            if (!TryRefreshCircuits(area, out string circuitFailure))
-            { reason = circuitFailure; return false; }
+            reason = "확정 회로 경로가 없습니다";
+            return false;
         }
         int count = area.Pattern.RoutePieces.Count;
         if (count == 0) { reason = "경로 조각이 없습니다"; return false; }
@@ -83,7 +83,7 @@ public partial class MainWindow
             if (!double.IsFinite(area.RoutePieceLengths[i]) || area.RoutePieceLengths[i] < 0)
             { reason = "유효하지 않은 조각 길이가 있습니다"; return false; }
         int turns = area.Pattern.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector);
-        if (area.TurnEnabled == null || area.TurnEnabled.Count < turns)
+        if (area.TurnEnabled == null || area.TurnEnabled.Count != turns)
         { reason = "회로 분할 상태가 조각과 일치하지 않습니다"; return false; }
         if (!HasUsableCircuits(area, out reason)) return false;
         return true;
@@ -326,7 +326,8 @@ public partial class MainWindow
 
     /// <summary>
     /// 현재 회로별 전체 발열 길이를 표시 순서대로 만든다. 인출점 사이의 경로 전체를
-    /// 한 번만 합산하며 별도의 인출부 길이는 두지 않는다.
+    /// 한 번만 합산하며 별도의 인출부 길이는 두지 않는다. 점선 가이드(비회로 조각)는
+    /// 회로 조각 목록에 없거나 길이가 이미 0이므로 여기서 따로 걸러내지 않는다.
     /// </summary>
     private List<CircuitLengthInfo> GetCircuitLengths(WorkingArea area, string prefix = "")
     {
@@ -334,7 +335,7 @@ public partial class MainWindow
         if (area?.Pattern == null) return result;
 
         if (area.CircuitPieceIndices == null || area.CircuitPieceIndices.Count == 0)
-            TryRefreshCircuits(area, out _);
+            return result;
         for (int i = 0; i < area.CircuitPieceIndices.Count; i++)
         {
             double heating = 0;

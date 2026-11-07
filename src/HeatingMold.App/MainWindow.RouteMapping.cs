@@ -8,9 +8,8 @@ namespace HeatingMold.App;
 public partial class MainWindow
 {
     /// <summary>
-    /// 경로·핸들·미리보기·확정이 모두 사용하는 단일 표면 매핑 규칙.
-    /// 인출점은 원본 CAD edge 평가를 우선하고, 평가가 불가능하면 실측 공유 모서리
-    /// 폴리라인 보간으로만 대체한다. 일반 꼭지점은 선택 면 직접 히트를 우선한다.
+    /// 일반점의 단일 표면 매핑 규칙. 인출점은 좌표 동등성으로 치환하지 않고
+    /// 해당 endpoint occurrence의 원본 edge/parameter override로만 적용한다.
     /// </summary>
     private Func<Vec2, SurfaceMappedSample?> BuildSurfaceMapDelegate(
         WorkingArea area, WorkingSideDefinition side, Vec2? movedAnchorDatum = null,
@@ -18,37 +17,9 @@ public partial class MainWindow
     {
         context ??= CommittedRouteContext.Capture(area);
         int[] faces = context.FaceIds;
-        var anchors = new List<(Vec2 Datum, Vec3 Point, int FaceId)>();
-
-        void AddAnchor(Vec2 datum)
-        {
-            if (Serpentine.DistanceToChain(context.ExitChain, datum) > 0.05) return;
-            SurfaceMappedSample? sample = MapExitDatum(side, context, datum);
-            if (!sample.HasValue) return;
-            foreach (var existing in anchors)
-                if (Math.Abs(existing.Datum.X - datum.X) <= 1e-9 &&
-                    Math.Abs(existing.Datum.Y - datum.Y) <= 1e-9) return;
-            anchors.Add((datum, sample.Value.Point, sample.Value.FaceId));
-        }
-
-        if (movedAnchorDatum.HasValue) AddAnchor(movedAnchorDatum.Value);
-        foreach (Vec2 start in context.CircuitStarts) AddAnchor(start);
-        foreach (Vec2 end in context.CircuitEnds) AddAnchor(end);
-        if (context.StartAnchor.HasValue) AddAnchor(context.StartAnchor.Value);
-        if (context.EndAnchor.HasValue) AddAnchor(context.EndAnchor.Value);
-        if (area.Pattern != null && area.Pattern.RoutePieces.Count > 0)
-        {
-            var pieces = area.Pattern.RoutePieces;
-            if (pieces[0].Points.Count > 0) AddAnchor(pieces[0].Points[0]);
-            if (pieces[^1].Points.Count > 0) AddAnchor(pieces[^1].Points[^1]);
-        }
-
         long id = side.Id.Value, revision = side.Revision.Value;
         return uv =>
         {
-            foreach ((Vec2 datum, Vec3 point, int faceId) in anchors)
-                if (uv == datum) return new SurfaceMappedSample(uv, point, faceId);
-
             var direct = Bridge.MapWorkingPointOntoFaces(id, revision, faces, uv.X, uv.Y);
             if (direct != null && direct.Status == WorkingQueryStatus.Hit && direct.Point != null)
                 return new SurfaceMappedSample(uv,
@@ -65,70 +36,71 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 인출 경계 위 데이텀을 원본 CAD edge의 정확한 3D 점으로 평가한다.
-    /// edge 참조가 있는데 평가에 실패하면 폴리라인으로 조용히 대체하지 않는다.
+    /// 저장한 원본 parameter를 직접 평가한다. 재검색/스냅/보간은 하지 않는다.
     /// </summary>
     private SurfaceMappedSample? MapExitDatum(
-        WorkingSideDefinition side, CommittedRouteContext context, Vec2 datum)
+        WorkingSideDefinition side, CommittedRouteContext context, CircuitExitPoint exit)
     {
-        if (!TryProjectExitDatum(side, context, datum, 5.0, out _, out SurfaceMappedSample sample))
-            return null;
-        return sample;
+        return TryEvaluateExitSample(side, context, exit?.Binding, exit?.Point,
+            out SurfaceMappedSample sample, out _) ? sample : null;
     }
 
     /// <summary>인출점 이동 확정/미리보기에서 해당 꼭지점만 대체할 표본을 만든다.</summary>
     private SurfaceMappedSample? BuildExitVertexOverride(
-        WorkingSideDefinition side, CommittedRouteContext context, Vec2 datum) =>
-        MapExitDatum(side, context, datum);
+        WorkingSideDefinition side, CommittedRouteContext context, CircuitExitPoint exit)
+    {
+        if (!TryEvaluateExitSample(side, context, exit?.Binding, exit?.Point,
+                out SurfaceMappedSample sample, out string failure))
+            throw new InvalidOperationException("인출점 원본 CAD 평가 실패 — " + failure);
+        return sample;
+    }
 
     /// <summary>
-    /// 드래그 중 데이텀을 인출 edge 위로 투영한다. 원본 edge 참조가 있으면 곡선까지
-    /// 정확히 투영하고, 실패하면 대체하지 않는다. 반환 데이텀은 실제 edge 위 좌표다.
+    /// 드래그는 저장한 한 edge/trim에서만 2D 최근접 위치를 구한다.
+    /// snap 허용 거리는 커서용이며, 확정 parameter의 평가 공차를 완화하지 않는다.
     /// </summary>
     private bool TryProjectExitDatum(WorkingSideDefinition side, CommittedRouteContext context,
-        Vec2 datum, double tolerance, out Vec2 projected, out SurfaceMappedSample sample)
+        ExitEdgeBinding? binding, Vec2 datum, double tolerance,
+        out ExitBoundaryPoint projected, out SurfaceMappedSample sample, out string failure)
     {
-        projected = datum;
+        projected = default;
         sample = default;
-        if (context.ExitEdgeRefs.Count > 0)
-        {
-            SurfaceMappedSample? best = null;
-            Vec2 bestDatum = datum;
-            double bestDistance = double.MaxValue;
-            foreach (ExitEdgeReference reference in context.ExitEdgeRefs)
-            {
-                ExitEdgeHit hit = Bridge.EvaluateExitEdge(
-                    side.Id.Value, side.Revision.Value,
-                    reference.Revision, reference.EdgeKey,
-                    datum.X, datum.Y, tolerance);
-                if (hit == null || hit.Status != ExitEdgeQueryStatus.Hit ||
-                    hit.Point == null || hit.Point.Length < 3 ||
-                    hit.DatumPoint == null || hit.DatumPoint.Length < 2)
-                    continue;
-                Vec2 candidate = new(hit.DatumPoint[0], hit.DatumPoint[1]);
-                double dx = candidate.X - datum.X, dy = candidate.Y - datum.Y;
-                double distance = dx * dx + dy * dy;
-                if (distance >= bestDistance) continue;
-                bestDistance = distance;
-                bestDatum = candidate;
-                best = new SurfaceMappedSample(candidate,
-                    new Vec3(hit.Point[0], hit.Point[1], hit.Point[2]), hit.FaceId);
-            }
-            if (!best.HasValue) return false;
-            projected = bestDatum;
-            sample = best.Value;
-            return true;
-        }
-
-        if (context.ExitChain.Count < 2 || context.ExitChain3D.Count != context.ExitChain.Count)
+        failure = "MissingReference: 인출점의 원본 edge/parameter가 없습니다";
+        if (!binding.HasValue || context?.Boundary == null) return false;
+        ExitBoundaryResolution result = context.Boundary.ProjectBound(binding.Value, datum, tolerance);
+        if (!result.Succeeded)
+        { failure = result.Failure + ": 지정한 원본 edge에서 이동 위치를 정하지 못했습니다"; return false; }
+        projected = result.Point.Value;
+        if (!TryEvaluateExitSample(side, context, projected.Binding, projected.Point, out sample, out failure))
             return false;
-        projected = Serpentine.SnapOnChain(context.ExitChain, datum);
-        Vec3 point = PointOnExitChain3D(context.ExitChain, context.ExitChain3D, projected, out int segment);
-        if (projected.DistanceTo(datum) > tolerance) return false;
-        int faceId = segment >= 1 && segment - 1 < context.ExitChainFaceIds.Count
-            ? context.ExitChainFaceIds[segment - 1]
-            : context.ExitFaceId;
-        sample = new SurfaceMappedSample(projected, point, faceId);
+        return true;
+    }
+
+    private static bool TryEvaluateExitSample(WorkingSideDefinition side, CommittedRouteContext context,
+        ExitEdgeBinding? binding, Vec2? expected, out SurfaceMappedSample sample, out string failure)
+    {
+        sample = default;
+        failure = "MissingReference: 원본 edge/parameter 또는 투영 경계가 없습니다";
+        if (!binding.HasValue || context?.Boundary is not CadExitBoundary2D boundary) return false;
+        ExitEdgeBinding saved = binding.Value;
+        if (side == null || saved.WorkingContextId != side.Id.Value || saved.WorkingContextRevision != side.Revision.Value)
+        { failure = "StaleContext: 인출점과 확정 작업평면이 일치하지 않습니다"; return false; }
+        ExitEdgeHit hit = boundary.EvaluateNative(saved);
+        string provenance = "edge=" + saved.EdgeKey + ", revision=" + saved.ModelRevision +
+            ", context=" + saved.WorkingContextId + ", trim=[" + saved.FirstParameter + "," +
+            saved.LastParameter + "], parameter=" + saved.Parameter;
+        if (hit?.Status != ExitEdgeQueryStatus.Hit || hit.Point is not { Length: >= 3 } ||
+            hit.DatumPoint is not { Length: >= 2 })
+        { failure = (hit?.Status.ToString() ?? "GeometryFailure") + ": " + provenance; return false; }
+        Vec2 actual = new(hit.DatumPoint[0], hit.DatumPoint[1]);
+        Vec3 point = new(hit.Point[0], hit.Point[1], hit.Point[2]);
+        if (!double.IsFinite(actual.X) || !double.IsFinite(actual.Y) ||
+            !double.IsFinite(point.X) || !double.IsFinite(point.Y) || !double.IsFinite(point.Z) ||
+            (expected.HasValue && actual.DistanceTo(expected.Value) > ExitBoundaryConstraint.Tolerance) ||
+            side.Frame.Project(point).DistanceTo(actual) > ExitBoundaryConstraint.Tolerance)
+        { failure = "GeometryFailure: 원본 parameter의 2D/3D 좌표 불일치 — " + provenance; return false; }
+        sample = new SurfaceMappedSample(actual, point, hit.FaceId);
+        failure = null;
         return true;
     }
 }

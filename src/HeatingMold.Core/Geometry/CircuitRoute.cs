@@ -3,12 +3,16 @@ namespace HeatingMold.Core.Geometry;
 /// <summary>회로 경로의 시작/종료 인출점 역할.</summary>
 public enum CircuitExitRole { Start, End }
 
-/// <summary>회로 정본에 붙는 인출점. 위치와 함께 인출 경계 폴리라인의 구간을 보관한다.</summary>
+/// <summary>회로 정본에 붙는 인출점. CAD 경계는 원본 에지 Binding을 보관하고,
+/// 폴리라인 구간 정보는 비-CAD 호환 경로와 표시 용도로만 사용한다.</summary>
 public sealed record CircuitExitPoint(
     CircuitExitRole Role,
     Vec2 Point,
     int BoundarySegmentIndex,
-    double BoundaryParameter);
+    double BoundaryParameter)
+{
+    public ExitEdgeBinding? Binding { get; init; }
+}
 
 /// <summary>
 /// 한 회로의 완결 경로 정본. 모든 조각의 첫 점과 마지막 점은 각각 시작/종료 인출점이며,
@@ -22,6 +26,7 @@ public sealed record CircuitRoute(
     int LaneCount,
     int NominalLaneCount)
 {
+    public string? CandidateId { get; init; }
     public IReadOnlyList<Vec2> Path => CircuitRouteGeometry.PathFromPieces(Pieces);
     public IReadOnlyList<SerpentineSegment> Segments => CircuitRouteGeometry.SegmentsFromPieces(Pieces);
     public double TotalLength => CircuitRouteGeometry.TotalLength(Pieces);
@@ -37,7 +42,7 @@ public sealed record CircuitRoute(
             result.EndExit,
             result.AngleDeg,
             result.LaneCount,
-            result.NominalLaneCount);
+            result.NominalLaneCount) { CandidateId = result.CandidateId };
     }
 
     public SerpentineResult ToResult() => new()
@@ -51,6 +56,7 @@ public sealed record CircuitRoute(
         RoutePieces = Pieces,
         StartExit = StartExit,
         EndExit = EndExit,
+        CandidateId = CandidateId,
     };
 }
 
@@ -159,9 +165,9 @@ public static class CircuitRouteBuilder
         route = new CircuitRoute(
             trimmed,
             new CircuitExitPoint(CircuitExitRole.Start, start.Point,
-                start.SegmentIndex, start.SegmentParameter),
+                start.SegmentIndex, start.SegmentParameter) { Binding = start.Binding },
             new CircuitExitPoint(CircuitExitRole.End, end.Point,
-                end.SegmentIndex, end.SegmentParameter),
+                end.SegmentIndex, end.SegmentParameter) { Binding = end.Binding },
             angleDeg,
             laneCount,
             nominalLaneCount);

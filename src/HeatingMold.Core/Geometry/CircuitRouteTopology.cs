@@ -29,20 +29,48 @@ public sealed record CircuitRouteSetResult(
 /// </summary>
 public static class CircuitRouteTopology
 {
+    /// <summary>Validate and retain a circuit's saved endpoints. CAD parameters are evaluated
+    /// directly; an existing endpoint is never rebound by a neighbouring-edge search.</summary>
+    public static CircuitRouteSetResult Constrain(CircuitRoute route,
+        IReadOnlyList<Vec2> exitChain, IExitBoundary2D? boundary = null)
+    {
+        ArgumentNullException.ThrowIfNull(route);
+        ArgumentNullException.ThrowIfNull(exitChain);
+        if (route.Pieces.Count == 0) return CircuitRouteSetResult.Fail(
+            CircuitRouteTopologyFailureReason.EmptyRoute, "The circuit route has no pieces.");
+        if (boundary == null && exitChain.Count < 2) return CircuitRouteSetResult.Fail(
+            CircuitRouteTopologyFailureReason.InvalidInput, "The exit boundary needs at least two points.");
+        if (!TryValidateExit(route.StartExit, exitChain, boundary, out string startFailure))
+            return CircuitRouteSetResult.Fail(CircuitRouteTopologyFailureReason.ExitBoundaryConflict,
+                "The saved start exit is invalid: " + startFailure);
+        if (!TryValidateExit(route.EndExit, exitChain, boundary, out string endFailure))
+            return CircuitRouteSetResult.Fail(CircuitRouteTopologyFailureReason.ExitBoundaryConflict,
+                "The saved end exit is invalid: " + endFailure);
+        return CircuitRouteSetResult.Ok(new[] { route });
+    }
+
     public static CircuitRouteSetResult Split(CircuitRoute route,
-        IReadOnlyList<bool> turnEnabled, IReadOnlyList<Vec2> exitChain)
+        IReadOnlyList<bool> turnEnabled, IReadOnlyList<Vec2> exitChain, IExitBoundary2D? boundary = null,
+        IReadOnlyDictionary<(int PieceIndex, CircuitExitRole Role), CircuitExitPoint>? existingExits = null)
     {
         ArgumentNullException.ThrowIfNull(route);
         ArgumentNullException.ThrowIfNull(turnEnabled);
         ArgumentNullException.ThrowIfNull(exitChain);
         if (route.Pieces.Count == 0) return CircuitRouteSetResult.Fail(
             CircuitRouteTopologyFailureReason.EmptyRoute, "The circuit route has no pieces.");
-        if (exitChain.Count < 2) return CircuitRouteSetResult.Fail(
+        if (boundary == null && exitChain.Count < 2) return CircuitRouteSetResult.Fail(
             CircuitRouteTopologyFailureReason.InvalidInput, "The exit boundary needs at least two points.");
         int turnCount = route.Pieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector);
         if (turnEnabled.Count != turnCount) return CircuitRouteSetResult.Fail(
             CircuitRouteTopologyFailureReason.InvalidInput,
             "One enabled state is required per turn connector.");
+        // Retained CAD endpoints must still refer to the same model/context/parameter,
+        // even when all connectors remain enabled. A failed query cannot drop provenance.
+        if (boundary != null || route.StartExit.Binding.HasValue || route.EndExit.Binding.HasValue)
+        {
+            CircuitRouteSetResult constrained = Constrain(route, exitChain, boundary);
+            if (!constrained.Succeeded) return constrained;
+        }
         if (turnEnabled.All(enabled => enabled))
             return CircuitRouteSetResult.Ok(new[] { route });
 
@@ -50,7 +78,8 @@ public static class CircuitRouteTopology
         string detail = string.Empty;
         bool failed = false;
         var segment = new Segment(route.Pieces, route.StartExit, route.EndExit,
-            turnEnabled.ToArray(), route.AngleDeg, exitChain.ToArray());
+            turnEnabled.ToArray(), route.AngleDeg, exitChain.ToArray(), boundary, route.CandidateId,
+            Enumerable.Range(0, route.Pieces.Count).ToArray(), existingExits?.ToDictionary(e => e.Key, e => e.Value));
         Visit(segment);
 
         return failed
@@ -134,28 +163,21 @@ public static class CircuitRouteTopology
             failure = "A split turn must be adjacent to heating runs.";
             return false;
         }
-        if (!TryDirection(leftLast.Points, fromEnd: true, out Vec2 leftEnd, out Vec2 leftPrevious) ||
-            !TryDirection(rightFirst.Points, fromEnd: false, out Vec2 rightStart, out Vec2 rightNext))
+        if (!TryCutExit(segment, leftLast.Points, fromEnd: true,
+                segment.PieceIndices[turnPieceIndex - 1], CircuitExitRole.End,
+                out ExitBoundaryPoint leftPoint, out string leftBoundaryFailure))
         {
-            failure = "A run adjacent to the split turn is degenerate.";
+            failure = "The left cut end cannot reach the exit boundary: " + leftBoundaryFailure;
+            return false;
+        }
+        if (!TryCutExit(segment, rightFirst.Points, fromEnd: false,
+                segment.PieceIndices[turnPieceIndex + 1], CircuitExitRole.Start,
+                out ExitBoundaryPoint rightPoint, out string rightBoundaryFailure))
+        {
+            failure = "The right cut end cannot reach the exit boundary: " + rightBoundaryFailure;
             return false;
         }
 
-        var leftBoundary = ExitBoundaryConstraint.TryResolve(leftEnd, leftPrevious, segment.ExitChain);
-        if (!leftBoundary.Succeeded)
-        {
-            failure = "The left cut end cannot reach the exit boundary: " + leftBoundary.Failure;
-            return false;
-        }
-        var rightBoundary = ExitBoundaryConstraint.TryResolve(rightStart, rightNext, segment.ExitChain);
-        if (!rightBoundary.Succeeded)
-        {
-            failure = "The right cut end cannot reach the exit boundary: " + rightBoundary.Failure;
-            return false;
-        }
-
-        ExitBoundaryPoint leftPoint = leftBoundary.Point!.Value;
-        ExitBoundaryPoint rightPoint = rightBoundary.Point!.Value;
         var leftExitEnd = ToExit(CircuitExitRole.End, leftPoint);
         var rightExitStart = ToExit(CircuitExitRole.Start, rightPoint);
         var leftTrimmed = ReplaceEndpoint(leftPieces, atStart: false, leftPoint.Point);
@@ -178,9 +200,47 @@ public static class CircuitRouteTopology
 
         int splitTurn = CountTurnsBefore(segment.Pieces, turnPieceIndex);
         left = new Segment(leftRoute!.Pieces, leftRoute.StartExit, leftRoute.EndExit,
-            segment.Turns.Take(splitTurn).ToArray(), segment.AngleDeg, segment.ExitChain);
+            segment.Turns.Take(splitTurn).ToArray(), segment.AngleDeg, segment.ExitChain,
+            segment.Boundary, segment.CandidateId, segment.PieceIndices.Take(turnPieceIndex).ToArray(),
+            segment.ExistingExits);
         right = new Segment(rightRoute!.Pieces, rightRoute.StartExit, rightRoute.EndExit,
-            segment.Turns.Skip(splitTurn + 1).ToArray(), segment.AngleDeg, segment.ExitChain);
+            segment.Turns.Skip(splitTurn + 1).ToArray(), segment.AngleDeg, segment.ExitChain,
+            segment.Boundary, segment.CandidateId, segment.PieceIndices.Skip(turnPieceIndex + 1).ToArray(),
+            segment.ExistingExits);
+        return true;
+    }
+
+    private static bool TryCutExit(Segment segment, IReadOnlyList<Vec2> points, bool fromEnd,
+        int originalPieceIndex, CircuitExitRole role, out ExitBoundaryPoint point, out string failure)
+    {
+        point = default;
+        failure = string.Empty;
+        if (segment.ExistingExits != null && segment.ExistingExits.TryGetValue((originalPieceIndex, role), out var saved))
+        {
+            // Piece identity and endpoint role, never projected-coordinate equality, select
+            // an existing cut endpoint. A next-bend edit must not recompute its parameter.
+            if (saved.Role != role)
+            {
+                failure = "The saved cut endpoint has the wrong role.";
+                return false;
+            }
+            if (!TryValidateExit(saved, segment.ExitChain, segment.Boundary, out failure)) return false;
+            point = ToBoundary(saved);
+            return true;
+        }
+        if (!TryDirection(points, fromEnd, out Vec2 datum, out Vec2 next))
+        {
+            failure = ExitBoundaryFailureReason.DegenerateSegment.ToString();
+            return false;
+        }
+        ExitBoundaryResolution resolved = ExitBoundaryConstraint.TryResolve(datum, next, segment.ExitChain,
+            boundary: segment.Boundary);
+        if (!resolved.Succeeded)
+        {
+            failure = resolved.Failure.ToString()!;
+            return false;
+        }
+        point = resolved.Point!.Value;
         return true;
     }
 
@@ -190,6 +250,32 @@ public static class CircuitRouteTopology
                 ToBoundary(segment.EndExit), segment.AngleDeg, LaneCount(segment.Pieces),
                 LaneCount(segment.Pieces), out route, out failure))
             return false;
+        route = route! with { CandidateId = segment.CandidateId };
+        return true;
+    }
+
+    private static bool TryValidateExit(CircuitExitPoint exit, IReadOnlyList<Vec2> exitChain,
+        IExitBoundary2D? boundary, out string failure)
+    {
+        failure = string.Empty;
+        if (boundary != null)
+        {
+            ExitBoundaryResolution evaluated = ExitBoundaryConstraint.EvaluateSaved(boundary, exit.Binding, exit.Point);
+            if (evaluated.Succeeded) return true;
+            failure = evaluated.Failure.ToString()!;
+            return false;
+        }
+        if (exit.Binding.HasValue)
+        {
+            failure = ExitBoundaryFailureReason.MissingReference.ToString();
+            return false;
+        }
+        if (!double.IsFinite(exit.Point.X) || !double.IsFinite(exit.Point.Y)
+            || Serpentine.DistanceToChain(exitChain, exit.Point) > ExitBoundaryConstraint.Tolerance)
+        {
+            failure = ExitBoundaryFailureReason.NoIntersection.ToString();
+            return false;
+        }
         return true;
     }
 
@@ -246,10 +332,10 @@ public static class CircuitRouteTopology
     }
 
     private static CircuitExitPoint ToExit(CircuitExitRole role, ExitBoundaryPoint boundary) =>
-        new(role, boundary.Point, boundary.SegmentIndex, boundary.SegmentParameter);
+        new(role, boundary.Point, boundary.SegmentIndex, boundary.SegmentParameter) { Binding = boundary.Binding };
 
     private static ExitBoundaryPoint ToBoundary(CircuitExitPoint exit) =>
-        new(exit.Point, exit.BoundarySegmentIndex, exit.BoundaryParameter);
+        new(exit.Point, exit.BoundarySegmentIndex, exit.BoundaryParameter) { Binding = exit.Binding };
 
     private static int LaneCount(IReadOnlyList<SerpentineRoutePiece> pieces) =>
         pieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun);
@@ -268,5 +354,9 @@ public static class CircuitRouteTopology
         CircuitExitPoint EndExit,
         IReadOnlyList<bool> Turns,
         double AngleDeg,
-        IReadOnlyList<Vec2> ExitChain);
+        IReadOnlyList<Vec2> ExitChain,
+        IExitBoundary2D? Boundary,
+        string? CandidateId,
+        IReadOnlyList<int> PieceIndices,
+        IReadOnlyDictionary<(int PieceIndex, CircuitExitRole Role), CircuitExitPoint>? ExistingExits);
 }

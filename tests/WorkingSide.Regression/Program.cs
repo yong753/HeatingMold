@@ -35,6 +35,17 @@ static class Program
         (T)target.GetType().GetField(name,BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(target)!;
     static void SetField(object target,string name,object value) =>
         target.GetType().GetField(name,BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(target,value);
+    static void RunGroup(string name, Action group)
+    {
+        try { group(); }
+        catch (Exception ex)
+        {
+            Console.WriteLine("CHECK-GROUP FAILED " + name + ": " + ex);
+            for (Exception inner = ex.InnerException; inner != null; inner = inner.InnerException)
+                Console.WriteLine("  inner: " + inner);
+            throw;
+        }
+    }
     [STAThread]
     static void Main(string[] args)
     {
@@ -178,18 +189,22 @@ static class Program
             "boundary diagnostic canvas removed; axis selector removed because working direction is fixed to +Z");
         SidebarTabChecks.Run(window);
         AreaHighlightChecks.Run(window);
-        ExclusionExitChecks.Run(window);
-        VertexEditChecks.Run(window);
-        ElectricalRefreshChecks.Run(window);
-        PatternStateChecks.Run(window);
-        CircuitExitOverrideChecks.Run(window);
-        GeometryRollbackChecks.Run(window);
+        RunGroup("ExclusionExitChecks", () => ExclusionExitChecks.Run(window, args[0]));
+        RunGroup("VertexEditChecks", () => VertexEditChecks.Run(window, args[0]));
+        RunGroup("ElectricalRefreshChecks", () => ElectricalRefreshChecks.Run(window));
+        RunGroup("PatternStateChecks", () => PatternStateChecks.Run(window));
+        RunGroup("CircuitExitOverrideChecks", () => CircuitExitOverrideChecks.Run(window));
+        RunGroup("GeometryRollbackChecks", () => GeometryRollbackChecks.Run(window));
         Check(typeof(Bridge).GetMethod("HlrProject")==null && typeof(Bridge).GetMethod("HlrEdges")!=null,
             "HLR smoke API removed while exporter HlrEdges remains");
         viewport.RectangleSelectionMode=true;
         Check(viewport.RectangleSelectionMode,"rectangle interaction remains independent of removed diagnostic mode");
-        Check(Bridge.ReturnToWorkingFront(front.Id,front.Revision),"active working front is independent of camera state");
-        Check(Bridge.LoadStep(Path.Combine(args[0],"ring.stp")),"load ring fixture");
+        // 새 검사 그룹(인출면/편집)이 exitSides.stp·layers.stp를 재로드해 기존 작업 컨텍스트를
+        // 무효화하므로, 카메라 복귀 검사용 컨텍스트를 이 지점에서 새로 만든다.
+        front = Bridge.CreateWorkingContext(0, 0, 1, 1, 0, 0);
+        Check(front != null, "camera check recreates a live working context after group reloads");
+        Check(Bridge.ReturnToWorkingFront(front.Id, front.Revision), "active working front is independent of camera state");
+        Check(Bridge.LoadStep(Path.Combine(args[0], "ring.stp")), "load ring fixture");
         Check(Bridge.QueryWorkingSurface(front.Id,front.Revision,0,0).Status==WorkingQueryStatus.StaleContext,"model reload invalidates native contexts");
         var ringContext=Bridge.CreateWorkingContext(0,0,1,1,0,0); var rings=Rings(ringContext);
         Check(rings.Count==2 && rings.Count(r=>r.IsHole)==1,"whole-model union retains hole across disconnected adjacent sheet faces");

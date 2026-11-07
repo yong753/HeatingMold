@@ -130,14 +130,14 @@ public static class SerpentineVertexEdit
         {
             IReadOnlyList<Vec2> first = newPieces[0].Points;
             if (first.Count > 0)
-                startExit = startExit with { Point = first[0] };
+                startExit = startExit with { Point = first[0], Binding = first[0] == startExit.Point ? startExit.Binding : null };
         }
         CircuitExitPoint? endExit = source.EndExit;
         if (endExit != null && newPieces.Count > 0)
         {
             IReadOnlyList<Vec2> last = newPieces[^1].Points;
             if (last.Count > 0)
-                endExit = endExit with { Point = last[^1] };
+                endExit = endExit with { Point = last[^1], Binding = last[^1] == endExit.Point ? endExit.Binding : null };
         }
 
         return new SerpentineResult
@@ -253,7 +253,7 @@ public static class SerpentineVertexPreview
 /// <summary>편집된 구간이 적용영역(외곽+홀) 안에 남는지 검사한다.</summary>
 public static class RouteVertexValidator
 {
-    /// <summary>검사 표본 간격(mm). 이보다 좁은 경계 요철은 놓칠 수 있다.</summary>
+    /// <summary>호환성용 기존 표본 간격(mm). 영역 검사는 더 이상 이 값을 사용하지 않는다.</summary>
     public const double SampleSpacing = 0.5;
 
     public static bool SegmentsStayInRegion(IReadOnlyList<IReadOnlyList<Vec2>> region,
@@ -275,18 +275,67 @@ public static class RouteVertexValidator
             if (!double.IsFinite(length)) { failure = "구간 좌표가 유한하지 않습니다."; return false; }
             if (length <= 1e-9) continue;
 
-            int steps = Math.Max(1, (int)Math.Ceiling(length / SampleSpacing));
-            for (int step = 0; step <= steps; step++)
+            if (!InsideOrOn(region, a)) { failure = OutsideRegionFailure(a); return false; }
+            if (!InsideOrOn(region, b)) { failure = OutsideRegionFailure(b); return false; }
+
+            Vec2 direction = b - a;
+            var parameters = new List<double> { 0, 1 };
+            foreach (IReadOnlyList<Vec2> ring in region)
             {
-                Vec2 p = a + (b - a) * (step / (double)steps);
+                if (ring.Count < 3) continue;
+                for (int edge = 0; edge < ring.Count; edge++)
+                    AddIntersectionParameters(a, direction, ring[edge], ring[(edge + 1) % ring.Count], parameters);
+            }
+            parameters.Sort();
+
+            // 모든 경계 교차점 사이의 open interval에서는 even-odd 포함 여부가 일정하다.
+            // 가까운 매개변수를 허용오차로 합치면 좁은 홀을 다시 놓치므로 중복 값만 건너뛴다.
+            for (int interval = 1; interval < parameters.Count; interval++)
+            {
+                double start = parameters[interval - 1], end = parameters[interval];
+                if (end <= start) continue;
+                Vec2 p = a + direction * (start + (end - start) * 0.5);
                 if (InsideOrOn(region, p)) continue;
-                failure = string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                    "수정된 구간이 적용영역을 벗어납니다 — ({0:F3}, {1:F3})", p.X, p.Y);
+                failure = OutsideRegionFailure(p);
                 return false;
             }
         }
         return true;
     }
+
+    private static void AddIntersectionParameters(Vec2 a, Vec2 direction, Vec2 c, Vec2 d,
+        List<double> parameters)
+    {
+        Vec2 edge = d - c, offset = c - a;
+        double denominator = Cross(direction, edge);
+        if (denominator == 0)
+        {
+            if (Cross(offset, direction) != 0) return;
+
+            // 공선 겹침은 허용한다. 겹침 양끝도 분할점으로 보존한다(길이 0인 링 변 포함).
+            bool useX = Math.Abs(direction.X) >= Math.Abs(direction.Y);
+            double first = useX ? (c.X - a.X) / direction.X : (c.Y - a.Y) / direction.Y;
+            double last = useX ? (d.X - a.X) / direction.X : (d.Y - a.Y) / direction.Y;
+            double start = Math.Max(0, Math.Min(first, last));
+            double end = Math.Min(1, Math.Max(first, last));
+            if (start <= end)
+            {
+                parameters.Add(start);
+                parameters.Add(end);
+            }
+            return;
+        }
+
+        double t = Cross(offset, edge) / denominator;
+        double u = Cross(offset, direction) / denominator;
+        if (t >= 0 && t <= 1 && u >= 0 && u <= 1) parameters.Add(t);
+    }
+
+    private static double Cross(Vec2 a, Vec2 b) => a.X * b.Y - a.Y * b.X;
+
+    private static string OutsideRegionFailure(Vec2 p) =>
+        string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            "수정된 구간이 적용영역을 벗어납니다 — ({0:F3}, {1:F3})", p.X, p.Y);
 
     private static bool InsideOrOn(IReadOnlyList<IReadOnlyList<Vec2>> region, Vec2 p)
     {

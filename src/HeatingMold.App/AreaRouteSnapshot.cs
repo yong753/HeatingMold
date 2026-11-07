@@ -31,4 +31,7 @@ internal sealed record AreaRouteSnapshot(
     List<CircuitExitOverride> CircuitExitOverrides,
     List<ExitEdgeReference> ExitEdgeRefs,
     AppliedGenerationInputs AppliedInputs,
-    CommittedRouteContext CommittedMapping);
+    CommittedRouteContext CommittedMapping,
+    IExitBoundary2D ExitBoundary,
+    AnchoredCandidate SelectedAnchorCandidate,
+    bool RouteEdited);

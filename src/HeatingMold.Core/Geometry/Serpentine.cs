@@ -36,6 +36,8 @@ public sealed class SerpentineResult
     public CircuitExitPoint? StartExit { get; init; }
     /// <summary>종료 인출점. 인출면이 고정된 생성 결과에만 존재한다.</summary>
     public CircuitExitPoint? EndExit { get; init; }
+    /// <summary>Identity of the selected route candidate, preserved through circuit conversions.</summary>
+    public string? CandidateId { get; init; }
 }
 
 /// <summary>제외영역 경로 계산이 실패한 이유. 분리된 발열영역을 억지로 잇지 않고 호출부가
@@ -52,6 +54,8 @@ public enum SerpentineComponentsFailureReason
     TooManyFragments,
     /// <summary>모든 레인 구간을 한 번씩 잇는 완전 경로가 존재하지 않음.</summary>
     NoCompletePath,
+    /// <summary>The exact CAD exit boundary could not be resolved or validated.</summary>
+    ExitBoundaryConflict,
 }
 
 public sealed record SerpentineComponentsResult(
@@ -622,10 +626,11 @@ public static class Serpentine
         IReadOnlyList<IReadOnlyList<Vec2>>? holes,
         PatternParams p,
         IReadOnlyList<Vec2> exitChain,
-        PatternDirection direction)
+        PatternDirection direction,
+        IExitBoundary2D? boundary = null)
     {
         var candidates = new List<AnchoredCandidate>();
-        if (outer.Count < 3 || p.Spacing <= 0 || exitChain.Count < 2) return candidates;
+        if (outer.Count < 3 || p.Spacing <= 0 || (boundary == null && exitChain.Count < 2)) return candidates;
 
         foreach (double angleDeg in AngleCandidates(outer, direction))
         {
@@ -636,11 +641,17 @@ public static class Serpentine
                 if (regionCount != 1 || route == null || route.Path.Count < 2) continue;
                 SerpentineResult world = ToWorld(route, rad, angleDeg);
                 if (!TryBuildAnchoredRoute(world, exitChain, p,
-                        out CircuitRoute? trimmed, out ExitBoundaryPoint start, out ExitBoundaryPoint end))
+                        out CircuitRoute? trimmed, out ExitBoundaryPoint start, out ExitBoundaryPoint end, out _, boundary))
                     continue;
-                if (candidates.Any(c => c.Start.DistanceTo(start.Point) <= AnchorMatchTolerance
+                if (boundary == null && candidates.Any(c => c.Start.DistanceTo(start.Point) <= AnchorMatchTolerance
                         && c.End.DistanceTo(end.Point) <= AnchorMatchTolerance)) continue;
-                candidates.Add(new AnchoredCandidate(start.Point, end.Point, angleDeg));
+                candidates.Add(new AnchoredCandidate(start.Point, end.Point, angleDeg)
+                {
+                    CandidateId = Guid.NewGuid().ToString("N"),
+                    StartBinding = start.Binding,
+                    EndBinding = end.Binding,
+                    StartLeftToRight = startLtr,
+                });
             }
         }
         return candidates;
@@ -655,38 +666,107 @@ public static class Serpentine
         IReadOnlyList<Vec2> exitChain,
         Vec2 startAnchor,
         Vec2 endAnchor,
-        PatternDirection direction)
+        PatternDirection direction,
+        IExitBoundary2D? boundary = null,
+        AnchoredCandidate? candidate = null) =>
+        GenerateAnchoredCore(outer, holes, p, exitChain, startAnchor, endAnchor, direction, candidate, boundary);
+
+    /// <summary>Generate the selected candidate without reselecting original edges by coordinates.</summary>
+    public static AnchoredResult GenerateAnchored(
+        IReadOnlyList<Vec2> outer,
+        IReadOnlyList<IReadOnlyList<Vec2>>? holes,
+        PatternParams p,
+        IReadOnlyList<Vec2> exitChain,
+        AnchoredCandidate candidate,
+        PatternDirection direction,
+        IExitBoundary2D? boundary = null)
     {
-        if (outer.Count < 3 || p.Spacing <= 0 || exitChain.Count < 2)
+        if (candidate == null) return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
+        return GenerateAnchoredCore(outer, holes, p, exitChain, candidate.Start, candidate.End,
+            direction, candidate, boundary);
+    }
+
+    private static AnchoredResult GenerateAnchoredCore(
+        IReadOnlyList<Vec2> outer,
+        IReadOnlyList<IReadOnlyList<Vec2>>? holes,
+        PatternParams p,
+        IReadOnlyList<Vec2> exitChain,
+        Vec2 startAnchor,
+        Vec2 endAnchor,
+        PatternDirection direction,
+        AnchoredCandidate? candidate,
+        IExitBoundary2D? boundary)
+    {
+        if (outer.Count < 3 || p.Spacing <= 0 || (boundary == null && exitChain.Count < 2))
             return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
         if (startAnchor.DistanceTo(endAnchor) <= AnchorMatchTolerance)
             return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
-        if (DistanceToChain(exitChain, startAnchor) > ChainTolerance
-            || DistanceToChain(exitChain, endAnchor) > ChainTolerance)
+        if (candidate != null && !AngleCandidates(outer, direction).Any(a => Math.Abs(a - candidate.AngleDeg) <= 1e-9))
+            return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
+        if (candidate != null && (candidate.Start.DistanceTo(startAnchor) > ExitBoundaryConstraint.Tolerance
+            || candidate.End.DistanceTo(endAnchor) > ExitBoundaryConstraint.Tolerance))
+            return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
+        if (boundary == null && (candidate?.StartBinding != null || candidate?.EndBinding != null))
+            return AnchoredResult.Fail(AnchoredFailureReason.ExitBoundaryConflict, ExitBoundaryFailureReason.MissingReference);
+        if (boundary == null && (DistanceToChain(exitChain, startAnchor) > ChainTolerance
+            || DistanceToChain(exitChain, endAnchor) > ChainTolerance))
             return AnchoredResult.Fail(AnchoredFailureReason.AnchorNotOnExitChain);
 
+        ExitBoundaryPoint? savedStart = null, savedEnd = null;
+        if (boundary != null)
+        {
+            ExitBoundaryResolution startCheck = ValidateAnchor(boundary, startAnchor, candidate?.StartBinding, candidate != null);
+            if (!startCheck.Succeeded)
+                return AnchoredResult.Fail(AnchoredFailureReason.ExitBoundaryConflict, startCheck.Failure);
+            ExitBoundaryResolution endCheck = ValidateAnchor(boundary, endAnchor, candidate?.EndBinding, candidate != null);
+            if (!endCheck.Succeeded)
+                return AnchoredResult.Fail(AnchoredFailureReason.ExitBoundaryConflict, endCheck.Failure);
+            savedStart = startCheck.Point;
+            savedEnd = endCheck.Point;
+        }
+
+        ExitBoundaryFailureReason? boundaryFailure = null;
         foreach (double angleDeg in AngleCandidates(outer, direction))
         {
+            if (candidate != null && Math.Abs(candidate.AngleDeg - angleDeg) > 1e-9) continue;
             foreach (bool startLtr in new[] { true, false })
             {
+                if (candidate?.StartLeftToRight is { } selectedLtr && selectedLtr != startLtr) continue;
                 (int regionCount, double rad, LocalRoute? route) =
                     BuildAtAngle(outer, holes, p, angleDeg, startLtr, requireEvenRuns: true);
                 if (regionCount != 1 || route == null || route.Path.Count < 2) continue;
                 SerpentineResult world = ToWorld(route, rad, angleDeg);
                 if (!TryResolveExitPoints(world, exitChain, p,
-                        out ExitBoundaryPoint start, out ExitBoundaryPoint end))
+                        out ExitBoundaryPoint start, out ExitBoundaryPoint end, out var resolveFailure, boundary))
+                {
+                    boundaryFailure = resolveFailure ?? boundaryFailure;
                     continue;
-                if (!Near(start.Point, startAnchor)) continue;
-                if (!Near(end.Point, endAnchor)) continue;
+                }
+                if (boundary == null)
+                {
+                    if (!Near(start.Point, startAnchor) || !Near(end.Point, endAnchor)) continue;
+                }
+                else
+                {
+                    if (!MatchesSaved(start, savedStart!.Value) || !MatchesSaved(end, savedEnd!.Value))
+                    {
+                        boundaryFailure = ExitBoundaryFailureReason.GeometryFailure;
+                        continue;
+                    }
+                    start = savedStart.Value;
+                    end = savedEnd.Value;
+                }
                 if (!CircuitRouteBuilder.TryTrimToExit(world.RoutePieces, start, end,
                         angleDeg, world.LaneCount, world.NominalLaneCount,
                         out CircuitRoute? trimmed, out _))
                     continue;
-                return AnchoredResult.Ok(trimmed!.ToResult());
+                return AnchoredResult.Ok((trimmed! with { CandidateId = candidate?.CandidateId }).ToResult());
             }
         }
 
-        return AnchoredResult.Fail(ClassifyFailure(outer, holes, p, exitChain, direction, startAnchor, endAnchor));
+        return boundary != null
+            ? AnchoredResult.Fail(AnchoredFailureReason.ExitBoundaryConflict, boundaryFailure)
+            : AnchoredResult.Fail(ClassifyFailure(outer, holes, p, exitChain, direction, startAnchor, endAnchor));
     }
 
     /// <summary>제외영역이 있는 영역에서 인출면 양 끝을 고정할 수 있는 후보를 계산한다.
@@ -697,9 +777,10 @@ public static class Serpentine
         IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
         PatternParams p,
         IReadOnlyList<Vec2> exitChain,
-        PatternDirection direction)
+        PatternDirection direction,
+        IExitBoundary2D? boundary = null)
     {
-        if (outer.Count < 3 || p.Spacing <= 0 || exitChain.Count < 2)
+        if (outer.Count < 3 || p.Spacing <= 0 || (boundary == null && exitChain.Count < 2))
             return new ExcludedCandidatesResult(Array.Empty<ExcludedAnchorCandidate>(),
                 SerpentineComponentsFailureReason.InvalidInput);
         ArgumentNullException.ThrowIfNull(exclusions);
@@ -707,6 +788,7 @@ public static class Serpentine
 
         var candidates = new List<ExcludedAnchorCandidate>();
         bool anySplit = false, anyTooComplex = false, anyTooMany = false, anyNoPath = false;
+        ExitBoundaryFailureReason? boundaryFailure = null;
         foreach (double angleDeg in AngleCandidates(outer, direction))
         {
             double rad = angleDeg * Math.PI / 180.0;
@@ -727,9 +809,21 @@ public static class Serpentine
             List<LaneIntervalNode> nodes = FlattenLaneNodes(byLane);
             List<int>[] adjacency = BuildLaneAdjacency(byLane, nodes.Count);
             ulong mask = (1UL << nodeCount) - 1;
+            // Endpoint eligibility is computed once; a sampled guide must not make a CAD
+            // endpoint infinitely expensive before the exact boundary is consulted.
+            double[][] leadCosts = nodes.Select(node => new[]
+            {
+                LeadCost(node, 0), LeadCost(node, 1),
+            }).ToArray();
+            double LeadCost(LaneIntervalNode node, int endpoint)
+            {
+                double cost = EndpointLeadCost(node, endpoint, exitChain, p, rad, boundary, out var costFailure);
+                boundaryFailure = costFailure ?? boundaryFailure;
+                return cost;
+            }
             var solutions = SolveLaneChainDp(nodes, adjacency, mask,
-                (node, endpoint) => EndpointLeadCost(nodes[node], endpoint, exitChain, p, rad),
-                (node, endpoint) => EndpointLeadCost(nodes[node], endpoint, exitChain, p, rad),
+                (node, endpoint) => leadCosts[node][endpoint],
+                (node, endpoint) => leadCosts[node][endpoint],
                 collectAll: true, requireComplete: true, out var failure);
             if (failure == SerpentineComponentsFailureReason.TooComplex) { anyTooComplex = true; continue; }
             if (solutions.Count == 0) { anyNoPath = true; continue; }
@@ -746,13 +840,22 @@ public static class Serpentine
                     }).ToList();
                 SerpentineResult world = BuildPatternFromPieces(worldPieces, angleDeg, laneCount);
                 if (!TryBuildAnchoredRoute(world, exitChain, p,
-                        out CircuitRoute? trimmed, out ExitBoundaryPoint start, out ExitBoundaryPoint end))
+                        out CircuitRoute? trimmed, out ExitBoundaryPoint start, out ExitBoundaryPoint end,
+                        out var candidateFailure, boundary))
+                {
+                    boundaryFailure = candidateFailure ?? boundaryFailure;
                     continue;
-                if (candidates.Any(c => c.Start.DistanceTo(start.Point) <= AnchorMatchTolerance
+                }
+                if (boundary == null && candidates.Any(c => c.Start.DistanceTo(start.Point) <= AnchorMatchTolerance
                         && c.End.DistanceTo(end.Point) <= AnchorMatchTolerance)) continue;
                 candidates.Add(new ExcludedAnchorCandidate(
-                    start.Point, end.Point, angleDeg, laneNodes,
-                    solution.Order.ToList(), solution.EnterLow.ToList(), solution.Cost));
+                    start.Point, end.Point, angleDeg, laneNodes.AsReadOnly(),
+                    solution.Order.AsReadOnly(), solution.EnterLow.AsReadOnly(), solution.Cost)
+                {
+                    CandidateId = Guid.NewGuid().ToString("N"),
+                    StartBinding = start.Binding,
+                    EndBinding = end.Binding,
+                });
             }
         }
 
@@ -760,6 +863,9 @@ public static class Serpentine
         if (candidates.Count > 32) candidates.RemoveRange(32, candidates.Count - 32);
         if (candidates.Count > 0) return new ExcludedCandidatesResult(candidates, null);
         if (anySplit) return new ExcludedCandidatesResult(candidates, SerpentineComponentsFailureReason.SplitByExclusion);
+        if (boundary != null && boundaryFailure.HasValue)
+            return new ExcludedCandidatesResult(candidates, SerpentineComponentsFailureReason.ExitBoundaryConflict)
+            { BoundaryFailure = boundaryFailure };
         if (anyNoPath) return new ExcludedCandidatesResult(candidates, SerpentineComponentsFailureReason.NoCompletePath);
         if (anyTooMany) return new ExcludedCandidatesResult(candidates, SerpentineComponentsFailureReason.TooManyFragments);
         if (anyTooComplex) return new ExcludedCandidatesResult(candidates, SerpentineComponentsFailureReason.TooComplex);
@@ -774,9 +880,10 @@ public static class Serpentine
         PatternParams p,
         IReadOnlyList<Vec2> exitChain,
         ExcludedAnchorCandidate candidate,
-        PatternDirection direction)
+        PatternDirection direction,
+        IExitBoundary2D? boundary = null)
     {
-        if (outer.Count < 3 || p.Spacing <= 0 || exitChain.Count < 2 || candidate == null)
+        if (outer.Count < 3 || p.Spacing <= 0 || (boundary == null && exitChain.Count < 2) || candidate == null)
             return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
         if (candidate.Nodes == null || candidate.Order == null || candidate.EnterLow == null)
             return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
@@ -784,11 +891,26 @@ public static class Serpentine
             return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
         if (candidate.Start.DistanceTo(candidate.End) <= AnchorMatchTolerance)
             return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
-        if (DistanceToChain(exitChain, candidate.Start) > ChainTolerance
-            || DistanceToChain(exitChain, candidate.End) > ChainTolerance)
+        if (boundary == null && (candidate.StartBinding.HasValue || candidate.EndBinding.HasValue))
+            return AnchoredResult.Fail(AnchoredFailureReason.ExitBoundaryConflict, ExitBoundaryFailureReason.MissingReference);
+        if (boundary == null && (DistanceToChain(exitChain, candidate.Start) > ChainTolerance
+            || DistanceToChain(exitChain, candidate.End) > ChainTolerance))
             return AnchoredResult.Fail(AnchoredFailureReason.AnchorNotOnExitChain);
         if (!AngleCandidates(outer, direction).Any(a => Math.Abs(a - candidate.AngleDeg) <= 1e-9))
             return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
+
+        ExitBoundaryPoint? savedStart = null, savedEnd = null;
+        if (boundary != null)
+        {
+            ExitBoundaryResolution startCheck = ValidateAnchor(boundary, candidate.Start, candidate.StartBinding, true);
+            if (!startCheck.Succeeded)
+                return AnchoredResult.Fail(AnchoredFailureReason.ExitBoundaryConflict, startCheck.Failure);
+            ExitBoundaryResolution endCheck = ValidateAnchor(boundary, candidate.End, candidate.EndBinding, true);
+            if (!endCheck.Succeeded)
+                return AnchoredResult.Fail(AnchoredFailureReason.ExitBoundaryConflict, endCheck.Failure);
+            savedStart = startCheck.Point;
+            savedEnd = endCheck.Point;
+        }
 
         int nodeCount = candidate.Nodes.Count;
         if (nodeCount == 0 || nodeCount > MaxExactLaneChainNodes)
@@ -816,24 +938,34 @@ public static class Serpentine
         int laneCount = nodes.Select(node => node.Lane).Distinct().Count();
         SerpentineResult world = BuildPatternFromPieces(worldPieces, candidate.AngleDeg, laneCount);
         if (!TryResolveExitPoints(world, exitChain, p,
-                out ExitBoundaryPoint start, out ExitBoundaryPoint end))
-            return AnchoredResult.Fail(AnchoredFailureReason.AnchorNotAtLaneEnd);
-        if (!Near(start.Point, candidate.Start) || !Near(end.Point, candidate.End))
+                out ExitBoundaryPoint start, out ExitBoundaryPoint end, out var resolveFailure, boundary))
+            return AnchoredResult.Fail(boundary == null ? AnchoredFailureReason.AnchorNotAtLaneEnd
+                : AnchoredFailureReason.ExitBoundaryConflict, resolveFailure);
+        if (boundary != null)
+        {
+            if (!MatchesSaved(start, savedStart!.Value) || !MatchesSaved(end, savedEnd!.Value))
+                return AnchoredResult.Fail(AnchoredFailureReason.ExitBoundaryConflict, ExitBoundaryFailureReason.GeometryFailure);
+            start = savedStart.Value;
+            end = savedEnd.Value;
+        }
+        else if (!Near(start.Point, candidate.Start) || !Near(end.Point, candidate.End))
             return AnchoredResult.Fail(AnchoredFailureReason.AnchorNotAtLaneEnd);
         if (!CircuitRouteBuilder.TryTrimToExit(worldPieces, start, end,
                 candidate.AngleDeg, laneCount, 0, out CircuitRoute? trimmed, out _))
             return AnchoredResult.Fail(AnchoredFailureReason.ExitBoundaryConflict);
-        return AnchoredResult.Ok(trimmed!.ToResult());
+        return AnchoredResult.Ok((trimmed! with { CandidateId = candidate.CandidateId }).ToResult());
     }
 
     private static Vec2 PointOnNode(LaneIntervalNode node, int endpoint) =>
         new(endpoint == 0 ? node.X0 : node.X1, node.Y);
 
     private static double EndpointLeadCost(
-        LaneIntervalNode node, int endpoint, IReadOnlyList<Vec2> exitChain, PatternParams p, double rad)
+        LaneIntervalNode node, int endpoint, IReadOnlyList<Vec2> exitChain, PatternParams p, double rad,
+        IExitBoundary2D? boundary, out ExitBoundaryFailureReason? failure)
     {
         Vec2 world = PointOnNode(node, endpoint).Rotate(rad);
-        double distance = DistanceToChain(exitChain, world);
+        if (!TryBoundaryDistance(world, exitChain, boundary, ChainReach(p), out double distance, out failure))
+            return double.PositiveInfinity;
         return distance <= ChainReach(p) ? distance : double.PositiveInfinity;
     }
 
@@ -933,39 +1065,93 @@ public static class Serpentine
         IReadOnlyList<Vec2> exitChain,
         PatternParams p,
         out ExitBoundaryPoint start,
-        out ExitBoundaryPoint end)
+        out ExitBoundaryPoint end,
+        out ExitBoundaryFailureReason? failure,
+        IExitBoundary2D? boundary)
     {
         start = default;
         end = default;
+        failure = null;
         IReadOnlyList<Vec2> path = pattern.Path;
         if (path.Count < 2) return false;
         double reach = ChainReach(p);
-        if (DistanceToChain(exitChain, path[0]) > reach) return false;
-        if (DistanceToChain(exitChain, path[^1]) > reach) return false;
+        if (!TryBoundaryDistance(path[0], exitChain, boundary, reach, out double startDistance, out failure)) return false;
+        if (!TryBoundaryDistance(path[^1], exitChain, boundary, reach, out double endDistance, out failure)) return false;
+        if (startDistance > reach || endDistance > reach)
+        {
+            failure = ExitBoundaryFailureReason.NoIntersection;
+            return false;
+        }
         ExitBoundaryResolution startResult =
-            ExitBoundaryConstraint.TryResolve(path[0], path[1], exitChain);
-        if (!startResult.Succeeded) return false;
+            ExitBoundaryConstraint.TryResolve(path[0], path[1], exitChain, boundary: boundary);
+        if (!startResult.Succeeded) { failure = startResult.Failure; return false; }
         ExitBoundaryResolution endResult =
-            ExitBoundaryConstraint.TryResolve(path[^1], path[^2], exitChain);
-        if (!endResult.Succeeded) return false;
+            ExitBoundaryConstraint.TryResolve(path[^1], path[^2], exitChain, boundary: boundary);
+        if (!endResult.Succeeded) { failure = endResult.Failure; return false; }
         start = startResult.Point!.Value;
         end = endResult.Point!.Value;
         return start.Point.DistanceTo(end.Point) > AnchorMatchTolerance;
     }
+
+    private static bool TryBoundaryDistance(Vec2 point, IReadOnlyList<Vec2> exitChain,
+        IExitBoundary2D? boundary, double projectionTolerance, out double distance,
+        out ExitBoundaryFailureReason? failure)
+    {
+        failure = null;
+        if (boundary == null)
+        {
+            distance = DistanceToChain(exitChain, point);
+            return true;
+        }
+        // 근접 스냅 반경은 호출자가 별도로 잡는 거리 기준(reach)을 따른다.
+        // 최소 정밀도 공차를 그대로 쓰면 마진만큼 떨어진 레인 끝점이 무조건 Miss가 된다.
+        ExitBoundaryResolution projection = ExitBoundaryConstraint.RequireBinding(
+            boundary.Project(point, projectionTolerance));
+        if (!projection.Succeeded)
+        {
+            distance = double.PositiveInfinity;
+            failure = projection.Failure;
+            return false;
+        }
+        distance = point.DistanceTo(projection.Point!.Value.Point);
+        return true;
+    }
+
+    private static ExitBoundaryResolution ValidateAnchor(IExitBoundary2D boundary, Vec2 anchor,
+        ExitEdgeBinding? binding, bool requireSavedBinding)
+    {
+        if (requireSavedBinding || binding.HasValue)
+            return ExitBoundaryConstraint.EvaluateSaved(boundary, binding, anchor);
+        ExitBoundaryResolution projection = ExitBoundaryConstraint.RequireBinding(
+            boundary.Project(anchor, ExitBoundaryConstraint.Tolerance));
+        if (!projection.Succeeded) return projection;
+        return projection.Point!.Value.Point.DistanceTo(anchor) <= ExitBoundaryConstraint.Tolerance
+            ? projection
+            : ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.NoIntersection);
+    }
+
+    private static bool MatchesSaved(ExitBoundaryPoint resolved, ExitBoundaryPoint saved) =>
+        resolved.Binding == saved.Binding
+        && resolved.Point.DistanceTo(saved.Point) <= ExitBoundaryConstraint.Tolerance;
+
     private static bool TryBuildAnchoredRoute(
         SerpentineResult pattern,
         IReadOnlyList<Vec2> exitChain,
         PatternParams p,
         out CircuitRoute? route,
         out ExitBoundaryPoint start,
-        out ExitBoundaryPoint end)
+        out ExitBoundaryPoint end,
+        out ExitBoundaryFailureReason? failure,
+        IExitBoundary2D? boundary)
     {
         route = null;
-        if (!TryResolveExitPoints(pattern, exitChain, p, out start, out end)) return false;
-        return CircuitRouteBuilder.TryTrimToExit(
+        if (!TryResolveExitPoints(pattern, exitChain, p, out start, out end, out failure, boundary)) return false;
+        bool built = CircuitRouteBuilder.TryTrimToExit(
             pattern.RoutePieces, start, end,
             pattern.AngleDeg, pattern.LaneCount, pattern.NominalLaneCount,
             out route, out _);
+        if (!built && boundary != null) failure = ExitBoundaryFailureReason.GeometryFailure;
+        return built;
     }
 
     private static SerpentineResult BuildPatternFromPieces(
@@ -1225,8 +1411,16 @@ public static class Serpentine
 
 // ---- 인출면 고정 경로 공개 타입 ----
 
-/// <summary>인출면 위에서 고를 수 있는 시작/종료 쌍. 두 점 모두 ExitChain 위에 있다.</summary>
-public sealed record AnchoredCandidate(Vec2 Start, Vec2 End, double AngleDeg);
+/// <summary>Selectable endpoint pair. CAD selection retains identity and original parameters,
+/// not just projected coordinates; legacy constructors remain valid for non-CAD fixtures.</summary>
+public sealed record AnchoredCandidate(Vec2 Start, Vec2 End, double AngleDeg)
+{
+    public string CandidateId { get; init; } = string.Empty;
+    public ExitEdgeBinding? StartBinding { get; init; }
+    public ExitEdgeBinding? EndBinding { get; init; }
+    /// <summary>Generated route orientation, when this is a non-exclusion candidate.</summary>
+    public bool? StartLeftToRight { get; init; }
+}
 
 public enum AnchoredFailureReason
 {
@@ -1243,8 +1437,10 @@ public enum AnchoredFailureReason
 public sealed record AnchoredResult(SerpentineResult? Pattern, AnchoredFailureReason? Failure)
 {
     public bool Succeeded => Pattern != null;
+    public ExitBoundaryFailureReason? BoundaryFailure { get; init; }
     public static AnchoredResult Ok(SerpentineResult pattern) => new(pattern, null);
-    public static AnchoredResult Fail(AnchoredFailureReason reason) => new(null, reason);
+    public static AnchoredResult Fail(AnchoredFailureReason reason, ExitBoundaryFailureReason? boundaryFailure = null) =>
+        new(null, reason) { BoundaryFailure = boundaryFailure };
 }
 
 /// <summary>제외영역 경로 후보를 만들 때 쓰는 로컬 프레임 레인 구간.</summary>
@@ -1259,11 +1455,24 @@ public sealed record ExcludedAnchorCandidate(
     IReadOnlyList<SerpentineLaneNode> Nodes,
     IReadOnlyList<int> Order,
     IReadOnlyList<bool> EnterLow,
-    double Cost);
+    double Cost)
+{
+    public string CandidateId { get; init; } = string.Empty;
+    public ExitEdgeBinding? StartBinding { get; init; }
+    public ExitEdgeBinding? EndBinding { get; init; }
+
+    public AnchoredCandidate ToAnchoredCandidate() => new(Start, End, AngleDeg)
+    {
+        CandidateId = CandidateId,
+        StartBinding = StartBinding,
+        EndBinding = EndBinding,
+    };
+}
 
 public sealed record ExcludedCandidatesResult(
     IReadOnlyList<ExcludedAnchorCandidate> Candidates,
     SerpentineComponentsFailureReason? Failure)
 {
     public bool Succeeded => Failure == null;
+    public ExitBoundaryFailureReason? BoundaryFailure { get; init; }
 }

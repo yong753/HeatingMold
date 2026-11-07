@@ -8,6 +8,9 @@ struct WorkingNative
     // 선택 면 집합만 적재한 레이캐스트 대상. key=(revision 내) 정렬된 face id 목록.
     // 곡면 라우팅은 이 대상으로만 판정하므로 가까운 비선택 벽면이 앞을 가로막지 않는다.
     std::map<std::string, std::shared_ptr<IntCurvesFace_ShapeIntersector>> faceTargets;
+    // Full original curves projected onto this context's immutable confirmed frame.
+    // Query trims are validated on every call; no cached query bypasses a binding.
+    std::map<long long, HeatingMoldExitNative::ProjectedCurve> exitCurves;
     std::vector<double> triangles;
     double deflection = 0.05;
     double rayLength = 0;
@@ -524,13 +527,13 @@ bool DisplayWorkingRoutePieceNative(long long id,long long revision,int pieceId,
             if (connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
             g_ctx->Display(ais,Standard_False); g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost); g_ctx->Activate(ais,Standard_False);
             if(pieceId<0) {
-                auto route=g_routePieces.emplace(pieceId,RoutePieceOverlay{ais,connector,true,color,width});
+                auto route=g_routePieces.emplace(pieceId,RoutePieceOverlay{ais,connector,true,color,width,id,revision});
                 if(!route.second) { g_ctx->Remove(ais,Standard_False); return false; }
                 try {
                     auto owner=g_stagedWorkingRouteOwners.emplace(pieceId,std::make_pair(id,revision));
                     if(!owner.second) { g_routePieces.erase(route.first); g_ctx->Remove(ais,Standard_False); return false; }
                 } catch(...) { g_routePieces.erase(pieceId); g_ctx->Remove(ais,Standard_False); throw; }
-            } else g_routePieces[pieceId]={ais,connector,true,color,width};
+            } else g_routePieces[pieceId]={ais,connector,true,color,width,id,revision};
         }
         return true;
     } catch (...) { if (!ais.IsNull() && !g_ctx.IsNull()) g_ctx->Remove(ais,Standard_False); return false; }
@@ -705,7 +708,7 @@ bool StageProjectedWorkingRouteNative(long long id,long long revision,int stageI
         g_ctx->SetColor(ais,color,Standard_False); g_ctx->SetWidth(ais,width,Standard_False);
         if(connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
         g_ctx->Display(ais,Standard_False);g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost);g_ctx->Activate(ais,Standard_False);
-        auto inserted=g_routePieces.emplace(stageId,RoutePieceOverlay{ais,connector,true,color,width});
+        auto inserted=g_routePieces.emplace(stageId,RoutePieceOverlay{ais,connector,true,color,width,id,revision});
         if(!inserted.second) { g_ctx->Remove(ais,Standard_False); return WorkingStageFail("display-id-collision"); }
         try { if(!g_stagedWorkingRouteOwners.emplace(stageId,std::make_pair(id,revision)).second)
                 throw std::runtime_error("staged route owner collision"); }
@@ -937,7 +940,7 @@ bool StageSurfaceMappedRoutePieceNative(long long id, long long revision, int st
         g_ctx->Display(ais, Standard_False);
         g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
         g_ctx->Activate(ais, Standard_False);
-        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, connector, true, color, width});
+        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, connector, true, color, width, id, revision});
         if (!inserted.second) { g_ctx->Remove(ais, Standard_False); return WorkingStageFail("display-id-collision"); }
         try { if (!g_stagedWorkingRouteOwners.emplace(stageId, std::make_pair(id, revision)).second)
                 throw std::runtime_error("staged route owner collision"); }
@@ -1018,7 +1021,7 @@ bool StageSurfaceMappedRoutePieceWithFacesNative(long long id, long long revisio
         g_ctx->Display(ais, Standard_False);
         g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
         g_ctx->Activate(ais, Standard_False);
-        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, turnKind, true, color, width});
+        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, turnKind, true, color, width, id, revision});
         if (!inserted.second) { g_ctx->Remove(ais, Standard_False); return WorkingStageFail("display-id-collision"); }
         try { if (!g_stagedWorkingRouteOwners.emplace(stageId, std::make_pair(id, revision)).second)
                 throw std::runtime_error("staged route owner collision"); }
@@ -1059,56 +1062,112 @@ void DiscardWorkingGeometryNative(long long contextId,long long revision,const s
     }
 }
 
-bool CommitWorkingGeometryNative(long long contextId,long long revision,const std::vector<int>& stagedRoutes,const std::vector<int>& finalRoutes,
-    const std::vector<int>& stagedLines)
+bool CommitWorkingGeometryDeltaNative(long long contextId, long long revision,
+    const std::vector<int>& stagedRoutes, const std::vector<int>& finalRoutes, const std::vector<int>& stagedLines,
+    const std::vector<int>& retainedRoutes, const std::vector<int>& deletedRoutes)
 {
-    if (!FindWorking(contextId,revision)) return false;
-    if (stagedRoutes.size()!=finalRoutes.size()) return false;
-    std::set<int> finalSet, stagedRouteSet, stagedLineSet;
-    for (size_t i=0;i<stagedRoutes.size();++i)
-        if (stagedRoutes[i]>=0 || !stagedRouteSet.insert(stagedRoutes[i]).second || !g_routePieces.count(stagedRoutes[i]) || !g_stagedWorkingRouteOwners.count(stagedRoutes[i]) ||
-            g_stagedWorkingRouteOwners.at(stagedRoutes[i])!=std::make_pair(contextId,revision) || finalRoutes[i]<0 || !finalSet.insert(finalRoutes[i]).second) return false;
-    for (int id : stagedLines) if (!stagedLineSet.insert(id).second || !g_stagedWorkingPolylines.count(id) ||
-        g_stagedWorkingPolylines.at(id).contextId!=contextId || g_stagedWorkingPolylines.at(id).revision!=revision) return false;
-    std::map<int,RoutePieceOverlay> nextRoutes;
-    std::vector<Handle(AIS_Shape)> nextWorld;
-    std::vector<Handle(AIS_Shape)> removed;
+    if (!FindWorking(contextId, revision) || stagedRoutes.size() != finalRoutes.size()) return false;
+    const auto owner = std::make_pair(contextId, revision);
+    std::set<int> committed, finals, stages, lines, retained, deleted, replaced;
+    std::map<int, RoutePieceOverlay> nextRoutes;
+    std::vector<Handle(AIS_Shape)> nextWorld, removed;
+    std::map<long long, std::vector<StagedWorkingPolyline>> nextLines;
+    std::set<int> nextHovered;
     try {
-        for (size_t i=0;i<stagedRoutes.size();++i) nextRoutes.emplace(finalRoutes[i],g_routePieces.at(stagedRoutes[i]));
-        for (const auto& route:g_routePieces) {
-            if(route.first>=0||stagedRouteSet.count(route.first)) continue;
-            auto owner=g_stagedWorkingRouteOwners.find(route.first);
-            if(owner!=g_stagedWorkingRouteOwners.end()&&owner->second!=std::make_pair(contextId,revision))
-                nextRoutes.emplace(route.first,route.second);
+        for (const auto& route : g_routePieces) if (route.first >= 0 && route.second.contextId == contextId) {
+            if (route.second.revision != revision) return false;
+            committed.insert(route.first);
         }
-        nextWorld.reserve(stagedLines.size());
-        for (int id : stagedLines) nextWorld.push_back(g_stagedWorkingPolylines.at(id).ais);
-        removed.reserve(g_routePieces.size()+g_worldOverlays.size());
+        for (size_t i = 0; i < stagedRoutes.size(); ++i) {
+            const int stage = stagedRoutes[i], finalId = finalRoutes[i];
+            const auto route = g_routePieces.find(stage);
+            const auto stagingOwner = g_stagedWorkingRouteOwners.find(stage);
+            if (stage >= 0 || finalId < 0 || !stages.insert(stage).second || !finals.insert(finalId).second ||
+                route == g_routePieces.end() || stagingOwner == g_stagedWorkingRouteOwners.end() ||
+                stagingOwner->second != owner || route->second.contextId != contextId || route->second.revision != revision ||
+                route->second.ais.IsNull()) return false;
+            const auto existing = g_routePieces.find(finalId);
+            if (existing != g_routePieces.end()) {
+                if (!committed.count(finalId)) return false; // other context/legacy/new-ID collision
+                replaced.insert(finalId);
+            }
+        }
+        for (int id : retainedRoutes)
+            if (id < 0 || !retained.insert(id).second || !committed.count(id) || finals.count(id)) return false;
+        for (int id : deletedRoutes)
+            if (id < 0 || !deleted.insert(id).second || !committed.count(id) || finals.count(id) || retained.count(id)) return false;
+        // Existing committed IDs must have exactly one disposition, including an empty final result.
+        if (committed.size() != retained.size() + deleted.size() + replaced.size()) return false;
+        for (int id : committed) if (!retained.count(id) && !deleted.count(id) && !replaced.count(id)) return false;
+        for (int id : stagedLines) {
+            const auto line = g_stagedWorkingPolylines.find(id);
+            if (id >= 0 || !lines.insert(id).second || stages.count(id) || line == g_stagedWorkingPolylines.end() ||
+                line->second.contextId != contextId || line->second.revision != revision || line->second.ais.IsNull()) return false;
+        }
+
+        // Prepare every allocating operation before the canonical swap. Retain copies
+        // only the handle/metadata: no AIS rebuild, remapping, or connector reset.
+        nextRoutes = g_routePieces;
+        nextHovered = g_hoveredCircuitPieces;
+        removed.reserve(deleted.size() + replaced.size() + g_worldOverlays.size());
+        for (int id : deleted) { removed.push_back(nextRoutes.at(id).ais); nextRoutes.erase(id); nextHovered.erase(id); }
+        for (int id : replaced) { removed.push_back(nextRoutes.at(id).ais); nextRoutes.erase(id); nextHovered.erase(id); }
+        for (size_t i = 0; i < stagedRoutes.size(); ++i) {
+            const RoutePieceOverlay candidate = nextRoutes.at(stagedRoutes[i]);
+            nextRoutes.erase(stagedRoutes[i]); nextHovered.erase(stagedRoutes[i]);
+            if (!nextRoutes.emplace(finalRoutes[i], candidate).second) return false;
+        }
+        // Anonymous legacy guides are a context-local complete set, not global overlays.
+        // Empty staging with retained routes leaves existing guides intact; full deletion
+        // or an explicitly staged replacement set removes only this context's guides.
+        const bool replaceLines = !stagedLines.empty() || retained.empty();
+        nextLines = g_committedWorkingPolylines;
+        nextWorld.reserve(g_worldOverlays.size() + stagedLines.size());
+        for (const auto& overlay : g_worldOverlays) {
+            bool remove = false;
+            const auto owned = g_committedWorkingPolylines.find(contextId);
+            if (replaceLines && owned != g_committedWorkingPolylines.end())
+                for (const auto& line : owned->second) if (line.ais == overlay) { remove = true; break; }
+            if (remove) removed.push_back(overlay); else nextWorld.push_back(overlay);
+        }
+        if (replaceLines) {
+            auto& contextLines = nextLines[contextId]; contextLines.clear(); contextLines.reserve(stagedLines.size());
+            for (int id : stagedLines) {
+                const auto& line = g_stagedWorkingPolylines.at(id);
+                contextLines.push_back(line); nextWorld.push_back(line.ais);
+            }
+            if (contextLines.empty()) nextLines.erase(contextId);
+        }
     } catch (...) { return false; }
-    try {
-        // Candidate geometry is already displayed and selectable. All validation precedes destructive swap.
-        g_lastCommitRedrawFailed = false;
-        HighlightCircuitNative(std::vector<int>());
-        for (const auto& old : g_routePieces) {
-            // Staged candidates are already displayed and are adopted as-is through
-            // nextRoutes (same AIS handles), so only previously committed routes may be removed.
-            if (old.first<0) continue;
-            removed.push_back(old.second.ais);
-            if (!g_ctx.IsNull()) g_ctx->Remove(old.second.ais,Standard_False);
-        }
-        for (const auto& old : g_worldOverlays) {
-            removed.push_back(old);
-            if (!g_ctx.IsNull()) g_ctx->Remove(old,Standard_False);
-        }
-        g_routePieces.swap(nextRoutes); g_worldOverlays.swap(nextWorld);
-        for (int id : stagedRoutes) g_stagedWorkingRouteOwners.erase(id);
-        for (int id : stagedLines) g_stagedWorkingPolylines.erase(id);
-        if (!g_view.IsNull()) { try { g_view->Redraw(); } catch (...) { g_lastCommitRedrawFailed = true; } }
-        return true;
-    } catch (...) {
-        if (!g_ctx.IsNull()) for (const auto& old : removed) { try { g_ctx->Display(old,Standard_False); } catch (...) {} }
-        return false;
+
+    // This is the only native geometry commit point. Everything after this point is
+    // presentation cleanup and must never report an uncommitted/rolled-back result.
+    g_routePieces.swap(nextRoutes); g_worldOverlays.swap(nextWorld);
+    g_committedWorkingPolylines.swap(nextLines); g_hoveredCircuitPieces.swap(nextHovered);
+    for (int id : stagedRoutes) g_stagedWorkingRouteOwners.erase(id);
+    for (int id : stagedLines) g_stagedWorkingPolylines.erase(id);
+    g_lastCommitRedrawFailed = false;
+    if (!g_ctx.IsNull()) for (const auto& old : removed) {
+        try { g_ctx->Remove(old, Standard_False); }
+        catch (...) { g_lastCommitRedrawFailed = true; }
     }
+    // No Redraw (directly or through HighlightCircuit). Managed references must be
+    // published before the caller updates markers and explicitly redraws the view.
+    return true;
+}
+
+bool CommitWorkingGeometryNative(long long contextId, long long revision, const std::vector<int>& stagedRoutes,
+    const std::vector<int>& finalRoutes, const std::vector<int>& stagedLines)
+{
+    std::vector<int> deleted;
+    try {
+        const std::set<int> finals(finalRoutes.begin(), finalRoutes.end());
+        for (const auto& route : g_routePieces)
+            if (route.first >= 0 && route.second.contextId == contextId && !finals.count(route.first)) deleted.push_back(route.first);
+        if (!CommitWorkingGeometryDeltaNative(contextId, revision, stagedRoutes, finalRoutes, stagedLines, {}, deleted)) return false;
+    } catch (...) { return false; }
+    if (!g_view.IsNull()) { try { g_view->Redraw(); } catch (...) { g_lastCommitRedrawFailed = true; } }
+    return true;
 }
 
 void ShowWorkingBoundaryNative(const std::vector<std::vector<double>>& loops, const std::vector<bool>& holes)

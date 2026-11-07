@@ -149,7 +149,10 @@ public partial class MainWindow
         area.CircuitExitOverrides.ToList(),
         area.ExitEdgeRefs,
         area.AppliedInputs,
-        area.CommittedMapping);
+        area.CommittedMapping,
+        area.ExitBoundary,
+        area.SelectedAnchorCandidate,
+        area.RouteEdited);
 
     /// <summary>캡처한 경로 상태를 영역에 되돌린다. 제외 목록은 필요할 때만 복원한다.</summary>
     private static void RestoreAreaRouteState(WorkingArea area, AreaRouteSnapshot snapshot, bool restoreExclusions)
@@ -181,6 +184,9 @@ public partial class MainWindow
         area.ExitEdgeRefs = snapshot.ExitEdgeRefs;
         area.AppliedInputs = snapshot.AppliedInputs;
         area.CommittedMapping = snapshot.CommittedMapping;
+        area.ExitBoundary = snapshot.ExitBoundary;
+        area.SelectedAnchorCandidate = snapshot.SelectedAnchorCandidate;
+        area.RouteEdited = snapshot.RouteEdited;
     }
 
     private void ClearFaceSelectionOnly()
@@ -404,29 +410,36 @@ public partial class MainWindow
     /// 곡면 영역의 조각 하나를 데이텀 점 단위로 매핑해 3D 폴리라인으로 스테이징한다.
     /// 2D 프레임 → 3D 평면 되돌리기와 BRepProj 재투영을 모두 쓰지 않는다.
     /// </summary>
-    /// <param name="allowCachedSamples">false면 편집 세션 표본 캐시(_pendingStageSamples/
-    /// _vertexBaselineSamples)를 읽지도 쓰지도 않고 항상 다시 매핑한다.</param>
+    /// <param name="allowCachedSamples">완전한 형상/컨텍스트/인출 binding/엄격 검증 키가
+    /// 일치하는 표본만 재사용한다. 편집 세션의 (영역, 인덱스) 캐시는 사용하지 않는다.</param>
     /// <param name="exclusionMode">true면 제외영역이 잘라낸 연결선을 "ExcludedBridge" 종류로 넘긴다.</param>
     private RoutePieceResult StageCurvedRoutePiece(WorkingArea area, WorkingSideDefinition side,
         SerpentineRoutePiece piece, int index, int count, int stageId,
         bool allowCachedSamples = true, bool exclusionMode = false,
         CommittedRouteContext mappingContext = null,
-        IReadOnlyDictionary<int, SurfaceMappedSample> vertexOverrides = null)
+        IReadOnlyDictionary<int, SurfaceMappedSample> vertexOverrides = null,
+        Dictionary<ValidatedRouteSampleKey, SurfaceMappedSample[]> validatedSamples = null)
     {
+        mappingContext ??= CommittedRouteContext.Capture(area);
         var hit = BuildSurfaceMapDelegate(area, side, context: mappingContext);
-        List<SurfaceMappedSample> samples = null;
-        bool cached = allowCachedSamples;
-        if (cached && !_pendingStageSamples.Remove((area, index), out samples))
-            cached = _vertexBaselineSamples.TryGetValue((area, index), out samples);
+        ValidatedRouteSampleKey key = allowCachedSamples
+            ? BuildValidatedRouteSampleKey(area, side, piece, mappingContext, vertexOverrides)
+            : null;
+        SurfaceMappedSample[] cachedSamples = null;
+        bool cached = key != null && validatedSamples != null &&
+            validatedSamples.TryGetValue(key, out cachedSamples);
+        IReadOnlyList<SurfaceMappedSample> samples = cachedSamples;
         if (!cached)
         {
-            if (!SurfacePathMapper.TryMapRoute(piece.Points, hit, vertexOverrides, out samples, out string failure))
+            if (!SurfacePathMapper.TryMapRouteStrict(piece.Points, hit, vertexOverrides,
+                    out List<SurfaceMappedSample> mapped, out string failure, gapSpacing: 0.1))
                 throw new InvalidOperationException(
                     "영역 " + area.Name + " 경로 조각 " + (index + 1) + "/" + count + " (" + piece.Kind + ") 매핑 실패 — "
                     + failure + " [" + FaceTypesText(area) + "]");
-            // 편집 세션 중에는 바뀌지 않은 조각의 표본을 유지해 다음 확정에서 재매핑을 생략한다.
-            if (allowCachedSamples && Viewport != null && Viewport.VertexEditMode && ReferenceEquals(area, _activeArea))
-                _vertexBaselineSamples[(area, index)] = samples;
+            samples = mapped.ToArray();
+            // 성공 전에는 후보 사전만 쓴다. 실패한 편집/생성이 확정 캐시를 바꾸지 않는다.
+            if (key != null && validatedSamples != null)
+                validatedSamples[key] = (SurfaceMappedSample[])samples;
         }
 
         var xyz = new double[samples.Count * 3];
@@ -455,17 +468,23 @@ public partial class MainWindow
             ? "ExcludedBridge"
             : piece.Kind.ToString();
 
-    /// <summary>회로 인출점과 일치하는 조각 끝점에만 edge 평가 override를 붙인다.</summary>
+    /// <summary>해당 회로 끝 occurrence의 저장된 원본 parameter만 직접 평가한다.</summary>
     private void AddExitOverride(ref Dictionary<int, SurfaceMappedSample> overrides,
-        int pointIndex, Vec2 exit, Vec2 piecePoint, WorkingSideDefinition side,
+        int pointIndex, CircuitExitPoint exit, Vec2 piecePoint, WorkingSideDefinition side,
         CommittedRouteContext context)
     {
-        if ((exit - piecePoint).Length > 1e-6) return;
+        if (exit == null || !double.IsFinite((exit.Point - piecePoint).Length) ||
+            (exit.Point - piecePoint).Length > 1e-7)
+            throw new InvalidOperationException("회로 인출점과 대상 경로 끝점이 일치하지 않습니다");
         SurfaceMappedSample? sample = BuildExitVertexOverride(side, context, exit);
         if (!sample.HasValue)
             throw new InvalidOperationException("인출점을 원본 CAD edge 위에서 평가하지 못했습니다");
+        double datumError = (sample.Value.DatumPoint - piecePoint).Length;
+        if (!double.IsFinite(datumError) || datumError > 1e-7)
+            throw new InvalidOperationException("원본 CAD 인출점의 작업평면 좌표와 경로 끝점이 일치하지 않습니다 (오차 "
+                + datumError + "mm)");
         overrides ??= new Dictionary<int, SurfaceMappedSample>();
-        overrides[pointIndex] = sample.Value with { DatumPoint = piecePoint };
+        overrides[pointIndex] = sample.Value;
     }
 
     /// <summary>2D 인출 체인에서 가장 가까운 구간을 찾아 같은 구간 파라미터로 3D 점을 보간한다.</summary>
@@ -497,17 +516,13 @@ public partial class MainWindow
                         p0.Z + (p1.Z - p0.Z) * bestT);
     }
 
-    /// <summary>
-    /// 모든 작업영역의 경로를 한 번에 다시 스테이징/커밋한다. 네이티브 커밋은
-    /// 기존 커밋 경로를 전부 교체하므로 영역 추가/삭제/재생성 시 이 경로만 사용한다.
-    /// 실패하면 기존 네이티브 표시는 그대로 남는다.
-    /// </summary>
+    /// <summary>既存 API: 確定済み領域は retain し、未確定の互換経路だけを候補にする。</summary>
     private bool RebuildNativePatternGeometry(out double activeLength, out int activeCount) =>
         RebuildNativePatternGeometry(_areas, null, out activeLength, out activeCount);
 
     /// <summary>
-    /// 변경 대상 영역만 현재 조건을 쓰고, 나머지 영역은 마지막 성공 시점의 불변 매핑 조건을 쓴다.
-    /// 변경 대상의 초안/인출면 변경이 다른 영역의 기존 경로를 조용히 다시 매핑하지 않게 한다.
+    /// 기존 호출자는 원본의 현재 상태를 분리 복사해 변경 후보로 사용한다.
+    /// 다른 영역의 초안은 회로 재계산이나 표면 재매핑에 사용하지 않는다.
     /// </summary>
     private bool RebuildNativePatternGeometry(WorkingArea changedArea,
         out double activeLength, out int activeCount) =>
@@ -516,259 +531,18 @@ public partial class MainWindow
     private bool RebuildNativePatternGeometry(IReadOnlyList<WorkingArea> areas, WorkingArea changedArea,
         out double activeLength, out int activeCount)
     {
-        activeLength = 0;
-        activeCount = 0;
-        var side = _workingSide.Confirmed;
-        if (side == null) return false;
-        // 대상 영역은 호출 시점의 확정 후보 상태를 쓴다. 다른 영역은 아래에서 각자의
-        // 마지막 성공 매핑 조건을 사용한다.
-        CommittedRouteContext changedContext = changedArea == null
-            ? null
-            : CommittedRouteContext.Capture(changedArea);
-
-        var stagedRoutes = new List<int>();
-        var finalIds = new List<int>();
-        var stagedLines = new List<int>();
-        var routeResults = new Dictionary<WorkingArea, (List<RoutePieceResult> Pieces, double[] Lengths)>();
-        var exclusionResults = new Dictionary<WorkingArea, (List<RoutePieceResult> Pieces, double[] Lengths)>();
-        var lineLengths = new Dictionary<WorkingArea, double>();
-        bool commitRedrawFailed = false;
-
-        try
+        var candidates = new Dictionary<WorkingArea, WorkingArea>();
+        if (changedArea != null)
+            candidates.Add(changedArea, ForkAreaRoute(changedArea));
+        else if (!_areas.Any(area => !areas.Contains(area)))
         {
-            foreach (var area in areas)
-            {
-                CommittedRouteContext mappingContext = ReferenceEquals(area, changedArea)
-                    ? changedContext
-                    : (area.CommittedMapping ?? CommittedRouteContext.Capture(area));
-                if (area.Pattern != null && area.Pattern.RoutePieces.Count > 0)
-                {
-                    if (!TryRefreshCircuits(area, out string circuitFailure))
-                        throw new InvalidOperationException("영역 " + area.Name + ": " + circuitFailure);
-                    int count = area.Pattern.RoutePieces.Count;
-                    if (area.NativePieceIds.Length != count)
-                        area.NativePieceIds = AllocateNativePieceIds(count);
-                    var pieces = new RoutePieceResult[count];
-                    var lengths = new double[count];
-                    var stagedIndices = new bool[count];
-                    // 회로별 완결 경로를 스테이징한다. 분할된 회로의 첫/마지막 직선은
-                    // 인출 경계까지 연장된 복사본이며, 같은 원본 조각 ID를 유지한다.
-                    for (int c = 0; c < area.Circuits.Count; c++)
-                    {
-                        CircuitRoute circuit = area.Circuits[c];
-                        List<int> indices = area.CircuitPieceIndices[c];
-                        RoutePieceResult previous = null;
-                        for (int j = 0; j < circuit.Pieces.Count; j++)
-                        {
-                            int index = indices[j];
-                            var piece = circuit.Pieces[j];
-                            if (piece.Points.Count < 2) continue;
-                            Dictionary<int, SurfaceMappedSample> overrides = null;
-                            if (j == 0) AddExitOverride(ref overrides, 0, circuit.StartExit.Point, piece.Points[0], side, mappingContext);
-                            if (j == circuit.Pieces.Count - 1)
-                                AddExitOverride(ref overrides, piece.Points.Count - 1, circuit.EndExit.Point,
-                                    piece.Points[^1], side, mappingContext);
-                            int stageId = _nextStageId--;
-                            RoutePieceResult shown = StageCurvedRoutePiece(
-                                area, side, piece, index, count, stageId,
-                                exclusionMode: area.Exclusions.Count > 0,
-                                mappingContext: mappingContext,
-                                vertexOverrides: overrides);
-                            stagedRoutes.Add(stageId);
-                            finalIds.Add(area.NativePieceIds[index]);
-                            pieces[index] = shown;
-                            lengths[index] = shown.Length;
-                            stagedIndices[index] = true;
-                            if (previous != null && Distance3D(previous.End, shown.Start) > 0.01)
-                                throw new InvalidOperationException("영역 " + area.Name + " 회로 " + (c + 1) + " 조각이 연결되지 않습니다");
-                            previous = shown;
-                        }
-                    }
-                    // 비활성 턴은 회로 길이/연속성에는 포함하지 않지만, 다시 클릭해
-                    // 재연결할 수 있도록 네이티브에는 숨김 상태로 남긴다.
-                    for (int i = 0; i < count; i++)
-                    {
-                        if (stagedIndices[i]) continue;
-                        SerpentineRoutePiece piece = area.Pattern.RoutePieces[i];
-                        if (piece.Points.Count < 2) continue;
-                        int stageId = _nextStageId--;
-                        RoutePieceResult shown = StageCurvedRoutePiece(
-                            area, side, piece, i, count, stageId,
-                            exclusionMode: area.Exclusions.Count > 0,
-                            mappingContext: mappingContext);
-                        stagedRoutes.Add(stageId);
-                        finalIds.Add(area.NativePieceIds[i]);
-                        pieces[i] = shown;
-                        lengths[i] = shown.Length;
-                    }
-                    for (int i = 0; i < count; i++)
-                        if (pieces[i] == null)
-                            throw new InvalidOperationException("영역 " + area.Name + " 경로 조각이 비어 있습니다");
-                    routeResults[area] = (pieces.ToList(), lengths);
-                }
-                else if (area.ExclusionPieces is { Count: > 0 })
-                {
-                    // 제외 모드도 일반 경로와 같은 표면 매핑을 쓴다. 제외영역을 지나는 연결선은 실제
-                    // 모델 표면 위에 있을 때만 표시되고, 표면이 끊기면 이번 생성 전체가 거부된다.
-                    var flat = new List<SerpentineRoutePiece>();
-                    var componentOf = new List<int>();
-                    for (int c = 0; c < area.ExclusionPieces.Count; c++)
-                        foreach (var piece in area.ExclusionPieces[c])
-                        {
-                            flat.Add(piece);
-                            componentOf.Add(c);
-                        }
-                    if (area.NativePieceIds.Length != flat.Count)
-                        area.NativePieceIds = AllocateNativePieceIds(flat.Count);
-                    var pieces = new List<RoutePieceResult>();
-                    var lengths = new List<double>();
-                    double sum = 0;
-                    RoutePieceResult previous = null;
-                    int previousComponent = -1;
-                    for (int i = 0; i < flat.Count; i++)
-                    {
-                        if (componentOf[i] != previousComponent)
-                        {
-                            previous = null;
-                            previousComponent = componentOf[i];
-                        }
-                        SerpentineRoutePiece piece = flat[i];
-                        if (piece.Points.Count < 2) continue;
-                        int stageId = _nextStageId--;
-                        RoutePieceResult shown = StageCurvedRoutePiece(
-                            area, side, piece, i, flat.Count, stageId,
-                            allowCachedSamples: false, exclusionMode: true,
-                            mappingContext: mappingContext);
-                        // 스테이징에 성공한 ID는 후속 검증보다 먼저 정리 목록에 넣는다.
-                        // 그래야 연속성 검사가 실패해도 방금 만든 네이티브 객체를 폐기할 수 있다.
-                        stagedRoutes.Add(stageId);
-                        if (previous != null && Distance3D(previous.End, shown.Start) > 0.01)
-                            throw new InvalidOperationException("영역 " + area.Name + " 제외 경로 조각이 연결되지 않습니다");
-                        finalIds.Add(area.NativePieceIds[i]);
-                        pieces.Add(shown);
-                        lengths.Add(shown.Length);
-                        sum += shown.Length;
-                        previous = shown;
-                    }
-                    exclusionResults[area] = (pieces, lengths.ToArray());
-                    lineLengths[area] = sum;
-                }
-                else if (area.Paths.Count > 0)
-                {
-                    double sum = 0;
-                    foreach (var path in area.Paths)
-                    {
-                        if (path.Count < 2) continue;
-                        int stageId = _nextStageId--;
-                        var projected = Bridge.StageProjectedWorkingPolyline(
-                            side.Id.Value, side.Revision.Value, stageId, "HeatingRun",
-                            Flatten(area.Frame, path), SortedFaceIds(area),
-                            -area.Frame.Normal.X, -area.Frame.Normal.Y, -area.Frame.Normal.Z);
-                        if (projected == null)
-                            throw new InvalidOperationException("영역 " + area.Name + " 제외 경로 투영 실패");
-                        stagedLines.Add(stageId);
-                        sum += projected.Length;
-                    }
-                    lineLengths[area] = sum;
-                }
-            }
-
-            if (stagedRoutes.Count == 0 && stagedLines.Count == 0)
-            {
-                Bridge.ClearOverlays();
-            }
-            else if (!Bridge.CommitWorkingRouteGeometry(
-                         side.Id.Value, side.Revision.Value,
-                         stagedRoutes.ToArray(), finalIds.ToArray(), stagedLines.ToArray()))
-            {
-                throw new InvalidOperationException("네이티브 경로 커밋 실패");
-            }
-            else
-            {
-                // 커밋은 성공했다. Redraw 실패는 롤백 사유가 아니라 별도 경고로 노출한다.
-                commitRedrawFailed = Bridge.ConsumeCommitRedrawFailure();
-            }
+            // 최초 스테이징을 호출하는 기존 테스트/호환 경로만 허용한다.
+            // 실제 삭제에서는 남은 영역의 미확정 초안을 생성하지 않는다.
+            foreach (WorkingArea area in areas)
+                if (area.CommittedMapping == null && HasUncommittedRoute(area))
+                    candidates.Add(area, ForkAreaRoute(area));
         }
-        catch (Exception ex)
-        {
-            Bridge.DiscardWorkingRouteGeometry(
-                side.Id.Value, side.Revision.Value,
-                stagedRoutes.ToArray(), stagedLines.ToArray());
-            StatusText.Text = "표시 생성 실패 — 기존 영역/경로를 유지했습니다: " + ex.Message;
-            ErrorReporter.ShowError("경로 표시 생성 실패 — 기존 영역/경로를 유지했습니다", ex);
-            return false;
-        }
-
-        // 네이티브 커밋은 이미 성공했다. 아래 갱신이 실패해도 되돌리지 않고(표시와 상태가
-        // 어긋난 채 남는 것보다 낫다) 오류만 보고한다. 되돌리기는 커밋 전 단계에서만 한다.
-        try
-        {
-            foreach (var entry in routeResults)
-            {
-                entry.Key.ProjectedPieces = entry.Value.Pieces;
-                entry.Key.RoutePieceLengths = entry.Value.Lengths;
-            }
-            foreach (var entry in exclusionResults)
-            {
-                entry.Key.ProjectedPieces = entry.Value.Pieces;
-                entry.Key.RoutePieceLengths = entry.Value.Lengths;
-            }
-            foreach (var area in areas)
-            {
-                // 변경 대상이 아닌 영역의 확정 매핑은 현재 초안으로 덮어쓰지 않는다.
-                if (changedArea == null || ReferenceEquals(area, changedArea) || area.CommittedMapping == null)
-                    area.CommittedMapping = CommittedRouteContext.Capture(area);
-                ApplyAreaConnectorStates(area);
-            }
-
-            // 인출점 마커 — 분할된 회로마다 첫 조각 Start와 마지막 조각 End를 표시한다.
-            var endpointPoints = new List<double>();
-            foreach (var entry in routeResults)
-            {
-                var pieces = entry.Value.Pieces;
-                foreach (List<int> indices in entry.Key.CircuitPieceIndices)
-                {
-                    if (indices.Count == 0) continue;
-                    RoutePieceResult first = pieces[indices[0]];
-                    RoutePieceResult last = pieces[indices[^1]];
-                    if (first?.Start != null) endpointPoints.AddRange(first.Start);
-                    if (last?.End != null) endpointPoints.AddRange(last.End);
-                }
-            }
-            Bridge.SetRouteEndpoints(endpointPoints.ToArray());
-
-            if (_activeArea != null && areas.Contains(_activeArea))
-            {
-                if (_activeArea.Pattern != null)
-                {
-                    activeCount = _activeArea.Circuits.Count;
-                    activeLength = 0;
-                    foreach (List<int> indices in _activeArea.CircuitPieceIndices)
-                        foreach (int index in indices)
-                            activeLength += _activeArea.RoutePieceLengths.ElementAtOrDefault(index);
-                }
-                else if (lineLengths.TryGetValue(_activeArea, out double lineLength))
-                {
-                    activeLength = lineLength;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = "경로는 적용되었지만 표시 상태 갱신에 실패했습니다: " + ex.Message;
-            ErrorReporter.ShowWarning("경로 표시 상태 갱신 실패", ex);
-            Bridge.RedrawView();
-            return true;
-        }
-
-        Bridge.RedrawView();
-        if (commitRedrawFailed)
-        {
-            StatusText.Text = "경로는 적용되었지만 화면 갱신에 실패했습니다 — 뷰를 다시 그려 주세요";
-            ErrorReporter.ShowWarning("경로 표시 갱신 실패",
-                new InvalidOperationException("네이티브 형상 커밋은 성공했지만 Redraw가 실패했습니다."));
-        }
-        return true;
+        return TryCommitAreaRouteCandidates(areas, candidates, out activeLength, out activeCount);
     }
 
     private void ApplyAreaConnectorStates(WorkingArea area)

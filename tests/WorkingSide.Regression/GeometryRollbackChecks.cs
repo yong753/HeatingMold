@@ -128,8 +128,8 @@ static class GeometryRollbackChecks
         object[] args = { 0d, 0 };
         bool rebuilt = (bool)rebuild.Invoke(window, args)!;
         Check(!rebuilt, "discontinuous exclusion pieces fail the rebuild");
-        Check((int)Field<object>(window, "_nextStageId") == stageBefore - 2,
-            "both exclusion pieces consumed a native staging id before the failure");
+        Check((int)Field<object>(window, "_nextStageId") == stageBefore,
+            "failed rebuild leaves the staging id counter untouched until commit");
         Check(((IList)areaType.GetProperty("ProjectedPieces")!.GetValue(area)!).Count == 0,
             "failed rebuild does not publish projected pieces");
         Check(Bridge.SetConnectorEnabled(priorId, true, .2, .8, .3, false),

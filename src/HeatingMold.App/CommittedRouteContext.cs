@@ -21,6 +21,10 @@ internal sealed class CommittedRouteContext
     public Vec2? StartAnchor { get; init; }
     public Vec2? EndAnchor { get; init; }
     public List<ExitEdgeReference> ExitEdgeRefs { get; init; } = new();
+    public IExitBoundary2D Boundary { get; init; }
+    public AnchoredCandidate SelectedAnchorCandidate { get; init; }
+    public List<CircuitExitPoint> StartExits { get; init; } = new();
+    public List<CircuitExitPoint> EndExits { get; init; } = new();
     /// <summary>분할된 회로별 인출점. 매핑 시 역할 기반 꼭지점 override에 쓴다.</summary>
     public List<Vec2> CircuitStarts { get; init; } = new();
     public List<Vec2> CircuitEnds { get; init; } = new();
@@ -34,7 +38,11 @@ internal sealed class CommittedRouteContext
         ExitChainFaceIds = area.ExitChainFaceIds.ToList(),
         StartAnchor = area.StartAnchor,
         EndAnchor = area.EndAnchor,
-        ExitEdgeRefs = area.ExitEdgeRefs.ToList(),
+        ExitEdgeRefs = area.ExitEdgeRefs.Select(CadExitBoundary2D.CopyReference).ToList(),
+        Boundary = area.ExitBoundary,
+        SelectedAnchorCandidate = area.SelectedAnchorCandidate,
+        StartExits = area.Circuits.Select(c => c.StartExit).ToList(),
+        EndExits = area.Circuits.Select(c => c.EndExit).ToList(),
         CircuitStarts = area.Circuits.Select(c => c.StartExit.Point).ToList(),
         CircuitEnds = area.Circuits.Select(c => c.EndExit.Point).ToList()
     };

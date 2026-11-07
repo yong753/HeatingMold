@@ -8,10 +8,18 @@ public enum ExitBoundaryFailureReason
     MultipleIntersections,
     TangentOrOverlap,
     DegenerateSegment,
+    StaleContext,
+    MissingReference,
+    GeometryFailure,
 }
 
-/// <summary>인출 경계 위의 한 점. SegmentIndex/Parameter는 ExitChain 폴리라인의 구간을 가리킨다.</summary>
-public readonly record struct ExitBoundaryPoint(Vec2 Point, int SegmentIndex, double SegmentParameter);
+/// <summary>인출 경계 위의 한 점. SegmentIndex/SegmentParameter는 표시용 폴리라인 메타데이터이며,
+/// CAD 구속의 정본은 Binding의 원본 에지와 파라미터다.</summary>
+public readonly record struct ExitBoundaryPoint(Vec2 Point, int SegmentIndex, double SegmentParameter)
+{
+    /// <summary>Original CAD provenance, absent only for explicit non-CAD/Core fixtures.</summary>
+    public ExitEdgeBinding? Binding { get; init; }
+}
 
 public sealed record ExitBoundaryResolution(ExitBoundaryPoint? Point, ExitBoundaryFailureReason? Failure)
 {
@@ -34,9 +42,10 @@ public static class ExitBoundaryConstraint
     /// 유일한 점을 찾는다. 연장 방향은 endpoint - next이며, endpoint 바깥(s ≥ 0)만 유효하다.
     /// </summary>
     public static ExitBoundaryResolution TryResolve(
-        Vec2 endpoint, Vec2 next, IReadOnlyList<Vec2> chain, double tolerance = Tolerance)
+        Vec2 endpoint, Vec2 next, IReadOnlyList<Vec2> chain, double tolerance = Tolerance,
+        IExitBoundary2D? boundary = null)
     {
-        if (chain == null || chain.Count < 2 || !IsFinite(endpoint) || !IsFinite(next)
+        if (!IsFinite(endpoint) || !IsFinite(next)
             || !double.IsFinite(tolerance) || tolerance <= 0)
             return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.InvalidInput);
 
@@ -44,6 +53,10 @@ public static class ExitBoundaryConstraint
         double length = direction.Length;
         if (!double.IsFinite(length) || length <= tolerance)
             return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.DegenerateSegment);
+        if (boundary != null)
+            return RequireBinding(boundary.ResolveOutward(endpoint, next, tolerance));
+        if (chain == null || chain.Count < 2)
+            return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.InvalidInput);
         Vec2 d = direction * (1.0 / length);
 
         bool closed = chain.Count >= 3 && chain[0].DistanceTo(chain[^1]) <= tolerance;
@@ -131,6 +144,38 @@ public static class ExitBoundaryConstraint
 
         return ExitBoundaryResolution.Ok(
             new ExitBoundaryPoint(best.Point, best.SegmentIndex, best.SegmentParameter));
+    }
+
+    /// <summary>A CAD query must never be replaced by an unbound sampled result.</summary>
+    internal static ExitBoundaryResolution RequireBinding(ExitBoundaryResolution resolution)
+    {
+        if (resolution.Failure.HasValue)
+            return ExitBoundaryResolution.Fail(resolution.Failure.Value);
+        if (!resolution.Point.HasValue || !IsFinite(resolution.Point.Value.Point))
+            return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.GeometryFailure);
+        if (!resolution.Point.Value.Binding.HasValue)
+            return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.MissingReference);
+        ExitEdgeBinding binding = resolution.Point.Value.Binding.Value;
+        if (!double.IsFinite(binding.FirstParameter) || !double.IsFinite(binding.LastParameter)
+            || !double.IsFinite(binding.Parameter))
+            return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.GeometryFailure);
+        return resolution;
+    }
+
+    /// <summary>Validate a saved parameter, without searching for a different edge or parameter.</summary>
+    internal static ExitBoundaryResolution EvaluateSaved(
+        IExitBoundary2D boundary, ExitEdgeBinding? binding, Vec2 expectedPoint)
+    {
+        if (!IsFinite(expectedPoint))
+            return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.InvalidInput);
+        if (!binding.HasValue)
+            return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.MissingReference);
+        ExitBoundaryResolution result = RequireBinding(boundary.Evaluate(binding.Value));
+        if (!result.Succeeded) return result;
+        ExitBoundaryPoint evaluated = result.Point!.Value;
+        if (evaluated.Binding != binding || evaluated.Point.DistanceTo(expectedPoint) > Tolerance)
+            return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.GeometryFailure);
+        return result;
     }
 
     private static bool Adjacent(int a, int b, int segmentCount, bool closed)

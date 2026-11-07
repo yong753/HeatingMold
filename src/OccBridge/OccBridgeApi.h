@@ -59,18 +59,31 @@ public:
     property array<ExitEdgeReference^>^ EdgeReferences;
 };
 
-public enum class ExitEdgeQueryStatus { Hit, Miss, Ambiguous, InvalidInput, StaleContext, GeometryFailure };
+public enum class ExitEdgeQueryStatus { Hit, Miss, Ambiguous, InvalidInput, StaleContext, GeometryFailure,
+    TangentOrOverlap, DegenerateProjection, MissingReference };
 
 /// <summary>2D 작업평면 데이텀을 원본 인출 Edge 위로 평가한 결과.</summary>
 public ref class ExitEdgeHit
 {
 public:
     property ExitEdgeQueryStatus Status;
-    property int FaceId;             // 평가점을 지지하는 인출 측면 원본 Face
+    property int FaceId;             // 평가점을 지지하는 선택 영역의 원본 Face
     property double Parameter;       // 원본 Edge 파라미터
     property array<double>^ Point;   // xyz
     property array<double>^ Tangent; // Edge 파라미터 증가 방향 단위 xyz
     property array<double>^ DatumPoint; // 평가점을 작업평면에 투영한 uv
+    property long long VertexKey;   // 실제 원본 공유 vertex의 revision-local ID; 내부점은 0
+    property long long EdgeKey;
+    property long long Revision;
+    property long long ContextId;
+    property long long ContextRevision;
+};
+
+public ref class ExitEdgeRayResult
+{
+public:
+    property ExitEdgeQueryStatus Status;
+    property array<ExitEdgeHit^>^ Hits;
 };
 
 public ref class HlrPolyline
@@ -173,6 +186,10 @@ public:
     static array<array<double>^>^ GetSharedBoundaryEdges(int exitFaceId, array<int>^ heatingFaceIds, double deflection);
     static bool CommitWorkingRouteGeometry(long long id, long long revision, array<int>^ stagedRouteIds,
         array<int>^ finalRouteIds, array<int>^ stagedPolylineIds);
+    /// <summary>Atomic context-owned retain/replace/delete commit. Does not redraw.</summary>
+    static bool CommitWorkingRouteGeometryDelta(long long id, long long revision, array<int>^ stagedRouteIds,
+        array<int>^ finalRouteIds, array<int>^ stagedPolylineIds, array<int>^ retainedRouteIds,
+        array<int>^ deletedRouteIds);
     /// <summary>커밋은 성공했지만 마지막 Redraw가 실패했는지 한 번만 보고한다(읽은 뒤 초기화).</summary>
     static bool ConsumeCommitRedrawFailure();
     static void DiscardWorkingRouteGeometry(long long id, long long revision,
@@ -217,8 +234,17 @@ public:
     /// 범위 밖/모호/무효/오래된 참조는 실패하며 다른 Edge나 표면으로 대체하지 않는다.
     /// </summary>
     static ExitEdgeHit^ EvaluateExitEdge(long long id, long long revision,
-                                         long long edgeRevision, long long edgeKey,
-                                         double u, double v, double tolerance);
+                                          long long edgeRevision, long long edgeKey,
+                                          double u, double v, double tolerance);
+    /// <summary>Nearest point on this reference's original projected curve, restricted to its trim.</summary>
+    static ExitEdgeHit^ ProjectExitEdge(long long id, long long revision, ExitEdgeReference^ reference,
+        double u, double v, double tolerance);
+    /// <summary>Evaluate the saved original parameter directly; no nearest-point search.</summary>
+    static ExitEdgeHit^ EvaluateExitEdgeParameter(long long id, long long revision,
+        ExitEdgeReference^ reference, double parameter);
+    /// <summary>Exact projected-curve intersections strictly forward of the ray origin. Direction need not be unit.</summary>
+    static ExitEdgeRayResult^ IntersectExitEdgeRay(long long id, long long revision,
+        ExitEdgeReference^ reference, double u, double v, double du, double dv, double tolerance);
     /// <summary>Last exit-side extraction diagnostic (ASCII, one item per line).</summary>
     static System::String^ GetExitSideDiagnostic();
     /// <summary>인출 측면 후보를 임시 강조 표시한다 (이전 강조는 지운다).</summary>
@@ -261,6 +287,8 @@ public:
     static void HighlightCircuit(array<int>^ pieceIds);
     /// <summary>발열 경로 인출점/끝점 마커를 다시 그린다. xyzFlat은 [x,y,z,...].</summary>
     static void SetRouteEndpoints(array<double>^ xyzFlat);
+    /// <summary>Update endpoint presentation without redraw; false reports presentation failure only.</summary>
+    static bool SetRouteEndpointsNoRedraw(array<double>^ xyzFlat);
 
     // ---- 꼭지점 편집 오버레이 ----
     /// <summary>편집 핸들을 표시한다. 좌표는 표시 인덱스 순서의 flat xyz.</summary>
@@ -348,6 +376,7 @@ public:
 
     // ---- 오버레이 (S3 통합 데모) ----
     static void RedrawView();
+    static bool TryRedrawView();
     static void ClearOverlays();
 
     /// <summary>방향과 화면 위쪽 벡터로 카메라를 설정</summary>

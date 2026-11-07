@@ -397,17 +397,47 @@ namespace HeatingMold.App
                   .Append(p.Z.ToString("R", inv)).Append(';');
             sb.Append("|CF:");
             foreach (int faceId in area.ExitChainFaceIds) sb.Append(faceId).Append(',');
+            sb.Append("|ER:");
+            AppendExitReferences(sb, area.ExitEdgeRefs, inv);
             sb.Append("|A:");
             AppendAnchor(sb, area.StartAnchor, inv);
             sb.Append(';');
             AppendAnchor(sb, area.EndAnchor, inv);
+            sb.Append("|AC:");
+            AppendCandidateIdentity(sb, area.SelectedAnchorCandidate?.CandidateId);
+            sb.Append(',');
+            if (area.SelectedAnchorCandidate != null)
+            {
+                sb.Append(area.SelectedAnchorCandidate.AngleDeg.ToString("R", inv)).Append(',')
+                  .Append(area.SelectedAnchorCandidate.StartLeftToRight?.ToString() ?? "-").Append(';');
+            }
+            AppendExitBinding(sb, area.SelectedAnchorCandidate?.StartBinding, inv);
+            sb.Append(';');
+            AppendExitBinding(sb, area.SelectedAnchorCandidate?.EndBinding, inv);
             sb.Append("|CE:");
             foreach (CircuitRoute circuit in area.Circuits)
             {
+                sb.Append('[');
+                AppendCandidateIdentity(sb, circuit.CandidateId);
+                sb.Append(';');
                 AppendAnchor(sb, circuit.StartExit?.Point, inv);
+                sb.Append(';');
+                AppendExitBinding(sb, circuit.StartExit?.Binding, inv);
                 sb.Append(';');
                 AppendAnchor(sb, circuit.EndExit?.Point, inv);
                 sb.Append(';');
+                AppendExitBinding(sb, circuit.EndExit?.Binding, inv);
+                sb.Append(']');
+            }
+            sb.Append("|CO:");
+            foreach (CircuitExitOverride endpoint in area.CircuitExitOverrides
+                         .OrderBy(endpoint => endpoint.PieceIndex).ThenBy(endpoint => endpoint.Role))
+            {
+                sb.Append(endpoint.PieceIndex).Append(',').Append((int)endpoint.Role).Append(';');
+                AppendAnchor(sb, endpoint.Point, inv);
+                sb.Append(';');
+                AppendExitBinding(sb, endpoint.Binding, inv);
+                sb.Append('|');
             }
             sb.Append("|X:");
             foreach (var e in area.Exclusions)
@@ -415,7 +445,38 @@ namespace HeatingMold.App
                   .Append(e.MinY.ToString("R", inv)).Append(',')
                   .Append(e.MaxX.ToString("R", inv)).Append(',')
                   .Append(e.MaxY.ToString("R", inv)).Append(';');
+            sb.Append("|EBP:cad-original-edge-v1,").Append(ExitBoundaryConstraint.Tolerance.ToString("R", inv));
             return sb.ToString();
+        }
+
+        private static void AppendCandidateIdentity(StringBuilder sb, string candidateId)
+        {
+            if (candidateId == null) { sb.Append('-'); return; }
+            sb.Append(candidateId.Length).Append(':').Append(candidateId);
+        }
+
+        private static void AppendExitReferences(StringBuilder sb, IEnumerable<ExitEdgeReference> references,
+            CultureInfo inv)
+        {
+            foreach (ExitEdgeReference reference in references)
+            {
+                if (reference == null) { sb.Append("missing;"); continue; }
+                sb.Append(reference.Revision).Append(',').Append(reference.EdgeKey).Append(',')
+                  .Append(reference.FaceId).Append(',').Append(reference.FirstParameter.ToString("R", inv)).Append(',')
+                  .Append(reference.LastParameter.ToString("R", inv)).Append(',')
+                  .Append(reference.Reversed ? '1' : '0').Append(';');
+            }
+        }
+
+        private static void AppendExitBinding(StringBuilder sb, ExitEdgeBinding? binding, CultureInfo inv)
+        {
+            if (!binding.HasValue) { sb.Append('-'); return; }
+            ExitEdgeBinding value = binding.Value;
+            sb.Append(value.ModelRevision).Append(',').Append(value.WorkingContextId).Append(',')
+              .Append(value.WorkingContextRevision).Append(',').Append(value.EdgeKey).Append(',')
+              .Append(value.FirstParameter.ToString("R", inv)).Append(',')
+              .Append(value.LastParameter.ToString("R", inv)).Append(',')
+              .Append(value.Parameter.ToString("R", inv)).Append(',').Append(value.Reversed ? '1' : '0');
         }
 
         private static void AppendAnchor(StringBuilder sb, Vec2? anchor, CultureInfo inv)
@@ -607,70 +668,62 @@ namespace HeatingMold.App
             ExitVertexEdit();
             var area = _activeArea;
             var rect = (minX, minY, maxX, maxY);
-            // 롤백 스냅샷 — 어느 단계에서 실패해도 제외 목록과 경로 상태를 이전 그대로 되돌린다.
-            AreaRouteSnapshot previous = CaptureAreaRouteState(area);
+            var candidate = ForkAreaRoute(area);
+            candidate.Exclusions.Add(rect);
+            PrepareExclusionRouteCandidate(candidate);
 
-            area.Exclusions.Add(rect);
             // 1) 표시 메시 스테이징 — 실패하면 아무 상태도 바꾸지 않는다.
-            if (!StageAreaHighlightMesh(area))
+            if (!StageAreaHighlightMesh(candidate))
             {
-                RestoreAreaExclusions(area, previous.Exclusions);
+                Bridge.DiscardAreaHighlight(candidate.AreaId);
                 error = "제외영역 표시를 생성하지 못했습니다 — 이전 제외영역/경로를 유지했습니다";
                 StatusText.Text = error;
                 return false;
             }
 
-            // 2) 스테이징이 성공한 뒤에만 이 영역의 기존 경로를 무효화한다.
-            area.Pattern = null;
-            area.CircuitExitOverrides.Clear();
-            area.Paths = new List<List<Vec2>>();
-            area.ExclusionPieces = null;
-            area.NativePieceIds = Array.Empty<int>();
-            area.RoutePieceLengths = Array.Empty<double>();
-            area.ProjectedPieces = new List<RoutePieceResult>();
-            area.TurnEnabled = new List<bool>();
-            area.PatternDisplayed = false;
-            Bridge.ClearExclusionOverlays();
-            if (!CommitAreaHighlight(area))
+            // 2) 빈 최종 경로도 retain/replace/delete 트랜잭션을 통과한다.
+            if (!RebuildNativePatternGeometry(area, candidate, out _, out _))
             {
-                Bridge.DiscardAreaHighlight(area.AreaId);
-                RestoreAreaRouteState(area, previous, restoreExclusions: true);
-                UpdateActiveAreaHighlight();
-                error = "제외영역 표시를 적용하지 못했습니다 — 이전 제외영역/경로를 유지했습니다";
+                Bridge.DiscardAreaHighlight(candidate.AreaId);
+                error = "제외영역 추가 후 네이티브 경로 상태를 갱신하지 못했습니다 — 이전 제외영역/경로를 유지했습니다";
                 StatusText.Text = error;
                 return false;
             }
 
-            // 3) 경로 재생성이 실패하면 표시까지 이전 상태로 되돌린다.
-            if (!RebuildNativePatternGeometry(area, out _, out _))
-            {
-                RestoreAreaRouteState(area, previous, restoreExclusions: true);
+            // 확정 데이터는 이미 게시되었다. 이후 표시 오류를 경로 롤백으로 취급하지 않는다.
+            bool highlightApplied = CommitAreaHighlight(area);
+            if (!highlightApplied)
                 Bridge.DiscardAreaHighlight(area.AreaId);
-                UpdateActiveAreaHighlight();
-                error = "제외영역 추가 후 네이티브 경로 상태를 갱신하지 못했습니다";
-                return false;
-            }
-            ClearRouteEditState(area);
-            if (area.HasExitFace)
-            {
-                RecomputeAnchorCandidates(area);
-                SyncExitFaceUi(area);
-            }
-            UpdateActiveAreaHighlight();
+            SyncExitFaceUi(area);
             // 경로가 무효화된 영역은 회로표/전기표에서도 즉시 빠져야 한다.
             UpdateCircuitTable();
-            StatusText.Text = area.HasExitFace && !area.HasExitAnchors && !string.IsNullOrEmpty(area.LastExitFailure)
-                ? area.LastExitFailure
-                : string.Format("모델 뷰포트 제외영역 추가 — {0}개", area.Exclusions.Count);
+            UpdateActionStates();
+            StatusText.Text = !highlightApplied
+                ? "제외영역을 추가했지만 표시 갱신에 실패했습니다 — 확정된 제외영역/경로 상태는 유지합니다"
+                : area.HasExitFace && !area.HasExitAnchors && !string.IsNullOrEmpty(area.LastExitFailure)
+                    ? area.LastExitFailure
+                    : string.Format("모델 뷰포트 제외영역 추가 — {0}개", area.Exclusions.Count);
             return true;
         }
 
-        /// <summary>제외 목록을 스냅샷으로 되돌린다.</summary>
-        private static void RestoreAreaExclusions(WorkingArea area,
-            List<(double MinX, double MinY, double MaxX, double MaxY)> snapshot)
+        /// <summary>제외 변경의 빈 최종 경로/후보를 확정 영역이 아닌 fork에서 준비한다.</summary>
+        private void PrepareExclusionRouteCandidate(WorkingArea candidate)
         {
-            area.Exclusions.Clear();
-            area.Exclusions.AddRange(snapshot);
+            candidate.Pattern = null;
+            candidate.Circuits = new List<CircuitRoute>();
+            candidate.CircuitPieceIndices = new List<List<int>>();
+            candidate.CircuitExitOverrides.Clear();
+            candidate.Paths = new List<List<Vec2>>();
+            candidate.ExclusionPieces = null;
+            candidate.NativePieceIds = Array.Empty<int>();
+            candidate.RoutePieceLengths = Array.Empty<double>();
+            candidate.ProjectedPieces = new List<RoutePieceResult>();
+            candidate.TurnEnabled = new List<bool>();
+            candidate.PatternDisplayed = false;
+            candidate.RouteEdited = false;
+            candidate.AppliedInputs = null;
+            candidate.CommittedMapping = null;
+            if (candidate.HasExitFace) RecomputeAnchorCandidates(candidate);
         }
 
         /// <summary>조각 순서대로 점을 이어 하나의 폴리라인으로 만든다 — 조각 경계의 중복 시작점은 건너뛴다.</summary>
@@ -925,41 +978,40 @@ namespace HeatingMold.App
                 StatusText.Text = "선택영역이 서로 떨어져 있습니다. 하나로 연결된 적용영역을 선택하세요";
                 return;
             }
+            var candidate = ForkAreaRoute(area);
             var paths = new List<IReadOnlyList<Vec2>>();
             SerpentineResult editablePattern = null;
-            if (!area.HasExitFace)
+            if (!candidate.HasExitFace)
             {
-                StatusText.Text = area.LastExitFailure
+                StatusText.Text = candidate.LastExitFailure
                     ?? "인출면이 지정되지 않았습니다 — 인출면과 시작/종료점을 먼저 지정하세요";
                 return;
             }
-            if (!area.HasExitAnchors)
+            if (!candidate.HasExitAnchors)
             {
-                StatusText.Text = area.LastExitFailure
+                StatusText.Text = candidate.LastExitFailure
                     ?? "인출면의 시작/종료점이 지정되지 않았습니다 — 후보 목록에서 시작/종료점을 선택하세요";
                 return;
             }
-            var parameters = new PatternParams { Margin = margin, Spacing = spacing, Direction = area.Direction };
+            var parameters = new PatternParams { Margin = margin, Spacing = spacing, Direction = candidate.Direction };
             try
             {
-                if (area.Exclusions.Count > 0)
+                if (candidate.Exclusions.Count > 0)
                 {
                     // 제외영역이 있어도 인출면 앵커를 고정한 단일 사행 경로를 생성한다.
-                    var plan = TryPrepareExcludedPlan(area, out string planFailure);
+                    var plan = TryPrepareExcludedPlan(candidate, out string planFailure);
                     if (plan == null)
                     {
-                        area.LastExitFailure = planFailure;
                         SyncExitFaceUi(area);
                         StatusText.Text = planFailure;
                         return;
                     }
-                    var anchored = Serpentine.GenerateAnchoredComponents(area.Region[0], area.Exclusions,
-                        parameters, area.ExitChain, plan, area.Direction);
+                    var anchored = Serpentine.GenerateAnchoredComponents(candidate.Region[0], candidate.Exclusions,
+                        parameters, candidate.ExitChain, plan, candidate.Direction, boundary: candidate.ExitBoundary);
                     if (!anchored.Succeeded)
                     {
-                        area.LastExitFailure = ExplainAnchoredFailure(anchored.Failure);
                         SyncExitFaceUi(area);
-                        StatusText.Text = area.LastExitFailure;
+                        StatusText.Text = ExplainAnchoredFailure(anchored.Failure, anchored.BoundaryFailure);
                         return;
                     }
                     editablePattern = anchored.Pattern;
@@ -968,13 +1020,13 @@ namespace HeatingMold.App
                 else
                 {
                     // 인출면이 지정되면 앵커 경로만 사용한다. 실패해도 무앵커 경로로 조용히 대체하지 않는다.
-                    var anchored = Serpentine.GenerateAnchored(area.Region[0], null, parameters,
-                        area.ExitChain, area.StartAnchor.Value, area.EndAnchor.Value, area.Direction);
+                    var anchored = Serpentine.GenerateAnchored(candidate.Region[0], null, parameters,
+                        candidate.ExitChain, candidate.StartAnchor.Value, candidate.EndAnchor.Value, candidate.Direction,
+                        boundary: candidate.ExitBoundary, candidate: candidate.SelectedAnchorCandidate);
                     if (!anchored.Succeeded)
                     {
-                        area.LastExitFailure = ExplainAnchoredFailure(anchored.Failure);
                         SyncExitFaceUi(area);
-                        StatusText.Text = area.LastExitFailure;
+                        StatusText.Text = ExplainAnchoredFailure(anchored.Failure, anchored.BoundaryFailure);
                         return;
                     }
                     editablePattern = anchored.Pattern;
@@ -994,52 +1046,42 @@ namespace HeatingMold.App
             }
             bool routePiecesMode = editablePattern != null && editablePattern.RoutePieces.Count > 0;
 
-            // 실패 시 이 영역의 기존 패턴 상태를 복원한다. 다른 영역은 건드리지 않는다.
-            AreaRouteSnapshot previous = CaptureAreaRouteState(area);
-
-            area.Pattern = routePiecesMode ? editablePattern : null;
-            area.CircuitExitOverrides.Clear();
-            area.TurnEnabled = routePiecesMode
+            // 새 생성은 이전 Pattern의 파생 분할 binding을 상속하지 않는다. 이 모든
+            // 준비는 후보 안에서만 수행하며, 실패 시 확정 영역은 수정조차 하지 않는다.
+            candidate.Pattern = routePiecesMode ? editablePattern : null;
+            candidate.Circuits = new List<CircuitRoute>();
+            candidate.CircuitPieceIndices = new List<List<int>>();
+            candidate.CircuitExitOverrides.Clear();
+            candidate.TurnEnabled = routePiecesMode
                 ? editablePattern.RoutePieces.Where(p => p.Kind == SerpentineRoutePieceKind.TurnConnector).Select(_ => true).ToList()
                 : new List<bool>();
-            area.Paths = routePiecesMode ? new List<List<Vec2>>() : paths.Select(p => p.ToList()).ToList();
-            area.ExclusionPieces = null;
+            candidate.Paths = routePiecesMode ? new List<List<Vec2>>() : paths.Select(p => p.ToList()).ToList();
+            candidate.ExclusionPieces = null;
             if (routePiecesMode)
             {
                 int count = editablePattern.RoutePieces.Count;
-                if (area.NativePieceIds.Length != count) area.NativePieceIds = AllocateNativePieceIds(count);
-                area.RoutePieceLengths = new double[count];
-                area.ProjectedPieces = new List<RoutePieceResult>();
+                candidate.RoutePieceLengths = new double[count];
+                candidate.ProjectedPieces = new List<RoutePieceResult>();
             }
             else
             {
-                area.NativePieceIds = Array.Empty<int>();
-                area.RoutePieceLengths = Array.Empty<double>();
-                area.ProjectedPieces = new List<RoutePieceResult>();
+                candidate.NativePieceIds = Array.Empty<int>();
+                candidate.RoutePieceLengths = Array.Empty<double>();
+                candidate.ProjectedPieces = new List<RoutePieceResult>();
             }
-            if (!TryRefreshCircuits(area, out string circuitFailure))
-            {
-                RestoreAreaRouteState(area, previous, restoreExclusions: false);
-                SyncExitFaceUi(area);
-                StatusText.Text = circuitFailure;
-                return;
-            }
-            area.PatternDisplayed = false;
+            candidate.RouteEdited = false;
+            candidate.PatternDisplayed = routePiecesMode ? candidate.Pattern.RoutePieces.Count > 0 : candidate.Paths.Count > 0;
 
-            if (!RebuildNativePatternGeometry(area, out double total, out int projectedCount))
+            if (!RebuildNativePatternGeometry(area, candidate, out double total, out int projectedCount))
             {
-                RestoreAreaRouteState(area, previous, restoreExclusions: false);
                 SyncExitFaceUi(area);
                 return;
             }
 
-            // 재생성이 성공한 뒤에만 기존 편집 표시/이력을 지운다 — 실패 시 편집 내용은 보존된다.
-            ClearRouteEditState(area);
-            area.AppliedInputs = CaptureAppliedInputs(area, margin, spacing);
-
+            // Rebuild가 확정 영역에 게시한 준비 상태만 UI에 사용한다.
             projectedCount = routePiecesMode ? area.Pattern.RoutePieces.Count : area.Paths.Count;
-            area.PatternDisplayed = projectedCount > 0;
             Viewport.CircuitHoverMode = routePiecesMode;
+            SyncExitFaceUi(area);
             Bridge.ClearHover();
             HoverText.Text = "";
             if (routePiecesMode)
@@ -1122,25 +1164,17 @@ namespace HeatingMold.App
             var connectors = area.Pattern.RoutePieces.Select((p, i) => (p, i)).Where(x => x.p.Kind == SerpentineRoutePieceKind.TurnConnector).ToList();
             int ci = connectors.FindIndex(x => x.i == local);
             if (ci < 0) return;
-            AreaRouteSnapshot previous = CaptureAreaRouteState(area);
+            if (ci >= area.TurnEnabled.Count)
+            {
+                StatusText.Text = "회로 분할 상태가 턴 개수와 일치하지 않습니다";
+                return;
+            }
+            var candidate = ForkAreaRoute(area);
             bool next = !area.TurnEnabled[ci];
             var beforeGroups = area.CircuitPieceIndices.Select(g => g.ToList()).ToList();
-            area.TurnEnabled[ci] = next;
-            if (!TryRefreshCircuits(area, out string failure))
-            {
-                area.TurnEnabled[ci] = !next;
-                TryRefreshCircuits(area, out _);
-                StatusText.Text = "분할할 수 없습니다 — " + failure;
-                return;
-            }
-            if (next) RemoveOverridesForMerge(area, local, beforeGroups);
-            if (!RebuildNativePatternGeometry(area, out _, out _))
-            {
-                RestoreAreaRouteState(area, previous, restoreExclusions: false);
-                ApplyAreaConnectorStates(area);
-                Bridge.RedrawView();
-                return;
-            }
+            candidate.TurnEnabled[ci] = next;
+            if (next) RemoveOverridesForMerge(candidate, local, beforeGroups);
+            if (!RebuildNativePatternGeometry(area, candidate, out _, out _)) return;
             ApplyConnectorStates();
         }
         private void ApplyConnectorStates()
@@ -1148,16 +1182,12 @@ namespace HeatingMold.App
             CancelPowerSetup();
             var area = _activeArea;
             if (area?.Pattern == null) return;
-            ApplyAreaConnectorStates(area);
             Bridge.RedrawView();
             var circuits = area.Circuits;
             double length = 0;
             foreach (List<int> group in area.CircuitPieceIndices)
                 foreach (int index in group)
                     length += area.RoutePieceLengths.ElementAtOrDefault(index);
-            if (TryParseAreaParams(area.MarginText, area.SpacingText, out double margin,
-                    out double spacing))
-                area.AppliedInputs = CaptureAppliedInputs(area, margin, spacing);
             UpdateCircuitTable();
             StatusText.Text = string.Format("{0} 영역 · 회로 {1}개 · 길이 합계 {2:F1}mm", area.Name, circuits.Count, length);
         }
@@ -1194,8 +1224,8 @@ namespace HeatingMold.App
         {
             var groups = new List<List<int>>();
             if (area?.Pattern == null) return groups;
-            if (area.CircuitPieceIndices == null || area.CircuitPieceIndices.Count == 0)
-                TryRefreshCircuits(area, out _);
+            // 조회 중 현재 초안으로 회로를 재생성하지 않는다. 확정 그룹이 없으면 표시하지 않는다.
+            if (area.CircuitPieceIndices == null) return groups;
             foreach (List<int> indices in area.CircuitPieceIndices)
             {
                 var group = new List<int>();
@@ -1203,7 +1233,8 @@ namespace HeatingMold.App
                 {
                     if (index < 0 || index >= area.Pattern.RoutePieces.Count) continue;
                     if (area.Pattern.RoutePieces[index].Points.Count == 0) continue;
-                    group.Add(index < area.NativePieceIds.Length ? area.NativePieceIds[index] : index);
+                    if (index >= area.NativePieceIds.Length) continue;
+                    group.Add(area.NativePieceIds[index]);
                 }
                 if (group.Count > 0) groups.Add(group);
             }
@@ -1302,35 +1333,20 @@ namespace HeatingMold.App
             if (!ConfirmDiscardRouteEdits(area, "제외영역 지우기")) return false;
             ExitVertexEdit();
             CancelPowerSetup();
-            // 롤백 스냅샷 — 실패 시 제외 목록/경로/표시를 이전 그대로 되돌린다.
-            AreaRouteSnapshot previous = CaptureAreaRouteState(area);
-
-            area.Exclusions.Clear();
-            area.Pattern = null;
-            area.CircuitExitOverrides.Clear();
-            area.Paths = new List<List<Vec2>>();
-            area.ExclusionPieces = null;
-            area.NativePieceIds = Array.Empty<int>();
-            area.RoutePieceLengths = Array.Empty<double>();
-            area.ProjectedPieces = new List<RoutePieceResult>();
-            area.TurnEnabled = new List<bool>();
-            area.PatternDisplayed = false;
-            Bridge.ClearExclusionOverlays();
-            if (!RebuildNativePatternGeometry(area, out _, out _))
+            var candidate = ForkAreaRoute(area);
+            candidate.Exclusions.Clear();
+            PrepareExclusionRouteCandidate(candidate);
+            // 제외가 0이면 스테이징할 클리핑 메시가 없다. 기존 채움 표시는 경로
+            // 트랜잭션이 성공한 뒤에만 지우며, 실패 시에는 그대로 둔다.
+            if (!RebuildNativePatternGeometry(area, candidate, out _, out _))
             {
-                RestoreAreaRouteState(area, previous, restoreExclusions: true);
-                UpdateActiveAreaHighlight();
-                error = "제외영역 제거 후 네이티브 경로 상태를 갱신하지 못했습니다";
+                error = "제외영역 제거 후 네이티브 경로 상태를 갱신하지 못했습니다 — 이전 제외영역/경로를 유지했습니다";
+                StatusText.Text = error;
                 return false;
             }
             // 경로 재생성 성공 후에만 채움 메시를 걷어내고 Face 색칠로 되돌린다.
             UpdateActiveAreaHighlight();   // 제외 0: ClearAreaHighlight + ApplyAreaColors
-            ClearRouteEditState(area);
-            if (area.HasExitFace)
-            {
-                RecomputeAnchorCandidates(area);
-                SyncExitFaceUi(area);
-            }
+            SyncExitFaceUi(area);
             UpdateCircuitTable();
             UpdateActionStates();
             StatusText.Text = string.Format("{0} 영역의 제외 사각형을 모두 지웠습니다", area.Name);

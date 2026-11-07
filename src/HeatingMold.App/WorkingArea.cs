@@ -8,7 +8,10 @@ using HeatingMold.OccBridge;
 namespace HeatingMold.App;
 
 /// <summary>분할로 새로 생긴 회로 끝 인출점의 수동 이동값. 원본 Pattern 조각 인덱스와 역할로 식별한다.</summary>
-internal sealed record CircuitExitOverride(int PieceIndex, CircuitExitRole Role, Vec2 Point);
+internal sealed record CircuitExitOverride(int PieceIndex, CircuitExitRole Role, Vec2 Point)
+{
+    public ExitEdgeBinding? Binding { get; init; }
+}
 
 /// <summary>
 /// 확정된 작업영역 하나. 확정 시점의 Face 집합/투영 프레임과 해당 영역에서
@@ -23,7 +26,7 @@ internal sealed class WorkingArea
     public HashSet<int> FaceIdSet { get; } = new();
     public List<List<Vec2>> Region { get; } = new();
     public ProjectionFrame Frame { get; init; }
-    public List<(double MinX, double MinY, double MaxX, double MaxY)> Exclusions { get; } = new();
+    public List<(double MinX, double MinY, double MaxX, double MaxY)> Exclusions { get; set; } = new();
 
     /// <summary>사행 배치 방향(자동/프레임 X/프레임 Y).</summary>
     public PatternDirection Direction { get; set; } = PatternDirection.Auto;
@@ -56,6 +59,12 @@ internal sealed class WorkingArea
 
     /// <summary>선택한 인출 경계 후보의 구간별 원본 CAD edge 참조. 모델/후보가 바뀌면 무효.</summary>
     public List<ExitEdgeReference> ExitEdgeRefs { get; set; } = new();
+
+    /// <summary>원본 edge의 작업평면 투영 질의. 표시용 체인과는 독립된 설계 제약이다.</summary>
+    public IExitBoundary2D ExitBoundary { get; set; }
+
+    /// <summary>선택한 후보의 identity와 양끝 원본 parameter를 보존한다.</summary>
+    public AnchoredCandidate SelectedAnchorCandidate { get; set; }
 
     /// <summary>분할·재연결을 반영한 회로별 완결 경로. 인출점/길이/표시의 정본이다.</summary>
     public List<CircuitRoute> Circuits { get; set; } = new();
@@ -108,8 +117,9 @@ internal sealed class WorkingArea
     public List<List<Vec2>> EffectiveRegion() =>
         Exclusions.Count == 0 ? Region : RegionOps.SubtractRectangles(Region, Exclusions);
 
-    public bool HasExitAnchors => ExitFaceId >= 0 && StartAnchor.HasValue && EndAnchor.HasValue;
-    public bool HasExitFace => ExitFaceId >= 0 && ExitChain.Count >= 2;
+    public bool HasExitAnchors => HasExitFace && StartAnchor.HasValue && EndAnchor.HasValue &&
+        SelectedAnchorCandidate?.StartBinding.HasValue == true && SelectedAnchorCandidate?.EndBinding.HasValue == true;
+    public bool HasExitFace => ExitFaceId >= 0 && ExitChain.Count >= 2 && ExitEdgeRefs.Count > 0 && ExitBoundary != null;
 
     public string Label => string.Format("{0} · Face {1}", Name, FaceIdSet.Count);
     public Brush Swatch => new SolidColorBrush(Color);
