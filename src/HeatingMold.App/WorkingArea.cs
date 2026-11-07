@@ -63,6 +63,9 @@ internal sealed class WorkingArea
     /// <summary>원본 edge의 작업평면 투영 질의. 표시용 체인과는 독립된 설계 제약이다.</summary>
     public IExitBoundary2D ExitBoundary { get; set; }
 
+    /// <summary>적용영역 전체 경계의 정확 CAD 판정. 표시/생성용 Region 폴리곤과 독립이다.</summary>
+    public ExactRegionContainment RegionBoundary { get; set; }
+
     /// <summary>선택한 후보의 identity와 양끝 원본 parameter를 보존한다.</summary>
     public AnchoredCandidate SelectedAnchorCandidate { get; set; }
 

@@ -97,8 +97,19 @@ static class ExclusionExitChecks
 
         // 영역은 선택 면의 실제 원본 통합 경계(60x40)를 작업평면에 투영해 구성한다.
         var loops = Bridge.GetSelectedRegionBoundary(new[] { topFace }, 0.05);
+        if (loops == null || loops.Length != 1) Console.WriteLine(Bridge.GetExitSideDiagnostic());
         Check(loops != null && loops.Length == 1 && loops[0].Closed && loops[0].Points != null,
             "planar face exposes one closed region boundary loop");
+        Check(loops[0].EdgeReferences != null && loops[0].EdgeReferences.Length > 0,
+            "region boundary carries original CAD edge references");
+        var boundaryRefs = loops[0].EdgeReferences;
+        int boundaryPoints = loops[0].Points.Length / 3;
+        Check(boundaryRefs[0].StartIndex == 0 && boundaryRefs[^1].EndIndex == boundaryPoints - 1 &&
+              Enumerable.Range(0, boundaryRefs.Length - 1)
+                  .All(i => boundaryRefs[i].EndIndex == boundaryRefs[i + 1].StartIndex),
+            "region boundary references cover the closed loop contiguously");
+        areaType.GetProperty("RegionBoundary")!.SetValue(area, new ExactRegionContainment(
+            new CadRegionBoundary2D(side.Id.Value, side.Revision.Value, loops[0].EdgeReferences)));
         var region = (List<List<Vec2>>)areaType.GetProperty("Region")!.GetValue(area)!;
         var ring = new List<Vec2>();
         for (int k = 0; k + 2 < loops[0].Points.Length; k += 3)
@@ -162,6 +173,8 @@ static class ExclusionExitChecks
 
         Invoke(window, "GenerateMultiFace");
         var pattern = areaType.GetProperty("Pattern")!.GetValue(area) as SerpentineResult;
+        if (pattern == null)
+            Console.WriteLine("GenerateMultiFace status: " + ((TextBlock)window.FindName("StatusText")).Text);
         Check(pattern != null, "exclusion+exit generation produces a route plan");
         if (pattern == null) { Cleanup(window, marginBox, spacingBox, fixtureDir); return; }
 

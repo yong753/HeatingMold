@@ -131,6 +131,13 @@ static class VertexEditChecks
         ((HashSet<int>)areaType.GetProperty("FaceIdSet")!.GetValue(area.Value)!).Add(topFace);
         ((List<List<Vec2>>)areaType.GetProperty("Region")!.GetValue(area.Value)!).Add(new()
             { new(-70, -20), new(-10, -20), new(-10, 20), new(-70, 20) });
+        var regionLoops = Bridge.GetSelectedRegionBoundary(new[] { topFace }, 0.05);
+        Check(regionLoops != null && regionLoops.Length == 1 &&
+              regionLoops[0].EdgeReferences != null && regionLoops[0].EdgeReferences.Length > 0,
+            "vertex edit fixture exposes exact region boundary references");
+        if (regionLoops == null) { Cleanup(window, fixtureDir); return; }
+        areaType.GetProperty("RegionBoundary")!.SetValue(area.Value, new ExactRegionContainment(
+            new CadRegionBoundary2D(side.Id.Value, side.Revision.Value, regionLoops[0].EdgeReferences)));
         ((IList)Field<object>(window, "_areas")).Add(area.Value);
 
         areaType.GetProperty("ExitFaceId")!.SetValue(area.Value, rightSide.FaceId);

@@ -40,6 +40,8 @@ static class CircuitExitOverrideChecks
         areaType.GetProperty("ExitFaceId")!.SetValue(area, 1);
         ((List<Vec2>)areaType.GetProperty("ExitChain")!.GetValue(area)!).AddRange(chain);
         ((IList)areaType.GetProperty("Region")!.GetValue(area)!).Add(outer);
+        areaType.GetProperty("RegionBoundary")!.SetValue(area, new ExactRegionContainment(
+            new MockExactRegionBoundary(outer.ToArray())));
         int turns = generated.Pattern!.RoutePieces.Count(
             piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector);
         var enabled = new List<bool>();

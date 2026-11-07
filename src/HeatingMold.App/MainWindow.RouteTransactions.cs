@@ -36,6 +36,7 @@ public partial class MainWindow
             EndAnchor = source.EndAnchor,
             ExitEdgeRefs = source.ExitEdgeRefs.Select(CadExitBoundary2D.CopyReference).ToList(),
             ExitBoundary = source.ExitBoundary,
+            RegionBoundary = source.RegionBoundary,
             SelectedAnchorCandidate = source.SelectedAnchorCandidate,
             Circuits = source.Circuits.Select(route => route with
             {

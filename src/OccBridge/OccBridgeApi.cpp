@@ -784,10 +784,31 @@ namespace
         return true;
     }
 
+    // 아래 정의는 뒤쪽 인출 측면 추출과 공유한다.
+    int FindSupportFaceForEdge(const TopoDS_Edge& edge, const std::set<int>& selected);
+    double EdgeLengthNative(const TopoDS_Edge& edge);
+    long long StoreOriginalExitEdge(const HeatingMoldExitNative::SourceInterval& source,
+        int faceId, int supportFaceId);
+    std::string g_exitSideDiagnostic;
+
+    /// <summary>경계 일부 점 구간이 대응하는 원본 CAD Edge 참조.</summary>
+    struct NativeExitEdgeRef
+    {
+        long long revision = 0;
+        long long key = -1;
+        int faceId = -1;
+        double firstParameter = 0.0;
+        double lastParameter = 0.0;
+        bool reversed = false;
+        int startIndex = 0; // 경계 polyline의 점 인덱스
+        int endIndex = 0;   // 포함
+    };
+
     struct NativeBoundaryLoop
     {
         bool closed = false;
         std::vector<double> xyz;
+        std::vector<NativeExitEdgeRef> edgeRefs;
     };
 
     bool ExtractSelectedRegionBoundary(const std::vector<int>& faceIds, double deflection,
@@ -842,6 +863,54 @@ namespace
         for (int i = 1; i <= edgeMap.Extent(); ++i)
             if (uses[i - 1] == 1) boundaryEdges.push_back(TopoDS::Edge(edgeMap(i)));
         if (boundaryEdges.empty()) return false;
+
+        // Sewing 사본 경계 Edge를 선택 면의 원본 경계 Edge로 되돌린다.
+        // 표시용 샘플과 독립된 정확 경계 판정의 정본이며, 매칭 실패는
+        // 폴리곤 근사로 대체하지 않고 추출 실패로 처리한다.
+        const double geometryMatchTolerance = 0.05;
+        TopTools_IndexedMapOfShape originalEdgeMap;
+        std::vector<int> originalEdgeUses;
+        for (int faceId : selected)
+        {
+            for (TopExp_Explorer ex(g_faces[faceId], TopAbs_EDGE); ex.More(); ex.Next())
+            {
+                const TopoDS_Edge originalEdge = TopoDS::Edge(ex.Current());
+                int index = originalEdgeMap.FindIndex(originalEdge);
+                if (index == 0)
+                {
+                    originalEdgeMap.Add(originalEdge);
+                    originalEdgeUses.push_back(0);
+                    index = originalEdgeMap.Extent();
+                }
+                ++originalEdgeUses[index - 1];
+            }
+        }
+        std::vector<TopoDS_Edge> originalBoundaryEdges;
+        for (int i = 1; i <= originalEdgeMap.Extent(); ++i)
+            if (originalEdgeUses[i - 1] == 1)
+                originalBoundaryEdges.push_back(TopoDS::Edge(originalEdgeMap(i)));
+        if (originalBoundaryEdges.empty())
+        {
+            g_exitSideDiagnostic += "region-boundary: no original boundary edges\n";
+            return false;
+        }
+        const auto inverse = HeatingMoldExitNative::SewingSourceInverse(sewing, originalBoundaryEdges, edgeMap);
+        std::vector<HeatingMoldExitNative::SourceInterval> sourceMatches(static_cast<size_t>(edgeMap.Extent()));
+        std::vector<bool> sourceValid(static_cast<size_t>(edgeMap.Extent()), false);
+        for (const TopoDS_Edge& boundaryEdge : boundaryEdges)
+        {
+            const int index = edgeMap.FindIndex(boundaryEdge) - 1;
+            if (index < 0 || index >= static_cast<int>(sourceMatches.size())) return false;
+            bool ambiguous = false;
+            sourceValid[index] = HeatingMoldExitNative::FindUniqueSourceInterval(boundaryEdge,
+                originalBoundaryEdges, inverse[index], geometryMatchTolerance, sourceMatches[index], ambiguous);
+            if (!sourceValid[index])
+            {
+                g_exitSideDiagnostic += "region-boundary: unmatched edge len=" +
+                    std::to_string(EdgeLengthNative(boundaryEdge)) + "\n";
+                return false;
+            }
+        }
 
         TopTools_IndexedMapOfShape vertexMap;
         std::vector<std::vector<int>> incident;
@@ -904,6 +973,23 @@ namespace
             for (BRepTools_WireExplorer we(wire); we.More(); we.Next())
             {
                 const TopoDS_Edge edge = we.Current();
+                const int mapIndex = edgeMap.FindIndex(edge);
+                if (mapIndex <= 0 || mapIndex > static_cast<int>(sourceMatches.size()) ||
+                    !sourceValid[mapIndex - 1])
+                {
+                    g_exitSideDiagnostic += "region-boundary: wire edge not mapped mapIndex=" +
+                        std::to_string(mapIndex) + "\n";
+                    return false;
+                }
+                const HeatingMoldExitNative::SourceInterval& source = sourceMatches[mapIndex - 1];
+                const int owningFace = FindSupportFaceForEdge(source.edge, selected);
+                if (owningFace < 0)
+                {
+                    g_exitSideDiagnostic += "region-boundary: no owning face\n";
+                    return false;
+                }
+                const int startPoint = static_cast<int>(loop.xyz.size() / 3);
+                int endPoint = startPoint - 1;
                 BRepAdaptor_Curve curve(edge);
                 GCPnts_QuasiUniformDeflection sampler(curve, deflection);
                 if (!sampler.IsDone() || sampler.NbPoints() < 2 || sampler.NbPoints() > 100000) return false;
@@ -919,8 +1005,26 @@ namespace
                         gp_Pnt(loop.xyz[loop.xyz.size() - 3], loop.xyz[loop.xyz.size() - 2],
                                loop.xyz[loop.xyz.size() - 1]).Distance(p) <= Precision::Confusion()) continue;
                     loop.xyz.push_back(p.X()); loop.xyz.push_back(p.Y()); loop.xyz.push_back(p.Z());
+                    endPoint = static_cast<int>(loop.xyz.size() / 3) - 1;
                 }
+                // 중복점만 남은 변(영길이/이음 변)은 폴리라인 구간이 없다. 참조도 만들지 않는다.
+                if (endPoint < startPoint) continue;
+                // 앞 변 끝점과 첫 표본이 중복 제거되든(허용오차 이내) 미세 단차로 남든,
+                // 구간은 항상 마지막 공유점에서 시작해야 참조 구간이 끊기지 않는다.
+                const int referenceStart = startPoint > 0 ? startPoint - 1 : 0;
+                if (endPoint <= referenceStart) continue;
+                NativeExitEdgeRef ref;
+                ref.revision = g_modelRevision;
+                ref.key = StoreOriginalExitEdge(source, owningFace, owningFace);
+                ref.faceId = owningFace;
+                ref.firstParameter = source.first;
+                ref.lastParameter = source.last;
+                ref.reversed = source.reversed != (edge.Orientation() == TopAbs_REVERSED);
+                ref.startIndex = referenceStart;
+                ref.endIndex = endPoint;
+                loop.edgeRefs.push_back(ref);
             }
+            if (loop.edgeRefs.empty()) return false;
             if (!hasPoint || previousPoint.Distance(firstPoint) > sewingTolerance) return false;
             if (loop.xyz.size() < 9) return false;
             loops.push_back(std::move(loop));
@@ -936,19 +1040,6 @@ namespace
     {
         int faceId = -1;
         int startIndex = 0;
-    };
-
-    /// <summary>run의 일부 점 구간이 대응하는 원본 CAD Edge 참조.</summary>
-    struct NativeExitEdgeRef
-    {
-        long long revision = 0;
-        long long key = -1;
-        int faceId = -1;
-        double firstParameter = 0.0;
-        double lastParameter = 0.0;
-        bool reversed = false;
-        int startIndex = 0; // NativeExitSide.xyz의 점 인덱스
-        int endIndex = 0;   // 포함
     };
 
     struct StoredExitEdge
@@ -1141,7 +1232,6 @@ namespace
     // changes, so a 3D angle gate rejects legitimate splits of one straight
     // side. Judge in the working-plane projection instead, and use a chord
     // window so a short sampling segment cannot set the direction.
-    std::string g_exitSideDiagnostic;
 
     const double kExitJunctionAngle2dDegrees = 15.0;
     const double kExitJunctionWindow = 1.0;
@@ -3533,6 +3623,22 @@ array<RegionBoundaryLoop^>^ Bridge::GetSelectedRegionBoundary(array<int>^ faceId
         auto points = gcnew array<double>((int)nativeLoops[(size_t)i].xyz.size());
         for (int k = 0; k < points->Length; ++k) points[k] = nativeLoops[(size_t)i].xyz[(size_t)k];
         loop->Points = points;
+        auto references = gcnew array<ExitEdgeReference^>((int)nativeLoops[(size_t)i].edgeRefs.size());
+        for (int k = 0; k < references->Length; ++k)
+        {
+            const NativeExitEdgeRef& source = nativeLoops[(size_t)i].edgeRefs[(size_t)k];
+            ExitEdgeReference^ reference = gcnew ExitEdgeReference();
+            reference->Revision = source.revision;
+            reference->EdgeKey = source.key;
+            reference->FaceId = source.faceId;
+            reference->FirstParameter = source.firstParameter;
+            reference->LastParameter = source.lastParameter;
+            reference->Reversed = source.reversed;
+            reference->StartIndex = source.startIndex;
+            reference->EndIndex = source.endIndex;
+            references[k] = reference;
+        }
+        loop->EdgeReferences = references;
         result[i] = loop;
     }
     return result;

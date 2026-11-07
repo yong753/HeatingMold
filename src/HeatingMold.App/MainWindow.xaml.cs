@@ -833,7 +833,8 @@ namespace HeatingMold.App
                 return;
             }
 
-            if (!TryBuildSelectedRegion(out List<List<Vec2>> region, out ProjectionFrame frame))
+            if (!TryBuildSelectedRegion(out List<List<Vec2>> region, out ProjectionFrame frame,
+                    out ExactRegionContainment regionBoundary))
             {
                 // 후보 구성 실패 시 기존 확정 영역·경로·하이라이트를 그대로 둔다.
                 ErrorReporter.ShowError("작업영역 확정 실패",
@@ -854,6 +855,7 @@ namespace HeatingMold.App
             };
             area.FaceIdSet.UnionWith(_selectedFaceIds);
             area.Region.Add(region[0]);
+            area.RegionBoundary = regionBoundary;
             _areas.Add(area);
             _multiFaceRegionFailure = null;
 
@@ -869,10 +871,12 @@ namespace HeatingMold.App
 
         // 현재 선택으로 확정 후보 영역을 계산만 한다. 성공 시에만 호출자가 게시하고,
         // 실패해도 기존 확정 표시(하이라이트/경로/2D 영역)는 건드리지 않는다.
-        private bool TryBuildSelectedRegion(out List<List<Vec2>> region, out ProjectionFrame frame)
+        private bool TryBuildSelectedRegion(out List<List<Vec2>> region, out ProjectionFrame frame,
+            out ExactRegionContainment boundary)
         {
             region = new List<List<Vec2>>();
             frame = null;
+            boundary = null;
             _multiFaceRegionFailure = null;
             if (_selectedFaceIds.Count == 0)
             {
@@ -913,6 +917,18 @@ namespace HeatingMold.App
                 return false;
             }
 
+            // 표시/생성용 폴리곤과 별개로, 판정은 원본 CAD 경계 참조로만 한다.
+            // 참조가 불완전하면 근사 검증으로 대체하지 않고 영역 확정을 실패시킨다.
+            ExitEdgeReference[] boundaryReferences = sourceLoops[0].EdgeReferences ?? Array.Empty<ExitEdgeReference>();
+            if (!TryValidateRegionBoundaryReferences(boundaryReferences, firstPts.Count, out string referenceFailure))
+            {
+                _multiFaceRegionFailure = referenceFailure;
+                return false;
+            }
+            var confirmedSide = _workingSide.Confirmed;
+            boundary = new ExactRegionContainment(new CadRegionBoundary2D(
+                confirmedSide.Id.Value, confirmedSide.Revision.Value, boundaryReferences));
+
             List<Vec2> projected = firstPts.Select(fixedFrame.Project).ToList();
             if (projected.Count < 3 || Math.Abs(RegionOps.SignedArea(projected)) < 1e-8)
             {
@@ -922,6 +938,47 @@ namespace HeatingMold.App
             if (RegionOps.SignedArea(projected) < 0) projected.Reverse();
             region.Add(projected);
             frame = fixedFrame;
+            return true;
+        }
+
+        /// <summary>경계 참조가 루프 점 전체를 빠짐없이 덮는지 확인한다.</summary>
+        private static bool TryValidateRegionBoundaryReferences(ExitEdgeReference[] references, int pointCount,
+            out string failure)
+        {
+            failure = null;
+            if (references == null || references.Length == 0)
+            {
+                failure = "영역 경계의 원본 CAD 참조를 구성하지 못했습니다 — 영역을 확정할 수 없습니다";
+                return false;
+            }
+            if (pointCount < 4)
+            {
+                failure = "원본 통합 경계의 점이 부족합니다";
+                return false;
+            }
+            if (references[0].StartIndex != 0 || references[^1].EndIndex != pointCount - 1)
+            {
+                failure = "영역 경계의 원본 CAD 참조가 루프 전체를 덮지 않습니다";
+                return false;
+            }
+            for (int i = 0; i < references.Length; i++)
+            {
+                if (references[i].EndIndex <= references[i].StartIndex ||
+                    references[i].Revision <= 0 || references[i].EdgeKey <= 0 ||
+                    references[i].FaceId < 0 ||
+                    references[i].LastParameter <= references[i].FirstParameter)
+                {
+                    failure = "영역 경계의 원본 CAD 참조가 유효하지 않습니다";
+                    return false;
+                }
+                if (i + 1 < references.Length && references[i].EndIndex != references[i + 1].StartIndex)
+                {
+                    failure = string.Format(
+                        "영역 경계의 원본 CAD 참조 구간이 연속되지 않습니다 — 참조 {0} 끝 인덱스 {1}, 다음 참조 시작 인덱스 {2}",
+                        i, references[i].EndIndex, references[i + 1].StartIndex);
+                    return false;
+                }
+            }
             return true;
         }
 

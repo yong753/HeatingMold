@@ -165,37 +165,6 @@ public class RouteVertexEditTests
     }
 
     [Fact]
-    public void Validator_AcceptsInsideAndRejectsOutside()
-    {
-        var region = new List<IReadOnlyList<Vec2>>
-        {
-            new List<Vec2> { new(0, 0), new(10, 0), new(10, 10), new(0, 10) },
-        };
-
-        Assert.True(RouteVertexValidator.SegmentsStayInRegion(region,
-            new List<(Vec2 A, Vec2 B)> { (new Vec2(1, 1), new Vec2(9, 9)) }, out _));
-
-        Assert.False(RouteVertexValidator.SegmentsStayInRegion(region,
-            new List<(Vec2 A, Vec2 B)> { (new Vec2(1, 1), new Vec2(11, 5)) }, out string failure));
-        Assert.Contains("벗어납니다", failure);
-    }
-
-    [Fact]
-    public void Validator_RespectsHole()
-    {
-        var region = new List<IReadOnlyList<Vec2>>
-        {
-            new List<Vec2> { new(0, 0), new(10, 0), new(10, 10), new(0, 10) },
-            new List<Vec2> { new(4, 4), new(6, 4), new(6, 6), new(4, 6) },
-        };
-
-        Assert.False(RouteVertexValidator.SegmentsStayInRegion(region,
-            new List<(Vec2 A, Vec2 B)> { (new Vec2(1, 5), new Vec2(9, 5)) }, out _));
-        Assert.True(RouteVertexValidator.SegmentsStayInRegion(region,
-            new List<(Vec2 A, Vec2 B)> { (new Vec2(1, 5), new Vec2(3, 5)) }, out _));
-    }
-
-    [Fact]
     public void SnapOnChain_ClampsToNearestSegmentPoint()
     {
         var chain = new List<Vec2> { new(0, 0), new(10, 0) };

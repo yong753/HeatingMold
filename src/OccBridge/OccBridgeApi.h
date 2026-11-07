@@ -23,12 +23,17 @@ public:
     property array<double>^ Points;
 };
 
+ref class ExitEdgeReference;
+
 /// <summary>원본 CAD 위상에서 추출한 선택 Face 통합 경계의 3D polyline.</summary>
 public ref class RegionBoundaryLoop
 {
 public:
     property array<double>^ Points; // flat: x0,y0,z0,...
     property bool Closed;
+    // 루프를 구성하는 원본 CAD Edge 참조(와이어 순서, Points 진행 방향 기준).
+    // 표시용 샘플과 독립된 정확 경계 판정의 정본이다.
+    property array<ExitEdgeReference^>^ EdgeReferences;
 };
 
 /// <summary>

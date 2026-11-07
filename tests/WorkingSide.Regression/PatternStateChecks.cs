@@ -112,6 +112,8 @@ static class PatternStateChecks
             new[] { new Vec2(-10, 0), new Vec2(10, 0) });
         ((List<List<Vec2>>)areaType.GetProperty("Region")!.GetValue(value)!).Add(new()
             { new(-12, -8), new(12, -8), new(12, 8), new(-12, 8) });
+        areaType.GetProperty("RegionBoundary")!.SetValue(value, new ExactRegionContainment(
+            new MockExactRegionBoundary(new Vec2[] { new(-12, -8), new(12, -8), new(12, 8), new(-12, 8) })));
         areaType.GetProperty("ExitBoundary")!.SetValue(value, new MockReviewBoundary());
         ((IList)Field<object>(window, "_areas")).Add(value);
         return value;

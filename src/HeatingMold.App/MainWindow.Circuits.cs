@@ -115,7 +115,11 @@ public partial class MainWindow
                 routes[i] = rebuilt with { CandidateId = routes[i].CandidateId };
             }
         }
-        var region = area.EffectiveRegion();
+        if (area.RegionBoundary == null)
+        {
+            failure = "영역의 정확 CAD 경계가 없습니다 — 영역을 다시 확정하세요";
+            return false;
+        }
         foreach (CircuitRoute route in routes)
         {
             var segments = new List<(Vec2 A, Vec2 B)>();
@@ -127,9 +131,9 @@ public partial class MainWindow
                 for (int i = 1; i < piece.Points.Count; i++)
                     segments.Add((piece.Points[i - 1], piece.Points[i]));
             }
-            if (!RouteVertexValidator.SegmentsStayInRegion(region, segments, out string regionFailure))
+            if (!area.RegionBoundary.ValidateSegments(segments, area.Exclusions, out string regionFailure))
             {
-                failure = "분할 회로가 선택 영역을 벗어납니다 — " + regionFailure;
+                failure = "회로가 적용영역을 벗어납니다 — " + regionFailure;
                 return false;
             }
         }
