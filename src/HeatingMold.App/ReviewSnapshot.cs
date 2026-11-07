@@ -15,7 +15,7 @@ internal enum ReviewAreaState
 
 internal sealed record ReviewAreaEntry(WorkingArea Area, ReviewAreaState State, string Reason);
 
-internal sealed record CircuitLengthInfo(string CircuitId, double HeatingLengthMm, double LeadLengthMm);
+internal sealed record CircuitLengthInfo(string CircuitId, double HeatingLengthMm);
 
 /// <summary>
 /// 회로 표·전기 사양표·내보내기 안내가 같은 판단을 쓰도록 만든 한 번의 검토 결과.

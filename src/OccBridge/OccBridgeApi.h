@@ -35,6 +35,19 @@ public:
 /// 확정 영역 외곽 경계에서 도출한 인출 측면 후보 (연속 경계 Edge의 묶음).
 /// faceId는 경계 반대편 원본 모델 Face이며, Points는 그 구간의 3D polyline이다.
 /// </summary>
+public ref class ExitEdgeReference
+{
+public:
+    property long long Revision;       // 참조를 만든 모델 revision
+    property long long EdgeKey;        // native가 보관하는 원본 Edge 영속 키
+    property int FaceId;               // 이 구간의 반대편(인출 측면) 원본 Face
+    property double FirstParameter;    // 원본 Edge trim 범위 시작
+    property double LastParameter;     // 원본 Edge trim 범위 끝
+    property bool Reversed;            // 후보 Points 진행 방향과 Edge 파라미터 방향이 반대인지
+    property int StartIndex;           // ExitSideCandidate.Points의 시작 점 인덱스
+    property int EndIndex;             // 끝 점 인덱스 (포함)
+};
+
 public ref class ExitSideCandidate
 {
 public:
@@ -42,6 +55,22 @@ public:
     property array<double>^ Points; // flat: x0,y0,z0,...
     // Points 구간별(점 N개 → N-1개) 반대편 면 id. 병합된 후보에서 구간마다 면이 다를 수 있다.
     property array<int>^ SegmentFaceIds;
+    // 후보 Polyline 구간이 대응하는 원본 CAD Edge 참조(순서대로).
+    property array<ExitEdgeReference^>^ EdgeReferences;
+};
+
+public enum class ExitEdgeQueryStatus { Hit, Miss, Ambiguous, InvalidInput, StaleContext, GeometryFailure };
+
+/// <summary>2D 작업평면 데이텀을 원본 인출 Edge 위로 평가한 결과.</summary>
+public ref class ExitEdgeHit
+{
+public:
+    property ExitEdgeQueryStatus Status;
+    property int FaceId;             // 평가점을 지지하는 인출 측면 원본 Face
+    property double Parameter;       // 원본 Edge 파라미터
+    property array<double>^ Point;   // xyz
+    property array<double>^ Tangent; // Edge 파라미터 증가 방향 단위 xyz
+    property array<double>^ DatumPoint; // 평가점을 작업평면에 투영한 uv
 };
 
 public ref class HlrPolyline
@@ -144,6 +173,8 @@ public:
     static array<array<double>^>^ GetSharedBoundaryEdges(int exitFaceId, array<int>^ heatingFaceIds, double deflection);
     static bool CommitWorkingRouteGeometry(long long id, long long revision, array<int>^ stagedRouteIds,
         array<int>^ finalRouteIds, array<int>^ stagedPolylineIds);
+    /// <summary>커밋은 성공했지만 마지막 Redraw가 실패했는지 한 번만 보고한다(읽은 뒤 초기화).</summary>
+    static bool ConsumeCommitRedrawFailure();
     static void DiscardWorkingRouteGeometry(long long id, long long revision,
         array<int>^ stagedRouteIds, array<int>^ stagedPolylineIds);
     static bool IsWorkingPointVisible(long long id, long long revision, double x, double y, double z, double tolerance);
@@ -181,6 +212,13 @@ public:
     static array<ExitSideCandidate^>^ GetBoundaryExitSides(array<int>^ faceIds, double deflection);
     static array<ExitSideCandidate^>^ GetBoundaryExitSides(array<int>^ faceIds, double deflection,
                                                           double nx, double ny, double nz);
+    /// <summary>
+    /// 작업평면 2D 데이텀에서 원본 인출 Edge 위의 3D 점을 평가한다.
+    /// 범위 밖/모호/무효/오래된 참조는 실패하며 다른 Edge나 표면으로 대체하지 않는다.
+    /// </summary>
+    static ExitEdgeHit^ EvaluateExitEdge(long long id, long long revision,
+                                         long long edgeRevision, long long edgeKey,
+                                         double u, double v, double tolerance);
     /// <summary>Last exit-side extraction diagnostic (ASCII, one item per line).</summary>
     static System::String^ GetExitSideDiagnostic();
     /// <summary>인출 측면 후보를 임시 강조 표시한다 (이전 강조는 지운다).</summary>

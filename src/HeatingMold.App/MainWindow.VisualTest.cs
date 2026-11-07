@@ -629,7 +629,7 @@ namespace HeatingMold.App
             int nativeId = area.NativePieceIds[routeIndex];
             OnConnectorPicked(nativeId);
 
-            Require(area.TurnEnabled[turnOrdinal] == enable, "연결구간 상태가 요청과 다릅니다.");
+            Require(area.TurnEnabled[turnOrdinal] == enable, "연결구간 상태가 요청과 다릅니다. " + StatusText.Text);
             int circuitsAfter = GetCircuitLengths(area).Count;
             if (enable) Require(circuitsAfter == circuitsBefore - 1, "재연결 후 회로 수가 줄지 않았습니다.");
             else Require(circuitsAfter == circuitsBefore + 1, "분할 후 회로 수가 늘지 않았습니다.");
@@ -689,10 +689,12 @@ namespace HeatingMold.App
 
             Dictionary<string, int> diagnostic = ParseDisplayDiagnostic(Bridge.GetDisplayDiagnostic());
             Require(NativeCount(diagnostic, "routes") == pieces, "네이티브 경로 조각 수가 관리 상태와 다릅니다.");
-            Require(NativeCount(diagnostic, "displayed") == pieces, "화면에 표시된 네이티브 조각 수가 다릅니다.");
+            Require(NativeCount(diagnostic, "displayed") == pieces,
+                string.Format("화면에 표시된 네이티브 조각 수가 다릅니다. 표시 {0}, 기대 {1} (전체 {2}, 비활성 {3})",
+                    NativeCount(diagnostic, "displayed"), pieces, pieces, disabled));
             Require(NativeCount(diagnostic, "connectors") == turns, "네이티브 연결구간 수가 다릅니다.");
             Require(NativeCount(diagnostic, "enabled") == pieces - disabled, "네이티브 활성 조각 수가 다릅니다.");
-            Require(NativeCount(diagnostic, "markers") == 2 * _areas.Count(a => a.Pattern != null && a.Pattern.RoutePieces.Count > 0),
+            Require(NativeCount(diagnostic, "markers") == 2 * _areas.Where(a => a.Pattern != null && a.Pattern.RoutePieces.Count > 0).Sum(a => Math.Max(1, a.Circuits.Count)),
                 "발열경로 끝점 마커 수가 영역 수와 다릅니다.");
 
             ReviewSnapshot snapshot = BuildReviewSnapshot();
@@ -1168,7 +1170,11 @@ namespace HeatingMold.App
             {
                 var matches = area.AnchorCandidates.Where(c => AnchorMatches(c, anchorSpec)).ToList();
                 Require(matches.Count == 1,
-                    string.Format("좌표 지문과 일치하는 앵커 후보가 정확히 1개가 아닙니다: {0}개", matches.Count));
+                    string.Format("좌표 지문과 일치하는 앵커 후보가 정확히 1개가 아닙니다: {0}개 (전체 후보 {1}개, 사유 {2}, 후보 {3})",
+                        matches.Count, area.AnchorCandidates.Count, area.LastExitFailure ?? "없음",
+                        string.Join("; ", area.AnchorCandidates.Select(c => string.Format(CultureInfo.InvariantCulture,
+                            "({0:0.###},{1:0.###})->({2:0.###},{3:0.###})",
+                            c.Start.X, c.Start.Y, c.End.X, c.End.Y)))));
                 anchor = matches[0];
                 anchorSource = "uv";
             }
@@ -1357,7 +1363,7 @@ namespace HeatingMold.App
             SidebarTabs.SelectedIndex = PatternTabIndex;
 
             Generate_Click(this, new RoutedEventArgs());
-            Require(area.Pattern != null, "발열경로 패턴이 생성되지 않았습니다.");
+            Require(area.Pattern != null, "발열경로 패턴이 생성되지 않았습니다: " + StatusText.Text);
             Require(area.Pattern.RoutePieces.Count > 0, "패턴 조각이 없습니다.");
             Require(area.PatternDisplayed, "패턴이 화면에 표시된 상태가 아닙니다.");
             Require(area.AppliedInputs != null, "생성 입력 스냅샷이 없습니다.");
@@ -1421,7 +1427,7 @@ namespace HeatingMold.App
             int nativeId = area.NativePieceIds[routeIndex];
             OnConnectorPicked(nativeId);
 
-            Require(!area.TurnEnabled[turnOrdinal], "지정한 연결구간이 비활성화되지 않았습니다.");
+            Require(!area.TurnEnabled[turnOrdinal], "지정한 연결구간이 비활성화되지 않았습니다. " + StatusText.Text);
             Require(area.TurnEnabled.Count(v => !v) == 1, "지정한 연결구간 외에 비활성화된 구간이 있습니다.");
 
             int circuitsAfter = BuildReviewSnapshot().Circuits.Count;

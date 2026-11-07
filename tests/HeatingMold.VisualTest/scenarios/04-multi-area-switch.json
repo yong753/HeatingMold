@@ -28,7 +28,7 @@
         "toleranceMm": 0.5
       },
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 1,
         "disabledTurns": 0,
@@ -48,12 +48,12 @@
       "exit": { "faceId": 34, "toleranceMm": 1.0 },
       "anchor": {
         "index": 0,
-        "startUv": [513.341, 4.49],
-        "endUv": [-434.657, -302.634],
+        "startUv": [511.8, 3.99],
+        "endUv": [-436.2, -303.134],
         "toleranceMm": 0.5
       },
       "expect": {
-        "pieces": 161,
+        "pieces": 159,
         "turns": 79,
         "circuits": 1,
         "disabledTurns": 0,
@@ -78,7 +78,7 @@
         "toleranceMm": 0.5
       },
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 1,
         "disabledTurns": 0,

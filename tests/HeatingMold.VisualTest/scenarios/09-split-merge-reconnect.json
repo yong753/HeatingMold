@@ -23,7 +23,7 @@
       },
       "anchor": { "index": 0 },
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 1,
         "disabledTurns": 0,
@@ -75,7 +75,7 @@
       "action": "checkArea",
       "area": "A",
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 1,
         "disabledTurns": 0,
@@ -85,10 +85,10 @@
     },
     {
       "id": "09.7",
-      "name": "연결구간 0 분할",
+      "name": "연결구간 1 분할",
       "action": "splitTurn",
       "area": "A",
-      "turnIndex": 0
+      "turnIndex": 1
     },
     {
       "id": "09.8",
@@ -96,7 +96,7 @@
       "action": "checkArea",
       "area": "A",
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 2,
         "disabledTurns": 1
@@ -104,10 +104,10 @@
     },
     {
       "id": "09.9",
-      "name": "연결구간 1 분할",
+      "name": "연결구간 3 분할",
       "action": "splitTurn",
       "area": "A",
-      "turnIndex": 1
+      "turnIndex": 3
     },
     {
       "id": "09.10",
@@ -115,7 +115,7 @@
       "action": "checkArea",
       "area": "A",
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 3,
         "disabledTurns": 2
@@ -123,10 +123,10 @@
     },
     {
       "id": "09.11",
-      "name": "연결구간 1 재연결",
+      "name": "연결구간 3 재연결",
       "action": "mergeTurn",
       "area": "A",
-      "turnIndex": 1
+      "turnIndex": 3
     },
     {
       "id": "09.12",
@@ -134,7 +134,7 @@
       "action": "checkArea",
       "area": "A",
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 2,
         "disabledTurns": 1
@@ -142,10 +142,10 @@
     },
     {
       "id": "09.13",
-      "name": "연결구간 0 재연결",
+      "name": "연결구간 1 재연결",
       "action": "mergeTurn",
       "area": "A",
-      "turnIndex": 0
+      "turnIndex": 1
     },
     {
       "id": "09.14",
@@ -153,7 +153,7 @@
       "action": "checkArea",
       "area": "A",
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 1,
         "disabledTurns": 0,

@@ -8,7 +8,7 @@ public sealed record SerpentineSegment(int LaneIndex, Vec2 Start, Vec2 End)
     public double Length => Start.DistanceTo(End);
 }
 
-public enum SerpentineRoutePieceKind { HeatingRun, TurnConnector, FixedConnector, ExitPiece }
+public enum SerpentineRoutePieceKind { HeatingRun, TurnConnector, FixedConnector }
 
 /// <summary>An ordered, world-frame portion of a generated serpentine route.</summary>
 public sealed record SerpentineRoutePiece(SerpentineRoutePieceKind Kind, int LaneIndex, IReadOnlyList<Vec2> Points)
@@ -32,6 +32,10 @@ public sealed class SerpentineResult
     /// <summary>같은 면 인출을 위해 실제 레인 수를 줄였는지 여부.</summary>
     public bool LaneCountAdjusted => NominalLaneCount > 0;
     public IReadOnlyList<SerpentineRoutePiece> RoutePieces { get; init; } = Array.Empty<SerpentineRoutePiece>();
+    /// <summary>시작 인출점. 인출면이 고정된 생성 결과에만 존재한다.</summary>
+    public CircuitExitPoint? StartExit { get; init; }
+    /// <summary>종료 인출점. 인출면이 고정된 생성 결과에만 존재한다.</summary>
+    public CircuitExitPoint? EndExit { get; init; }
 }
 
 /// <summary>제외영역 경로 계산이 실패한 이유. 분리된 발열영역을 억지로 잇지 않고 호출부가
@@ -630,19 +634,13 @@ public static class Serpentine
                 (int regionCount, double rad, LocalRoute? route) =
                     BuildAtAngle(outer, holes, p, angleDeg, startLtr, requireEvenRuns: true);
                 if (regionCount != 1 || route == null || route.Path.Count < 2) continue;
-                Vec2 start = route.Path[0].Rotate(rad);
-                Vec2 end = route.Path[^1].Rotate(rad);
-                double reach = ChainReach(p);
-                if (DistanceToChain(exitChain, start) > reach) continue;
-                if (DistanceToChain(exitChain, end) > reach) continue;
-                // 마진 인셋 때문에 경로 끝점은 인출면 경계보다 margin 만큼 안쪽에 있다.
-                // 경계 위로 직교 투영한 점을 앵커로 쓰고, 그 연결 구간은 ExitPiece가 된다.
-                Vec2 startAnchor = SnapOnChain(exitChain, start);
-                Vec2 endAnchor = SnapOnChain(exitChain, end);
-                if (startAnchor.DistanceTo(endAnchor) <= AnchorMatchTolerance) continue;
-                if (candidates.Any(c => c.Start.DistanceTo(startAnchor) <= AnchorMatchTolerance
-                        && c.End.DistanceTo(endAnchor) <= AnchorMatchTolerance)) continue;
-                candidates.Add(new AnchoredCandidate(startAnchor, endAnchor, angleDeg));
+                SerpentineResult world = ToWorld(route, rad, angleDeg);
+                if (!TryBuildAnchoredRoute(world, exitChain, p,
+                        out CircuitRoute? trimmed, out ExitBoundaryPoint start, out ExitBoundaryPoint end))
+                    continue;
+                if (candidates.Any(c => c.Start.DistanceTo(start.Point) <= AnchorMatchTolerance
+                        && c.End.DistanceTo(end.Point) <= AnchorMatchTolerance)) continue;
+                candidates.Add(new AnchoredCandidate(start.Point, end.Point, angleDeg));
             }
         }
         return candidates;
@@ -674,15 +672,17 @@ public static class Serpentine
                 (int regionCount, double rad, LocalRoute? route) =
                     BuildAtAngle(outer, holes, p, angleDeg, startLtr, requireEvenRuns: true);
                 if (regionCount != 1 || route == null || route.Path.Count < 2) continue;
-                Vec2 start = route.Path[0].Rotate(rad);
-                Vec2 end = route.Path[^1].Rotate(rad);
-                double reach = ChainReach(p);
-                if (DistanceToChain(exitChain, start) > reach) continue;
-                if (DistanceToChain(exitChain, end) > reach) continue;
-                if (!Near(SnapOnChain(exitChain, start), startAnchor)) continue;
-                if (!Near(SnapOnChain(exitChain, end), endAnchor)) continue;
-                return AnchoredResult.Ok(WithExitPieces(ToWorld(route, rad, angleDeg),
-                    startAnchor, endAnchor));
+                SerpentineResult world = ToWorld(route, rad, angleDeg);
+                if (!TryResolveExitPoints(world, exitChain, p,
+                        out ExitBoundaryPoint start, out ExitBoundaryPoint end))
+                    continue;
+                if (!Near(start.Point, startAnchor)) continue;
+                if (!Near(end.Point, endAnchor)) continue;
+                if (!CircuitRouteBuilder.TryTrimToExit(world.RoutePieces, start, end,
+                        angleDeg, world.LaneCount, world.NominalLaneCount,
+                        out CircuitRoute? trimmed, out _))
+                    continue;
+                return AnchoredResult.Ok(trimmed!.ToResult());
             }
         }
 
@@ -735,18 +735,23 @@ public static class Serpentine
             if (solutions.Count == 0) { anyNoPath = true; continue; }
 
             var laneNodes = nodes.Select(n => new SerpentineLaneNode(n.Lane, n.Y, n.X0, n.X1)).ToList();
+            int laneCount = nodes.Select(n => n.Lane).Distinct().Count();
             foreach (LaneChainSolution solution in solutions)
             {
                 if (solution.Order.Count == 0) continue;
-                Vec2 startWorld = PointOnNode(nodes[solution.Order[0]], solution.EnterLow[0] ? 0 : 1).Rotate(rad);
-                Vec2 endWorld = PointOnNode(nodes[solution.Order[^1]], solution.EnterLow[^1] ? 1 : 0).Rotate(rad);
-                Vec2 startAnchor = SnapOnChain(exitChain, startWorld);
-                Vec2 endAnchor = SnapOnChain(exitChain, endWorld);
-                if (startAnchor.DistanceTo(endAnchor) <= AnchorMatchTolerance) continue;
-                if (candidates.Any(c => c.Start.DistanceTo(startAnchor) <= AnchorMatchTolerance
-                        && c.End.DistanceTo(endAnchor) <= AnchorMatchTolerance)) continue;
+                List<SerpentineRoutePiece> worldPieces = BuildLaneChainPath(nodes, solution.Order, solution.EnterLow)
+                    .Select(piece => piece with
+                    {
+                        Points = piece.Points.Select(point => point.Rotate(rad)).ToList(),
+                    }).ToList();
+                SerpentineResult world = BuildPatternFromPieces(worldPieces, angleDeg, laneCount);
+                if (!TryBuildAnchoredRoute(world, exitChain, p,
+                        out CircuitRoute? trimmed, out ExitBoundaryPoint start, out ExitBoundaryPoint end))
+                    continue;
+                if (candidates.Any(c => c.Start.DistanceTo(start.Point) <= AnchorMatchTolerance
+                        && c.End.DistanceTo(end.Point) <= AnchorMatchTolerance)) continue;
                 candidates.Add(new ExcludedAnchorCandidate(
-                    startAnchor, endAnchor, angleDeg, laneNodes,
+                    start.Point, end.Point, angleDeg, laneNodes,
                     solution.Order.ToList(), solution.EnterLow.ToList(), solution.Cost));
             }
         }
@@ -762,7 +767,7 @@ public static class Serpentine
     }
 
     /// <summary>후보의 레인 순서/진입 끝을 그대로 사용해 인출면 고정 경로를 만든다.
-    /// 후보에 저장된 시작/종료 앵커를 경로 양 끝으로 쓰고, 레인 끝과의 간극은 ExitPiece로 남긴다.</summary>
+    /// 후보에 저장된 시작/종료 앵커에서 인출 경계까지 직선으로 연장한다.</summary>
     public static AnchoredResult GenerateAnchoredComponents(
         IReadOnlyList<Vec2> outer,
         IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
@@ -801,35 +806,24 @@ public static class Serpentine
         var nodes = candidate.Nodes
             .Select(n => new LaneIntervalNode(n.Lane, n.Y, n.X0, n.X1)).ToList();
         List<SerpentineRoutePiece> localPieces = BuildLaneChainPath(nodes, candidate.Order, candidate.EnterLow);
-        List<Vec2> localPath = PathFromPieces(localPieces);
-        if (localPath.Count < 2) return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
+        if (localPieces.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
 
         double rad = candidate.AngleDeg * Math.PI / 180.0;
-        Vec2 firstWorld = localPath[0].Rotate(rad);
-        Vec2 lastWorld = localPath[^1].Rotate(rad);
-        if (SnapOnChain(exitChain, firstWorld).DistanceTo(candidate.Start) > 1e-3
-            || SnapOnChain(exitChain, lastWorld).DistanceTo(candidate.End) > 1e-3)
-            return AnchoredResult.Fail(AnchoredFailureReason.AnchorNotAtLaneEnd);
-
         List<SerpentineRoutePiece> worldPieces = localPieces.Select(piece => piece with
         {
             Points = piece.Points.Select(point => point.Rotate(rad)).ToList(),
         }).ToList();
-        List<Vec2> worldPath = localPath.Select(point => point.Rotate(rad)).ToList();
-        List<SerpentineSegment> segments = worldPieces
-            .Where(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun)
-            .Select(piece => new SerpentineSegment(piece.LaneIndex, piece.Points[0], piece.Points[1]))
-            .ToList();
-        var basePattern = new SerpentineResult
-        {
-            Path = worldPath,
-            Segments = segments,
-            LaneCount = nodes.Select(node => node.Lane).Distinct().Count(),
-            AngleDeg = candidate.AngleDeg,
-            TotalLength = worldPieces.Sum(piece => piece.Length),
-            RoutePieces = worldPieces,
-        };
-        return AnchoredResult.Ok(WithExitPieces(basePattern, candidate.Start, candidate.End));
+        int laneCount = nodes.Select(node => node.Lane).Distinct().Count();
+        SerpentineResult world = BuildPatternFromPieces(worldPieces, candidate.AngleDeg, laneCount);
+        if (!TryResolveExitPoints(world, exitChain, p,
+                out ExitBoundaryPoint start, out ExitBoundaryPoint end))
+            return AnchoredResult.Fail(AnchoredFailureReason.AnchorNotAtLaneEnd);
+        if (!Near(start.Point, candidate.Start) || !Near(end.Point, candidate.End))
+            return AnchoredResult.Fail(AnchoredFailureReason.AnchorNotAtLaneEnd);
+        if (!CircuitRouteBuilder.TryTrimToExit(worldPieces, start, end,
+                candidate.AngleDeg, laneCount, 0, out CircuitRoute? trimmed, out _))
+            return AnchoredResult.Fail(AnchoredFailureReason.ExitBoundaryConflict);
+        return AnchoredResult.Ok(trimmed!.ToResult());
     }
 
     private static Vec2 PointOnNode(LaneIntervalNode node, int endpoint) =>
@@ -903,18 +897,6 @@ public static class Serpentine
         return adjacency;
     }
 
-    private static List<Vec2> PathFromPieces(IReadOnlyList<SerpentineRoutePiece> pieces)
-    {
-        var path = new List<Vec2>();
-        foreach (SerpentineRoutePiece piece in pieces)
-        {
-            int start = path.Count > 0 && piece.Points.Count > 0
-                && path[^1].DistanceTo(piece.Points[0]) <= 1e-9 ? 1 : 0;
-            for (int i = start; i < piece.Points.Count; i++) path.Add(piece.Points[i]);
-        }
-        return path;
-    }
-
     private const double ChainTolerance = 0.05;
     private const double AnchorMatchTolerance = 1e-4;
 
@@ -944,44 +926,58 @@ public static class Serpentine
         return new Vec2(a.X + t * dx, a.Y + t * dy);
     }
 
-    /// <summary>인출면 경계의 앵커와 사행 경로 끝점 사이를 ExitPiece로 연결한다.
-    /// 두 점이 이미 같으면 조각을 만들지 않는다.</summary>
-    private static SerpentineResult WithExitPieces(SerpentineResult pattern, Vec2 startAnchor, Vec2 endAnchor)
+    /// <summary>사행 경로 양 끝의 바깥 연장선과 인출 경계의 유일한 교차점을 계산한다.
+    /// 교차점이 없거나 모호하면 후보를 거부한다.</summary>
+    private static bool TryResolveExitPoints(
+        SerpentineResult pattern,
+        IReadOnlyList<Vec2> exitChain,
+        PatternParams p,
+        out ExitBoundaryPoint start,
+        out ExitBoundaryPoint end)
     {
-        var path = new List<Vec2>(pattern.Path);
-        var pieces = new List<SerpentineRoutePiece>();
-        double extra = 0;
-        Vec2 first = path[0];
-        Vec2 last = path[^1];
-        if (startAnchor.DistanceTo(first) > AnchorMatchTolerance)
-        {
-            pieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.ExitPiece, -1,
-                new[] { startAnchor, first }));
-            path.Insert(0, startAnchor);
-            extra += startAnchor.DistanceTo(first);
-        }
-        if (endAnchor.DistanceTo(last) > AnchorMatchTolerance)
-        {
-            path.Add(endAnchor);
-        }
-        pieces.AddRange(pattern.RoutePieces);
-        if (endAnchor.DistanceTo(last) > AnchorMatchTolerance)
-        {
-            pieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.ExitPiece, -1,
-                new[] { last, endAnchor }));
-            extra += endAnchor.DistanceTo(last);
-        }
-        return new SerpentineResult
-        {
-            Path = path,
-            Segments = pattern.Segments,
-            LaneCount = pattern.LaneCount,
-            NominalLaneCount = pattern.NominalLaneCount,
-            AngleDeg = pattern.AngleDeg,
-            TotalLength = pattern.TotalLength + extra,
-            RoutePieces = pieces,
-        };
+        start = default;
+        end = default;
+        IReadOnlyList<Vec2> path = pattern.Path;
+        if (path.Count < 2) return false;
+        double reach = ChainReach(p);
+        if (DistanceToChain(exitChain, path[0]) > reach) return false;
+        if (DistanceToChain(exitChain, path[^1]) > reach) return false;
+        ExitBoundaryResolution startResult =
+            ExitBoundaryConstraint.TryResolve(path[0], path[1], exitChain);
+        if (!startResult.Succeeded) return false;
+        ExitBoundaryResolution endResult =
+            ExitBoundaryConstraint.TryResolve(path[^1], path[^2], exitChain);
+        if (!endResult.Succeeded) return false;
+        start = startResult.Point!.Value;
+        end = endResult.Point!.Value;
+        return start.Point.DistanceTo(end.Point) > AnchorMatchTolerance;
     }
+    private static bool TryBuildAnchoredRoute(
+        SerpentineResult pattern,
+        IReadOnlyList<Vec2> exitChain,
+        PatternParams p,
+        out CircuitRoute? route,
+        out ExitBoundaryPoint start,
+        out ExitBoundaryPoint end)
+    {
+        route = null;
+        if (!TryResolveExitPoints(pattern, exitChain, p, out start, out end)) return false;
+        return CircuitRouteBuilder.TryTrimToExit(
+            pattern.RoutePieces, start, end,
+            pattern.AngleDeg, pattern.LaneCount, pattern.NominalLaneCount,
+            out route, out _);
+    }
+
+    private static SerpentineResult BuildPatternFromPieces(
+        IReadOnlyList<SerpentineRoutePiece> pieces, double angleDeg, int laneCount) => new()
+    {
+        Path = CircuitRouteGeometry.PathFromPieces(pieces),
+        Segments = CircuitRouteGeometry.SegmentsFromPieces(pieces),
+        LaneCount = laneCount,
+        AngleDeg = angleDeg,
+        TotalLength = CircuitRouteGeometry.TotalLength(pieces),
+        RoutePieces = pieces,
+    };
 
     private static IEnumerable<double> AngleCandidates(IReadOnlyList<Vec2> outer, PatternDirection direction)
     {
@@ -1241,6 +1237,7 @@ public enum AnchoredFailureReason
     AnchorNotOnExitChain,
     AnchorNotAtLaneEnd,
     ParityConflict,
+    ExitBoundaryConflict,
 }
 
 public sealed record AnchoredResult(SerpentineResult? Pattern, AnchoredFailureReason? Failure)

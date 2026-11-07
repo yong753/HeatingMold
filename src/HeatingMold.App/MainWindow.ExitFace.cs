@@ -335,6 +335,8 @@ public partial class MainWindow
         area.ExitChain = chain;
         area.ExitChain3D = chain3D;
         area.ExitChainFaceIds = chainFaceIds;
+        area.ExitEdgeRefs = chosen.EdgeReferences?.ToList() ?? new List<ExitEdgeReference>();
+        area.CircuitExitOverrides.Clear();
         RecomputeAnchorCandidates(area);
         // 피킹 취소 시에는 아무것도 바꾸지 않는다. 실제 인출면이 바뀐 경우에도
         // 기존 결과가 화면에 남아 있으므로 재생성 성공 전에는 편집 표시를 지우지 않는다.
@@ -391,6 +393,8 @@ public partial class MainWindow
         area.ExitChain = new List<Vec2>();
         area.ExitChain3D = new List<Vec3>();
         area.ExitChainFaceIds = new List<int>();
+        area.ExitEdgeRefs = new List<ExitEdgeReference>();
+        area.CircuitExitOverrides.Clear();
         area.StartAnchor = null;
         area.EndAnchor = null;
         area.AnchorCandidates.Clear();
@@ -613,29 +617,4 @@ public partial class MainWindow
             "마진/간격 조건에서 생성되는 레인이 없습니다",
         _ => "인출면 기준 경로를 생성할 수 없습니다"
     };
-
-    /// <summary>회로별 인출 리드(ExitPiece) 길이를 합산해 접속 길이로 기록한다.</summary>
-    private void UpdateExitLeadLengths(WorkingArea area)
-    {
-        if (area?.Pattern == null)
-        {
-            if (area != null) area.LeadLengths = Array.Empty<double>();
-            return;
-        }
-        var groups = CircuitPieceGroups(area);
-        var leads = new double[groups.Count];
-        for (int i = 0; i < groups.Count; i++)
-        {
-            double lead = 0;
-            for (int id = 0; id < area.Pattern.RoutePieces.Count; id++)
-            {
-                if (area.Pattern.RoutePieces[id].Kind != SerpentineRoutePieceKind.ExitPiece) continue;
-                int native = id < area.NativePieceIds.Length ? area.NativePieceIds[id] : -1;
-                if (native < 0 || !groups[i].Contains(native)) continue;
-                lead += area.RoutePieceLengths.ElementAtOrDefault(id);
-            }
-            leads[i] = lead;
-        }
-        area.LeadLengths = leads;
-    }
 }

@@ -54,7 +54,7 @@ namespace HeatingMold.App
             Color.FromRgb(0xFF, 0x00, 0xFF), // G 자홍
             Color.FromRgb(0xFF, 0xFF, 0x00), // H 노랑
         };
-        private sealed class CircuitLengthRow { public string Circuit { get; set; } public double HeatingLength { get; set; } public double LeadLength { get; set; } public double TotalLength => HeatingLength + LeadLength; }
+        private sealed class CircuitLengthRow { public string Circuit { get; set; } public double HeatingLength { get; set; } public double TotalLength => HeatingLength; }
         private sealed record PendingLead(int CircuitIndex, bool IsStart, Vec3 Start);
         private List<PendingLead> _pendingLeads = new();
         private double[] _leadLengths = Array.Empty<double>();
@@ -401,6 +401,14 @@ namespace HeatingMold.App
             AppendAnchor(sb, area.StartAnchor, inv);
             sb.Append(';');
             AppendAnchor(sb, area.EndAnchor, inv);
+            sb.Append("|CE:");
+            foreach (CircuitRoute circuit in area.Circuits)
+            {
+                AppendAnchor(sb, circuit.StartExit?.Point, inv);
+                sb.Append(';');
+                AppendAnchor(sb, circuit.EndExit?.Point, inv);
+                sb.Append(';');
+            }
             sb.Append("|X:");
             foreach (var e in area.Exclusions)
                 sb.Append(e.MinX.ToString("R", inv)).Append(',')
@@ -614,6 +622,7 @@ namespace HeatingMold.App
 
             // 2) 스테이징이 성공한 뒤에만 이 영역의 기존 경로를 무효화한다.
             area.Pattern = null;
+            area.CircuitExitOverrides.Clear();
             area.Paths = new List<List<Vec2>>();
             area.ExclusionPieces = null;
             area.NativePieceIds = Array.Empty<int>();
@@ -917,9 +926,14 @@ namespace HeatingMold.App
                 return;
             }
             var paths = new List<IReadOnlyList<Vec2>>();
-            List<List<SerpentineRoutePiece>> exclusionPieces = null;
             SerpentineResult editablePattern = null;
-            if (area.HasExitFace && !area.HasExitAnchors && area.Exclusions.Count == 0)
+            if (!area.HasExitFace)
+            {
+                StatusText.Text = area.LastExitFailure
+                    ?? "인출면이 지정되지 않았습니다 — 인출면과 시작/종료점을 먼저 지정하세요";
+                return;
+            }
+            if (!area.HasExitAnchors)
             {
                 StatusText.Text = area.LastExitFailure
                     ?? "인출면의 시작/종료점이 지정되지 않았습니다 — 후보 목록에서 시작/종료점을 선택하세요";
@@ -928,7 +942,7 @@ namespace HeatingMold.App
             var parameters = new PatternParams { Margin = margin, Spacing = spacing, Direction = area.Direction };
             try
             {
-                if (area.HasExitFace && area.Exclusions.Count > 0)
+                if (area.Exclusions.Count > 0)
                 {
                     // 제외영역이 있어도 인출면 앵커를 고정한 단일 사행 경로를 생성한다.
                     var plan = TryPrepareExcludedPlan(area, out string planFailure);
@@ -951,7 +965,7 @@ namespace HeatingMold.App
                     editablePattern = anchored.Pattern;
                     if (editablePattern.Path.Count >= 2) paths.Add(editablePattern.Path);
                 }
-                else if (area.HasExitAnchors)
+                else
                 {
                     // 인출면이 지정되면 앵커 경로만 사용한다. 실패해도 무앵커 경로로 조용히 대체하지 않는다.
                     var anchored = Serpentine.GenerateAnchored(area.Region[0], null, parameters,
@@ -965,32 +979,6 @@ namespace HeatingMold.App
                     }
                     editablePattern = anchored.Pattern;
                     if (editablePattern.Path.Count >= 2) paths.Add(editablePattern.Path);
-                }
-                else
-                {
-                    foreach (List<Vec2> ring in area.Region)
-                    {
-                        if (area.Exclusions.Count == 0)
-                        {
-                            var result = Serpentine.Generate(ring, null, parameters, constrainConnectors: true);
-                            editablePattern = result;
-                            if (result.Path.Count >= 2) paths.Add(result.Path);
-                        }
-                        else
-                        {
-                            // 제외영역 모드: 발열선은 발열영역(외곽−제외) 안에서만 생성되고, 턴커넥터는
-                            // 이전 발열선 끝점에서 다음 발열선 시작점까지의 최단 직선(2점)이다.
-                            // 제외영역으로 발열영역이 분리되면 두 독립 경로를 만들지 않고 실패로 알린다.
-                            var result = Serpentine.GenerateComponents(ring, area.Exclusions, parameters);
-                            if (result.Failure != null)
-                            {
-                                StatusText.Text = ExplainComponentsFailure(result.Failure);
-                                return;
-                            }
-                            exclusionPieces = result.Components.Select(c => c.ToList()).ToList();
-                            paths.AddRange(result.Components.Select(FlattenPieces));
-                        }
-                    }
                 }
             }
             catch (Exception ex)
@@ -1010,11 +998,12 @@ namespace HeatingMold.App
             AreaRouteSnapshot previous = CaptureAreaRouteState(area);
 
             area.Pattern = routePiecesMode ? editablePattern : null;
+            area.CircuitExitOverrides.Clear();
             area.TurnEnabled = routePiecesMode
                 ? editablePattern.RoutePieces.Where(p => p.Kind == SerpentineRoutePieceKind.TurnConnector).Select(_ => true).ToList()
                 : new List<bool>();
             area.Paths = routePiecesMode ? new List<List<Vec2>>() : paths.Select(p => p.ToList()).ToList();
-            area.ExclusionPieces = routePiecesMode ? null : exclusionPieces;
+            area.ExclusionPieces = null;
             if (routePiecesMode)
             {
                 int count = editablePattern.RoutePieces.Count;
@@ -1027,6 +1016,13 @@ namespace HeatingMold.App
                 area.NativePieceIds = Array.Empty<int>();
                 area.RoutePieceLengths = Array.Empty<double>();
                 area.ProjectedPieces = new List<RoutePieceResult>();
+            }
+            if (!TryRefreshCircuits(area, out string circuitFailure))
+            {
+                RestoreAreaRouteState(area, previous, restoreExclusions: false);
+                SyncExitFaceUi(area);
+                StatusText.Text = circuitFailure;
+                return;
             }
             area.PatternDisplayed = false;
 
@@ -1048,16 +1044,10 @@ namespace HeatingMold.App
             HoverText.Text = "";
             if (routePiecesMode)
             {
-                UpdateExitLeadLengths(area);
-            }
-            else
-            {
-                area.LeadLengths = Array.Empty<double>();
+                HoverText.Text = "";
             }
             UpdateCircuitTable();
             int connectors = area.ExclusionPieces?.Sum(c => c.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector)) ?? 0;
-            int leadCount = routePiecesMode
-                ? area.Pattern.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.ExitPiece) : 0;
             int turnCount = routePiecesMode
                 ? area.Pattern.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector) : 0;
             if (projectedCount == 0)
@@ -1066,9 +1056,9 @@ namespace HeatingMold.App
             }
             else if (routePiecesMode)
             {
-                int circuits = SerpentineTopology.Compute(area.Pattern.RoutePieces, area.TurnEnabled).Count;
+                int circuits = area.Circuits.Count;
                 string counts = area.Exclusions.Count > 0
-                    ? string.Format(" · 연결선 {0}개 · 리드 {1}개", turnCount, leadCount)
+                    ? string.Format(" · 연결선 {0}개", turnCount)
                     : string.Empty;
                 StatusText.Text = string.Format(
                     "{0} 영역 — {1}개 경로 · 길이 {2:F1}mm · 회로 {3}개 · 회로 분할 가능",
@@ -1132,7 +1122,25 @@ namespace HeatingMold.App
             var connectors = area.Pattern.RoutePieces.Select((p, i) => (p, i)).Where(x => x.p.Kind == SerpentineRoutePieceKind.TurnConnector).ToList();
             int ci = connectors.FindIndex(x => x.i == local);
             if (ci < 0) return;
-            area.TurnEnabled[ci] = !area.TurnEnabled[ci];
+            AreaRouteSnapshot previous = CaptureAreaRouteState(area);
+            bool next = !area.TurnEnabled[ci];
+            var beforeGroups = area.CircuitPieceIndices.Select(g => g.ToList()).ToList();
+            area.TurnEnabled[ci] = next;
+            if (!TryRefreshCircuits(area, out string failure))
+            {
+                area.TurnEnabled[ci] = !next;
+                TryRefreshCircuits(area, out _);
+                StatusText.Text = "분할할 수 없습니다 — " + failure;
+                return;
+            }
+            if (next) RemoveOverridesForMerge(area, local, beforeGroups);
+            if (!RebuildNativePatternGeometry(area, out _, out _))
+            {
+                RestoreAreaRouteState(area, previous, restoreExclusions: false);
+                ApplyAreaConnectorStates(area);
+                Bridge.RedrawView();
+                return;
+            }
             ApplyConnectorStates();
         }
         private void ApplyConnectorStates()
@@ -1142,13 +1150,14 @@ namespace HeatingMold.App
             if (area?.Pattern == null) return;
             ApplyAreaConnectorStates(area);
             Bridge.RedrawView();
-            var circuits = SerpentineTopology.Compute(area.Pattern.RoutePieces, area.TurnEnabled);
-            var turns = area.Pattern.RoutePieces.Select((p, i) => (p, i)).Where(x => x.p.Kind == SerpentineRoutePieceKind.TurnConnector).ToList();
-            double length = area.Pattern.RoutePieces.Select((p, i) => (p, i))
-                .Where(x => x.p.Kind != SerpentineRoutePieceKind.TurnConnector || area.TurnEnabled[turns.FindIndex(t => t.i == x.i)])
-                .Sum(x => area.RoutePieceLengths.ElementAtOrDefault(x.i));
-            area.LeadLengths = new double[circuits.Count];
-            UpdateExitLeadLengths(area);
+            var circuits = area.Circuits;
+            double length = 0;
+            foreach (List<int> group in area.CircuitPieceIndices)
+                foreach (int index in group)
+                    length += area.RoutePieceLengths.ElementAtOrDefault(index);
+            if (TryParseAreaParams(area.MarginText, area.SpacingText, out double margin,
+                    out double spacing))
+                area.AppliedInputs = CaptureAppliedInputs(area, margin, spacing);
             UpdateCircuitTable();
             StatusText.Text = string.Format("{0} 영역 · 회로 {1}개 · 길이 합계 {2:F1}mm", area.Name, circuits.Count, length);
         }
@@ -1168,8 +1177,7 @@ namespace HeatingMold.App
                     .Select(x => new CircuitLengthRow
                     {
                         Circuit = (reference ? "[참고] " : "") + x.CircuitId,
-                        HeatingLength = x.HeatingLengthMm,
-                        LeadLength = x.LeadLengthMm
+                        HeatingLength = x.HeatingLengthMm
                     }));
             }
             CircuitLengthGrid.ItemsSource = rows.Count == 0 ? null : rows;
@@ -1178,27 +1186,27 @@ namespace HeatingMold.App
             RefreshElectricalTable();
         }
 
-        // Group stable route-piece IDs, not resampled planar points. Disabled
+        // Group stable route-piece IDs by the canonical split circuits. Disabled
         // turns are separators and contribute neither geometry nor length.
         private List<List<int>> CircuitPieceGroups() => CircuitPieceGroups(_activeArea);
 
         private List<List<int>> CircuitPieceGroups(WorkingArea area)
         {
             var groups = new List<List<int>>();
-            var current = new List<int>();
-            int turn = 0;
             if (area?.Pattern == null) return groups;
-            for (int id = 0; id < area.Pattern.RoutePieces.Count; id++)
+            if (area.CircuitPieceIndices == null || area.CircuitPieceIndices.Count == 0)
+                TryRefreshCircuits(area, out _);
+            foreach (List<int> indices in area.CircuitPieceIndices)
             {
-                bool enabled = area.Pattern.RoutePieces[id].Kind != SerpentineRoutePieceKind.TurnConnector || area.TurnEnabled[turn++];
-                if (!enabled)
+                var group = new List<int>();
+                foreach (int index in indices)
                 {
-                    if (current.Count > 0) { groups.Add(current); current = new List<int>(); }
+                    if (index < 0 || index >= area.Pattern.RoutePieces.Count) continue;
+                    if (area.Pattern.RoutePieces[index].Points.Count == 0) continue;
+                    group.Add(index < area.NativePieceIds.Length ? area.NativePieceIds[index] : index);
                 }
-                else if (area.Pattern.RoutePieces[id].Points.Count > 0)
-                    current.Add(id < area.NativePieceIds.Length ? area.NativePieceIds[id] : id);
+                if (group.Count > 0) groups.Add(group);
             }
-            if (current.Count > 0) groups.Add(current);
             return groups;
         }
         private void PowerSetup_Click(object sender, RoutedEventArgs e)
@@ -1299,6 +1307,7 @@ namespace HeatingMold.App
 
             area.Exclusions.Clear();
             area.Pattern = null;
+            area.CircuitExitOverrides.Clear();
             area.Paths = new List<List<Vec2>>();
             area.ExclusionPieces = null;
             area.NativePieceIds = Array.Empty<int>();

@@ -28,12 +28,12 @@
         "toleranceMm": 0.5
       },
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 2,
         "disabledTurns": 1,
         "exitFaceId": 79,
-        "lengthMm": 5266.022,
+        "lengthMm": 5276.04,
         "lengthToleranceMm": 1.0,
         "marginMm": 5,
         "spacingMm": 10
@@ -48,12 +48,12 @@
       "exit": { "faceId": 34, "toleranceMm": 1.0 },
       "anchor": {
         "index": 0,
-        "startUv": [513.341, 4.49],
-        "endUv": [-434.657, -302.634],
+        "startUv": [511.8, 3.99],
+        "endUv": [-436.2, -303.134],
         "toleranceMm": 0.5
       },
       "expect": {
-        "pieces": 161,
+        "pieces": 159,
         "turns": 79,
         "circuits": 1,
         "disabledTurns": 0,
@@ -78,7 +78,7 @@
         "toleranceMm": 0.5
       },
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 1,
         "disabledTurns": 0,
@@ -124,7 +124,7 @@
       "action": "generate",
       "area": "A",
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 1,
         "disabledTurns": 0,
@@ -161,8 +161,8 @@
       "area": "B",
       "anchor": {
         "index": 0,
-        "startUv": [524.341, 8.053],
-        "endUv": [-445.657, -306.197],
+        "startUv": [522.8, 7.554],
+        "endUv": [-447.2, -306.697],
         "toleranceMm": 0.5
       }
     },
@@ -172,7 +172,7 @@
       "action": "generate",
       "area": "B",
       "expect": {
-        "pieces": 197,
+        "pieces": 195,
         "turns": 97,
         "circuits": 1,
         "disabledTurns": 0,
@@ -222,10 +222,10 @@
     },
     {
       "id": "06.17",
-      "name": "A 연결구간 0 분할",
+      "name": "A 연결구간 1 분할",
       "action": "splitTurn",
       "area": "A",
-      "turnIndex": 0
+      "turnIndex": 1
     },
     {
       "id": "06.18",
@@ -233,11 +233,11 @@
       "action": "checkArea",
       "area": "A",
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 2,
         "disabledTurns": 1,
-        "lengthMm": 5266.022,
+        "lengthMm": 5276.04,
         "lengthToleranceMm": 1.0
       }
     },
@@ -261,8 +261,8 @@
       "area": "B",
       "anchor": {
         "index": 0,
-        "startUv": [513.341, 4.49],
-        "endUv": [-434.657, -302.634],
+        "startUv": [511.8, 3.99],
+        "endUv": [-436.2, -303.134],
         "toleranceMm": 0.5
       }
     },

@@ -23,7 +23,7 @@
       },
       "anchor": { "index": 0 },
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 1,
         "disabledTurns": 0,
@@ -45,12 +45,12 @@
       },
       "anchor": {
         "index": 0,
-        "startUv": [524.341, 8.053],
-        "endUv": [-445.657, -306.197],
+        "startUv": [522.8, 7.554],
+        "endUv": [-447.2, -306.697],
         "toleranceMm": 0.5
       },
       "expect": {
-        "pieces": 197,
+        "pieces": 195,
         "turns": 97,
         "circuits": 1,
         "disabledTurns": 0,

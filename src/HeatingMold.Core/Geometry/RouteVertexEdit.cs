@@ -92,6 +92,16 @@ public static class SerpentineVertexEdit
             if (points[i][0] != points[i - 1][^1])
                 throw new ArgumentException("공유 꼭지점이 한쪽만 갱신되었습니다.", nameof(edits));
         }
+        // 이동한 꼭지점에 인접한 구간이 길이 0으로 퇴화하면 거부한다.
+        foreach ((RouteVertexOccurrence at, _) in edits)
+        {
+            List<Vec2> affected = points[at.Piece];
+            if (at.Point > 0 && affected[at.Point].DistanceTo(affected[at.Point - 1]) <= 1e-9)
+                throw new ArgumentException("이동 결과 인접 구간의 길이가 0입니다.", nameof(edits));
+            if (at.Point + 1 < affected.Count &&
+                affected[at.Point].DistanceTo(affected[at.Point + 1]) <= 1e-9)
+                throw new ArgumentException("이동 결과 인접 구간의 길이가 0입니다.", nameof(edits));
+        }
 
         var newPieces = new List<SerpentineRoutePiece>(pieces.Count);
         for (int i = 0; i < pieces.Count; i++)
@@ -115,6 +125,21 @@ public static class SerpentineVertexEdit
         double totalLength = 0;
         for (int i = 1; i < path.Count; i++) totalLength += path[i - 1].DistanceTo(path[i]);
 
+        CircuitExitPoint? startExit = source.StartExit;
+        if (startExit != null && newPieces.Count > 0)
+        {
+            IReadOnlyList<Vec2> first = newPieces[0].Points;
+            if (first.Count > 0)
+                startExit = startExit with { Point = first[0] };
+        }
+        CircuitExitPoint? endExit = source.EndExit;
+        if (endExit != null && newPieces.Count > 0)
+        {
+            IReadOnlyList<Vec2> last = newPieces[^1].Points;
+            if (last.Count > 0)
+                endExit = endExit with { Point = last[^1] };
+        }
+
         return new SerpentineResult
         {
             Path = path,
@@ -124,6 +149,8 @@ public static class SerpentineVertexEdit
             AngleDeg = source.AngleDeg,
             TotalLength = totalLength,
             RoutePieces = newPieces,
+            StartExit = startExit,
+            EndExit = endExit,
         };
     }
 }

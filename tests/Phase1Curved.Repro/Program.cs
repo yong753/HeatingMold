@@ -554,7 +554,7 @@ static class Program
         {
             var piece = pattern.RoutePieces[i];
             Vec2? anchorDatum = null; Vec3? anchor3D = null;
-            if (piece.Kind == SerpentineRoutePieceKind.ExitPiece && piece.Points.Count > 0)
+            if (piece.Points.Count > 0)
             {
                 if (piece.Points[0] == startAnchor || piece.Points[^1] == startAnchor) { anchorDatum = startDatum; anchor3D = start3D; }
                 else if (piece.Points[0] == endAnchor || piece.Points[^1] == endAnchor) { anchorDatum = endDatum; anchor3D = end3D; }

@@ -23,6 +23,16 @@ static class PatternStateChecks
         target.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(target, args);
 
+    static bool RefreshCircuits(object area)
+    {
+        var method = typeof(MainWindow).GetMethod(
+            "TryRefreshCircuits", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var args = new[] { area, null };
+        bool ok = (bool)method.Invoke(null, args)!;
+        if (!ok) throw new Exception("circuit refresh failed: " + args[1]);
+        return ok;
+    }
+
     static SerpentineResult Pattern(params Vec2[] points)
     {
         var path = points.ToList();
@@ -35,7 +45,9 @@ static class PatternStateChecks
             LaneCount = 1,
             AngleDeg = 0,
             TotalLength = path.Zip(path.Skip(1), (a, b) => a.DistanceTo(b)).Sum(),
-            RoutePieces = new[] { new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, 0, path) }
+            RoutePieces = new[] { new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, 0, path) },
+            StartExit = new CircuitExitPoint(CircuitExitRole.Start, path[0], 0, 0),
+            EndExit = new CircuitExitPoint(CircuitExitRole.End, path[^1], 0, 1)
         };
     }
 
@@ -45,6 +57,10 @@ static class PatternStateChecks
         areaType.GetProperty("Name")!.SetValue(value, name);
         areaType.GetProperty("Frame")!.SetValue(value, side.Frame);
         areaType.GetProperty("AreaId")!.SetValue(value, id);
+        areaType.GetProperty("ExitFaceId")!.SetValue(value, 0);
+        areaType.GetProperty("ExitFaceRevision")!.SetValue(value, Bridge.GetModelRevision());
+        ((List<Vec2>)areaType.GetProperty("ExitChain")!.GetValue(value)!).AddRange(
+            new[] { new Vec2(-10, 0), new Vec2(10, 0) });
         ((List<List<Vec2>>)areaType.GetProperty("Region")!.GetValue(value)!).Add(new()
             { new(-12, -8), new(12, -8), new(12, 8), new(-12, 8) });
         ((IList)Field<object>(window, "_areas")).Add(value);
@@ -93,6 +109,7 @@ static class PatternStateChecks
             "valid inputs clear the error and re-enable generation");
 
         areaType.GetProperty("Pattern")!.SetValue(a, Pattern(new Vec2(-10, 0), new Vec2(10, 0)));
+        RefreshCircuits(a);
         object applied = Invoke(window, "CaptureAppliedInputs", a, 5.0, 50.0);
         areaType.GetProperty("AppliedInputs")!.SetValue(a, applied);
 
@@ -128,6 +145,8 @@ static class PatternStateChecks
 
         // 검토 범위는 회로 길이 표·전기 표·내보내기 안내가 같은 목록을 쓰는지 확인한다.
         areaType.GetProperty("Pattern")!.SetValue(b, Pattern(new Vec2(-10, 0), new Vec2(10, 0)));
+        RefreshCircuits(b);
+        areaType.GetProperty("AppliedInputs")!.SetValue(b, Invoke(window, "CaptureAppliedInputs", b, 5.0, 50.0));
         areaType.GetProperty("NativePieceIds")!.SetValue(a, new[] { -4501 });
         areaType.GetProperty("RoutePieceLengths")!.SetValue(a, new[] { 20.0 });
         areaType.GetProperty("NativePieceIds")!.SetValue(b, new[] { -4502 });

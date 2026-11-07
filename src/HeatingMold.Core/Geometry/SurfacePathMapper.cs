@@ -44,7 +44,7 @@ public static class SurfacePathMapper
         ArgumentNullException.ThrowIfNull(hit);
         return TryMapCore(path, hit, point => point, (a, b) => a == b,
             requirePlanarSpacing: true, gapSpacing: 0, previousSampleFromResult: false,
-            DenseDepthError, out mapped, out failure, maxProbes);
+            DenseDepthError, null, out mapped, out failure, maxProbes);
     }
 
     /// <summary>Adaptive map retaining the face identity of every final, path-ordered sample.</summary>
@@ -55,7 +55,7 @@ public static class SurfacePathMapper
         return TryMapCore(path, hit, sample => sample.Point,
             (a, b) => a.DatumPoint == b.DatumPoint,
             requirePlanarSpacing: true, gapSpacing: 0, previousSampleFromResult: true,
-            DenseDepthError, out mapped, out failure, maxProbes);
+            DenseDepthError, null, out mapped, out failure, maxProbes);
     }
 
     /// <summary>
@@ -67,7 +67,21 @@ public static class SurfacePathMapper
         out List<SurfaceMappedSample> mapped, out string failure, int maxProbes = DefaultMaxProbes)
     {
         ArgumentNullException.ThrowIfNull(path); ArgumentNullException.ThrowIfNull(hit);
-        return TryMapRouteCore(path, hit, 0, out mapped, out failure, maxProbes);
+        return TryMapRouteCore(path, hit, null, 0, out mapped, out failure, maxProbes);
+    }
+
+    /// <summary>
+    /// Route-grade map with caller-supplied samples for selected path vertices. Overrides are
+    /// used only for the named vertices; adaptive midpoint/quarter/gap probes still query
+    /// <paramref name="hit"/>, so the surface domain is not bypassed between them.
+    /// </summary>
+    public static bool TryMapRoute(IReadOnlyList<Vec2> path, Func<Vec2, SurfaceMappedSample?> hit,
+        IReadOnlyDictionary<int, SurfaceMappedSample>? vertexOverrides,
+        out List<SurfaceMappedSample> mapped, out string failure, int maxProbes = DefaultMaxProbes)
+    {
+        ArgumentNullException.ThrowIfNull(path); ArgumentNullException.ThrowIfNull(hit);
+        if (!TryValidateVertexOverrides(path, vertexOverrides, out failure)) { mapped = new(); return false; }
+        return TryMapRouteCore(path, hit, vertexOverrides, 0, out mapped, out failure, maxProbes);
     }
 
     /// <summary>
@@ -82,16 +96,57 @@ public static class SurfacePathMapper
         if (!double.IsFinite(gapSpacing) || gapSpacing < 0)
             throw new ArgumentOutOfRangeException(nameof(gapSpacing));
         ArgumentNullException.ThrowIfNull(path); ArgumentNullException.ThrowIfNull(hit);
-        return TryMapRouteCore(path, hit, gapSpacing, out mapped, out failure, maxProbes);
+        return TryMapRouteCore(path, hit, null, gapSpacing, out mapped, out failure, maxProbes);
+    }
+
+    /// <summary>Strict route map variant with selected-vertex sample overrides.</summary>
+    public static bool TryMapRouteStrict(IReadOnlyList<Vec2> path, Func<Vec2, SurfaceMappedSample?> hit,
+        IReadOnlyDictionary<int, SurfaceMappedSample>? vertexOverrides,
+        out List<SurfaceMappedSample> mapped, out string failure,
+        double gapSpacing = 0.1, int maxProbes = DefaultMaxProbes)
+    {
+        if (!double.IsFinite(gapSpacing) || gapSpacing < 0)
+            throw new ArgumentOutOfRangeException(nameof(gapSpacing));
+        ArgumentNullException.ThrowIfNull(path); ArgumentNullException.ThrowIfNull(hit);
+        if (!TryValidateVertexOverrides(path, vertexOverrides, out failure)) { mapped = new(); return false; }
+        return TryMapRouteCore(path, hit, vertexOverrides, gapSpacing, out mapped, out failure, maxProbes);
+    }
+
+    private static bool TryValidateVertexOverrides(IReadOnlyList<Vec2> path,
+        IReadOnlyDictionary<int, SurfaceMappedSample>? overrides, out string failure)
+    {
+        failure = string.Empty;
+        if (overrides == null) return true;
+        foreach (var pair in overrides)
+        {
+            if (pair.Key < 0 || pair.Key >= path.Count)
+            {
+                failure = "A vertex override targets an index outside the planar path.";
+                return false;
+            }
+            SurfaceMappedSample sample = pair.Value;
+            if (!double.IsFinite(sample.DatumPoint.X) || !double.IsFinite(sample.DatumPoint.Y) ||
+                !double.IsFinite(sample.Point.X) || !double.IsFinite(sample.Point.Y) ||
+                !double.IsFinite(sample.Point.Z))
+            {
+                failure = "A vertex override contains a nonfinite coordinate.";
+                return false;
+            }
+        }
+        return true;
     }
 
     private static bool TryMapRouteCore(IReadOnlyList<Vec2> path, Func<Vec2, SurfaceMappedSample?> hit,
+        IReadOnlyDictionary<int, SurfaceMappedSample>? vertexOverrides,
         double gapSpacing, out List<SurfaceMappedSample> mapped, out string failure, int maxProbes)
     {
+        Func<int, SurfaceMappedSample?>? overrideLookup = vertexOverrides == null
+            ? null
+            : index => vertexOverrides.TryGetValue(index, out SurfaceMappedSample sample) ? sample : null;
         return TryMapCore(path, hit, sample => sample.Point,
             (a, b) => a.DatumPoint == b.DatumPoint,
             requirePlanarSpacing: false, gapSpacing, previousSampleFromResult: true,
-            RouteDepthError, out mapped, out failure, maxProbes);
+            RouteDepthError, overrideLookup, out mapped, out failure, maxProbes);
     }
 
     /// <summary>
@@ -102,7 +157,8 @@ public static class SurfacePathMapper
     private static bool TryMapCore<TSample>(IReadOnlyList<Vec2> path, Func<Vec2, TSample?> hit,
         Func<TSample, Vec3> pointOf, Func<TSample, TSample, bool> same,
         bool requirePlanarSpacing, double gapSpacing, bool previousSampleFromResult,
-        string depthError, out List<TSample> mapped, out string failure, int maxProbes)
+        string depthError, Func<int, TSample?>? vertexOverride,
+        out List<TSample> mapped, out string failure, int maxProbes)
         where TSample : struct
     {
         mapped = new List<TSample>();
@@ -147,6 +203,36 @@ public static class SurfacePathMapper
         void Append(TSample sample)
         {
             if (result.Count == 0 || !same(result[^1], sample)) result.Add(sample);
+        }
+
+        // Only named path vertices are replaced. Adaptive probes between vertices keep
+        // querying the real surface, so an override cannot hide a gap or face transition.
+        bool ProbeVertex(int index, out TSample sample)
+        {
+            sample = default;
+            Vec2 point = path[index];
+            if (!double.IsFinite(point.X) || !double.IsFinite(point.Y))
+            {
+                error = "The planar path contains a nonfinite coordinate.";
+                return false;
+            }
+            if (vertexOverride != null)
+            {
+                TSample? value = vertexOverride(index);
+                if (value.HasValue)
+                {
+                    sample = value.Value;
+                    Vec3 mappedPoint = pointOf(sample);
+                    if (!double.IsFinite(mappedPoint.X) || !double.IsFinite(mappedPoint.Y) ||
+                        !double.IsFinite(mappedPoint.Z))
+                    {
+                        error = "A surface hit contains a nonfinite coordinate.";
+                        return false;
+                    }
+                    return true;
+                }
+            }
+            return Probe(point, out sample);
         }
 
         // 리프 내부의 표본화되지 않은 긴 구간을 gapSpacing 간격으로 확인한다.
@@ -204,7 +290,7 @@ public static class SurfacePathMapper
                 Refine(midpoint, mappedMidpoint, b, mappedB, depth + 1);
         }
 
-        if (!Probe(path[0], out TSample previous))
+        if (!ProbeVertex(0, out TSample previous))
         {
             failure = error;
             return false;
@@ -213,7 +299,7 @@ public static class SurfacePathMapper
         for (int i = 1; i < path.Count; i++)
         {
             if (path[i] == path[i - 1]) continue;
-            if (!Probe(path[i], out TSample next))
+            if (!ProbeVertex(i, out TSample next))
             {
                 failure = error;
                 return false;

@@ -17,6 +17,9 @@ static class Program
         new(c.Frame[9],c.Frame[10],c.Frame[11]),new(c.Frame[3],c.Frame[4],c.Frame[5]));
     static WorkingHit Query(WorkingContext c,Vec3 world)
     { var uv=Frame(c).Project(world); return Bridge.QueryWorkingSurface(c.Id,c.Revision,uv.X,uv.Y); }
+    static ExitEdgeHit EvalEdge(WorkingContext c,ExitEdgeReference r,Vec3 world,double tolerance=0.05)
+    { var uv=Frame(c).Project(world); return Bridge.EvaluateExitEdge(c.Id,c.Revision,r.Revision,r.EdgeKey,uv.X,uv.Y,tolerance); }
+    static Vec3 P(double[] values) => new(values[0],values[1],values[2]);
     static IReadOnlyList<WorkingBoundaryRing> Rings(WorkingContext c)
     {
         var f=Frame(c); var triangles=new List<IReadOnlyList<Vec2>>();
@@ -179,6 +182,7 @@ static class Program
         VertexEditChecks.Run(window);
         ElectricalRefreshChecks.Run(window);
         PatternStateChecks.Run(window);
+        CircuitExitOverrideChecks.Run(window);
         GeometryRollbackChecks.Run(window);
         Check(typeof(Bridge).GetMethod("HlrProject")==null && typeof(Bridge).GetMethod("HlrEdges")!=null,
             "HLR smoke API removed while exporter HlrEdges remains");
@@ -381,6 +385,74 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
         Check(nakedSides==null || nakedSides.Length==0,"detached sheet naked edges yield no exit-side candidate");
         Check(Bridge.GetBoundaryExitSides(new[]{-1},0.05)==null && Bridge.GetBoundaryExitSides(Array.Empty<int>(),0.05)==null,
             "invalid exit-side input is rejected");
+        var boxExitContext=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+        Check(boxExitContext!=null,"box exit-edge working context created");
+        var boxRefs=new List<ExitEdgeReference>();
+        if (exitSides!=null) foreach (var side in exitSides)
+        {
+            Check(side.EdgeReferences!=null && side.EdgeReferences.Length==1,
+                "straight boundary run keeps exactly one original edge reference");
+            foreach (var reference in side.EdgeReferences ?? Array.Empty<ExitEdgeReference>())
+            {
+                boxRefs.Add(reference);
+                Check(reference.Revision==Bridge.GetModelRevision() && reference.EdgeKey>=1 &&
+                    reference.FaceId==side.FaceId && reference.StartIndex==0 &&
+                    reference.EndIndex==side.Points.Length/3-1 &&
+                    reference.LastParameter>reference.FirstParameter,
+                    "original edge reference carries revision, face, parameter range and point span");
+            }
+        }
+        Check(boxRefs.Count==4,"four top boundary edges keep four independent original references");
+        if (boxExitContext!=null && exitSides!=null)
+        {
+            bool boxHits=true,boxTangents=true;
+            foreach (var side in exitSides)
+            {
+                var reference=side.EdgeReferences?[0];
+                if (reference==null || side.Points==null || side.Points.Length<6) { boxHits=false; continue; }
+                int mid=(side.Points.Length/3)/2;
+                var world=new Vec3(side.Points[mid*3],side.Points[mid*3+1],side.Points[mid*3+2]);
+                var hit=EvalEdge(boxExitContext,reference,world);
+                boxHits&=hit!=null && hit.Status==ExitEdgeQueryStatus.Hit &&
+                    hit.FaceId==reference.FaceId && hit.Point!=null && (P(hit.Point)-world).Length<=1e-3;
+                boxTangents&=hit!=null && hit.Tangent!=null && Math.Abs(P(hit.Tangent).Length-1)<=1e-6;
+            }
+            Check(boxHits,"straight edge evaluation lands on the original edge point");
+            Check(boxTangents,"straight edge evaluation returns a unit tangent");
+            var edge=exitSides[0].EdgeReferences[0];
+            var start=new Vec3(exitSides[0].Points[0],exitSides[0].Points[1],exitSides[0].Points[2]);
+            var next=new Vec3(exitSides[0].Points[3],exitSides[0].Points[4],exitSides[0].Points[5]);
+            var direction=(next-start).Normalized();
+            var startHit=EvalEdge(boxExitContext,edge,start);
+            var insideHit=EvalEdge(boxExitContext,edge,start+direction*0.001);
+            var outsideClamp=EvalEdge(boxExitContext,edge,start-direction*0.01);
+            var farOutsideMiss=EvalEdge(boxExitContext,edge,start-direction*0.2);
+            Check(startHit!=null && startHit.Status==ExitEdgeQueryStatus.Hit && startHit.Point!=null &&
+                (P(startHit.Point)-start).Length<=1e-6,
+                "open edge endpoint evaluates exactly at the trim end");
+            Check(insideHit!=null && insideHit.Status==ExitEdgeQueryStatus.Hit && insideHit.Point!=null &&
+                (P(insideHit.Point)-(start+direction*0.001)).Length<=1e-6,
+                "working point just inside an open edge end evaluates on the edge");
+            Check(outsideClamp!=null && outsideClamp.Status==ExitEdgeQueryStatus.Hit &&
+                outsideClamp.Point!=null && (P(outsideClamp.Point)-start).Length<=1e-6,
+                "working point just past an open edge end clamps to the trim end");
+            Check(farOutsideMiss!=null && farOutsideMiss.Status==ExitEdgeQueryStatus.Miss,
+                "working point far past an open edge end is rejected");
+            var interior=EvalEdge(boxExitContext,edge,new Vec3(30,20,20));
+            Check(interior!=null && interior.Status==ExitEdgeQueryStatus.Miss,
+                "interior working point is not accepted as an edge hit");
+            var datum=Frame(boxExitContext).Project(start);
+            Check(Bridge.EvaluateExitEdge(boxExitContext.Id,boxExitContext.Revision,edge.Revision+1,edge.EdgeKey,
+                datum.X,datum.Y,0.05).Status==ExitEdgeQueryStatus.StaleContext,
+                "stale original edge revision is rejected");
+            Check(Bridge.EvaluateExitEdge(boxExitContext.Id,boxExitContext.Revision,edge.Revision,edge.EdgeKey+1000000,
+                datum.X,datum.Y,0.05).Status==ExitEdgeQueryStatus.StaleContext,
+                "unknown original edge key is rejected");
+            Check(Bridge.EvaluateExitEdge(boxExitContext.Id,boxExitContext.Revision,edge.Revision,edge.EdgeKey,
+                double.NaN,0,0.05).Status==ExitEdgeQueryStatus.InvalidInput,
+                "invalid original edge datum is rejected");
+        }
+        if (boxExitContext!=null) Bridge.ReleaseWorkingContext(boxExitContext.Id);
         Check(Bridge.LoadStep(Path.Combine(args[0],"exitSplit.stp")),"load split long-side fixture");
         int splitTopA=-1,splitTopB=-1,splitSideA=-1,splitSideB=-1;
         for (int id=0;;++id)
@@ -433,6 +505,31 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
             if (side.SegmentFaceIds.Distinct().Count()==1) singleFaceCandidates++;
         }
         Check(singleFaceCandidates==3,"the three unmerged boundaries keep a single neighbour face");
+        var mergedSide=mergedSideIndex>=0 ? splitSides[mergedSideIndex] : null;
+        var mergedRefs=mergedSide?.EdgeReferences;
+        bool refsContiguous=mergedRefs!=null && mergedRefs.Length==2 &&
+            (mergedRefs[0].EndIndex==mergedRefs[1].StartIndex || mergedRefs[1].EndIndex==mergedRefs[0].StartIndex);
+        var refFaces=mergedRefs==null ? new HashSet<int>() : new HashSet<int>(mergedRefs.Select(r=>r.FaceId));
+        Check(refsContiguous && refFaces.SetEquals(new HashSet<int>{splitSideA,splitSideB}),
+            "merged split run keeps two contiguous original half-edge references");
+        if (mergedSide!=null && mergedRefs!=null && refsContiguous)
+        {
+            var splitContext=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+            bool refHits=splitContext!=null;
+            if (splitContext!=null)
+            {
+                foreach (var reference in mergedRefs)
+                {
+                    int mid=(reference.StartIndex+reference.EndIndex)/2;
+                    var world=new Vec3(mergedSide.Points[mid*3],mergedSide.Points[mid*3+1],mergedSide.Points[mid*3+2]);
+                    var hit=EvalEdge(splitContext,reference,world);
+                    refHits&=hit!=null && hit.Status==ExitEdgeQueryStatus.Hit &&
+                        hit.FaceId==reference.FaceId && hit.Point!=null && (P(hit.Point)-world).Length<=1e-3;
+                }
+                Bridge.ReleaseWorkingContext(splitContext.Id);
+            }
+            Check(refHits,"each half of a merged split run evaluates against its own original edge");
+        }
         Check(Bridge.LoadStep(Path.Combine(args[0],"exitSplitThree.stp")),"load three-way split fixture");
         int threeTopA=-1,threeTopB=-1,threeTopC=-1,threeSideA=-1,threeSideB=-1,threeSideC=-1;
         for (int id=0;;++id)
@@ -476,6 +573,60 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
                 && ids.SetEquals(new HashSet<int>{threeSideA,threeSideB,threeSideC});
         }
         Check(threeMerged,"merged candidate crosses the middle sliver and keeps all three neighbour ids");
+        Check(Bridge.LoadStep(Path.Combine(args[0],"curvedExit.stp")),"load curved exit fixture");
+        int curvedTop=-1,curvedBottom=-1;
+        for (int id=0;;++id)
+        {
+            var probe=Bridge.GetFaceNormal(id); if (probe==null) break;
+            if (probe[2]>0.9 && Math.Abs(probe[5]-30)<1e-6) curvedTop=id;
+            if (probe[2]<-0.9 && Math.Abs(probe[5])<1e-6) curvedBottom=id;
+        }
+        Check(curvedTop>=0 && curvedBottom>=0,"curved fixture exposes both cylinder disks");
+        var curvedSides=Bridge.GetBoundaryExitSides(new[]{curvedTop},0.05);
+        Check(curvedSides!=null && curvedSides.Length==1,
+            "cylinder top boundary yields one curved side candidate");
+        var curved=curvedSides?[0];
+        Check(curved?.Points!=null && curved.Points.Length>=6 && curved.EdgeReferences?.Length==1,
+            "curved run keeps one original circular edge reference");
+        double curvedRadius=0; bool curvedPlanar=true;
+        if (curved?.Points!=null) for (int i=0;i+2<curved.Points.Length;i+=3)
+        {
+            curvedRadius=Math.Max(curvedRadius,Math.Sqrt(curved.Points[i]*curved.Points[i]+curved.Points[i+1]*curved.Points[i+1]));
+            curvedPlanar&=Math.Abs(curved.Points[i+2]-30)<=1e-3;
+        }
+        Check(Math.Abs(curvedRadius-20)<=0.1 && curvedPlanar,
+            "curved candidate samples stay on the top circle");
+        var curvedContext=Bridge.CreateWorkingContext(0,0,1,1,0,0);
+        var curvedRef=curved?.EdgeReferences?[0];
+        Check(curvedContext!=null && curvedRef!=null,"curved edge working context created");
+        if (curvedContext!=null && curvedRef!=null)
+        {
+            bool curvedHits=true,curvedTangents=true,radiusExact=true;
+            for (int k=0;k<8;k++)
+            {
+                double angle=Math.PI*2*(k+0.5)/8;
+                var world=new Vec3(20*Math.Cos(angle),20*Math.Sin(angle),30);
+                var hit=EvalEdge(curvedContext,curvedRef,world);
+                if (hit==null || hit.Status!=ExitEdgeQueryStatus.Hit || hit.Point==null)
+                { curvedHits=false; continue; }
+                var point=P(hit.Point);
+                curvedHits&=(point-world).Length<=1e-6;
+                radiusExact&=Math.Abs(Math.Sqrt(point.X*point.X+point.Y*point.Y)-20)<=1e-6;
+                curvedTangents&=hit.Tangent!=null && Math.Abs(P(hit.Tangent).Length-1)<=1e-6 &&
+                    Math.Abs(point.X*hit.Tangent[0]+point.Y*hit.Tangent[1])<=1e-6;
+            }
+            Check(curvedHits,"curved edge evaluation hits the exact circle at every angle");
+            Check(radiusExact,"curved edge evaluation keeps the analytic radius");
+            Check(curvedTangents,"curved edge evaluation returns a tangent perpendicular to the radius");
+            var datum=Frame(curvedContext).Project(new Vec3(20,0,30));
+            var tight=Bridge.EvaluateExitEdge(curvedContext.Id,curvedContext.Revision,
+                curvedRef.Revision,curvedRef.EdgeKey,datum.X,datum.Y,0.0001);
+            Check(tight.Status==ExitEdgeQueryStatus.Hit,
+                "closed curved edge evaluation succeeds with a tight tolerance");
+            Check(tight.Status!=ExitEdgeQueryStatus.Ambiguous,
+                "closed curved edge is not misclassified as ambiguous at a unique point");
+            Bridge.ReleaseWorkingContext(curvedContext.Id);
+        }
         Check(!Bridge.LoadStep(Path.Combine(args[0],"absent.stp")),"failed model load");
         Check(Bridge.QueryWorkingSurface(afterStageReload.Id,afterStageReload.Revision,0,0).Status==WorkingQueryStatus.StaleContext,"failed reload also invalidates context");
         Check(Bridge.CreateWorkingContext(0,0,1,1,0,0)==null,"no context available without model");

@@ -249,18 +249,17 @@ public class RegionOpsTests
 
         var runs = pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun).ToList();
         Assert.Equal(6, runs.Count);
-        Assert.Equal(320, runs.Sum(piece => piece.Length), 6);
+        Assert.Equal(330, runs.Sum(piece => piece.Length), 6);
+        Assert.Equal(candidate.Start, runs[0].Points[0]);
+        Assert.Equal(candidate.End, runs[^1].Points[^1]);
 
         var connectors = pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector).ToList();
         Assert.Equal(5, connectors.Count);
         Assert.Equal(50, connectors.Sum(piece => piece.Length), 6);
 
-        var exits = pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.ExitPiece).ToList();
-        Assert.Equal(2, exits.Count);
-        Assert.Equal(10, exits.Sum(piece => piece.Length), 6);
-        Assert.Equal(candidate.Start, exits[0].Points[0]);
-        Assert.Equal(candidate.End, exits[^1].Points[1]);
+
         Assert.Equal(380, pattern.TotalLength, 6);
+        Assert.Equal(pattern.TotalLength, runs.Sum(piece => piece.Length) + connectors.Sum(piece => piece.Length), 6);
 
         AssertRunsAvoidRect(pattern.RoutePieces, (40d, 15d, 60d, 35d));
     }
@@ -303,7 +302,7 @@ public class RegionOpsTests
         Assert.Equal(90, pattern.AngleDeg, 9);
         Assert.Equal(12, pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun));
         Assert.Equal(11, pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector));
-        Assert.Empty(pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.ExitPiece));
+
         Assert.Equal(460, pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun)
             .Sum(piece => piece.Length), 6);
         AssertRunsAvoidRect(pattern.RoutePieces, (40d, 15d, 60d, 35d));
@@ -330,7 +329,7 @@ public class RegionOpsTests
 
         Assert.Equal(4, pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun));
         Assert.Equal(3, pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector));
-        Assert.Empty(pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.ExitPiece));
+
         Assert.Equal(360, pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun)
             .Sum(piece => piece.Length), 6);
         AssertRunsAvoidRect(pattern.RoutePieces, (0d, 10d, 20d, 30d));
@@ -357,11 +356,14 @@ public class RegionOpsTests
         Assert.True(anchored.Succeeded);
         var pattern = anchored.Pattern!;
 
-        Assert.Equal(4, pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun));
-        Assert.Equal(3, pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector));
-        Assert.Equal(2, pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.ExitPiece));
-        Assert.Equal(4, pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.ExitPiece)
-            .Sum(piece => piece.Length), 6);
+        var runs = pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun).ToList();
+        var connectors = pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector).ToList();
+        Assert.Equal(4, runs.Count);
+        Assert.Equal(3, connectors.Count);
+
+        Assert.Equal(44, runs.Sum(piece => piece.Length), 6);
+        Assert.Equal(candidates.Candidates[0].Start, runs[0].Points[0]);
+        Assert.Equal(candidates.Candidates[0].End, runs[^1].Points[^1]);
         Assert.True(candidates.Candidates[0].Start.DistanceTo(pattern.Path[0]) < 1e-9);
         Assert.True(candidates.Candidates[0].End.DistanceTo(pattern.Path[^1]) < 1e-9);
         AssertRunsAvoidRect(pattern.RoutePieces, (0d, -4d, 6d, 4d));

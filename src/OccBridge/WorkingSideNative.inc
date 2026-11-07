@@ -14,6 +14,8 @@ struct WorkingNative
 };
 std::map<long long, std::unique_ptr<WorkingNative>> g_working;
 long long g_nextWorkingId = 1;
+// 커밋 자체는 성공했지만 마지막 Redraw가 실패했음을 App에 알리기 위한 플래그.
+bool g_lastCommitRedrawFailed = false;
 std::vector<Handle(AIS_Shape)> g_workingBoundaries;
 struct WorkingPresentationNative
 {
@@ -1085,6 +1087,7 @@ bool CommitWorkingGeometryNative(long long contextId,long long revision,const st
     } catch (...) { return false; }
     try {
         // Candidate geometry is already displayed and selectable. All validation precedes destructive swap.
+        g_lastCommitRedrawFailed = false;
         HighlightCircuitNative(std::vector<int>());
         for (const auto& old : g_routePieces) {
             // Staged candidates are already displayed and are adopted as-is through
@@ -1100,7 +1103,7 @@ bool CommitWorkingGeometryNative(long long contextId,long long revision,const st
         g_routePieces.swap(nextRoutes); g_worldOverlays.swap(nextWorld);
         for (int id : stagedRoutes) g_stagedWorkingRouteOwners.erase(id);
         for (int id : stagedLines) g_stagedWorkingPolylines.erase(id);
-        if (!g_view.IsNull()) { try { g_view->Redraw(); } catch (...) {} }
+        if (!g_view.IsNull()) { try { g_view->Redraw(); } catch (...) { g_lastCommitRedrawFailed = true; } }
         return true;
     } catch (...) {
         if (!g_ctx.IsNull()) for (const auto& old : removed) { try { g_ctx->Display(old,Standard_False); } catch (...) {} }

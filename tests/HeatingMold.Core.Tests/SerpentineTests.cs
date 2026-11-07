@@ -194,6 +194,86 @@ public class SerpentineTests
         Assert.Equal(1, SerpentineTopology.Compute(pieces).Count);
     }
 
+    private static CircuitRoute BuildAnchoredRoute(double height, out List<Vec2> chain)
+    {
+        var outer = Rect(0, 0, 100, height);
+        var p = new PatternParams { Margin = 5, Spacing = 10 };
+        chain = new List<Vec2> { new(100, 0), new(100, height) };
+        var candidate = Assert.Single(Serpentine.ComputeCandidates(
+            outer, null, p, chain, PatternDirection.FrameX));
+        var anchored = Serpentine.GenerateAnchored(outer, null, p, chain,
+            candidate.Start, candidate.End, PatternDirection.FrameX);
+        Assert.True(anchored.Succeeded);
+        return CircuitRoute.FromResult(anchored.Pattern!);
+    }
+
+    [Fact]
+    public void SplitAtExitSideTurnExtendsBothCutRunsToExitBoundary()
+    {
+        CircuitRoute route = BuildAnchoredRoute(60, out var chain);
+        Assert.Equal(3, route.Pieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector));
+
+        var split = CircuitRouteTopology.Split(route, new[] { true, false, true }, chain);
+
+        Assert.True(split.Succeeded, split.Detail);
+        Assert.Equal(2, split.Routes.Count);
+        Assert.Equal(route.StartExit.Point, split.Routes[0].StartExit.Point);
+        Assert.Equal(route.EndExit.Point, split.Routes[^1].EndExit.Point);
+        foreach (CircuitRoute circuit in split.Routes)
+        {
+            Assert.Equal(CircuitExitRole.Start, circuit.StartExit.Role);
+            Assert.Equal(CircuitExitRole.End, circuit.EndExit.Role);
+            Assert.Equal(circuit.StartExit.Point, circuit.Path[0]);
+            Assert.Equal(circuit.EndExit.Point, circuit.Path[^1]);
+            Assert.Equal(100.0, circuit.StartExit.Point.X, 6);
+            Assert.Equal(100.0, circuit.EndExit.Point.X, 6);
+            Assert.True(Serpentine.DistanceToChain(chain, circuit.StartExit.Point) <= 1e-6);
+            Assert.True(Serpentine.DistanceToChain(chain, circuit.EndExit.Point) <= 1e-6);
+            Assert.Equal(circuit.TotalLength, circuit.Pieces.Sum(piece => piece.Length), 6);
+        }
+        Assert.DoesNotContain(split.Routes.SelectMany(circuit => circuit.Pieces),
+            piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector &&
+                     piece.Points[0].X > 90 && piece.Points[^1].X > 90);
+        Assert.Equal(3, route.Pieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector));
+    }
+
+    [Fact]
+    public void SplitRejectsTurnWhoseExtensionLeavesTheExitBoundary()
+    {
+        CircuitRoute route = BuildAnchoredRoute(60, out var chain);
+
+        var opposite = CircuitRouteTopology.Split(route, new[] { false, true, true }, chain);
+        Assert.False(opposite.Succeeded);
+        Assert.Empty(opposite.Routes);
+        Assert.Contains("left cut end", opposite.Detail);
+
+        var partial = new List<Vec2> { new(100, 0), new(100, 30) };
+        var failed = CircuitRouteTopology.Split(route, new[] { true, false, true }, partial);
+        Assert.False(failed.Succeeded);
+        Assert.Empty(failed.Routes);
+        Assert.Contains("right cut end", failed.Detail);
+    }
+
+    [Fact]
+    public void SplitFailsAsAWholeWhenAnyCutCannotReachTheExitBoundary()
+    {
+        CircuitRoute route = BuildAnchoredRoute(60, out var chain);
+
+        var split = CircuitRouteTopology.Split(route, new[] { false, false, true }, chain);
+        Assert.False(split.Succeeded);
+        Assert.Empty(split.Routes);
+    }
+
+    [Fact]
+    public void AllTurnsEnabledReturnsTheOriginalCircuit()
+    {
+        CircuitRoute route = BuildAnchoredRoute(60, out var chain);
+
+        var result = CircuitRouteTopology.Split(route, new[] { true, true, true }, chain);
+        Assert.True(result.Succeeded);
+        Assert.Same(route, Assert.Single(result.Routes));
+    }
+
     // T10: 배치 방향 강제 ??FrameY???�축�?무�??�게 90°
     [Fact]
     public void T10_DirectionOverride_ForcesAngle()
@@ -377,13 +457,18 @@ public class SerpentineTests
 
         Assert.Equal(new Vec2(100, 10), pattern.Path[0]);
         Assert.Equal(new Vec2(100, 60), pattern.Path[^1]);
-        Assert.Equal(SerpentineRoutePieceKind.ExitPiece, pattern.RoutePieces[0].Kind);
-        Assert.Equal(new Vec2(95, 10), pattern.RoutePieces[0].Points[^1]);
-        Assert.Equal(SerpentineRoutePieceKind.ExitPiece, pattern.RoutePieces[^1].Kind);
+        Assert.Equal(SerpentineRoutePieceKind.HeatingRun, pattern.RoutePieces[0].Kind);
+        Assert.Equal(2, pattern.RoutePieces[0].Points.Count);
+        Assert.Equal(new Vec2(5, 10), pattern.RoutePieces[0].Points[^1]);
+        Assert.Equal(SerpentineRoutePieceKind.HeatingRun, pattern.RoutePieces[^1].Kind);
+        Assert.Equal(2, pattern.RoutePieces[^1].Points.Count);
         Assert.Equal(new Vec2(100, 60), pattern.RoutePieces[^1].Points[^1]);
+
         Assert.Equal(pattern.TotalLength, pattern.RoutePieces.Sum(x => x.Length), 6);
-        Assert.Equal(2 * 5.0, pattern.TotalLength - pattern.RoutePieces
-            .Where(x => x.Kind != SerpentineRoutePieceKind.ExitPiece).Sum(x => x.Length), 6);
+        Assert.NotNull(pattern.StartExit);
+        Assert.NotNull(pattern.EndExit);
+        Assert.Equal(100.0, pattern.StartExit!.Point.X, 6);
+        Assert.Equal(100.0, pattern.EndExit!.Point.X, 6);
     }
 
     // T20: 경계 chain + ?�???�인 ??같�? �??�출 불�?, ?�유 명시.
@@ -403,7 +488,7 @@ public class SerpentineTests
         Assert.Equal(5, r.Pattern!.NominalLaneCount);
         Assert.Equal(new Vec2(100, 15), r.Pattern!.Path[0]);
         Assert.Equal(new Vec2(100, 45), r.Pattern!.Path[^1]);
-        Assert.Equal(new Vec2(95, 15), r.Pattern!.RoutePieces[0].Points[^1]);
+        Assert.Equal(new Vec2(5, 15), r.Pattern!.RoutePieces[0].Points[^1]);
     }
 
     // T21: 반�???경계 chain?�면 ?�작 ?�인 방향???�집?�??같�? �????�을 만족?�다.
@@ -420,7 +505,7 @@ public class SerpentineTests
         Assert.True(r.Succeeded);
         Assert.Equal(new Vec2(0, 10), r.Pattern!.Path[0]);
         Assert.Equal(new Vec2(0, 60), r.Pattern!.Path[^1]);
-        Assert.Equal(new Vec2(5, 10), r.Pattern!.RoutePieces[0].Points[^1]);
+        Assert.Equal(new Vec2(95, 10), r.Pattern!.RoutePieces[0].Points[^1]);
     }
 
     // T22: 짝수로 줄일 여지가 없으면(레인 1개) 임의 보정 없이 ParityConflict로 실패한다.

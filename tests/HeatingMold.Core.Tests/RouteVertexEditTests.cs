@@ -112,6 +112,19 @@ public class RouteVertexEditTests
     }
 
     [Fact]
+    public void ApplyVertexEdits_RejectsZeroLengthAdjacentSegment()
+    {
+        var source = TwoLaneRoute();
+        var edits = new List<(RouteVertexOccurrence At, Vec2 Value)>
+        {
+            (new RouteVertexOccurrence(0, 1), new Vec2(0, 0)),
+            (new RouteVertexOccurrence(1, 0), new Vec2(0, 0)),
+        };
+
+        Assert.Throws<ArgumentException>(() => SerpentineVertexEdit.ApplyVertexEdits(source, edits));
+    }
+
+    [Fact]
     public void PreviewApply_CopiesOnlyAffectedPieces_AndMatchesFullEdit()
     {
         var source = TwoLaneRoute();

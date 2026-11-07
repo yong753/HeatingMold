@@ -199,6 +199,76 @@ public class SurfacePathMapperTests
     }
 
     [Fact]
+    public void RouteVertexOverridesReplaceNamedVerticesOnly()
+    {
+        Vec2[] path = { new(0, 0), new(1, 0), new(2, 0) };
+        var hits = new List<Vec2>();
+        SurfaceMappedSample? Hit(Vec2 p)
+        {
+            hits.Add(p);
+            if (p == path[1]) throw new InvalidOperationException("An overridden vertex was queried.");
+            return new SurfaceMappedSample(p, new Vec3(p.X, p.Y, 0), 10);
+        }
+        var overrides = new Dictionary<int, SurfaceMappedSample>
+        {
+            [1] = new(path[1], new Vec3(1, 0, 0.01), 99)
+        };
+
+        Assert.True(SurfacePathMapper.TryMapRoute(path, Hit, overrides, out var mapped, out var failure), failure);
+        Assert.Contains(mapped, sample => sample.FaceId == 99 && sample.DatumPoint == path[1]);
+        Assert.DoesNotContain(path[1], hits);
+        Assert.Contains(hits, p => p.X > 0 && p.X < 1);
+        Assert.Contains(hits, p => p.X > 1 && p.X < 2);
+    }
+
+    [Fact]
+    public void StrictRouteOverridesStillRunGapProbes()
+    {
+        Vec2[] path = { new(0, 0), new(1, 0) };
+        var hits = new List<Vec2>();
+        SurfaceMappedSample? Hit(Vec2 p)
+        {
+            hits.Add(p);
+            return new SurfaceMappedSample(p, new Vec3(p.X, p.Y, 0), 10);
+        }
+        var overrides = new Dictionary<int, SurfaceMappedSample>
+        {
+            [0] = new(path[0], new Vec3(0, 0, 0.01), 99)
+        };
+
+        Assert.True(SurfacePathMapper.TryMapRouteStrict(path, Hit, overrides,
+            out var mapped, out var failure, gapSpacing: 0.25), failure);
+        Assert.Equal(99, mapped[0].FaceId);
+        Assert.DoesNotContain(path[0], hits);
+        Assert.Contains(hits, p => p.X > 0 && p.X < 1);
+    }
+
+    [Fact]
+    public void InvalidVertexOverridesRejectWithoutCallingHit()
+    {
+        Vec2[] path = { new(0, 0), new(1, 0) };
+        bool called = false;
+        SurfaceMappedSample? Hit(Vec2 p)
+        {
+            called = true;
+            return new SurfaceMappedSample(p, new Vec3(p.X, p.Y, 0), 1);
+        }
+
+        Assert.False(SurfacePathMapper.TryMapRoute(path, Hit,
+            new Dictionary<int, SurfaceMappedSample> { [2] = new(path[0], new Vec3(0, 0, 0), 1) },
+            out var outside, out var outsideFailure));
+        Assert.Empty(outside);
+        Assert.NotEmpty(outsideFailure);
+
+        Assert.False(SurfacePathMapper.TryMapRouteStrict(path, Hit,
+            new Dictionary<int, SurfaceMappedSample> { [0] = new(path[0], new Vec3(double.NaN, 0, 0), 1) },
+            out var nonfinite, out var nonfiniteFailure));
+        Assert.Empty(nonfinite);
+        Assert.NotEmpty(nonfiniteFailure);
+        Assert.False(called);
+    }
+
+    [Fact]
     public void InvalidInputsRejectOrThrowWithoutCallingHit()
     {
         Vec3? Hit(Vec2 _) => throw new InvalidOperationException("Must not probe invalid input.");

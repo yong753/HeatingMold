@@ -6,6 +6,7 @@
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS.hxx>
@@ -82,6 +83,12 @@ static TopoDS_Compound ExitSplitThree()
     TopoDS_Compound shape; BRep_Builder builder; builder.MakeCompound(shape); builder.Add(shape,sewing.SewedShape());
     return shape;
 }
+// Cylinder whose top disk shares one circular boundary edge with the lateral face.
+// The exit-side run must keep a single curved original edge reference.
+static TopoDS_Shape CurvedExit()
+{
+    return BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0,0,0),gp_Dir(0,0,1)),20,30).Shape();
+}
 int main(int argc,char** argv)
 {
     if (argc!=2) return 1;
@@ -129,5 +136,6 @@ int main(int argc,char** argv)
         write("tangentBack",tangentBack) && write("threePanels",ThreePanels()) &&
         write("sphere",BRepPrimAPI_MakeSphere(gp_Pnt(0,0,0),20).Shape()) &&
         write("pickCoincident",coincident) && write("pickStacked",stacked) &&
-        write("exitSplit",ExitSplit()) && write("exitSplitThree",ExitSplitThree()) ? 0 : 2;
+        write("exitSplit",ExitSplit()) && write("exitSplitThree",ExitSplitThree()) &&
+        write("curvedExit",CurvedExit()) ? 0 : 2;
 }

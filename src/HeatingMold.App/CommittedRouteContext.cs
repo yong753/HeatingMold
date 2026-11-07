@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using HeatingMold.Core.Geometry;
+using HeatingMold.OccBridge;
 
 namespace HeatingMold.App;
 
@@ -19,6 +20,10 @@ internal sealed class CommittedRouteContext
     public List<int> ExitChainFaceIds { get; init; } = new();
     public Vec2? StartAnchor { get; init; }
     public Vec2? EndAnchor { get; init; }
+    public List<ExitEdgeReference> ExitEdgeRefs { get; init; } = new();
+    /// <summary>분할된 회로별 인출점. 매핑 시 역할 기반 꼭지점 override에 쓴다.</summary>
+    public List<Vec2> CircuitStarts { get; init; } = new();
+    public List<Vec2> CircuitEnds { get; init; } = new();
 
     public static CommittedRouteContext Capture(WorkingArea area) => new()
     {
@@ -28,6 +33,9 @@ internal sealed class CommittedRouteContext
         ExitChain3D = area.ExitChain3D.ToList(),
         ExitChainFaceIds = area.ExitChainFaceIds.ToList(),
         StartAnchor = area.StartAnchor,
-        EndAnchor = area.EndAnchor
+        EndAnchor = area.EndAnchor,
+        ExitEdgeRefs = area.ExitEdgeRefs.ToList(),
+        CircuitStarts = area.Circuits.Select(c => c.StartExit.Point).ToList(),
+        CircuitEnds = area.Circuits.Select(c => c.EndExit.Point).ToList()
     };
 }

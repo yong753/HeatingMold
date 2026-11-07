@@ -22,16 +22,20 @@ public partial class MainWindow
         List<RoutePieceResult> Projected,
         int[] NativeIds,
         double[] Lengths,
-        double[] Leads,
         Vec2? StartAnchor,
         Vec2? EndAnchor,
-        bool Edited);
+        bool Edited,
+        List<CircuitRoute> Circuits,
+        List<List<int>> CircuitPieceIndices,
+        List<CircuitExitOverride> CircuitExitOverrides);
 
     /// <summary>확정 시 이미 계산한 표본을 재스테이징에서 그대로 쓰기 위한 일회성 캐시.</summary>
     private readonly Dictionary<(WorkingArea Area, int PieceIndex), List<SurfaceMappedSample>> _pendingStageSamples = new();
     /// <summary>변경되지 않은 조각의 표본. 편집 세션 동안 재사용해 확정 시 전체 재매핑을 피한다.</summary>
     private readonly Dictionary<(WorkingArea Area, int PieceIndex), List<SurfaceMappedSample>> _vertexBaselineSamples = new();
     private List<RouteVertexGroup> _vertexGroups = new();
+    /// <summary>분할 회로의 파생 인출점 핸들 → 원본 Pattern 조각 인덱스/역할.</summary>
+    private readonly Dictionary<int, (int PieceIndex, CircuitExitRole Role)> _vertexCircuitAnchors = new();
     private int _vertexHover = -1;
     // 표시 인덱스 → _vertexGroups 인덱스. 매핑에 실패한 꼭지점은 핸들을 만들지 않는다.
     private readonly List<int> _vertexHandleGroupMap = new();
@@ -57,6 +61,8 @@ public partial class MainWindow
         if (area == null) { RejectVertexEdit("작업영역을 먼저 선택하세요"); return; }
         if (area.Pattern == null || area.Pattern.RoutePieces.Count == 0)
         { RejectVertexEdit("먼저 발열 경로를 생성하세요"); return; }
+        if (!area.HasExitFace)
+        { RejectVertexEdit("인출면을 먼저 지정하세요"); return; }
         if (area.Paths.Count > 0)
         { RejectVertexEdit("제외영역 경로는 발열경로 편집을 지원하지 않습니다 — 제외영역을 지우고 다시 생성하세요"); return; }
         if (IsPatternInputStale(area))
@@ -78,7 +84,7 @@ public partial class MainWindow
         Viewport.CircuitHoverMode = false;
         Bridge.ClearHover();
 
-        _vertexGroups = RouteVertexGroups.Build(area.Pattern.RoutePieces).ToList();
+        _vertexGroups = BuildVertexGroups(area);
         _pendingStageSamples.Clear();
         _vertexBaselineSamples.Clear();
         _vertexHover = -1;
@@ -129,6 +135,7 @@ public partial class MainWindow
         _vertexPresentation = null;
         _vertexPresentationHeld = false;
         _vertexGroups.Clear();
+        _vertexCircuitAnchors.Clear();
         _vertexHandleGroupMap.Clear();
         _pendingStageSamples.Clear();
         _vertexBaselineSamples.Clear();
@@ -161,9 +168,11 @@ public partial class MainWindow
         {
             RouteVertexGroup group = _vertexGroups[groupIndex];
             Vec3? point = null;
-            if (IsAnchorGroup(area, group, out _))
+            if (IsAnchorGroup(area, group, out _) || _vertexCircuitAnchors.ContainsKey(groupIndex))
             {
-                if (area.HasExitChain3D) point = PointOnExitChain3D(area, group.Datum, out _);
+                var context = CommittedRouteContext.Capture(area);
+                SurfaceMappedSample? sample = MapExitDatum(side, context, group.Datum);
+                if (sample.HasValue) point = sample.Value.Point;
             }
             else
             {
@@ -179,24 +188,62 @@ public partial class MainWindow
         Bridge.SetVertexHandles(side.Id.Value, side.Revision.Value, xyz.ToArray());
     }
 
-    /// <summary>경로 시작/종료 역할이고 인출 체인 위에 있는 꼭지점 묶음인지 판정한다.</summary>
+    /// <summary>경로 정본에 기록된 시작/종료 인출점 역할과 정확히 일치하는 꼭지점 묶음인지 판정한다.</summary>
     private static bool IsAnchorGroup(WorkingArea area, RouteVertexGroup group, out bool isStart)
     {
         isStart = false;
         if (area.Pattern == null || !area.HasExitFace) return false;
-        var pieces = area.Pattern.RoutePieces;
+        var pattern = area.Pattern;
+        IReadOnlyList<SerpentineRoutePiece> pieces = pattern.RoutePieces;
         if (pieces.Count == 0) return false;
-        bool atStart = false, atEnd = false;
-        foreach (RouteVertexOccurrence occurrence in group.Occurrences)
-        {
-            if (occurrence.Piece == 0 && occurrence.Point == 0) atStart = true;
-            if (occurrence.Piece == pieces.Count - 1 &&
-                occurrence.Point == pieces[occurrence.Piece].Points.Count - 1) atEnd = true;
-        }
-        if (!atStart && !atEnd) return false;
-        if (Serpentine.DistanceToChain(area.ExitChain, group.Datum) > 0.05) return false;
-        isStart = atStart;
+
+        CircuitExitPoint startExit = pattern.StartExit;
+        CircuitExitPoint endExit = pattern.EndExit;
+        bool startRole = startExit != null &&
+            group.Datum.DistanceTo(startExit.Point) <= 1e-6 &&
+            group.Occurrences.Any(o => o.Piece == 0 && o.Point == 0);
+        int lastPiece = pieces.Count - 1;
+        int lastPoint = pieces[lastPiece].Points.Count - 1;
+        bool endRole = endExit != null &&
+            group.Datum.DistanceTo(endExit.Point) <= 1e-6 &&
+            lastPoint >= 0 &&
+            group.Occurrences.Any(o => o.Piece == lastPiece && o.Point == lastPoint);
+
+        if (startRole == endRole) return false;   // 둘 다/둘 다 아님은 모호하므로 앵커로 보지 않는다.
+        isStart = startRole;
         return true;
+    }
+
+    /// <summary>원본 Pattern 꼭지점에 더해 분할 회로의 파생 인출점 핸들을 만든다.</summary>
+    private List<RouteVertexGroup> BuildVertexGroups(WorkingArea area)
+    {
+        var groups = RouteVertexGroups.Build(area.Pattern.RoutePieces).ToList();
+        _vertexCircuitAnchors.Clear();
+        if (area.Circuits.Count == 0 || area.Circuits.Count != area.CircuitPieceIndices.Count)
+            return groups;
+        for (int i = 0; i < area.Circuits.Count; i++)
+        {
+            List<int> indices = area.CircuitPieceIndices[i];
+            if (indices.Count == 0) continue;
+            CircuitRoute route = area.Circuits[i];
+            int first = indices[0];
+            int last = indices[^1];
+            bool startIsPattern = first == 0 && area.Pattern.StartExit != null &&
+                route.StartExit.Point.DistanceTo(area.Pattern.StartExit.Point) <= 1e-6;
+            bool endIsPattern = last == area.Pattern.RoutePieces.Count - 1 && area.Pattern.EndExit != null &&
+                route.EndExit.Point.DistanceTo(area.Pattern.EndExit.Point) <= 1e-6;
+            if (!startIsPattern)
+            {
+                groups.Add(new RouteVertexGroup(Array.Empty<RouteVertexOccurrence>(), route.StartExit.Point));
+                _vertexCircuitAnchors[groups.Count - 1] = (first, CircuitExitRole.Start);
+            }
+            if (!endIsPattern && !(last == first && route.EndExit.Point.DistanceTo(route.StartExit.Point) <= 1e-6))
+            {
+                groups.Add(new RouteVertexGroup(Array.Empty<RouteVertexOccurrence>(), route.EndExit.Point));
+                _vertexCircuitAnchors[groups.Count - 1] = (last, CircuitExitRole.End);
+            }
+        }
+        return groups;
     }
 
     private void OnVertexHovered(int handle)
@@ -212,7 +259,7 @@ public partial class MainWindow
         }
         int group = _vertexHandleGroupMap[handle];
         RouteVertexGroup vertex = _vertexGroups[group];
-        bool anchor = IsAnchorGroup(_activeArea, vertex, out _);
+        bool anchor = IsAnchorGroup(_activeArea, vertex, out _) || _vertexCircuitAnchors.ContainsKey(group);
         HoverText.Text = string.Format("꼭지점 ({0:F2}, {1:F2})mm{2}",
             vertex.Datum.X, vertex.Datum.Y, anchor ? " · 인출 앵커" : "");
     }
@@ -321,11 +368,32 @@ public partial class MainWindow
             return false;
         }
         RouteVertexGroup group = _vertexGroups[_vertexDragGroup];
+        if (_vertexCircuitAnchors.TryGetValue(_vertexDragGroup, out var circuitKey))
+        {
+            anchor = true;
+            isStart = circuitKey.Role == CircuitExitRole.Start;
+            return TryBuildCircuitAnchor(circuitKey, datum, strict: false,
+                out pieces, out mappedPieces, out applied, out failure);
+        }
         anchor = IsAnchorGroup(area, group, out isStart);
+        var side = _workingSide.Confirmed;
+        if (side == null) { failure = "작업면이 확정되지 않았습니다"; return false; }
+        var context = CommittedRouteContext.Capture(area);
+        SurfaceMappedSample? anchorSample = null;
         if (anchor)
         {
-            if (area.ExitChain.Count < 2) { failure = "인출면 경계가 없습니다"; return false; }
-            applied = Serpentine.SnapOnChain(area.ExitChain, datum);
+            if (!TryProjectExitDatum(side, context, datum, 5.0,
+                    out applied, out SurfaceMappedSample projectedSample))
+            {
+                failure = "인출 경계에서 이동할 수 없습니다";
+                return false;
+            }
+            if (applied.DistanceTo(group.Datum) <= 1e-6)
+            {
+                failure = "인출점 위치가 변경되지 않았습니다";
+                return false;
+            }
+            anchorSample = projectedSample;
         }
 
         var edits = new List<(RouteVertexOccurrence, Vec2)>(group.Occurrences.Count);
@@ -333,13 +401,13 @@ public partial class MainWindow
         if (!SerpentineVertexPreview.TryApplyAffected(area.Pattern, edits, out pieces, out _, out failure))
             return false;
 
-        var side = _workingSide.Confirmed;
-        if (side == null) { failure = "작업면이 확정되지 않았습니다"; return false; }
-        var hit = BuildSurfaceMapDelegate(area, side, anchor ? applied : (Vec2?)null);
+        var hit = BuildSurfaceMapDelegate(area, side, anchor ? applied : (Vec2?)null, context);
         foreach (KeyValuePair<int, IReadOnlyList<Vec2>> entry in pieces)
         {
             if (entry.Value.Count < 2) continue;
-            bool ok = SurfacePathMapper.TryMapRoute(entry.Value, hit, out var samples, out string mapFailure);
+            var overrides = BuildAnchorOverrides(group, entry.Key, entry.Value, anchorSample);
+            bool ok = SurfacePathMapper.TryMapRoute(
+                entry.Value, hit, overrides, out var samples, out string mapFailure);
             if (!ok) { failure = "모델 표면 매핑 실패 — " + mapFailure; return false; }
             mappedPieces[entry.Key] = samples;
         }
@@ -368,31 +436,130 @@ public partial class MainWindow
             return false;
         }
         RouteVertexGroup group = _vertexGroups[_vertexDragGroup];
+        if (_vertexCircuitAnchors.TryGetValue(_vertexDragGroup, out var circuitKey))
+        {
+            anchor = true;
+            isStart = circuitKey.Role == CircuitExitRole.Start;
+            if (!TryBuildCircuitAnchor(circuitKey, datum, strict: true,
+                    out _, out mappedPieces, out applied, out failure))
+                return false;
+            candidate = area.Pattern;
+            return true;
+        }
         anchor = IsAnchorGroup(area, group, out isStart);
+        var side = _workingSide.Confirmed;
+        if (side == null) { failure = "작업면이 확정되지 않았습니다"; return false; }
+        var context = CommittedRouteContext.Capture(area);
+        SurfaceMappedSample? anchorSample = null;
         if (anchor)
         {
-            if (area.ExitChain.Count < 2) { failure = "인출면 경계가 없습니다"; return false; }
-            applied = Serpentine.SnapOnChain(area.ExitChain, datum);
+            if (!TryProjectExitDatum(side, context, datum, 5.0,
+                    out applied, out SurfaceMappedSample projectedSample))
+            {
+                failure = "인출 경계에서 이동할 수 없습니다";
+                return false;
+            }
+            if (applied.DistanceTo(group.Datum) <= 1e-6)
+            {
+                failure = "인출점 위치가 변경되지 않았습니다";
+                return false;
+            }
+            anchorSample = projectedSample;
         }
 
         var edits = new List<(RouteVertexOccurrence, Vec2)>(group.Occurrences.Count);
         foreach (RouteVertexOccurrence occurrence in group.Occurrences) edits.Add((occurrence, applied));
         try { candidate = SerpentineVertexEdit.ApplyVertexEdits(area.Pattern, edits); }
         catch (Exception ex) { failure = ex.Message; return false; }
-        var side = _workingSide.Confirmed;
 
-        if (side == null) { failure = "작업면이 확정되지 않았습니다"; return false; }
-        var hit = BuildSurfaceMapDelegate(area, side, anchor ? applied : (Vec2?)null);
+        var hit = BuildSurfaceMapDelegate(area, side, anchor ? applied : (Vec2?)null, context);
         foreach (int pieceIndex in group.Occurrences.Select(o => o.Piece).Distinct())
         {
             SerpentineRoutePiece piece = candidate.RoutePieces[pieceIndex];
             if (piece.Points.Count < 2) continue;
-            bool ok = SurfacePathMapper.TryMapRouteStrict(piece.Points, hit, out var samples,
+            var overrides = BuildAnchorOverrides(group, pieceIndex, piece.Points, anchorSample);
+            bool ok = SurfacePathMapper.TryMapRouteStrict(piece.Points, hit, overrides, out var samples,
                 out string mapFailure, 0.1);
             if (!ok) { failure = "모델 표면 매핑 실패 — " + mapFailure; return false; }
             mappedPieces[pieceIndex] = samples;
         }
         return true;
+    }
+
+    /// <summary>분할 회로의 파생 인출점 하나를 이동한 후보를 만든다.</summary>
+    private bool TryBuildCircuitAnchor((int PieceIndex, CircuitExitRole Role) key, Vec2 datum, bool strict,
+        out Dictionary<int, IReadOnlyList<Vec2>> pieces,
+        out Dictionary<int, List<SurfaceMappedSample>> mappedPieces,
+        out Vec2 applied, out string failure)
+    {
+        pieces = new Dictionary<int, IReadOnlyList<Vec2>>();
+        mappedPieces = new Dictionary<int, List<SurfaceMappedSample>>();
+        applied = datum;
+        failure = string.Empty;
+        var area = _activeArea;
+        var side = _workingSide.Confirmed;
+        if (area?.Pattern == null || side == null) { failure = "편집할 경로가 없습니다"; return false; }
+        int circuitIndex = area.CircuitPieceIndices.FindIndex(g =>
+            g.Count > 0 && (key.Role == CircuitExitRole.Start ? g[0] == key.PieceIndex : g[^1] == key.PieceIndex));
+        if (circuitIndex < 0 || circuitIndex >= area.Circuits.Count)
+        { failure = "분할 회로의 인출점을 찾을 수 없습니다"; return false; }
+        CircuitRoute route = area.Circuits[circuitIndex];
+        var context = CommittedRouteContext.Capture(area);
+        if (!TryProjectExitDatum(side, context, datum, 5.0,
+                out applied, out SurfaceMappedSample anchorSample))
+        { failure = "인출 경계에서 이동할 수 없습니다"; return false; }
+        if (applied.DistanceTo(route.StartExit.Point) <= 1e-6 && key.Role == CircuitExitRole.Start ||
+            applied.DistanceTo(route.EndExit.Point) <= 1e-6 && key.Role == CircuitExitRole.End)
+        { failure = "인출점 위치가 변경되지 않았습니다"; return false; }
+
+        CircuitExitPoint start = key.Role == CircuitExitRole.Start
+            ? new CircuitExitPoint(CircuitExitRole.Start, applied, 0, 0)
+            : route.StartExit;
+        CircuitExitPoint end = key.Role == CircuitExitRole.End
+            ? new CircuitExitPoint(CircuitExitRole.End, applied, 0, 0)
+            : route.EndExit;
+        if (!CircuitRouteBuilder.TryTrimToExit(route.Pieces, ToBoundary(start), ToBoundary(end),
+                route.AngleDeg, route.LaneCount, route.NominalLaneCount,
+                out CircuitRoute candidate, out failure))
+            return false;
+        IReadOnlyList<Vec2> points = key.Role == CircuitExitRole.Start
+            ? candidate.Pieces[0].Points
+            : candidate.Pieces[^1].Points;
+        if (points.Count < 2) { failure = "인출점 주변 구간이 퇴화합니다"; return false; }
+        var overrides = new Dictionary<int, SurfaceMappedSample>
+        {
+            [key.Role == CircuitExitRole.Start ? 0 : points.Count - 1] =
+                anchorSample with { DatumPoint = applied }
+        };
+        var hit = BuildSurfaceMapDelegate(area, side, applied, context);
+        bool ok = strict
+            ? SurfacePathMapper.TryMapRouteStrict(points, hit, overrides, out var samples, out failure, 0.1)
+            : SurfacePathMapper.TryMapRoute(points, hit, overrides, out samples, out failure);
+        if (!ok) { failure = "모델 표면 매핑 실패 — " + failure; return false; }
+        pieces[key.PieceIndex] = points;
+        mappedPieces[key.PieceIndex] = samples;
+        return true;
+    }
+
+    /// <summary>이동한 인출점 occurrence에만 원본 edge 평가 표본을 적용한다.</summary>
+    private static Dictionary<int, SurfaceMappedSample> BuildAnchorOverrides(
+        RouteVertexGroup group, int pieceIndex, IReadOnlyList<Vec2> points,
+        SurfaceMappedSample? anchorSample)
+    {
+        if (!anchorSample.HasValue) return null;
+        Dictionary<int, SurfaceMappedSample> overrides = null;
+        foreach (RouteVertexOccurrence occurrence in group.Occurrences)
+        {
+            if (occurrence.Piece != pieceIndex || occurrence.Point < 0 || occurrence.Point >= points.Count)
+                continue;
+            if (points[occurrence.Point].DistanceTo(anchorSample.Value.DatumPoint) > 1e-6) continue;
+            overrides ??= new Dictionary<int, SurfaceMappedSample>();
+            overrides[occurrence.Point] = anchorSample.Value with
+            {
+                DatumPoint = points[occurrence.Point]
+            };
+        }
+        return overrides;
     }
 
     /// <summary>검증 단계에서 이미 계산한 매핑을 재사용해 미리보기 폴리라인을 그린다.</summary>
@@ -425,6 +592,12 @@ public partial class MainWindow
     {
         var area = _activeArea;
         if (area?.Pattern == null) return;
+        if (!area.HasExitFace)
+        {
+            ExitVertexEdit();
+            StatusText.Text = "인출면이 지정되지 않아 편집을 적용할 수 없습니다";
+            return;
+        }
         // 미리보기 중 초안/인출면/앵커가 바뀌어 표시 결과의 원본 조건이 달라졌다면
         // 이전 결과를 새 조건에 덮어쓰지 않고 편집을 거부한다.
         if (IsPatternInputStale(area))
@@ -443,11 +616,22 @@ public partial class MainWindow
         }
 
         VertexCommitRollbackSnapshot before = CaptureVertexRollback(area);
-        area.Pattern = candidate;
-        if (anchor)
+        bool circuitAnchor = _vertexCircuitAnchors.TryGetValue(_vertexDragGroup, out var circuitKey);
+        if (circuitAnchor)
         {
-            if (isStart) area.StartAnchor = applied;
-            else area.EndAnchor = applied;
+            area.CircuitExitOverrides.RemoveAll(o =>
+                o.PieceIndex == circuitKey.PieceIndex && o.Role == circuitKey.Role);
+            area.CircuitExitOverrides.Add(new CircuitExitOverride(
+                circuitKey.PieceIndex, circuitKey.Role, applied));
+        }
+        else
+        {
+            area.Pattern = candidate;
+            if (anchor)
+            {
+                if (isStart) area.StartAnchor = applied;
+                else area.EndAnchor = applied;
+            }
         }
         _pendingStageSamples.Clear();
         foreach (KeyValuePair<int, List<SurfaceMappedSample>> entry in mappedPieces)
@@ -468,8 +652,7 @@ public partial class MainWindow
         // 비교에서 편집 자체가 '재생성 필요'로 오인되지 않게 원본 지문만 갱신한다.
         if (area.AppliedInputs != null)
             area.AppliedInputs = CaptureAppliedInputs(area, area.AppliedInputs.Margin, area.AppliedInputs.Spacing);
-        _vertexGroups = RouteVertexGroups.Build(area.Pattern.RoutePieces).ToList();
-        UpdateExitLeadLengths(area);
+        _vertexGroups = BuildVertexGroups(area);
         UpdateCircuitTable();
         StatusText.Text = string.Format("{0} 영역 · 경로 꼭지점 수정 — 길이 {1:F1}mm",
             area.Name, area.RoutePieceLengths.Sum());
@@ -477,8 +660,10 @@ public partial class MainWindow
     }
 
     private static VertexCommitRollbackSnapshot CaptureVertexRollback(WorkingArea area) => new(
-        area, area.Pattern, area.ProjectedPieces, area.NativePieceIds, area.RoutePieceLengths, area.LeadLengths,
-        area.StartAnchor, area.EndAnchor, area.RouteEdited);
+        area, area.Pattern, area.ProjectedPieces, area.NativePieceIds, area.RoutePieceLengths,
+        area.StartAnchor, area.EndAnchor, area.RouteEdited,
+        area.Circuits.ToList(), area.CircuitPieceIndices.Select(g => g.ToList()).ToList(),
+        area.CircuitExitOverrides.ToList());
 
     private void RestoreVertexRollback(VertexCommitRollbackSnapshot snapshot)
     {
@@ -487,10 +672,12 @@ public partial class MainWindow
         area.ProjectedPieces = snapshot.Projected;
         area.NativePieceIds = snapshot.NativeIds;
         area.RoutePieceLengths = snapshot.Lengths;
-        area.LeadLengths = snapshot.Leads;
         area.StartAnchor = snapshot.StartAnchor;
         area.EndAnchor = snapshot.EndAnchor;
         area.RouteEdited = snapshot.Edited;
+        area.Circuits = snapshot.Circuits;
+        area.CircuitPieceIndices = snapshot.CircuitPieceIndices;
+        area.CircuitExitOverrides = snapshot.CircuitExitOverrides;
     }
 
     /// <summary>편집 내용이 있으면 삭제 동의를 받는다. 여기서는 상태를 지우지 않는다 —

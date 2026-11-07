@@ -68,6 +68,11 @@ public partial class MainWindow
     {
         reason = null;
         if (area?.Pattern == null) { reason = "발열 경로가 없습니다"; return false; }
+        if (area.Circuits == null || area.Circuits.Count == 0)
+        {
+            if (!TryRefreshCircuits(area, out string circuitFailure))
+            { reason = circuitFailure; return false; }
+        }
         int count = area.Pattern.RoutePieces.Count;
         if (count == 0) { reason = "경로 조각이 없습니다"; return false; }
         if (area.NativePieceIds == null || area.NativePieceIds.Length != count)
@@ -80,6 +85,7 @@ public partial class MainWindow
         int turns = area.Pattern.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector);
         if (area.TurnEnabled == null || area.TurnEnabled.Count < turns)
         { reason = "회로 분할 상태가 조각과 일치하지 않습니다"; return false; }
+        if (!HasUsableCircuits(area, out reason)) return false;
         return true;
     }
 
@@ -272,8 +278,8 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 확정된 발열 경로의 회로별 길이로 전기 사양표를 다시 계산한다.
-    /// L은 가열부(HeatingRun + 활성 Turn + FixedConnector)만 합산하고 ExitPiece는 외부 인출로 제외한다.
+    /// 확정된 발열 경로의 회로별 전체 길이로 전기 사양표를 다시 계산한다.
+    /// 인출점 사이의 경로 전체를 한 번만 합산한다.
     /// </summary>
     private void RefreshElectricalTable()
     {
@@ -319,30 +325,22 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 현재 회로별 가열부 길이를 표시 순서대로 만든다. 인출부 길이는 함께 보관한다.
+    /// 현재 회로별 전체 발열 길이를 표시 순서대로 만든다. 인출점 사이의 경로 전체를
+    /// 한 번만 합산하며 별도의 인출부 길이는 두지 않는다.
     /// </summary>
     private List<CircuitLengthInfo> GetCircuitLengths(WorkingArea area, string prefix = "")
     {
         var result = new List<CircuitLengthInfo>();
         if (area?.Pattern == null) return result;
 
-        List<List<int>> groups = CircuitPieceGroups(area);
-        var lengthById = new Dictionary<int, double>();
-        var heatingIds = new HashSet<int>();
-        for (int i = 0; i < area.NativePieceIds.Length; i++)
+        if (area.CircuitPieceIndices == null || area.CircuitPieceIndices.Count == 0)
+            TryRefreshCircuits(area, out _);
+        for (int i = 0; i < area.CircuitPieceIndices.Count; i++)
         {
-            lengthById[area.NativePieceIds[i]] = area.RoutePieceLengths.ElementAtOrDefault(i);
-            if (i < area.Pattern.RoutePieces.Count
-                && area.Pattern.RoutePieces[i].Kind != SerpentineRoutePieceKind.ExitPiece)
-                heatingIds.Add(area.NativePieceIds[i]);
-        }
-
-        for (int i = 0; i < groups.Count; i++)
-        {
-            double heating = groups[i].Where(id => heatingIds.Contains(id))
-                .Sum(id => lengthById.TryGetValue(id, out double value) ? value : 0);
-            result.Add(new CircuitLengthInfo(prefix + (i + 1), heating,
-                area.LeadLengths.ElementAtOrDefault(i)));
+            double heating = 0;
+            foreach (int index in area.CircuitPieceIndices[i])
+                heating += area.RoutePieceLengths.ElementAtOrDefault(index);
+            result.Add(new CircuitLengthInfo(prefix + (i + 1), heating));
         }
         return result;
     }

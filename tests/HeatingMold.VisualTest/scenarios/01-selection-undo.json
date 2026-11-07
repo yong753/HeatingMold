@@ -23,7 +23,7 @@
       },
       "anchor": { "index": 0 },
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 1,
         "exitFaceId": 79,

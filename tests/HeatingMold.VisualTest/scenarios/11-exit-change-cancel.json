@@ -28,7 +28,7 @@
         "toleranceMm": 0.5
       },
       "expect": {
-        "pieces": 129,
+        "pieces": 127,
         "turns": 63,
         "circuits": 1,
         "disabledTurns": 0,
@@ -81,7 +81,7 @@
       "action": "generate",
       "area": "A",
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 1,
         "disabledTurns": 0,
@@ -102,7 +102,7 @@
       "action": "checkArea",
       "area": "A",
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 1,
         "exitFaceId": 79,

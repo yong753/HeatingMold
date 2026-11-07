@@ -23,7 +23,7 @@
       },
       "anchor": { "index": 0 },
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 1,
         "disabledTurns": 0,
@@ -90,7 +90,7 @@
       "action": "checkArea",
       "area": "A",
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 1,
         "disabledTurns": 0,
@@ -113,7 +113,7 @@
       "action": "checkArea",
       "area": "A",
       "expect": {
-        "pieces": 17,
+        "pieces": 15,
         "turns": 7,
         "circuits": 1,
         "disabledTurns": 0,

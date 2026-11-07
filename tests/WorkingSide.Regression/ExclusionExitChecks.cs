@@ -110,8 +110,6 @@ static class ExclusionExitChecks
             "both split lanes contribute exactly two heating runs");
         Check(pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector) == 3,
             "the four heating runs are joined by three turn connectors");
-        Check(pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.ExitPiece) == 2,
-            "start and end leads are emitted as exit pieces");
         Check(plan.Start.DistanceTo(pattern.Path[0]) < 1e-9 && plan.End.DistanceTo(pattern.Path[^1]) < 1e-9,
             "generated path endpoints match the selected exit-face anchors");
         bool runsOutside = pattern.RoutePieces
@@ -123,13 +121,10 @@ static class ExclusionExitChecks
         var projected = (List<RoutePieceResult>)areaType.GetProperty("ProjectedPieces")!.GetValue(area)!;
         Check(projected.Count == pattern.RoutePieces.Count && projected.All(piece => piece != null),
             "every route piece maps onto the working surface");
-        var leads = (double[])areaType.GetProperty("LeadLengths")!.GetValue(area)!;
-        Check(leads.Length > 0 && Math.Abs(leads.Sum() - 4) < 0.1,
-            "exit-face leads sum to the two margin-sized gaps");
         Check((bool)areaType.GetProperty("PatternDisplayed")!.GetValue(area)!,
             "generated anchored exclusion plan is displayed");
-        Check(((TextBlock)window.FindName("StatusText")).Text.Contains("리드"),
-            "status reports the number of exit leads");
+        Check(((TextBlock)window.FindName("StatusText")).Text.Contains("회로"),
+            "status reports the number of circuits");
 
         Invoke(window, "ClearAllAreas", false);
         marginBox.Text = "5";

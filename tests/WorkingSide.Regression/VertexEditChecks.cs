@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Windows.Controls;
 using HeatingMold.App;
 using HeatingMold.Core.Geometry;
+using HeatingMold.Core.Model;
 using HeatingMold.OccBridge;
 
 /// <summary>
@@ -40,7 +41,7 @@ static class VertexEditChecks
         public bool RouteEdited { get => Get<bool>("RouteEdited"); set => Set("RouteEdited", value); }
     }
 
-    static SerpentineResult Pattern(params Vec2[] points)
+    static SerpentineResult Pattern(Vec2[] points, bool withExits = false)
     {
         var path = points.ToList();
         var segments = new List<SerpentineSegment>();
@@ -52,7 +53,13 @@ static class VertexEditChecks
             LaneCount = 1,
             AngleDeg = 0,
             TotalLength = path.Zip(path.Skip(1), (a, b) => a.DistanceTo(b)).Sum(),
-            RoutePieces = new[] { new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, 0, path) }
+            RoutePieces = new[] { new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, 0, path) },
+            StartExit = withExits
+                ? new CircuitExitPoint(CircuitExitRole.Start, path[0], 0, 0)
+                : null,
+            EndExit = withExits
+                ? new CircuitExitPoint(CircuitExitRole.End, path[^1], 0, 1)
+                : null,
         };
     }
 
@@ -104,8 +111,15 @@ static class VertexEditChecks
         AreaHandle area = Area(window, areaType, side, topFace, "VertexEditCheck", 4301);
         Invoke(window, "ActivateArea", area.Value);
 
-        var p0 = Pattern(new Vec2(-10, 0), new Vec2(0, 0), new Vec2(10, 0));
+        var p0 = Pattern(new[] { new Vec2(-10, 0), new Vec2(0, 0), new Vec2(10, 0) }, withExits: true);
         area.Pattern = p0;
+        areaType.GetProperty("ExitFaceId")!.SetValue(area.Value, topFace);
+        areaType.GetProperty("ExitFaceRevision")!.SetValue(area.Value, side.Revision.Value);
+        ((List<Vec2>)areaType.GetProperty("ExitChain")!.GetValue(area.Value)!).AddRange(
+            new[] { new Vec2(-15, 0), new Vec2(15, 0) });
+        ((List<Vec3>)areaType.GetProperty("ExitChain3D")!.GetValue(area.Value)!).AddRange(
+            new[] { new Vec3(-15, 0, 20), new Vec3(15, 0, 20) });
+        ((List<int>)areaType.GetProperty("ExitChainFaceIds")!.GetValue(area.Value)!).Add(topFace);
         area.NativePieceIds = new[] { 9001 };
         area.RoutePieceLengths = new[] { 20.0 };
         area.ProjectedPieces = new List<RoutePieceResult>();
@@ -117,7 +131,7 @@ static class VertexEditChecks
 
         // 다른 영역의 매핑 실패로 전체 재스테이징이 실패하면 방금 커밋한 편집을 되돌린다.
         AreaHandle bad = Area(window, areaType, side, topFace, "VertexEditBad", 4302);
-        bad.Pattern = Pattern(new Vec2(1000, 1000), new Vec2(1100, 1000));
+        bad.Pattern = Pattern(new[] { new Vec2(1000, 1000), new Vec2(1100, 1000) });
 
         Commit(window, area, 1, new Vec2(0, 2));
         Check(ReferenceEquals(area.Pattern, p0), "failed native rebuild restores the previous pattern");
