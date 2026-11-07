@@ -224,8 +224,14 @@ public:
 
     /// <summary>면의 UV 경계 폴리곤 — 외곽 먼저, 이후 홀 (V3)</summary>
     static array<UvWire^>^ GetFaceUvBoundary(int faceIndex);
-    /// <summary>임시 0.01mm Sewing 후 공유 내부 Edge를 제거하고 외곽 루프를 3D 적응 샘플링해 반환.</summary>
+    /// <summary>
+    /// 임시 0.01mm Sewing 후 공유 내부 Edge를 제거하고 외곽 루프를 3D 적응 샘플링해 반환.
+    /// 외곽 순서는 기존 정점 연결만 따라 결정하며 Wire/Edge를 재조립하지 않는다.
+    /// </summary>
     static array<RegionBoundaryLoop^>^ GetSelectedRegionBoundary(array<int>^ faceIds, double deflection);
+    /// <summary>위 호출과 동일하되 실패한 단계의 진단 문자열을 함께 반환한다.</summary>
+    static array<RegionBoundaryLoop^>^ GetSelectedRegionBoundary(array<int>^ faceIds, double deflection,
+                                                                 [System::Runtime::InteropServices::Out] System::String^% failureReason);
     /// <summary>
     /// 확정 영역 외곽 경계 Edge의 반대편 인접면을 인출 측면 후보로 반환한다.
     /// 연속 경계 Edge가 같은 면을 공유하면 하나의 후보(run)로 묶인다.

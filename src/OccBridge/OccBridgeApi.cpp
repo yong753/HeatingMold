@@ -147,6 +147,7 @@
 #include <vector>
 #include "ProjectedExitCurveNative.inc"
 #include "ExitEdgeMatchingNative.inc"
+#include "BoundaryLoopTraversalNative.inc"
 
 using namespace System;
 using namespace System::Collections::Generic;
@@ -784,11 +785,78 @@ namespace
         return true;
     }
 
+    struct StoredExitEdge
+    {
+        TopoDS_Edge edge;
+        long long revision = 0;
+        int faceId = -1;
+        int supportFaceId = -1;
+        struct Binding { double first, last; int faceId, supportFaceId; };
+        std::vector<Binding> bindings;
+    };
+
+    // 후보 조회 때마다 새로 만들어지는 sewing Edge를 영속 참조로 쓰지 않는다.
+    // 원본 Edge 사본과 revision을 보관하고, 모델이 바뀔 때만 비운다.
+    std::map<long long, StoredExitEdge> g_exitEdges;
+    TopTools_IndexedMapOfShape g_exitSourceEdges;
+    TopTools_IndexedMapOfShape g_exitSourceVertices;
+
+    void ClearExitEdgeStoreNative()
+    {
+        g_exitEdges.clear();
+        g_exitSourceEdges.Clear();
+        g_exitSourceVertices.Clear();
+    }
+
+    // 추출 중에는 기존 등록표의 복사본에만 키를 배정한다. managed 결과 구성까지
+    // 성공한 호출자만 Publish로 게시하므로, 중간 실패는 기존 키/binding을 바꾸지 않는다.
+    // 전제: UI 스레드에서 동기 호출. 지원하지 않는 동시 native 호출에 대한 원자성은 보장하지 않는다.
+    struct ExitEdgeStoreSnapshot
+    {
+        std::map<long long, StoredExitEdge> edges;
+        TopTools_IndexedMapOfShape sourceEdges;
+        TopTools_IndexedMapOfShape sourceVertices;
+    };
+
+    void BeginExitEdgeStaging(ExitEdgeStoreSnapshot& staged)
+    {
+        staged.edges = g_exitEdges;
+        staged.sourceEdges = g_exitSourceEdges;
+        staged.sourceVertices = g_exitSourceVertices;
+    }
+
+    void PublishExitEdgeStaging(ExitEdgeStoreSnapshot& staged)
+    {
+        g_exitEdges.swap(staged.edges);
+        g_exitSourceEdges.Exchange(staged.sourceEdges);
+        g_exitSourceVertices.Exchange(staged.sourceVertices);
+    }
+
+    long long StageOriginalExitEdge(ExitEdgeStoreSnapshot& staged,
+        const HeatingMoldExitNative::SourceInterval& source, int faceId, int supportFaceId)
+    {
+        const long long key = staged.sourceEdges.Add(source.edge);
+        auto entry = staged.edges.find(key);
+        if (entry == staged.edges.end()) {
+            StoredExitEdge stored;
+            stored.edge = source.edge; stored.revision = g_modelRevision;
+            stored.faceId = faceId; stored.supportFaceId = supportFaceId;
+            entry = staged.edges.emplace(key, stored).first;
+            TopoDS_Vertex first, last;
+            TopExp::Vertices(source.edge, first, last, Standard_False);
+            if (!first.IsNull()) staged.sourceVertices.Add(first);
+            if (!last.IsNull()) staged.sourceVertices.Add(last);
+        }
+        for (const auto& binding : entry->second.bindings)
+            if (binding.first == source.first && binding.last == source.last &&
+                binding.faceId == faceId && binding.supportFaceId == supportFaceId) return key;
+        entry->second.bindings.push_back({source.first, source.last, faceId, supportFaceId});
+        return key;
+    }
+
     // 아래 정의는 뒤쪽 인출 측면 추출과 공유한다.
     int FindSupportFaceForEdge(const TopoDS_Edge& edge, const std::set<int>& selected);
     double EdgeLengthNative(const TopoDS_Edge& edge);
-    long long StoreOriginalExitEdge(const HeatingMoldExitNative::SourceInterval& source,
-        int faceId, int supportFaceId);
     std::string g_exitSideDiagnostic;
 
     /// <summary>경계 일부 점 구간이 대응하는 원본 CAD Edge 참조.</summary>
@@ -811,16 +879,43 @@ namespace
         std::vector<NativeExitEdgeRef> edgeRefs;
     };
 
-    bool ExtractSelectedRegionBoundary(const std::vector<int>& faceIds, double deflection,
-                                       std::vector<NativeBoundaryLoop>& loops)
+    /// <summary>
+    /// 외곽 경계 슬롯 하나. 순회 결과의 입력 인덱스가 직접 이 기록을 가리키므로
+    /// 재조립된 Edge를 다시 조회하지 않는다. edgeMapIndex는 전체 Edge 목록 기준이며
+    /// 외곽 슬롯 번호와 같다고 가정하지 않는다.
+    /// </summary>
+    struct BoundaryEdgeInput
     {
-        if (faceIds.empty() || !std::isfinite(deflection) || deflection <= 0.0) return false;
+        TopoDS_Edge workingEdge;
+        int edgeMapIndex = 0; // 1-based edgeMap index
+        HeatingMoldExitNative::SourceInterval source;
+        bool sourceValid = false;
+        bool sourceAmbiguous = false;
+        int relatedFace = -1; // 영역: 소유 Face, 인출 후보: 반대편 인접 Face
+    };
+
+    bool ExtractSelectedRegionBoundary(const std::vector<int>& faceIds, double deflection,
+                                       std::vector<NativeBoundaryLoop>& loops,
+                                       ExitEdgeStoreSnapshot& staged, std::string& diagnostic)
+    {
+        loops.clear();
+        diagnostic.clear();
+        if (faceIds.empty() || !std::isfinite(deflection) || deflection <= 0.0)
+        {
+            diagnostic = "region-boundary: invalid input";
+            return false;
+        }
         std::set<int> selected;
         for (int id : faceIds)
         {
-            if (id < 0 || id >= static_cast<int>(g_faces.size())) return false;
+            if (id < 0 || id >= static_cast<int>(g_faces.size()))
+            {
+                diagnostic = "region-boundary: face id out of range";
+                return false;
+            }
             selected.insert(id);
         }
+        BeginExitEdgeStaging(staged);
 
         // Sew only a temporary working copy: STEP/source topology is untouched.
         // This reconciles geometrically coincident but separately represented
@@ -833,12 +928,20 @@ namespace
         for (int faceId : selected) sewing.Add(g_faces[faceId]);
         sewing.Perform();
         const TopoDS_Shape workingShape = sewing.SewedShape();
-        if (workingShape.IsNull()) return false;
+        if (workingShape.IsNull())
+        {
+            diagnostic = "region-boundary: temporary sewing produced no shape";
+            return false;
+        }
 
         std::vector<TopoDS_Face> workingFaces;
         for (TopExp_Explorer ex(workingShape, TopAbs_FACE); ex.More(); ex.Next())
             workingFaces.push_back(TopoDS::Face(ex.Current()));
-        if (workingFaces.empty()) return false;
+        if (workingFaces.empty())
+        {
+            diagnostic = "region-boundary: temporary sewing produced no faces";
+            return false;
+        }
 
         // Count edge uses by topological identity after sewing. Internal edges
         // used by two selected working faces disappear from the union boundary.
@@ -859,10 +962,19 @@ namespace
             }
 
         std::vector<TopoDS_Edge> boundaryEdges;
-        for (int count : uses) if (count > 2) return false; // non-manifold selection
+        for (int count : uses)
+            if (count > 2)
+            {
+                diagnostic = "region-boundary: selected faces are non-manifold";
+                return false;
+            }
         for (int i = 1; i <= edgeMap.Extent(); ++i)
             if (uses[i - 1] == 1) boundaryEdges.push_back(TopoDS::Edge(edgeMap(i)));
-        if (boundaryEdges.empty()) return false;
+        if (boundaryEdges.empty())
+        {
+            diagnostic = "region-boundary: selected faces have no exterior edge";
+            return false;
+        }
 
         // Sewing 사본 경계 Edge를 선택 면의 원본 경계 Edge로 되돌린다.
         // 표시용 샘플과 독립된 정확 경계 판정의 정본이며, 매칭 실패는
@@ -891,114 +1003,108 @@ namespace
                 originalBoundaryEdges.push_back(TopoDS::Edge(originalEdgeMap(i)));
         if (originalBoundaryEdges.empty())
         {
-            g_exitSideDiagnostic += "region-boundary: no original boundary edges\n";
+            diagnostic = "region-boundary: no original boundary edges";
             return false;
         }
         const auto inverse = HeatingMoldExitNative::SewingSourceInverse(sewing, originalBoundaryEdges, edgeMap);
         std::vector<HeatingMoldExitNative::SourceInterval> sourceMatches(static_cast<size_t>(edgeMap.Extent()));
         std::vector<bool> sourceValid(static_cast<size_t>(edgeMap.Extent()), false);
+        std::vector<bool> sourceAmbiguous(static_cast<size_t>(edgeMap.Extent()), false);
         for (const TopoDS_Edge& boundaryEdge : boundaryEdges)
         {
             const int index = edgeMap.FindIndex(boundaryEdge) - 1;
-            if (index < 0 || index >= static_cast<int>(sourceMatches.size())) return false;
+            if (index < 0 || index >= static_cast<int>(sourceMatches.size()))
+            {
+                diagnostic = "region-boundary: boundary edge missing from the working edge map";
+                return false;
+            }
             bool ambiguous = false;
             sourceValid[index] = HeatingMoldExitNative::FindUniqueSourceInterval(boundaryEdge,
                 originalBoundaryEdges, inverse[index], geometryMatchTolerance, sourceMatches[index], ambiguous);
+            sourceAmbiguous[index] = ambiguous;
             if (!sourceValid[index])
             {
-                g_exitSideDiagnostic += "region-boundary: unmatched edge len=" +
-                    std::to_string(EdgeLengthNative(boundaryEdge)) + "\n";
+                diagnostic = "region-boundary: " + std::string(ambiguous ? "ambiguous" : "missing") +
+                    "-source len=" + std::to_string(EdgeLengthNative(boundaryEdge));
                 return false;
             }
         }
 
-        TopTools_IndexedMapOfShape vertexMap;
-        std::vector<std::vector<int>> incident;
-        auto addVertexEdge = [&](const TopoDS_Vertex& vertex, int edgeIndex)
+        // 외곽 슬롯마다 원본 대응을 직접 보관한다. 이후 단계는 새 Edge를 다시
+        // 조회하지 않고 이 기록의 workingEdge와 source를 그대로 사용한다.
+        std::vector<BoundaryEdgeInput> boundaryInputs;
+        boundaryInputs.reserve(boundaryEdges.size());
+        for (const TopoDS_Edge& boundaryEdge : boundaryEdges)
         {
-            if (vertex.IsNull()) return;
-            int index = vertexMap.FindIndex(vertex);
-            if (index == 0)
+            BoundaryEdgeInput input;
+            input.workingEdge = boundaryEdge;
+            input.edgeMapIndex = edgeMap.FindIndex(boundaryEdge);
+            const size_t index = static_cast<size_t>(input.edgeMapIndex - 1);
+            input.source = sourceMatches[index];
+            input.sourceValid = sourceValid[index];
+            input.sourceAmbiguous = sourceAmbiguous[index];
+            input.relatedFace = FindSupportFaceForEdge(input.source.edge, selected);
+            if (input.relatedFace < 0)
             {
-                vertexMap.Add(vertex);
-                incident.emplace_back();
-                index = vertexMap.Extent();
+                diagnostic = "region-boundary: no owning face for a boundary edge";
+                return false;
             }
-            incident[index - 1].push_back(edgeIndex);
-        };
-        for (int i = 0; i < static_cast<int>(boundaryEdges.size()); ++i)
-        {
-            TopoDS_Vertex first, last;
-            TopExp::Vertices(boundaryEdges[i], first, last, Standard_True);
-            addVertexEdge(first, i);
-            // Count both ends even for a one-edge closed loop; its graph degree is 2.
-            addVertexEdge(last, i);
+            boundaryInputs.push_back(input);
         }
-        for (const auto& edgesAtVertex : incident)
-            if (edgesAtVertex.size() != 2) return false; // reject branches/touching cycles
-
-        std::vector<bool> seen(boundaryEdges.size(), false);
-        for (int seed = 0; seed < static_cast<int>(boundaryEdges.size()); ++seed)
+        // Wire 재조립 없이 기존 정점 연결로 외곽 루프의 순서와 방향만 정한다.
+        std::vector<TopoDS_Edge> boundaryWorkingEdges;
+        boundaryWorkingEdges.reserve(boundaryInputs.size());
+        for (const BoundaryEdgeInput& input : boundaryInputs)
+            boundaryWorkingEdges.push_back(input.workingEdge);
+        std::vector<HeatingMoldBoundaryNative::BoundaryComponent> components;
+        int failedComponents = 0;
+        std::string orderFailure;
+        if (!HeatingMoldBoundaryNative::OrderBoundaryLoops(
+                boundaryWorkingEdges, components, failedComponents, orderFailure))
         {
-            if (seen[seed]) continue;
-            std::vector<int> component, stack{ seed };
-            seen[seed] = true;
-            while (!stack.empty())
-            {
-                int edgeIndex = stack.back(); stack.pop_back();
-                component.push_back(edgeIndex);
-                TopoDS_Vertex ends[2];
-                TopExp::Vertices(boundaryEdges[edgeIndex], ends[0], ends[1], Standard_True);
-                for (const TopoDS_Vertex& vertex : ends)
-                {
-                    const int vi = vertexMap.FindIndex(vertex);
-                    if (vi <= 0) continue;
-                    for (int adjacent : incident[vi - 1])
-                        if (!seen[adjacent]) { seen[adjacent] = true; stack.push_back(adjacent); }
-                }
-            }
+            diagnostic = "region-boundary: " + orderFailure;
+            return false;
+        }
+        if (failedComponents > 0)
+        {
+            diagnostic = "region-boundary: " + orderFailure;
+            return false;
+        }
 
-            BRepBuilderAPI_MakeWire wireBuilder;
-            for (int edgeIndex : component) wireBuilder.Add(boundaryEdges[edgeIndex]);
-            if (!wireBuilder.IsDone()) return false;
-            const TopoDS_Wire wire = wireBuilder.Wire();
+        std::vector<NativeBoundaryLoop> prepared;
+        for (const HeatingMoldBoundaryNative::BoundaryComponent& component : components)
+        {
             NativeBoundaryLoop loop;
-            loop.closed = BRep_Tool::IsClosed(wire);
-            if (!loop.closed) return false;
-            size_t orderedEdgeCount = 0;
-            for (BRepTools_WireExplorer check(wire); check.More(); check.Next()) ++orderedEdgeCount;
-            if (orderedEdgeCount != component.size()) return false;
+            loop.closed = true;
             gp_Pnt firstPoint, previousPoint;
             bool hasPoint = false;
-            for (BRepTools_WireExplorer we(wire); we.More(); we.Next())
+            for (const HeatingMoldBoundaryNative::BoundaryStep& step : component.steps)
             {
-                const TopoDS_Edge edge = we.Current();
-                const int mapIndex = edgeMap.FindIndex(edge);
-                if (mapIndex <= 0 || mapIndex > static_cast<int>(sourceMatches.size()) ||
-                    !sourceValid[mapIndex - 1])
-                {
-                    g_exitSideDiagnostic += "region-boundary: wire edge not mapped mapIndex=" +
-                        std::to_string(mapIndex) + "\n";
-                    return false;
-                }
-                const HeatingMoldExitNative::SourceInterval& source = sourceMatches[mapIndex - 1];
-                const int owningFace = FindSupportFaceForEdge(source.edge, selected);
-                if (owningFace < 0)
-                {
-                    g_exitSideDiagnostic += "region-boundary: no owning face\n";
-                    return false;
-                }
+                const BoundaryEdgeInput& input = boundaryInputs[static_cast<size_t>(step.inputIndex)];
                 const int startPoint = static_cast<int>(loop.xyz.size() / 3);
                 int endPoint = startPoint - 1;
-                BRepAdaptor_Curve curve(edge);
+                const bool curveReversed = input.workingEdge.Orientation() == TopAbs_REVERSED;
+                const bool sampleReverse = curveReversed != step.reverse;
+                BRepAdaptor_Curve curve(input.workingEdge);
                 GCPnts_QuasiUniformDeflection sampler(curve, deflection);
-                if (!sampler.IsDone() || sampler.NbPoints() < 2 || sampler.NbPoints() > 100000) return false;
-                const bool reverse = edge.Orientation() == TopAbs_REVERSED;
+                if (!sampler.IsDone() || sampler.NbPoints() < 2 || sampler.NbPoints() > 100000)
+                {
+                    diagnostic = "region-boundary: boundary sampling failed";
+                    return false;
+                }
                 for (int k = 1; k <= sampler.NbPoints(); ++k)
                 {
-                    const gp_Pnt p = sampler.Value(reverse ? sampler.NbPoints() - k + 1 : k);
-                    if (!std::isfinite(p.X()) || !std::isfinite(p.Y()) || !std::isfinite(p.Z())) return false;
-                    if (k == 1 && hasPoint && previousPoint.Distance(p) > sewingTolerance) return false;
+                    const gp_Pnt p = sampler.Value(sampleReverse ? sampler.NbPoints() - k + 1 : k);
+                    if (!std::isfinite(p.X()) || !std::isfinite(p.Y()) || !std::isfinite(p.Z()))
+                    {
+                        diagnostic = "region-boundary: non-finite boundary sample";
+                        return false;
+                    }
+                    if (k == 1 && hasPoint && previousPoint.Distance(p) > sewingTolerance)
+                    {
+                        diagnostic = "region-boundary: boundary sample is discontinuous";
+                        return false;
+                    }
                     if (!hasPoint) { firstPoint = p; hasPoint = true; }
                     previousPoint = p;
                     if (loop.xyz.size() >= 3 &&
@@ -1007,29 +1113,54 @@ namespace
                     loop.xyz.push_back(p.X()); loop.xyz.push_back(p.Y()); loop.xyz.push_back(p.Z());
                     endPoint = static_cast<int>(loop.xyz.size() / 3) - 1;
                 }
-                // 중복점만 남은 변(영길이/이음 변)은 폴리라인 구간이 없다. 참조도 만들지 않는다.
-                if (endPoint < startPoint) continue;
-                // 앞 변 끝점과 첫 표본이 중복 제거되든(허용오차 이내) 미세 단차로 남든,
-                // 구간은 항상 마지막 공유점에서 시작해야 참조 구간이 끊기지 않는다.
+                // 표시점 중복 제거로 유효한 원본 Edge 구간이 사라지면 조용히
+                // 건너뛰지 않는다. 참조 구간은 루프 전체를 빈틈없이 덮어야 한다.
+                if (endPoint < startPoint)
+                {
+                    diagnostic = "region-boundary: boundary edge produced no polyline segment";
+                    return false;
+                }
                 const int referenceStart = startPoint > 0 ? startPoint - 1 : 0;
-                if (endPoint <= referenceStart) continue;
+                if (endPoint <= referenceStart)
+                {
+                    diagnostic = "region-boundary: boundary edge produced no reference interval";
+                    return false;
+                }
                 NativeExitEdgeRef ref;
                 ref.revision = g_modelRevision;
-                ref.key = StoreOriginalExitEdge(source, owningFace, owningFace);
-                ref.faceId = owningFace;
-                ref.firstParameter = source.first;
-                ref.lastParameter = source.last;
-                ref.reversed = source.reversed != (edge.Orientation() == TopAbs_REVERSED);
+                ref.key = StageOriginalExitEdge(staged, input.source, input.relatedFace, input.relatedFace);
+                ref.faceId = input.relatedFace;
+                ref.firstParameter = input.source.first;
+                ref.lastParameter = input.source.last;
+                ref.reversed = (input.source.reversed != curveReversed) != step.reverse;
                 ref.startIndex = referenceStart;
                 ref.endIndex = endPoint;
                 loop.edgeRefs.push_back(ref);
             }
-            if (loop.edgeRefs.empty()) return false;
-            if (!hasPoint || previousPoint.Distance(firstPoint) > sewingTolerance) return false;
-            if (loop.xyz.size() < 9) return false;
-            loops.push_back(std::move(loop));
+            if (loop.edgeRefs.empty())
+            {
+                diagnostic = "region-boundary: boundary loop has no original references";
+                return false;
+            }
+            if (!hasPoint || previousPoint.Distance(firstPoint) > sewingTolerance)
+            {
+                diagnostic = "region-boundary: boundary loop is not closed";
+                return false;
+            }
+            if (loop.xyz.size() < 9)
+            {
+                diagnostic = "region-boundary: too few boundary points";
+                return false;
+            }
+            prepared.push_back(std::move(loop));
         }
-        return !loops.empty();
+        if (prepared.empty())
+        {
+            diagnostic = "region-boundary: no boundary loop";
+            return false;
+        }
+        loops = std::move(prepared);
+        return true;
     }
 
     // ---- 인출 측면 후보: 외곽 경계 Edge의 반대편 인접면 ----
@@ -1041,29 +1172,6 @@ namespace
         int faceId = -1;
         int startIndex = 0;
     };
-
-    struct StoredExitEdge
-    {
-        TopoDS_Edge edge;
-        long long revision = 0;
-        int faceId = -1;
-        int supportFaceId = -1;
-        struct Binding { double first, last; int faceId, supportFaceId; };
-        std::vector<Binding> bindings;
-    };
-
-    // 후보 조회 때마다 새로 만들어지는 sewing Edge를 영속 참조로 쓰지 않는다.
-    // 원본 Edge 사본과 revision을 보관하고, 모델이 바뀔 때만 비운다.
-    std::map<long long, StoredExitEdge> g_exitEdges;
-    TopTools_IndexedMapOfShape g_exitSourceEdges;
-    TopTools_IndexedMapOfShape g_exitSourceVertices;
-
-    void ClearExitEdgeStoreNative()
-    {
-        g_exitEdges.clear();
-        g_exitSourceEdges.Clear();
-        g_exitSourceVertices.Clear();
-    }
 
     struct NativeExitSide
     {
@@ -1253,28 +1361,6 @@ namespace
         return true;
     }
 
-    long long StoreOriginalExitEdge(const HeatingMoldExitNative::SourceInterval& source,
-        int faceId, int supportFaceId)
-    {
-        const long long key = g_exitSourceEdges.Add(source.edge);
-        auto entry = g_exitEdges.find(key);
-        if (entry == g_exitEdges.end()) {
-            StoredExitEdge stored;
-            stored.edge = source.edge; stored.revision = g_modelRevision;
-            stored.faceId = faceId; stored.supportFaceId = supportFaceId;
-            entry = g_exitEdges.emplace(key, stored).first;
-            TopoDS_Vertex first, last;
-            TopExp::Vertices(source.edge, first, last, Standard_False);
-            if (!first.IsNull()) g_exitSourceVertices.Add(first);
-            if (!last.IsNull()) g_exitSourceVertices.Add(last);
-        }
-        for (const auto& binding : entry->second.bindings)
-            if (binding.first == source.first && binding.last == source.last &&
-                binding.faceId == faceId && binding.supportFaceId == supportFaceId) return key;
-        entry->second.bindings.push_back({source.first, source.last, faceId, supportFaceId});
-        return key;
-    }
-
     gp_Vec ProjectExitDirection(const gp_Vec& direction, const gp_Vec& viewNormal)
     {
         const double length = viewNormal.Magnitude();
@@ -1377,9 +1463,11 @@ namespace
     /// 영역 경계 추출과 동일한 0.01mm Sewing 공차/경계 분류를 사용한다.
     /// </summary>
     bool ExtractBoundaryExitSides(const std::vector<int>& faceIds, double deflection,
-                                  const gp_Vec& viewNormal, std::vector<NativeExitSide>& sides)
+                                  const gp_Vec& viewNormal, std::vector<NativeExitSide>& sides,
+                                  ExitEdgeStoreSnapshot& staged)
     {
         sides.clear();
+        g_exitSideDiagnostic.clear();
         if (faceIds.empty() || !std::isfinite(deflection) || deflection <= 0.0) return false;
         std::set<int> selected;
         for (int id : faceIds)
@@ -1387,6 +1475,7 @@ namespace
             if (id < 0 || id >= static_cast<int>(g_faces.size())) return false;
             selected.insert(id);
         }
+        BeginExitEdgeStaging(staged);
 
         try
         {
@@ -1394,7 +1483,6 @@ namespace
             const double geometryMatchTolerance = 0.05;
             std::string faceList;
             for (int faceId : selected) { faceList += std::to_string(faceId); faceList += ','; }
-            g_exitSideDiagnostic.clear();
             g_exitSideDiagnostic += "faces=" + faceList + "\n";
             BRepBuilderAPI_Sewing sewing(sewingTolerance, Standard_True, Standard_True, Standard_True, Standard_True);
             for (int faceId : selected) sewing.Add(g_faces[faceId]);
@@ -1476,79 +1564,56 @@ namespace
                     (sourceValid[index] ? " source=bound\n" : (ambiguous ? " reject(ambiguous-source)\n" : " reject(missing-source)\n"));
             }
 
-            TopTools_IndexedMapOfShape vertexMap;
-            std::vector<std::vector<int>> incident;
-            auto addVertexEdge = [&](const TopoDS_Vertex& vertex, int edgeIndex)
+            // 외곽 슬롯마다 원본 대응과 반대편 면을 직접 보관한다. 순회 단계는
+            // 재조립된 Edge가 아니라 이 기록을 그대로 사용한다.
+            std::vector<BoundaryEdgeInput> boundaryInputs;
+            boundaryInputs.reserve(boundaryEdges.size());
+            for (size_t i = 0; i < boundaryEdges.size(); ++i)
             {
-                if (vertex.IsNull()) return;
-                int index = vertexMap.FindIndex(vertex);
-                if (index == 0)
-                {
-                    vertexMap.Add(vertex);
-                    incident.emplace_back();
-                    index = vertexMap.Extent();
-                }
-                incident[index - 1].push_back(edgeIndex);
-            };
-            for (int i = 0; i < static_cast<int>(boundaryEdges.size()); ++i)
-            {
-                TopoDS_Vertex first, last;
-                TopExp::Vertices(boundaryEdges[i], first, last, Standard_True);
-                addVertexEdge(first, i);
-                addVertexEdge(last, i);
+                BoundaryEdgeInput input;
+                input.workingEdge = boundaryEdges[i];
+                input.edgeMapIndex = boundaryIndices[i];
+                input.source = sourceMatches[static_cast<size_t>(input.edgeMapIndex - 1)];
+                input.sourceValid = sourceValid[static_cast<size_t>(input.edgeMapIndex - 1)];
+                input.relatedFace = adjacent[static_cast<size_t>(input.edgeMapIndex - 1)];
+                boundaryInputs.push_back(input);
             }
-            for (const auto& edgesAtVertex : incident)
-                if (edgesAtVertex.size() != 2) return false; // 분기/접촉 루프 거부
 
-            std::vector<bool> seen(boundaryEdges.size(), false);
-            for (int seed = 0; seed < static_cast<int>(boundaryEdges.size()); ++seed)
+            std::vector<TopoDS_Edge> boundaryWorkingEdges;
+            boundaryWorkingEdges.reserve(boundaryInputs.size());
+            for (const BoundaryEdgeInput& input : boundaryInputs)
+                boundaryWorkingEdges.push_back(input.workingEdge);
+            std::vector<HeatingMoldBoundaryNative::BoundaryComponent> components;
+            int failedComponents = 0;
+            std::string orderFailure;
+            if (!HeatingMoldBoundaryNative::OrderBoundaryLoops(
+                    boundaryWorkingEdges, components, failedComponents, orderFailure))
             {
-                if (seen[seed]) continue;
-                std::vector<int> component, stack{ seed };
-                seen[seed] = true;
-                while (!stack.empty())
-                {
-                    int edgeIndex = stack.back(); stack.pop_back();
-                    component.push_back(edgeIndex);
-                    TopoDS_Vertex ends[2];
-                    TopExp::Vertices(boundaryEdges[edgeIndex], ends[0], ends[1], Standard_True);
-                    for (const TopoDS_Vertex& vertex : ends)
-                    {
-                        const int vi = vertexMap.FindIndex(vertex);
-                        if (vi <= 0) continue;
-                        for (int next : incident[vi - 1])
-                            if (!seen[next]) { seen[next] = true; stack.push_back(next); }
-                    }
-                }
+                g_exitSideDiagnostic += "reject(" + orderFailure + ")\n";
+                return false;
+            }
+            if (failedComponents > 0) g_exitSideDiagnostic += orderFailure;
 
-                BRepBuilderAPI_MakeWire wireBuilder;
-                for (int edgeIndex : component) wireBuilder.Add(boundaryEdges[edgeIndex]);
-                if (!wireBuilder.IsDone()) continue;
-                const TopoDS_Wire wire = wireBuilder.Wire();
-                if (!BRep_Tool::IsClosed(wire)) continue;
-                size_t orderedCount = 0;
-                for (BRepTools_WireExplorer check(wire); check.More(); check.Next()) ++orderedCount;
-                if (orderedCount != component.size()) continue;
-
-                // 와이어 순서로 같은 인접면의 연속 Edge를 하나의 run으로 누적한다.
+            for (const HeatingMoldBoundaryNative::BoundaryComponent& component : components)
+            {
+                // 순회 순서로 같은 인접면의 연속 Edge를 하나의 run으로 누적한다.
                 std::vector<NativeExitSide> runs;
                 NativeExitSide current;
-                for (BRepTools_WireExplorer we(wire); we.More(); we.Next())
+                for (const HeatingMoldBoundaryNative::BoundaryStep& step : component.steps)
                 {
-                    const TopoDS_Edge edge = we.Current();
-                    const int mapIndex = edgeMap.FindIndex(edge);
-                    const int faceId = (mapIndex > 0 && mapIndex <= static_cast<int>(adjacent.size()))
-                        ? adjacent[mapIndex - 1] : -1;
+                    const BoundaryEdgeInput& input = boundaryInputs[static_cast<size_t>(step.inputIndex)];
+                    const int faceId = input.relatedFace;
 
-                    if (faceId < 0 || mapIndex <= 0 || !sourceValid[mapIndex - 1]) {
+                    if (faceId < 0 || !input.sourceValid) {
                         // A naked/unmapped interval is a break, never an unbound bridge
                         // hidden inside an otherwise valid candidate.
                         if (current.faceId >= 0 && current.xyz.size() >= 6) runs.push_back(std::move(current));
                         current = NativeExitSide();
                         continue;
                     }
-                    const auto& source = sourceMatches[mapIndex - 1];
-                    const bool reversed = source.reversed != (edge.Orientation() == TopAbs_REVERSED);
+                    const auto& source = input.source;
+                    const bool curveReversed = input.workingEdge.Orientation() == TopAbs_REVERSED;
+                    const bool reversed = (source.reversed != curveReversed) != step.reverse;
 
                     std::vector<gp_Pnt> points;
                     bool sampled = false;
@@ -1601,7 +1666,7 @@ namespace
                     }
                     NativeExitEdgeRef ref;
                     ref.revision = g_modelRevision;
-                    ref.key = StoreOriginalExitEdge(source, faceId, supportFace);
+                    ref.key = StageOriginalExitEdge(staged, source, faceId, supportFace);
                     ref.faceId = faceId;
                     ref.firstParameter = source.first;
                     ref.lastParameter = source.last;
@@ -3603,16 +3668,42 @@ array<UvWire^>^ Bridge::GetFaceUvBoundary(int faceIndex)
 
 array<RegionBoundaryLoop^>^ Bridge::GetSelectedRegionBoundary(array<int>^ faceIds, double deflection)
 {
-    if (faceIds == nullptr || faceIds->Length == 0) return nullptr;
+    System::String^ failureReason;
+    return Bridge::GetSelectedRegionBoundary(faceIds, deflection, failureReason);
+}
+
+array<RegionBoundaryLoop^>^ Bridge::GetSelectedRegionBoundary(array<int>^ faceIds, double deflection,
+                                                             System::String^% failureReason)
+{
+    failureReason = nullptr;
+    if (faceIds == nullptr || faceIds->Length == 0)
+    {
+        failureReason = "region-boundary: no face selected";
+        return nullptr;
+    }
     std::vector<int> ids(faceIds->Length);
     for (int i = 0; i < faceIds->Length; ++i) ids[(size_t)i] = faceIds[i];
     std::vector<NativeBoundaryLoop> nativeLoops;
+    ExitEdgeStoreSnapshot staged;
+    std::string diagnostic;
     try
     {
-        if (!ExtractSelectedRegionBoundary(ids, deflection, nativeLoops)) return nullptr;
+        if (!ExtractSelectedRegionBoundary(ids, deflection, nativeLoops, staged, diagnostic))
+        {
+            failureReason = diagnostic.empty()
+                ? gcnew System::String("region-boundary: extraction failed")
+                : msclr::interop::marshal_as<System::String^>(diagnostic);
+            return nullptr;
+        }
     }
     catch (const Standard_Failure&)
     {
+        failureReason = "region-boundary: native exception";
+        return nullptr;
+    }
+    catch (const std::exception&)
+    {
+        failureReason = "region-boundary: native exception";
         return nullptr;
     }
     auto result = gcnew array<RegionBoundaryLoop^>((int)nativeLoops.size());
@@ -3641,6 +3732,8 @@ array<RegionBoundaryLoop^>^ Bridge::GetSelectedRegionBoundary(array<int>^ faceId
         loop->EdgeReferences = references;
         result[i] = loop;
     }
+    // managed 결과가 모두 준비된 뒤에만 원본 참조 등록을 게시한다.
+    PublishExitEdgeStaging(staged);
     return result;
 }
 
@@ -3663,9 +3756,10 @@ array<ExitSideCandidate^>^ Bridge::GetBoundaryExitSides(array<int>^ faceIds, dou
     for (int i = 0; i < faceIds->Length; ++i) ids[(size_t)i] = faceIds[i];
     const gp_Vec viewNormal(nx, ny, nz);
     std::vector<NativeExitSide> nativeSides;
+    ExitEdgeStoreSnapshot staged;
     try
     {
-        if (!ExtractBoundaryExitSides(ids, deflection, viewNormal, nativeSides)) return nullptr;
+        if (!ExtractBoundaryExitSides(ids, deflection, viewNormal, nativeSides, staged)) return nullptr;
     }
     catch (const Standard_Failure&)
     {
@@ -3714,6 +3808,8 @@ array<ExitSideCandidate^>^ Bridge::GetBoundaryExitSides(array<int>^ faceIds, dou
         side->EdgeReferences = edgeRefs;
         result[i] = side;
     }
+    // managed 결과가 모두 준비된 뒤에만 원본 참조 등록을 게시한다.
+    PublishExitEdgeStaging(staged);
     return result;
 }
 

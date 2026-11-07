@@ -891,12 +891,14 @@ namespace HeatingMold.App
             // Build the union boundary from shared source CAD edges first;
             // only then approximate those surviving 3D edges for projection.
             RegionBoundaryLoop[] sourceLoops = Bridge.GetSelectedRegionBoundary(
-                _selectedFaceIds.OrderBy(id => id).ToArray(), 0.05);
+                _selectedFaceIds.OrderBy(id => id).ToArray(), 0.05, out string regionFailure);
             if (sourceLoops == null || sourceLoops.Length == 0 || sourceLoops.Any(loop => !loop.Closed))
             {
                 _multiFaceRegionFailure = _selectedFaceIds.Any(id => Bridge.FaceRegionIsClosed(id))
                     ? "경계가 없는 닫힌 곡면은 Phase 1에서 미지원입니다 — 경계가 있는 열린 곡면 패치를 선택하세요"
-                    : "원본 CAD 위상에서 닫힌 통합 경계를 구성하지 못했습니다. 선택 Face의 공유 Edge 연결을 확인하세요";
+                    : string.IsNullOrWhiteSpace(regionFailure)
+                        ? "원본 CAD 위상에서 닫힌 통합 경계를 구성하지 못했습니다. 선택 Face의 공유 Edge 연결을 확인하세요"
+                        : "원본 CAD 위상에서 닫힌 통합 경계를 구성하지 못했습니다 — " + regionFailure;
                 return false;
             }
             if (sourceLoops.Length != 1)
