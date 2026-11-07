@@ -48,7 +48,7 @@ public partial class MainWindow
         if (DirectionBox != null)
         {
             _suppressDirectionChange = true;
-            DirectionBox.SelectedIndex = area == null ? 0 : (int)area.Direction;
+            DirectionBox.SelectedIndex = area == null ? 0 : IndexFromDirection(area.Direction);
             DirectionBox.IsEnabled = area != null;
             _suppressDirectionChange = false;
         }
@@ -163,13 +163,13 @@ public partial class MainWindow
         if (_suppressDirectionChange) return;
         var area = _activeArea;
         if (area == null) return;
-        var direction = (PatternDirection)Math.Max(0, DirectionBox.SelectedIndex);
+        var direction = DirectionFromIndex(DirectionBox.SelectedIndex);
         if (area.Direction == direction) return;
         if (!ConfirmDiscardRouteEdits(area, "배치 방향 변경"))
         {
             // 취소하면 콤보 표시를 실제 영역 방향으로 되돌린다.
             _suppressDirectionChange = true;
-            DirectionBox.SelectedIndex = (int)area.Direction;
+            DirectionBox.SelectedIndex = IndexFromDirection(area.Direction);
             _suppressDirectionChange = false;
             return;
         }
@@ -200,8 +200,20 @@ public partial class MainWindow
     {
         PatternDirection.FrameX => "가로 (Frame X)",
         PatternDirection.FrameY => "세로 (Frame Y)",
-        _ => "자동 (장축)"
+        _ => "가로 (Frame X)"
     };
+
+    /// <summary>자동(장축) 선택이 제거되어 저장된 Auto는 가로로 해석한다.</summary>
+    private static PatternDirection EffectiveDirection(PatternDirection direction) =>
+        direction == PatternDirection.FrameY ? PatternDirection.FrameY : PatternDirection.FrameX;
+
+    /// <summary>콤보 인덱스 → 배치 방향. 0=가로, 1=세로.</summary>
+    private static PatternDirection DirectionFromIndex(int index) =>
+        index == 1 ? PatternDirection.FrameY : PatternDirection.FrameX;
+
+    /// <summary>배치 방향 → 콤보 인덱스. Auto는 가로로 표시한다.</summary>
+    private static int IndexFromDirection(PatternDirection direction) =>
+        EffectiveDirection(direction) == PatternDirection.FrameY ? 1 : 0;
 
     private void PickStartExit_Click(object sender, RoutedEventArgs e) => BeginExitPointPick(0);
 
@@ -1000,13 +1012,15 @@ public partial class MainWindow
         AnchoredFailureReason.AnchorNotOnExitChain =>
             "선택한 시작/종료점이 인출면 위에 있지 않습니다 — 후보 목록에서 다시 선택하세요",
         AnchoredFailureReason.AnchorNotAtLaneEnd =>
-            "선택한 점이 사행 레인 끝점이 아닙니다 — 후보 위치 중에서 선택하세요",
+            "시작 인출점이 마진 안쪽 사행 구간의 진행축 끝에 있지 않습니다 — 영역 외곽선에서 레인 방향 끝점을 선택하세요",
         AnchoredFailureReason.RegionSplit =>
             "적용영역이 분리되어 하나의 사행 경로로 연결할 수 없습니다",
         AnchoredFailureReason.NoLanes =>
-            "마진/간격 조건에서 생성되는 레인이 없습니다",
+            "시작 인출점 위치와 마진/간격 조건에서 생성되는 사행 레인이 없습니다 — 시작점이나 간격을 조정하세요",
         AnchoredFailureReason.NoCompletePath =>
             "선택한 인출점과 제외영역 조건으로 모든 레인을 잇는 완전 경로를 만들 수 없습니다 — 제외영역을 줄이거나 간격/방향을 조정하세요",
+        AnchoredFailureReason.IndeterminateDirection =>
+            "시작점과 종료점이 배치 축에서 같은 위치입니다 — 가로 배치는 두 점의 높이를, 세로 배치는 두 점의 좌우 위치를 다르게 선택하세요",
         AnchoredFailureReason.ExitBoundaryConflict => ExplainExitBoundaryFailure(boundaryFailure),
         AnchoredFailureReason.InvalidInput =>
             "선택한 인출점 또는 영역 입력이 올바르지 않습니다",

@@ -427,7 +427,6 @@
                                                 <TextBlock Text="배치 방향" Style="{StaticResource FieldLabel}"/>
                                                 <ComboBox x:Name="DirectionBox" SelectedIndex="0"
                                                           SelectionChanged="DirectionBox_SelectionChanged">
-                                                    <ComboBoxItem Content="자동 (장축)"/>
                                                     <ComboBoxItem Content="가로 (Frame X)"/>
                                                     <ComboBoxItem Content="세로 (Frame Y)"/>
                                                 </ComboBox>

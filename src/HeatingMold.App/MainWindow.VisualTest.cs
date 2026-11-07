@@ -413,7 +413,7 @@ namespace HeatingMold.App
             double spacing = spec.SpacingMm ?? definition.SpacingMm;
             int direction = spec.Direction ?? definition.Direction;
 
-            DirectionBox.SelectedIndex = direction;
+            DirectionBox.SelectedIndex = IndexFromDirection((PatternDirection)direction);
             MarginBox.Text = margin.ToString("0.###", CultureInfo.CurrentCulture);
             SpacingBox.Text = spacing.ToString("0.###", CultureInfo.CurrentCulture);
 
@@ -421,7 +421,7 @@ namespace HeatingMold.App
                 "마진/간격 입력을 읽지 못했습니다: " + error);
             Require(Math.Abs(readMargin - margin) < 1e-9, "적용된 마진이 요청과 다릅니다.");
             Require(Math.Abs(readSpacing - spacing) < 1e-9, "적용된 간격이 요청과 다릅니다.");
-            Require(area.Direction == (PatternDirection)direction, "영역 방향이 요청과 다릅니다.");
+            Require(area.Direction == EffectiveDirection((PatternDirection)direction), "영역 방향이 요청과 다릅니다.");
             Require(IsPatternInputStale(area) == (area.Pattern != null),
                 "입력 변경 후 stale 상태가 예상과 다릅니다.");
 
@@ -1143,7 +1143,7 @@ namespace HeatingMold.App
             Require(exit != null, "인출면 정의가 없습니다.");
             SidebarTabs.SelectedIndex = PatternTabIndex;
 
-            DirectionBox.SelectedIndex = direction;
+            DirectionBox.SelectedIndex = IndexFromDirection((PatternDirection)direction);
             MarginBox.Text = marginMm.ToString("0.###", CultureInfo.CurrentCulture);
             SpacingBox.Text = spacingMm.ToString("0.###", CultureInfo.CurrentCulture);
             Require(TryGetParams(out double margin, out double spacing, out string parameterError),
@@ -1236,7 +1236,7 @@ namespace HeatingMold.App
             if (spec.SpacingMm != null)
                 SpacingBox.Text = spec.SpacingMm.Value.ToString("0.###", CultureInfo.CurrentCulture);
             if (spec.Direction != null)
-                DirectionBox.SelectedIndex = spec.Direction.Value;
+                DirectionBox.SelectedIndex = IndexFromDirection((PatternDirection)spec.Direction.Value);
         }
 
         private WorkingArea ResolveVisualArea(string alias)

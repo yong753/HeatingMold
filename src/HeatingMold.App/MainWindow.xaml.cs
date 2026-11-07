@@ -866,6 +866,7 @@ namespace HeatingMold.App
                 Frame = frame,
                 AreaId = ++_nextAreaId,
                 // 새 영역은 현재 화면에 입력된 배치 조건을 초안으로 이어받는다.
+                Direction = DirectionFromIndex(DirectionBox?.SelectedIndex ?? 0),
                 MarginText = MarginBox?.Text ?? "5",
                 SpacingText = SpacingBox?.Text ?? "50"
             };
@@ -1090,7 +1091,8 @@ namespace HeatingMold.App
                     ?? "시작/종료 인출점이 지정되지 않았습니다 — 적용영역 외곽 Edge에서 두 점을 먼저 선택하세요";
                 return;
             }
-            var parameters = new PatternParams { Margin = margin, Spacing = spacing, Direction = candidate.Direction };
+            // 배치 방향 콤보에서 자동(장축)을 제거했으므로 저장된 Auto는 가로로 해석한다.
+            var parameters = new PatternParams { Margin = margin, Spacing = spacing, Direction = EffectiveDirection(candidate.Direction) };
             try
             {
                 if (candidate.Exclusions.Count > 0)
