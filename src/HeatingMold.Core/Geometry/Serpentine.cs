@@ -575,6 +575,209 @@ public static class Serpentine
         return new LocalRoute(pts, segments, routePieces, traversed, requestedLaneCount);
     }
 
+    private const int MaxAnchoredLanes = 100000;
+
+    /// <summary>수동 종료점이 시작점의 어느 쪽에 있는지로 레인 진행 방향을 정한다.
+    /// 로컬 프레임에서 레인은 항상 로컬 X 방향이고 레인 인덱스는 로컬 Y로 증가하므로,
+    /// 종료점의 로컬 Y 부호가 곧 진행 방향이다(가로: 아래/위, 세로: 오른쪽/왼쪽).</summary>
+    private static bool TryResolveSweepDirection(
+        Vec2 startLocal,
+        Vec2 endLocal,
+        out int stepSign,
+        out AnchoredFailureReason failure)
+    {
+        failure = AnchoredFailureReason.InvalidInput;
+        double delta = endLocal.Y - startLocal.Y;
+        // 회전 변환의 부동소수 오차를 고려해 같은 위치로 판정한다.
+        if (Math.Abs(delta) <= 1e-9)
+        {
+            // 가로 배치에서 두 점의 높이가 같거나, 세로 배치에서 두 점의 열이 같으면
+            // 사행이 위/아래(또는 좌/우) 어느 쪽으로도 진행할 수 있다.
+            // 영역 크기나 간격으로 방향을 추측하지 않고 명시적으로 실패한다.
+            stepSign = 0;
+            failure = AnchoredFailureReason.IndeterminateDirection;
+            return false;
+        }
+        stepSign = delta > 0 ? 1 : -1;
+        return true;
+    }
+
+    /// <summary>선택한 시작점을 첫 레인의 기준으로 삼아 사행을 만든다.
+    /// 첫 발열선은 시작점에서 배치 축과 평행하게 출발하고, 각 레인은 이미 마진이 적용된
+    /// region 경계에서 멈춘다. 시작점 반대편으로 자동 왕복하지 않는다.</summary>
+    private static bool TryBuildAnchoredLocalRoute(
+        List<List<Vec2>> region,
+        IReadOnlyList<Vec2> outerLocal,
+        PatternParams p,
+        Vec2 startLocal,
+        Vec2 endLocal,
+        int stepSign,
+        out LocalRoute? route,
+        out AnchoredFailureReason failure)
+    {
+        route = null;
+        failure = AnchoredFailureReason.InvalidInput;
+        if (region.Count == 0 || p.Spacing <= 0) return false;
+
+        double minY = region.Min(r => r.Min(v => v.Y));
+        double maxY = region.Max(r => r.Max(v => v.Y));
+        // 순회 범위는 두 선택점 사이로 제한한다. 종료점이 영역 안쪽이면
+        // 경로 폭/높이도 그 범위 안에서만 생성된다.
+        double limitY = stepSign > 0 ? Math.Min(endLocal.Y, maxY) : Math.Max(endLocal.Y, minY);
+        List<(double X0, double X1)> firstIntervals = ScanlineIntervals(region, startLocal.Y);
+        bool syntheticFirstLane = false;
+        if (firstIntervals.Count == 0)
+        {
+            // 시작점은 외곽 경계 위에 있으므로 마진 밴드 밖에 있을 수 있다.
+            // 그 경우 원본 외곽 스캔라인에서 진행 방향 반대쪽 끝만 마진만큼 당겨 첫 레인을 만든다.
+            // 시작점 자체는 옮기지 않으므로 첫 발열선은 여전히 선택점에서 축과 평행하게 출발한다.
+            List<(double X0, double X1)> outerIntervals = ScanlineIntervals(new[] { outerLocal }, startLocal.Y);
+            if (outerIntervals.Count == 0)
+            {
+                failure = AnchoredFailureReason.NoLanes;
+                return false;
+            }
+            int outerChosen = -1;
+            double outerDistance = double.PositiveInfinity;
+            bool outerLow = true;
+            for (int i = 0; i < outerIntervals.Count; i++)
+            {
+                (double x0, double x1) = outerIntervals[i];
+                double low = Math.Abs(startLocal.X - x0);
+                double high = Math.Abs(startLocal.X - x1);
+                double distance = Math.Min(low, high);
+                if (distance + 1e-7 < outerDistance)
+                {
+                    outerDistance = distance;
+                    outerChosen = i;
+                    outerLow = low <= high;
+                }
+            }
+            if (outerChosen < 0)
+            {
+                failure = AnchoredFailureReason.AnchorNotAtLaneEnd;
+                return false;
+            }
+            (double ox0, double ox1) = outerIntervals[outerChosen];
+            // 진행 방향 반대쪽 끝에서만 마진을 적용한다. 시작점 쪽은 선택점 그대로다.
+            double lowEnd = outerLow ? startLocal.X : ox0 + p.Margin;
+            double highEnd = outerLow ? ox1 - p.Margin : startLocal.X;
+            if (highEnd - lowEnd <= 1e-9)
+            {
+                failure = AnchoredFailureReason.NoLanes;
+                return false;
+            }
+            firstIntervals = new() { (lowEnd, highEnd) };
+            syntheticFirstLane = true;
+        }
+
+        int chosen = -1;
+        double chosenDistance = double.PositiveInfinity;
+        bool startLow = true;
+        for (int i = 0; i < firstIntervals.Count; i++)
+        {
+            (double x0, double x1) = firstIntervals[i];
+            double low = Math.Abs(startLocal.X - x0);
+            double high = Math.Abs(startLocal.X - x1);
+            double distance = Math.Min(low, high);
+            if (distance + 1e-7 < chosenDistance)
+            {
+                chosenDistance = distance;
+                chosen = i;
+                startLow = low <= high;
+            }
+        }
+        if (chosen < 0)
+        {
+            failure = AnchoredFailureReason.AnchorNotAtLaneEnd;
+            return false;
+        }
+
+        (double chosenX0, double chosenX1) = firstIntervals[chosen];
+        double outside = startLow ? chosenX0 - startLocal.X : startLocal.X - chosenX1;
+        if (outside < -1e-6)
+        {
+            // 시작점이 인셋 구간 안쪽에 있어 첫 발열선의 시작 끝을 결정할 수 없다.
+            failure = AnchoredFailureReason.AnchorNotAtLaneEnd;
+            return false;
+        }
+
+        var segments = new List<SerpentineSegment>();
+        var routePieces = new List<SerpentineRoutePiece>();
+        var pts = new List<Vec2>();
+        int traversed = 0;
+        Vec2? prevEnd = null;
+
+        for (int step = 0; step < MaxAnchoredLanes; step++)
+        {
+            double y = startLocal.Y + stepSign * step * p.Spacing;
+            if (stepSign > 0 ? y > limitY + 1e-9 : y < limitY - 1e-9) break;
+            if (y < minY - 1e-9 || y > maxY + 1e-9) break;
+            List<(double X0, double X1)> intervals = step == 0 && syntheticFirstLane
+                ? firstIntervals
+                : ScanlineIntervals(region, y);
+            if (intervals.Count == 0) continue;
+
+            bool ltr = (traversed % 2 == 0) == startLow;
+            List<(double X0, double X1)> ordered = ltr
+                ? intervals.OrderBy(i => i.X0).ToList()
+                : intervals.OrderByDescending(i => i.X1).ToList();
+
+            if (step == 0)
+            {
+                // 시작점이 속한 구간이 첫 레인의 첫 구간이어야 첫 발열선이 시작점에서 출발한다.
+                (double firstX0, double firstX1) = ordered[0];
+                if (Math.Abs(firstX0 - chosenX0) > 1e-9 || Math.Abs(firstX1 - chosenX1) > 1e-9)
+                {
+                    failure = AnchoredFailureReason.AnchorNotAtLaneEnd;
+                    return false;
+                }
+            }
+
+            bool firstOnLane = true;
+            foreach ((double x0, double x1) in ordered)
+            {
+                Vec2 a = ltr ? new Vec2(x0, y) : new Vec2(x1, y);
+                Vec2 b = ltr ? new Vec2(x1, y) : new Vec2(x0, y);
+                if (step == 0 && firstOnLane)
+                    a = new Vec2(startLocal.X, y); // 첫 발열선의 시작점 고정
+
+                if (pts.Count > 0 && firstOnLane && prevEnd.HasValue)
+                {
+                    routePieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.TurnConnector, traversed,
+                        new[] { prevEnd.Value, a }));
+                }
+                else if (pts.Count > 0 && prevEnd.HasValue)
+                {
+                    List<Vec2> connector = RouteAlongBoundary(region, prevEnd.Value, a);
+                    pts.AddRange(connector);
+                    routePieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.FixedConnector, traversed,
+                        new[] { prevEnd.Value }.Concat(connector).Append(a).ToList()));
+                }
+
+                pts.Add(a);
+                pts.Add(b);
+                segments.Add(new SerpentineSegment(traversed, a, b));
+                routePieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, traversed, new[] { a, b }));
+                prevEnd = b;
+                firstOnLane = false;
+            }
+
+            traversed++;
+        }
+
+        if (routePieces.Count == 0)
+        {
+            failure = AnchoredFailureReason.NoLanes;
+            return false;
+        }
+
+        // RequestedLaneCount=0 → 레인 수를 짝수로 줄이지 않았음을 의미한다.
+        route = new LocalRoute(pts, segments, routePieces, traversed, 0);
+        failure = AnchoredFailureReason.InvalidInput;
+        return true;
+    }
+
     private static SerpentineResult ToWorld(LocalRoute route, double rad, double angleDeg)
     {
         // 원래 프레임으로 복원
@@ -689,9 +892,10 @@ public static class Serpentine
     private static bool IsFinite(Vec2 point) =>
         double.IsFinite(point.X) && double.IsFinite(point.Y);
 
-    /// <summary>사용자가 직접 고른 두 인출점으로 사행 경로를 생성한다.
-    /// 몸통 경로는 인출면 방향/레인 끝에 맞춰 줄이지 않고, 첫/마지막 발열선의 양 끝만
-    /// 선택점으로 교체한다. 따라서 첫/마지막 레인은 비스듬할 수 있고 조각 수는 늘지 않는다.</summary>
+    /// <summary>사용자가 직접 고른 시작점에서 사행 전체를 생성한다.
+    /// 첫 발열선은 시작점에서 배치 축과 평행하게 출발하고, 레인은 수동 종료점 쪽으로만 진행하며,
+    /// 반대편은 마진이 적용된 영역 경계에서 멈춘다. 마지막 발열선의 끝만 종료점으로 이어 붙이므로
+    /// 그 구간은 비스듬할 수 있다.</summary>
     public static AnchoredResult GenerateWithSelectedExits(
         IReadOnlyList<Vec2> outer,
         IReadOnlyList<IReadOnlyList<Vec2>>? holes,
@@ -717,8 +921,16 @@ public static class Serpentine
         if (region.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
         if (region.Count != 1) return AnchoredResult.Fail(AnchoredFailureReason.RegionSplit);
 
-        LocalRoute route = BuildLocalRoute(region, p, true);
-        if (route.Pieces.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
+        Vec2 startLocal = savedStart.Point.Rotate(-rad);
+        Vec2 endLocal = savedEnd.Point.Rotate(-rad);
+        if (!TryResolveSweepDirection(startLocal, endLocal,
+                out int stepSign, out AnchoredFailureReason directionFailure))
+            return AnchoredResult.Fail(directionFailure);
+        if (!TryBuildAnchoredLocalRoute(region, outerLocal, p, startLocal, endLocal, stepSign,
+                out LocalRoute? route, out AnchoredFailureReason routeFailure))
+            return AnchoredResult.Fail(routeFailure);
+        if (route == null || route.Pieces.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
+
         SerpentineResult world = ToWorld(route, rad, angleDeg);
         return TrimToSelectedExits(world, savedStart, savedEnd, boundary);
     }
@@ -993,9 +1205,9 @@ public static class Serpentine
         return AnchoredResult.Ok((trimmed! with { CandidateId = candidate.CandidateId }).ToResult());
     }
 
-    /// <summary>제외영역이 있는 영역에서도 사용자가 고른 두 인출점을 그대로 사용한다.
-    /// 시작/종료 후보 비용은 쓰지 않고, 모든 레인 노드를 한 번에 방문하는 완전 경로만 채택한다.
-    /// 첫/마지막 발열선의 끝점만 선택점으로 교체하며 조각 수는 유지한다.</summary>
+    /// <summary>제외영역이 있는 영역에서도 사용자가 고른 시작점에서 사행을 시작한다.
+    /// 첫 레인은 시작점 기준으로 고정하고, 모든 레인 노드를 한 번에 방문하는 완전 경로만 채택한다.
+    /// 마지막 발열선의 끝만 수동 종료점으로 이어 붙인다.</summary>
     public static AnchoredResult GenerateComponentsWithSelectedExits(
         IReadOnlyList<Vec2> outer,
         IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
@@ -1024,11 +1236,19 @@ public static class Serpentine
             RegionOps.BuildPatternRegion(localOuter, null, p.Margin), rotatedExclusions);
         if (region.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
 
+        Vec2 startLocal = savedStart.Point.Rotate(-rad);
+        Vec2 endLocal = savedEnd.Point.Rotate(-rad);
+        if (!TryResolveSweepDirection(startLocal, endLocal,
+                out int stepSign, out AnchoredFailureReason directionFailure))
+            return AnchoredResult.Fail(directionFailure);
+
         SerpentineResult world;
         if (rotatedExclusions.Count == 0)
         {
-            LocalRoute route = BuildLocalRoute(region, p, true);
-            if (route.Pieces.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
+            if (!TryBuildAnchoredLocalRoute(region, localOuter, p, startLocal, endLocal, stepSign,
+                    out LocalRoute? route, out AnchoredFailureReason routeFailure))
+                return AnchoredResult.Fail(routeFailure);
+            if (route == null || route.Pieces.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
             world = ToWorld(route, rad, angleDeg);
         }
         else
@@ -1036,36 +1256,104 @@ public static class Serpentine
             int outerRingCount = region.Count(r => r.Count >= 3 && RegionOps.SignedArea(r) > 0);
             if (outerRingCount >= 2)
                 return AnchoredResult.Fail(AnchoredFailureReason.RegionSplit);
-
-            double minY = region.Min(r => r.Min(v => v.Y)), maxY = region.Max(r => r.Max(v => v.Y));
-            double height = maxY - minY;
-            int lanes = Math.Max(1, (int)Math.Floor((height + 1e-9) / p.Spacing));
-            double y0 = minY + (height - (lanes - 1) * p.Spacing) / 2.0;
-            var laneY = new double[lanes];
-            for (int k = 0; k < lanes; k++) laneY[k] = y0 + k * p.Spacing;
-
             var components = GroupComponents(region);
             if (components.Count != 1)
                 return AnchoredResult.Fail(AnchoredFailureReason.RegionSplit);
 
-            var byLane = new List<LaneIntervalNode>[lanes];
-            for (int k = 0; k < lanes; k++)
+            // 레인 좌표는 bbox 중앙이 아니라 시작점에서 종료점 방향으로 전개한다.
+            double minY = region.Min(r => r.Min(v => v.Y)), maxY = region.Max(r => r.Max(v => v.Y));
+            double limitY = stepSign > 0 ? Math.Min(endLocal.Y, maxY) : Math.Max(endLocal.Y, minY);
+            var byLane = new List<List<LaneIntervalNode>>();
+            for (int step = 0; step < MaxAnchoredLanes; step++)
             {
-                byLane[k] = new List<LaneIntervalNode>();
-                foreach ((double X0, double X1) interval in ScanlineIntervals(components[0], laneY[k]))
-                    byLane[k].Add(new LaneIntervalNode(k, laneY[k], interval.X0, interval.X1));
+                double y = startLocal.Y + stepSign * step * p.Spacing;
+                if (stepSign > 0 ? y > limitY + 1e-9 : y < limitY - 1e-9) break;
+                if (y < minY - 1e-9 || y > maxY + 1e-9) break;
+                var laneIntervals = new List<LaneIntervalNode>();
+                foreach ((double x0, double x1) in ScanlineIntervals(components[0], y))
+                    laneIntervals.Add(new LaneIntervalNode(step, y, x0, x1));
+                byLane.Add(laneIntervals);
             }
-            var trace = TraceLaneChains(byLane);
-            if (trace.Failure is { } traceFailure)
-                return AnchoredResult.Fail(MapComponentsFailure(traceFailure));
-            // 부분 사슬을 이어 붙이면 조각 경계가 끊긴다. 정확히 하나의 완전 사슬만 허용한다.
-            if (trace.Chains.Count != 1)
+            if (byLane.Count == 0 || byLane[0].Count == 0)
+                return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
+
+            var nodes = new List<LaneIntervalNode>();
+            var laneNodes = new List<int>[byLane.Count];
+            for (int lane = 0; lane < byLane.Count; lane++)
+            {
+                laneNodes[lane] = new List<int>(byLane[lane].Count);
+                foreach (LaneIntervalNode node in byLane[lane]) { laneNodes[lane].Add(nodes.Count); nodes.Add(node); }
+            }
+            if (nodes.Count > MaxExactLaneChainNodes)
                 return AnchoredResult.Fail(AnchoredFailureReason.NoCompletePath);
-            List<SerpentineRoutePiece> worldPieces = trace.Chains[0].Select(piece => piece with
+
+            var adjacency = new List<int>[nodes.Count];
+            for (int i = 0; i < adjacency.Length; i++) adjacency[i] = new();
+            for (int lane = 0; lane + 1 < byLane.Count; lane++)
+                foreach (int a in laneNodes[lane])
+                    foreach (int b in laneNodes[lane + 1])
+                    {
+                        adjacency[a].Add(b);
+                        adjacency[b].Add(a);
+                    }
+
+            // 시작점이 속한 첫 레인의 구간과 진입 끝을 고정한다.
+            int anchor = -1;
+            int anchorEntry = 0;
+            double anchorDistance = double.PositiveInfinity;
+            foreach (int index in laneNodes[0])
+            {
+                LaneIntervalNode node = nodes[index];
+                double low = Math.Abs(startLocal.X - node.X0);
+                double high = Math.Abs(startLocal.X - node.X1);
+                double distance = Math.Min(low, high);
+                if (distance + 1e-7 < anchorDistance)
+                {
+                    anchorDistance = distance;
+                    anchor = index;
+                    anchorEntry = low <= high ? 0 : 1;
+                }
+            }
+            if (anchor < 0) return AnchoredResult.Fail(AnchoredFailureReason.AnchorNotAtLaneEnd);
+            LaneIntervalNode anchorNode = nodes[anchor];
+            double outside = anchorEntry == 0
+                ? anchorNode.X0 - startLocal.X
+                : startLocal.X - anchorNode.X1;
+            if (outside < -1e-6)
+                return AnchoredResult.Fail(AnchoredFailureReason.AnchorNotAtLaneEnd);
+            if (laneNodes[0].Count > 1)
+            {
+                // 시작 레인에 다른 구간이 있으면 시작점이 진행 방향의 첫 구간이어야 한다.
+                double extreme = anchorEntry == 0
+                    ? laneNodes[0].Min(i => nodes[i].X0)
+                    : laneNodes[0].Max(i => nodes[i].X1);
+                double anchorEnd = anchorEntry == 0 ? anchorNode.X0 : anchorNode.X1;
+                if (Math.Abs(extreme - anchorEnd) > 1e-9)
+                    return AnchoredResult.Fail(AnchoredFailureReason.AnchorNotAtLaneEnd);
+            }
+
+            ulong mask = (1UL << nodes.Count) - 1;
+            var solutions = SolveLaneChainDp(nodes, adjacency, mask,
+                (node, entry) => node == anchor && entry == anchorEntry ? 0.0 : double.PositiveInfinity,
+                static (_, _) => 0.0,
+                collectAll: false, requireComplete: true, out SerpentineComponentsFailureReason? chainFailure);
+            if (chainFailure is { }) return AnchoredResult.Fail(AnchoredFailureReason.NoCompletePath);
+            if (solutions.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoCompletePath);
+
+            List<SerpentineRoutePiece> pieces = BuildLaneChainPath(nodes, solutions[0].Order, solutions[0].EnterLow);
+            if (pieces.Count == 0 || pieces[0].Kind != SerpentineRoutePieceKind.HeatingRun)
+                return AnchoredResult.Fail(AnchoredFailureReason.NoCompletePath);
+            // BuildLaneChainPath의 첫 점은 인셋 구간 끝이다. 선택한 시작점으로 고정해
+            // 첫 발열선이 시작점에서 배치 축과 평행하게 출발하도록 한다.
+            List<Vec2> firstPoints = pieces[0].Points.ToList();
+            firstPoints[0] = new Vec2(startLocal.X, firstPoints[0].Y);
+            pieces[0] = pieces[0] with { Points = firstPoints };
+
+            List<SerpentineRoutePiece> worldPieces = pieces.Select(piece => piece with
             {
                 Points = piece.Points.Select(point => point.Rotate(rad)).ToList(),
             }).ToList();
-            int laneCount = byLane.SelectMany(nodes => nodes).Select(node => node.Lane).Distinct().Count();
+            int laneCount = nodes.Select(node => node.Lane).Distinct().Count();
             world = BuildPatternFromPieces(worldPieces, angleDeg, laneCount);
         }
 
@@ -1593,6 +1881,7 @@ public enum AnchoredFailureReason
     ParityConflict,
     ExitBoundaryConflict,
     NoCompletePath,
+    IndeterminateDirection,
 }
 
 public sealed record AnchoredResult(SerpentineResult? Pattern, AnchoredFailureReason? Failure)

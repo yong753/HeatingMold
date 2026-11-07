@@ -92,11 +92,10 @@ static class SelectedExitChecks
 
         double minX = ring.Min(p => p.X), maxX = ring.Max(p => p.X);
         double minY = ring.Min(p => p.Y), maxY = ring.Max(p => p.Y);
-        // 첫 레인은 왼쪽→오른쪽, 마지막 레인도 왼쪽→오른쪽(홀수 3레인)이므로
-        // 시작점은 왼쪽 Edge, 종료점은 오른쪽 Edge에 둔다. 레인 y=-10/0/10과
-        // 다른 y=-5/+5를 골라 첫/마지막 레인을 비스듬하게 만든다.
-        var startResolution = exitBoundary.Project(new Vec2(minX, (minY + maxY) / 2 - 5), 1.0);
-        var endResolution = exitBoundary.Project(new Vec2(maxX, (minY + maxY) / 2 + 5), 1.0);
+        // 첫 레인은 왼쪽→오른쪽, 홀수 3레인이 되도록 시작점을 간격 중간에 두고
+        // 종료점은 마지막 레인보다 살짝 바깥(+14)에 둬 마지막 레인만 경사지게 한다.
+        var startResolution = exitBoundary.Project(new Vec2(minX, (minY + maxY) / 2 - 8), 1.0);
+        var endResolution = exitBoundary.Project(new Vec2(maxX, (minY + maxY) / 2 + 14), 1.0);
         Check(startResolution.Succeeded && endResolution.Succeeded &&
               startResolution.Point!.Value.Binding.HasValue && endResolution.Point!.Value.Binding.HasValue,
             "two short exit points bind to different original boundary edges");
@@ -137,13 +136,14 @@ static class SelectedExitChecks
         int heatingRuns = pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun);
         int turns = pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector);
         Check(heatingRuns == 3 && turns == 2,
-            "endpoint replacement does not add heating runs or turn connectors");
+            "start-anchored generation does not add heating runs or turn connectors");
         Check(pattern.RoutePieces[0].Points[0].DistanceTo(selectedStart.Point) < 1e-6 &&
               pattern.RoutePieces[^1].Points[^1].DistanceTo(selectedEnd.Point) < 1e-6,
             "first and last lane endpoints are the selected points");
-        Check(pattern.RoutePieces[0].Points[0].Y > pattern.RoutePieces[0].Points[^1].Y &&
-              pattern.RoutePieces[^1].Points[0].Y > pattern.RoutePieces[^1].Points[^1].Y,
-            "first and last lanes are slanted rather than axis-aligned");
+        Check(Math.Abs(pattern.RoutePieces[0].Points[0].Y - pattern.RoutePieces[0].Points[^1].Y) < 1e-6,
+            "first heating run leaves the selected start point parallel to the layout axis");
+        Check(Math.Abs(pattern.RoutePieces[^1].Points[0].Y - pattern.RoutePieces[^1].Points[^1].Y) > 1e-6,
+            "last heating run is slanted toward the manual end point");
 
         var projected = (List<RoutePieceResult>)areaType.GetProperty("ProjectedPieces")!.GetValue(area)!;
         Check(projected.Count == pattern.RoutePieces.Count && projected.All(piece => piece != null),
