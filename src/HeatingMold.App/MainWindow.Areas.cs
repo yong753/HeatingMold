@@ -480,13 +480,13 @@ public partial class MainWindow
         CommittedRouteContext context)
     {
         if (exit == null || !double.IsFinite((exit.Point - piecePoint).Length) ||
-            (exit.Point - piecePoint).Length > 1e-7)
+            (exit.Point - piecePoint).Length > ExitBoundaryConstraint.AcceptanceTolerance)
             throw new InvalidOperationException("회로 인출점과 대상 경로 끝점이 일치하지 않습니다");
         SurfaceMappedSample? sample = BuildExitVertexOverride(side, context, exit);
         if (!sample.HasValue)
             throw new InvalidOperationException("인출점을 원본 CAD edge 위에서 평가하지 못했습니다");
         double datumError = (sample.Value.DatumPoint - piecePoint).Length;
-        if (!double.IsFinite(datumError) || datumError > 1e-7)
+        if (!double.IsFinite(datumError) || datumError > ExitBoundaryConstraint.AcceptanceTolerance)
             throw new InvalidOperationException("원본 CAD 인출점의 작업평면 좌표와 경로 끝점이 일치하지 않습니다 (오차 "
                 + datumError + "mm)");
         overrides ??= new Dictionary<int, SurfaceMappedSample>();

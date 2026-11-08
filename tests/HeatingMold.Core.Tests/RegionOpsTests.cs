@@ -35,6 +35,32 @@ public class RegionOpsTests
     }
 
     [Fact]
+    public void BuildGenerationRegionExpandsExclusionsByMargin()
+    {
+        // 외곽 0..40x0..20, 마진 2 → 36x16=576. 제외 10..14x6..10을 2만큼 확장하면
+        // 8..16x4..12=64를 차감해 512가 남는다. 원본 제외영역은 그대로다.
+        var exclusions = new[] { (10d, 6d, 14d, 10d) };
+        var remaining = RegionOps.BuildGenerationRegion(Rect(0, 0, 40, 20), exclusions, 2.0);
+
+        Assert.Equal(512, remaining.Sum(r => RegionOps.SignedArea(r)), 6);
+        Assert.Equal((10d, 6d, 14d, 10d), exclusions[0]);
+    }
+
+    [Fact]
+    public void BuildGenerationRegionWithZeroMarginMatchesExistingSubtraction()
+    {
+        var outer = new IReadOnlyList<Vec2>[] { Rect(0, 0, 20, 10) };
+        var exclusions = new[] { (8d, 2d, 12d, 8d) };
+
+        var generation = RegionOps.BuildGenerationRegion(outer[0], exclusions, 0.0);
+        var existing = RegionOps.SubtractRectangles(
+            RegionOps.BuildPatternRegion(outer[0], null, 0.0), exclusions);
+
+        Assert.Equal(existing.Sum(r => RegionOps.SignedArea(r)),
+            generation.Sum(r => RegionOps.SignedArea(r)), 6);
+    }
+
+    [Fact]
     public void SubtractRectanglesUnionsOverlappingExclusions()
     {
         var remaining = RegionOps.SubtractRectangles(new IReadOnlyList<Vec2>[] { Rect(0, 0, 20, 10) },
@@ -225,8 +251,9 @@ public class RegionOpsTests
     public void AnchoredExclusionStartsAndEndsOnExitFaceWithoutCrossingExclusion()
     {
         // 100×50, Margin 5 → 발열영역 x∈[5,95], y∈[5,45], 레인 y=10/20/30/40.
-        // 제외 (40,15)-(60,35)는 레인 y=20/30을 좌우 35mm 조각으로 가르므로 노드 6개(1+2+2+1).
-        // 인출면 x=100 고정: 모든 오른쪽 레인 끝(95)에서 5mm 리드가 생긴다.
+        // 제외 (40,15)-(60,35)는 마진 적용 후 (35,10)-(65,40)이 되어 레인 y=20/30과
+        // 경계 레인 하나(y=10 또는 40)를 좌우 조각으로 가르므로 노드 7개다.
+        // 모든 오른쪽 레인 끝(95)에서 5mm 리드가 생긴다.
         var outer = Rect(0, 0, 100, 50);
         var exclusions = new[] { (40d, 15d, 60d, 35d) };
         var parameters = new PatternParams { Margin = 5, Spacing = 10, Direction = PatternDirection.FrameX };
@@ -248,20 +275,20 @@ public class RegionOpsTests
         Assert.Equal(candidate.End, pattern.Path[^1]);
 
         var runs = pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun).ToList();
-        Assert.Equal(6, runs.Count);
-        Assert.Equal(330, runs.Sum(piece => piece.Length), 6);
+        var connectors = pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector).ToList();
+        Assert.Equal(7, runs.Count);
+        Assert.Equal(280, runs.Sum(piece => piece.Length), 6);
         Assert.Equal(candidate.Start, runs[0].Points[0]);
         Assert.Equal(candidate.End, runs[^1].Points[^1]);
 
-        var connectors = pattern.RoutePieces.Where(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector).ToList();
-        Assert.Equal(5, connectors.Count);
-        Assert.Equal(50, connectors.Sum(piece => piece.Length), 6);
+        Assert.Equal(6, connectors.Count);
+        Assert.Equal(124.86833, connectors.Sum(piece => piece.Length), 6);
 
 
-        Assert.Equal(380, pattern.TotalLength, 6);
+        Assert.Equal(404.86833, pattern.TotalLength, 6);
         Assert.Equal(pattern.TotalLength, runs.Sum(piece => piece.Length) + connectors.Sum(piece => piece.Length), 6);
 
-        AssertRunsAvoidRect(pattern.RoutePieces, (40d, 15d, 60d, 35d));
+        AssertRunsAvoidRect(pattern.RoutePieces, (35d, 10d, 65d, 40d));
     }
 
     [Fact]
@@ -339,9 +366,10 @@ public class RegionOpsTests
     public void AnchoredExclusionWithTwoSplitLanesAndMarginTwo()
     {
         // 작업영역 30x16, 마진 2, 간격 5 → 유효영역 26x12, 수평 레인 2개(y=-2.5, 2.5).
-        // 제외 (0,-4)-(6,4)가 두 레인을 모두 절단 → 노드 4개. 인출면 x=15, 레인 끝 x=±13 → 리드 2+2.
+        // 제외 (0,-2)-(6,2)는 마진 적용 후 (-2,-4)-(8,4)이 되어 두 레인을 모두 절단하되
+        // 영역을 완전히 분리하지는 않는다(위아래 2mm 여유). 인출면 x=15, 레인 끝 x=±13 → 리드 2+2.
         var outer = Rect(-15, -8, 15, 8);
-        var exclusions = new[] { (0d, -4d, 6d, 4d) };
+        var exclusions = new[] { (0d, -2d, 6d, 2d) };
         var parameters = new PatternParams { Margin = 2, Spacing = 5, Direction = PatternDirection.FrameX };
         var chain = new List<Vec2> { new(15, -8), new(15, 8) };
 
@@ -361,18 +389,19 @@ public class RegionOpsTests
         Assert.Equal(4, runs.Count);
         Assert.Equal(3, connectors.Count);
 
-        Assert.Equal(44, runs.Sum(piece => piece.Length), 6);
+        Assert.Equal(36, runs.Sum(piece => piece.Length), 6);
         Assert.Equal(candidates.Candidates[0].Start, runs[0].Points[0]);
         Assert.Equal(candidates.Candidates[0].End, runs[^1].Points[^1]);
         Assert.True(candidates.Candidates[0].Start.DistanceTo(pattern.Path[0]) < 1e-9);
         Assert.True(candidates.Candidates[0].End.DistanceTo(pattern.Path[^1]) < 1e-9);
-        AssertRunsAvoidRect(pattern.RoutePieces, (0d, -4d, 6d, 4d));
+        AssertRunsAvoidRect(pattern.RoutePieces, (-2d, -4d, 8d, 4d));
     }
 
     [Fact]
     public void ExcludedAnchorCandidatesRejectTooManyLaneFragments()
     {
-        // 10레인 중 8레인이 세 개의 내부 홀로 4분할 → 노드 34개 (> 20) → TooComplex.
+        // 10레인 중 8레인이 세 개의 내부 홀로 4분할 → 노드 34개. 노드 개수 상한은 없지만
+        // 이 조합은 정확 탐색의 고유 상태 수가 계산 예산(2,000,000)을 넘어 TooComplex로 끝난다.
         var outer = Rect(0, 0, 100, 100);
         var exclusions = new[] { (20d, 12d, 30d, 88d), (45d, 12d, 55d, 88d), (70d, 12d, 80d, 88d) };
         var parameters = new PatternParams { Margin = 0, Spacing = 10, Direction = PatternDirection.FrameX };

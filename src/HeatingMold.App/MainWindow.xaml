@@ -286,7 +286,7 @@
                             <CheckBox x:Name="VertexEditModeBox" Content="발열경로 편집"
                                       VerticalAlignment="Center"
                                       Checked="VertexEditMode_Changed" Unchecked="VertexEditMode_Changed"/>
-                            <TextBlock Text="작업 정면에서 발열경로의 꼭지점을 드래그해 수정합니다. 편집 후 패턴을 다시 생성하면 편집 내용은 사라집니다."
+                            <TextBlock Text="작업 정면에서 발열경로의 중간 꼭지점을 드래그해 수정합니다. 시작점/종료점은 전용 선택 버튼으로만 변경할 수 있으며, 편집 후 패턴을 다시 생성하면 편집 내용은 사라집니다."
                                        Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0"
                                        TextTrimming="CharacterEllipsis"/>
                         </StackPanel>

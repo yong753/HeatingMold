@@ -9,6 +9,8 @@ public static class SurfacePathMapper
     // accepted leaves (at most 0.025 mm apart); sub-probe-width features are not guaranteed.
     private const double MaxPlanarSpacing = 0.1;
     private const double MaxChordError = 0.05;
+    // 요청한 작업평면 좌표와 반환된 datum의 허용 잔차(mm). 샘플링 품질 기준과 분리한다.
+    private const double DatumResidualTolerance = GeometryTolerancePolicy.DistanceTolerance;
     private const int MaxDepth = 18;
     private const int DefaultMaxProbes = 100_000;
     private const string DenseDepthError =
@@ -42,7 +44,7 @@ public static class SurfacePathMapper
     {
         ArgumentNullException.ThrowIfNull(path);
         ArgumentNullException.ThrowIfNull(hit);
-        return TryMapCore(path, hit, point => point, (a, b) => a == b,
+        return TryMapCore(path, hit, point => point, null, (a, b) => a == b,
             requirePlanarSpacing: true, gapSpacing: 0, previousSampleFromResult: false,
             DenseDepthError, null, out mapped, out failure, maxProbes);
     }
@@ -52,7 +54,7 @@ public static class SurfacePathMapper
         out List<SurfaceMappedSample> mapped, out string failure, int maxProbes = DefaultMaxProbes)
     {
         ArgumentNullException.ThrowIfNull(path); ArgumentNullException.ThrowIfNull(hit);
-        return TryMapCore(path, hit, sample => sample.Point,
+        return TryMapCore(path, hit, sample => sample.Point, sample => sample.DatumPoint,
             (a, b) => a.DatumPoint == b.DatumPoint,
             requirePlanarSpacing: true, gapSpacing: 0, previousSampleFromResult: true,
             DenseDepthError, null, out mapped, out failure, maxProbes);
@@ -143,7 +145,7 @@ public static class SurfacePathMapper
         Func<int, SurfaceMappedSample?>? overrideLookup = vertexOverrides == null
             ? null
             : index => vertexOverrides.TryGetValue(index, out SurfaceMappedSample sample) ? sample : null;
-        return TryMapCore(path, hit, sample => sample.Point,
+        return TryMapCore(path, hit, sample => sample.Point, sample => sample.DatumPoint,
             (a, b) => a.DatumPoint == b.DatumPoint,
             requirePlanarSpacing: false, gapSpacing, previousSampleFromResult: true,
             RouteDepthError, overrideLookup, out mapped, out failure, maxProbes);
@@ -155,7 +157,7 @@ public static class SurfacePathMapper
     /// Probe order and every rejection path are intentionally identical across modes.
     /// </summary>
     private static bool TryMapCore<TSample>(IReadOnlyList<Vec2> path, Func<Vec2, TSample?> hit,
-        Func<TSample, Vec3> pointOf, Func<TSample, TSample, bool> same,
+        Func<TSample, Vec3> pointOf, Func<TSample, Vec2>? datumOf, Func<TSample, TSample, bool> same,
         bool requirePlanarSpacing, double gapSpacing, bool previousSampleFromResult,
         string depthError, Func<int, TSample?>? vertexOverride,
         out List<TSample> mapped, out string failure, int maxProbes)
@@ -197,8 +199,17 @@ public static class SurfacePathMapper
                 error = "A surface hit contains a nonfinite coordinate.";
                 return false;
             }
+            if (datumOf != null && !DatumMatches(datumOf(sample), point))
+            {
+                error = "The mapped surface point does not match the requested planar point.";
+                return false;
+            }
             return true;
         }
+
+        bool DatumMatches(Vec2 datum, Vec2 requested) =>
+            double.IsFinite(datum.X) && double.IsFinite(datum.Y) &&
+            datum.DistanceTo(requested) <= DatumResidualTolerance;
 
         void Append(TSample sample)
         {
@@ -227,6 +238,11 @@ public static class SurfacePathMapper
                         !double.IsFinite(mappedPoint.Z))
                     {
                         error = "A surface hit contains a nonfinite coordinate.";
+                        return false;
+                    }
+                    if (datumOf != null && !DatumMatches(datumOf(sample), point))
+                    {
+                        error = "The mapped surface point does not match the requested planar point.";
                         return false;
                     }
                     return true;

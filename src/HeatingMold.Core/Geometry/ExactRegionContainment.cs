@@ -32,14 +32,19 @@ public interface IExactRegionBoundary
 /// <summary>
 /// 정확 CAD 경계 기준 적용영역 포함 판정.
 /// 구간의 모든 경계 교차 파라미터 사이 open interval을 판정하므로 표본 간격에 의존하지 않는다.
-/// 경계 위 점은 수치 허용오차(OnBoundaryTolerance)로만 인정하며, 모호한 해는 실패로 처리한다.
+/// 경계에서 최대 <see cref="BoundaryAcceptanceTolerance"/>mm 벗어난 점/구간은 허용하고,
+/// 교차점 중복 제거·동률·퇴화 판정에는 별도의 작은 수치 epsilon만 사용한다.
+/// 모호한 해는 실패로 처리한다.
 /// </summary>
 public sealed class ExactRegionContainment
 {
-    /// <summary>곡선 위 판정의 수치 허용오차(mm). 설계/스냅 허용오차가 아니다.</summary>
-    public const double OnBoundaryTolerance = 1e-6;
+    /// <summary>곡선 위/경계 접촉 판정의 수치 허용오차(mm). 설계/스냅 허용오차가 아니다.</summary>
+    public const double OnBoundaryTolerance = GeometryTolerancePolicy.OnBoundaryTolerance;
 
-    private const double DirectionEpsilon = 1e-9;
+    /// <summary>경계 이탈·제외영역 침범에 허용하는 거리(mm).</summary>
+    public const double BoundaryAcceptanceTolerance = GeometryTolerancePolicy.DistanceTolerance;
+
+    private const double DirectionEpsilon = GeometryTolerancePolicy.DirectionEpsilon;
 
     // 광선이 경계 꼭짓점을 지나면 even-odd가 모호해진다. 방향을 바꿔 재시도하고,
     // 모든 방향이 꼭짓점/접선에 걸리면 명시적 실패로 끝낸다(허용오차 확대 금지).
@@ -117,19 +122,37 @@ public sealed class ExactRegionContainment
             }
             parameters.Sort();
 
-            // 교차 사이 open interval의 even-odd 상태는 일정하다. 중점 하나로 구간 전체를 판정한다.
+            // 교차 사이 open interval의 even-odd 상태는 일정하다. 표본으로 구간 전체를 판정한다.
             // 구간은 [0, p0], [p0, p1], ..., [pn, 1]로 교차 수 + 1개다.
             for (int i = 0; i <= parameters.Count; i++)
             {
                 double start = i == 0 ? 0.0 : parameters[i - 1];
                 double end = i == parameters.Count ? 1.0 : parameters[i];
                 if (end - start <= 1e-12) continue;
-                Vec2 sample = a + direction * (start + (end - start) * 0.5);
-                if (!Classify(sample, out Relation relation, out failure)) return false;
-                if (relation == Relation.Outside) { failure = OutsideFailure(sample); return false; }
-                // 경계 위(수치 허용오차 이내)는 통과시킨다. 폭이 허용오차보다 좁은 홈은
-                // 기존 계약과 동일하게 기하학적으로 구분하지 않는다.
+                if (!IntervalStaysInside(a, direction, start, end, out failure)) return false;
             }
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// even-odd 상태가 일정한 구간을 표본으로 확인한다. 중점이 허용 밴드 안이면
+    /// 긴 구간은 1/4·3/4 지점도 확인해 얕은 이탈이 표본 하나에 가려지지 않게 한다.
+    /// </summary>
+    private bool IntervalStaysInside(Vec2 a, Vec2 direction, double start, double end,
+        out string failure)
+    {
+        failure = string.Empty;
+        Vec2 sample = a + direction * ((start + end) * 0.5);
+        if (!Classify(sample, out Relation relation, out failure)) return false;
+        if (relation == Relation.Outside) { failure = OutsideFailure(sample); return false; }
+        if (relation != Relation.OnBoundary || end - start <= 2.0 * OnBoundaryTolerance) return true;
+
+        foreach (double t in new[] { start + (end - start) * 0.25, start + (end - start) * 0.75 })
+        {
+            Vec2 point = a + direction * t;
+            if (!Classify(point, out relation, out failure)) return false;
+            if (relation == Relation.Outside) { failure = OutsideFailure(point); return false; }
         }
         return true;
     }
@@ -141,7 +164,7 @@ public sealed class ExactRegionContainment
         relation = Relation.Outside;
         failure = string.Empty;
 
-        RegionBoundaryProbe probe = _boundary.ProbeDistance(point, OnBoundaryTolerance);
+        RegionBoundaryProbe probe = _boundary.ProbeDistance(point, BoundaryAcceptanceTolerance);
         if (probe.Status == RegionRayStatus.Failure) { failure = probe.Detail; return false; }
         if (probe.Status == RegionRayStatus.Ambiguous) { failure = AmbiguousFailure(point); return false; }
         if (probe.Status == RegionRayStatus.Hit) { relation = Relation.OnBoundary; return true; }
@@ -194,40 +217,75 @@ public sealed class ExactRegionContainment
         string.Format(System.Globalization.CultureInfo.InvariantCulture,
             "수정된 구간의 적용영역 경계 판정이 모호합니다 — ({0:F3}, {1:F3})", p.X, p.Y);
 
-    /// <summary>제외 사각형의 내부(경계 제외)를 지나는 구간을 찾는다.</summary>
+    /// <summary>
+    /// 제외 사각형 내부로 침범한 최대 깊이(mm). 경계 접촉과 외부는 0이다.
+    /// 구간과 사각형의 교집합 전체에서 경계까지 거리의 최솟값이 가장 큰 지점을 찾는다.
+    /// 중점 한 곳만 보지 않으므로 얇은 사각형의 관통도 실제 최대 깊이로 판정한다.
+    /// </summary>
+    public static double MaxExclusionPenetration(Vec2 a, Vec2 b,
+        (double MinX, double MinY, double MaxX, double MaxY) exclusion) =>
+        MaxExclusionPenetration(a, b, exclusion, out _);
+
+    private static double MaxExclusionPenetration(Vec2 a, Vec2 b,
+        (double MinX, double MinY, double MaxX, double MaxY) exclusion, out Vec2 deepest)
+    {
+        deepest = default;
+        double minX = exclusion.MinX, minY = exclusion.MinY;
+        double maxX = exclusion.MaxX, maxY = exclusion.MaxY;
+        if (!double.IsFinite(minX) || !double.IsFinite(minY) ||
+            !double.IsFinite(maxX) || !double.IsFinite(maxY)) return 0.0;
+        if (minX > maxX) (minX, maxX) = (maxX, minX);
+        if (minY > maxY) (minY, maxY) = (maxY, minY);
+
+        double dx = b.X - a.X, dy = b.Y - a.Y;
+        double t0 = 0.0, t1 = 1.0;
+        if (!Clip(-dx, a.X - minX, ref t0, ref t1) ||
+            !Clip(dx, maxX - a.X, ref t0, ref t1) ||
+            !Clip(-dy, a.Y - minY, ref t0, ref t1) ||
+            !Clip(dy, maxY - a.Y, ref t0, ref t1))
+            return 0.0;
+        if (!(t1 > t0)) return 0.0;
+
+        double Depth(double t)
+        {
+            double x = a.X + dx * t, y = a.Y + dy * t;
+            double depth = Math.Min(x - minX, maxX - x);
+            depth = Math.Min(depth, y - minY);
+            depth = Math.Min(depth, maxY - y);
+            return Math.Max(0.0, depth);
+        }
+
+        // 경계까지의 최소 거리는 선형 함수들의 최솟값이라 오목하다. 삼분 탐색으로 최댓값을 찾는다.
+        double lo = t0, hi = t1;
+        for (int i = 0; i < 100 && hi - lo > 1e-15; i++)
+        {
+            double m1 = lo + (hi - lo) / 3.0;
+            double m2 = hi - (hi - lo) / 3.0;
+            if (Depth(m1) < Depth(m2)) lo = m1; else hi = m2;
+        }
+        double tBest = (lo + hi) * 0.5;
+        deepest = new Vec2(a.X + dx * tBest, a.Y + dy * tBest);
+        return Depth(tBest);
+    }
+
+    /// <summary>제외 사각형 내부 침범이 허용 거리를 넘는 구간을 찾는다.</summary>
     private static bool TryExclusionViolation(Vec2 a, Vec2 b,
         IReadOnlyList<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
         out Vec2 violation)
     {
         violation = default;
         if (exclusions.Count == 0) return false;
+        double worst = 0.0;
+        bool violated = false;
         foreach (var exclusion in exclusions)
         {
-            double minX = exclusion.MinX, minY = exclusion.MinY;
-            double maxX = exclusion.MaxX, maxY = exclusion.MaxY;
-            if (!double.IsFinite(minX) || !double.IsFinite(minY) ||
-                !double.IsFinite(maxX) || !double.IsFinite(maxY)) continue;
-            if (minX > maxX) (minX, maxX) = (maxX, minX);
-            if (minY > maxY) (minY, maxY) = (maxY, minY);
-
-            // Liang-Barsky를 열린 사각형으로 적용한다. 경계에 정확히 놓인 구간은 허용한다.
-            double t0 = 0.0, t1 = 1.0;
-            double dx = b.X - a.X, dy = b.Y - a.Y;
-            if (!Clip(-dx, a.X - minX, ref t0, ref t1) ||
-                !Clip(dx, maxX - a.X, ref t0, ref t1) ||
-                !Clip(-dy, a.Y - minY, ref t0, ref t1) ||
-                !Clip(dy, maxY - a.Y, ref t0, ref t1))
-                continue;
-            // 경계에 정확히 놓인 구간은 허용하고, 엄격한 내부를 지나는 구간만 위반으로 본다.
-            if (!(t1 > t0)) continue;
-            Vec2 middle = new(a.X + dx * ((t0 + t1) * 0.5), a.Y + dy * ((t0 + t1) * 0.5));
-            if (middle.X > minX && middle.X < maxX && middle.Y > minY && middle.Y < maxY)
-            {
-                violation = middle;
-                return true;
-            }
+            double depth = MaxExclusionPenetration(a, b, exclusion, out Vec2 deepest);
+            if (!(depth > BoundaryAcceptanceTolerance) || (violated && depth <= worst)) continue;
+            worst = depth;
+            violation = deepest;
+            violated = true;
         }
-        return false;
+        return violated;
     }
 
     private static bool Clip(double denominator, double numerator, ref double t0, ref double t1)

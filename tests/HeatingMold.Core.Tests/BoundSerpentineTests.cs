@@ -76,7 +76,8 @@ public sealed class BoundSerpentineTests
         Assert.Equal(candidate.CandidateId, generated.Pattern!.CandidateId);
         Assert.Equal(candidate.StartBinding, generated.Pattern.StartExit!.Binding);
         Assert.Equal(candidate.EndBinding, generated.Pattern.EndExit!.Binding);
-        Assert.Equal(6, generated.Pattern.Segments.Count);
+        // 마진 5가 제외영역에도 적용되어 (35,10)-(65,40) 경계가 레인 하나를 더 분할한다.
+        Assert.Equal(7, generated.Pattern.Segments.Count);
         Assert.Equal(2, generated.Pattern.RoutePieces[0].Points.Count);
         Assert.Equal(2, generated.Pattern.RoutePieces[^1].Points.Count);
     }

@@ -449,7 +449,9 @@ namespace HeatingMold.App
                   .Append(e.MinY.ToString("R", inv)).Append(',')
                   .Append(e.MaxX.ToString("R", inv)).Append(',')
                   .Append(e.MaxY.ToString("R", inv)).Append(';');
-            sb.Append("|EBP:cad-original-edge-v1,").Append(ExitBoundaryConstraint.Tolerance.ToString("R", inv));
+            sb.Append("|EBP:cad-original-edge-v2,").Append(ExitBoundaryConstraint.Tolerance.ToString("R", inv))
+              .Append(',').Append(ExitBoundaryConstraint.AcceptanceTolerance.ToString("R", inv))
+              .Append(',').Append(GeometryTolerancePolicy.Version);
             return sb.ToString();
         }
 
@@ -924,7 +926,7 @@ namespace HeatingMold.App
             // Build the union boundary from shared source CAD edges first;
             // only then approximate those surviving 3D edges for projection.
             RegionBoundaryLoop[] sourceLoops = Bridge.GetSelectedRegionBoundary(
-                _selectedFaceIds.OrderBy(id => id).ToArray(), 0.05, out string regionFailure);
+                _selectedFaceIds.OrderBy(id => id).ToArray(), GeometryTolerancePolicy.DistanceTolerance, out string regionFailure);
             if (sourceLoops == null || sourceLoops.Length == 0 || sourceLoops.Any(loop => !loop.Closed))
             {
                 _multiFaceRegionFailure = _selectedFaceIds.Any(id => Bridge.FaceRegionIsClosed(id))

@@ -30,6 +30,19 @@ public partial class MainWindow
     private WorkingPresentation _vertexPresentation;
     private bool _vertexPresentationHeld;
 
+    private const string RouteEndpointEditMessage =
+        "시작점/종료점은 편집 모드에서 이동할 수 없습니다 — 전용 '시작점 선택'/'종료점 선택' 버튼으로 변경하세요";
+
+    /// <summary>시작/종료 인출점과 분할 회로의 파생 인출점은 발열경로 편집에서 고정한다.
+    /// 이 점들은 전용 '시작점 선택'/'종료점 선택' 버튼으로만 변경한다.</summary>
+    private bool IsRouteEndpointGroup(int groupIndex)
+    {
+        var area = _activeArea;
+        if (area?.Pattern == null || groupIndex < 0 || groupIndex >= _vertexGroups.Count) return false;
+        if (_vertexCircuitAnchors.ContainsKey(groupIndex)) return true;
+        return IsAnchorGroup(area, _vertexGroups[groupIndex], out _);
+    }
+
     private void VertexEditMode_Changed(object sender, RoutedEventArgs e)
     {
         if (_suppressVertexEditToggle) return;
@@ -88,7 +101,7 @@ public partial class MainWindow
         Viewport.VertexEditMode = true;
         RefreshVertexHandles();
         UpdateActionStates();
-        StatusText.Text = "발열경로 편집 — 점을 드래그해 경로를 수정합니다 (Esc: 드래그 취소/편집 종료)";
+        StatusText.Text = "발열경로 편집 — 중간 꼭지점을 드래그해 수정합니다. 시작점/종료점은 전용 버튼으로만 변경합니다 (Esc: 드래그 취소/편집 종료)";
     }
 
     private void RejectVertexEdit(string reason)
@@ -144,33 +157,14 @@ public partial class MainWindow
         _vertexHandleGroupMap.Clear();
         for (int groupIndex = 0; groupIndex < _vertexGroups.Count; groupIndex++)
         {
-            RouteVertexGroup group = _vertexGroups[groupIndex];
-            Vec3? point = null;
-            if (IsAnchorGroup(area, group, out bool startRole))
-            {
-                var context = CommittedRouteContext.Capture(area);
-                SurfaceMappedSample? sample = MapExitDatum(side, context,
-                    startRole ? area.Pattern.StartExit : area.Pattern.EndExit);
-                if (sample.HasValue) point = sample.Value.Point;
-            }
-            else if (_vertexCircuitAnchors.TryGetValue(groupIndex, out var key))
-            {
-                int circuitIndex = FindCircuitEndpoint(area, key);
-                if (circuitIndex < 0) continue;
-                CircuitRoute circuit = area.Circuits[circuitIndex];
-                SurfaceMappedSample? sample = MapExitDatum(side, CommittedRouteContext.Capture(area),
-                    key.Role == CircuitExitRole.Start ? circuit.StartExit : circuit.EndExit);
-                if (sample.HasValue) point = sample.Value.Point;
-            }
-            else
-            {
-                var sample = hit(group.Datum);
-                if (sample.HasValue) point = sample.Value.Point;
-            }
-            if (!point.HasValue) continue;
-            xyz.Add(point.Value.X);
-            xyz.Add(point.Value.Y);
-            xyz.Add(point.Value.Z);
+            // 시작/종료 인출점은 편집 핸들을 만들지 않는다 — 전용 버튼으로만 변경한다.
+            if (IsRouteEndpointGroup(groupIndex)) continue;
+            var sample = hit(_vertexGroups[groupIndex].Datum);
+            if (!sample.HasValue) continue;
+            Vec3 point = sample.Value.Point;
+            xyz.Add(point.X);
+            xyz.Add(point.Y);
+            xyz.Add(point.Z);
             _vertexHandleGroupMap.Add(groupIndex);
         }
         Bridge.SetVertexHandles(side.Id.Value, side.Revision.Value, xyz.ToArray());
@@ -255,8 +249,14 @@ public partial class MainWindow
     private void OnVertexDragStarted(int handle, int x, int y)
     {
         if (!Viewport.VertexEditMode || handle < 0 || handle >= _vertexHandleGroupMap.Count) return;
+        int groupIndex = _vertexHandleGroupMap[handle];
+        if (IsRouteEndpointGroup(groupIndex))
+        {
+            StatusText.Text = RouteEndpointEditMessage;
+            return;
+        }
         if (!TryViewportPointOnFrame(x, y, out Vec2 pressUv, out _)) return;
-        _vertexDragGroup = _vertexHandleGroupMap[handle];
+        _vertexDragGroup = groupIndex;
         _vertexDragOriginDatum = _vertexGroups[_vertexDragGroup].Datum;
         _vertexDragPressUv = pressUv;
         _vertexDragging = true;
@@ -317,6 +317,12 @@ public partial class MainWindow
 
     private void UpdateVertexPreview(Vec2 datum)
     {
+        if (IsRouteEndpointGroup(_vertexDragGroup))
+        {
+            Bridge.ClearRoutePreview();
+            StatusText.Text = RouteEndpointEditMessage;
+            return;
+        }
         if (!TryBuildVertexPreview(datum, out var pieces, out var mappedPieces, out Vec2 applied,
                 out string failure, out bool anchor, out _))
         {
@@ -625,6 +631,11 @@ public partial class MainWindow
     {
         var area = _activeArea;
         if (area?.Pattern == null) return;
+        if (IsRouteEndpointGroup(_vertexDragGroup))
+        {
+            StatusText.Text = RouteEndpointEditMessage;
+            return;
+        }
         if (!area.HasSelectedExits && !area.HasExitFace)
         {
             ExitVertexEdit();

@@ -196,11 +196,13 @@ static class ExclusionExitChecks
             "the seven heating runs are joined by six turn connectors");
         Check(plan.Start.DistanceTo(pattern.Path[0]) < 1e-9 && plan.End.DistanceTo(pattern.Path[^1]) < 1e-9,
             "generated path endpoints match the selected exit-face anchors");
+        // 마진 2가 제외영역에도 적용되므로 발열선은 확장 경계 (-52,-12)-(-42,-6) 밖에 있어야 한다.
+        // 허용 거리 0.1mm를 뺀 검사 사각형으로 확인한다.
         bool runsOutside = pattern.RoutePieces
             .Where(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun)
             .SelectMany(piece => piece.Points)
-            .All(p => !(p.X > -49.999 && p.X < -44.001 && p.Y > -9.999 && p.Y < -8.001));
-        Check(runsOutside, "every heating run stays outside the excluded rectangle");
+            .All(p => !(p.X > -51.9 && p.X < -42.1 && p.Y > -11.9 && p.Y < -6.1));
+        Check(runsOutside, "every heating run stays outside the margin-expanded exclusion");
 
         // 분할 레인(y=-9)의 두 조각이 실제로 존재하고 제외 사각형 양쪽에 닿는지 구조로 확인한다.
         // 조각 끝점은 제외 경계 x=-50/-44 위에 정확히 놓인다.

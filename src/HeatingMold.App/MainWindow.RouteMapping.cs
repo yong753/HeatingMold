@@ -96,8 +96,8 @@ public partial class MainWindow
         Vec3 point = new(hit.Point[0], hit.Point[1], hit.Point[2]);
         if (!double.IsFinite(actual.X) || !double.IsFinite(actual.Y) ||
             !double.IsFinite(point.X) || !double.IsFinite(point.Y) || !double.IsFinite(point.Z) ||
-            (expected.HasValue && actual.DistanceTo(expected.Value) > ExitBoundaryConstraint.Tolerance) ||
-            side.Frame.Project(point).DistanceTo(actual) > ExitBoundaryConstraint.Tolerance)
+            (expected.HasValue && actual.DistanceTo(expected.Value) > ExitBoundaryConstraint.AcceptanceTolerance) ||
+            side.Frame.Project(point).DistanceTo(actual) > ExitBoundaryConstraint.AcceptanceTolerance)
         { failure = "GeometryFailure: 원본 parameter의 2D/3D 좌표 불일치 — " + provenance; return false; }
         sample = new SurfaceMappedSample(actual, point, hit.FaceId);
         failure = null;

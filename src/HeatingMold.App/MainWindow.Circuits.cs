@@ -189,7 +189,7 @@ public partial class MainWindow
             return !moved.Binding.HasValue && Serpentine.DistanceToChain(area.ExitChain, moved.Point) <= 0.05;
         if (!moved.Binding.HasValue) return false;
         ExitBoundaryResolution evaluated = area.ExitBoundary.Evaluate(moved.Binding.Value);
-        return evaluated.Succeeded && evaluated.Point.Value.Point.DistanceTo(moved.Point) <= ExitBoundaryConstraint.Tolerance;
+        return evaluated.Succeeded && evaluated.Point.Value.Point.DistanceTo(moved.Point) <= ExitBoundaryConstraint.AcceptanceTolerance;
     }
 
     /// <summary>분할 회로를 다시 연결하면 그 절단면의 수동 인출점 이동값은 더 이상 유효하지 않다.</summary>
@@ -246,7 +246,7 @@ public partial class MainWindow
                 if (!exit.Binding.HasValue)
                 { reason = "회로 " + (i + 1) + "의 원본 edge/parameter가 없습니다"; return false; }
                 ExitBoundaryResolution evaluated = boundary.Evaluate(exit.Binding.Value);
-                if (!evaluated.Succeeded || evaluated.Point.Value.Point.DistanceTo(exit.Point) > ExitBoundaryConstraint.Tolerance)
+                if (!evaluated.Succeeded || evaluated.Point.Value.Point.DistanceTo(exit.Point) > ExitBoundaryConstraint.AcceptanceTolerance)
                 { reason = "회로 " + (i + 1) + "의 원본 경계가 유효하지 않습니다: " + evaluated.Failure; return false; }
             }
             if (route.Pieces.Count != area.CircuitPieceIndices[i].Count)

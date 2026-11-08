@@ -181,6 +181,15 @@ static class VertexEditChecks
 
         Invoke(window, "ActivateArea", area.Value);
 
+        // 시작/종료 꼭지점은 편집 모드에서 고정된다 — 전용 선택 버튼으로만 변경한다.
+        Commit(window, area, 0, new Vec2(-10, -5));
+        Check(ReferenceEquals(area.Pattern, p0), "vertex edit keeps the route start point fixed");
+        Commit(window, area, 2, new Vec2(-10, 5));
+        Check(ReferenceEquals(area.Pattern, p0), "vertex edit keeps the route end point fixed");
+        Check(!area.RouteEdited, "rejected endpoint edits do not mark the area as edited");
+        Check(((TextBlock)window.FindName("StatusText")).Text.Contains("전용"),
+            "rejected endpoint edits point to the dedicated start/end buttons");
+
         // 실패 단계: 인출점의 원본 binding을 제거한 불일치 상태에서 편집을 확정하면
         // 경계 검증이 명시 실패하고, 방금 준비한 편집을 포함해 커밋 전 상태로 되돌린다.
         var unbound = Pattern3(null, null);

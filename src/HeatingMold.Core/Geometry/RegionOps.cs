@@ -63,6 +63,29 @@ public static class RegionOps
         return FromPaths(Clipper.Union(paths, new PathsD(), FillRule.NonZero, 2));
     }
 
+    /// <summary>
+    /// 발열 경로 생성 전용 영역. 외곽은 margin만큼 안쪽, 제외 사각형은 같은 margin만큼
+    /// 바깥쪽으로 확장해 차감한다. 원본 제외영역 값과 기존 <see cref="SubtractRectangles"/>
+    /// 계약(정확 차감)은 변경하지 않는다. margin이 0이면 기존 결과와 같다.
+    /// 제외영역 확장은 입력 사각형을 복사해서만 적용하며 저장·표시 값에는 영향을 주지 않는다.
+    /// </summary>
+    public static List<List<Vec2>> BuildGenerationRegion(
+        IReadOnlyList<Vec2> outer,
+        IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
+        double margin)
+    {
+        ArgumentNullException.ThrowIfNull(outer);
+        ArgumentNullException.ThrowIfNull(exclusions);
+        double grow = Math.Max(0.0, margin);
+        var expanded = new List<(double MinX, double MinY, double MaxX, double MaxY)>();
+        foreach (var r in exclusions)
+        {
+            if (!(r.MaxX > r.MinX && r.MaxY > r.MinY)) continue;
+            expanded.Add((r.MinX - grow, r.MinY - grow, r.MaxX + grow, r.MaxY + grow));
+        }
+        return SubtractRectangles(BuildPatternRegion(outer, null, margin), expanded);
+    }
+
     /// <summary>링의 부호 있는 면적 (CCW 양수).</summary>
     public static double SignedArea(IReadOnlyList<Vec2> ring)
     {

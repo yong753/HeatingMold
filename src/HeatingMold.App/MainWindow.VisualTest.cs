@@ -842,16 +842,9 @@ namespace HeatingMold.App
             Require(area.Pattern != null, "제외영역 적용 결과를 검사할 경로가 없습니다.");
             double[] rect = spec.Rect;
             Require(rect != null && rect.Length == 4, "검사할 제외 사각형이 없습니다.");
-            // 레인 구간이 제외 사각형 경계에서 정확히 끝나는 것은 정상이다. 경계 접촉을
-            // 위반으로 세지 않도록 검사용 사각형을 아주 조금 안쪽으로 줄인다.
-            const double boundaryEpsilonMm = 0.01;
-            double shrinkX = Math.Min(boundaryEpsilonMm, (rect[2] - rect[0]) * 0.25);
-            double shrinkY = Math.Min(boundaryEpsilonMm, (rect[3] - rect[1]) * 0.25);
-            double[] checkRect =
-            {
-                rect[0] + shrinkX, rect[1] + shrinkY,
-                rect[2] - shrinkX, rect[3] - shrinkY
-            };
+            // 경계 접촉은 정상이며, 원본 제외 사각형 대비 허용 거리(0.1mm)를 넘는
+            // 침범만 위반으로 센다. 침범 깊이는 구간 전체에서 계산한다.
+            var exclusion = (rect[0], rect[1], rect[2], rect[3]);
 
             // 인출면이 있는 제외영역 생성은 editablePattern 경로를 쓰므로 ExclusionPieces가
             // null이고, 최종 조각은 Pattern.RoutePieces에 들어 있다. 둘 다 지원한다.
@@ -880,7 +873,9 @@ namespace HeatingMold.App
                 bool violates = false;
                 for (int i = 1; i < piece.Points.Count; i++)
                 {
-                    if (!SegmentIntersectsRect(piece.Points[i - 1], piece.Points[i], checkRect)) continue;
+                    if (ExactRegionContainment.MaxExclusionPenetration(
+                            piece.Points[i - 1], piece.Points[i], exclusion)
+                        <= GeometryTolerancePolicy.DistanceTolerance) continue;
                     violates = true;
                     break;
                 }

@@ -11,6 +11,10 @@ namespace HeatingMold.App;
 
 public partial class MainWindow
 {
+    /// <summary>실제 3D 경로 조각 끝점 사이에 허용하는 최대 간격(mm).
+    /// 이 간격은 연결로 승인되지만 자동 보간·길이 가산은 하지 않는다.</summary>
+    private const double RouteJoinTolerance = GeometryTolerancePolicy.DistanceTolerance;
+
     private Dictionary<ValidatedRouteSampleKey, SurfaceMappedSample[]> _validatedRouteSamples = new();
 
     /// <summary>초안과 모든 가변 경로 목록을 분리한다. 확정 영역은 성공 시 참조 교체만 한다.</summary>
@@ -351,7 +355,7 @@ public partial class MainWindow
                     projected[index] = shown;
                     candidate.RoutePieceLengths[index] = shown.Length;
                     stagedIndices[index] = true;
-                    if (previous != null && Distance3D(previous.End, shown.Start) > 0.01)
+                    if (previous != null && Distance3D(previous.End, shown.Start) > RouteJoinTolerance)
                         throw new InvalidOperationException("영역 " + candidate.Name + " 회로 " + (c + 1) + " 조각이 연결되지 않습니다");
                     previous = shown;
                     PrepareConnectorState(candidate, index, stageId);
@@ -393,7 +397,7 @@ public partial class MainWindow
                     ValidateProjectedRoutePiece(shown);
                     projected[index] = shown;
                     candidate.RoutePieceLengths[index] = HeatingPieceLength(piece, shown, exclusionMode: true);
-                    if (previous != null && Distance3D(previous.End, shown.Start) > 0.01)
+                    if (previous != null && Distance3D(previous.End, shown.Start) > RouteJoinTolerance)
                         throw new InvalidOperationException("영역 " + candidate.Name + " 제외 경로 조각이 연결되지 않습니다");
                     previous = shown;
                     index++;
@@ -583,7 +587,8 @@ public partial class MainWindow
         SerpentineRoutePiece piece, CommittedRouteContext context,
         IReadOnlyDictionary<int, SurfaceMappedSample> overrides)
     {
-        var key = new StringBuilder("strict-v1|gap=0.1|chord=0.05|max-probes=100000|support=0.05|datum=1e-7|selected-global|");
+        var key = new StringBuilder("strict-v2|gap=0.1|chord=0.05|max-probes=100000|support=0.1|datum=0.1|selected-global|")
+            .Append(GeometryTolerancePolicy.Version).Append('|');
         void Number(double value) => key.Append(value.ToString("R", CultureInfo.InvariantCulture)).Append(',');
         void Point(Vec2 point) { Number(point.X); Number(point.Y); }
         void Point3(Vec3 point) { Number(point.X); Number(point.Y); Number(point.Z); }

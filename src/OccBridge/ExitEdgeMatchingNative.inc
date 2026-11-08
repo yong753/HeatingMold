@@ -110,8 +110,9 @@ namespace HeatingMoldExitNative
                 const double first = std::min(start, end), last = std::max(start, end);
                 GeomAdaptor_Curve originalAdaptor(oc, first, last);
                 const double originalLength = GCPnts_AbscissaPoint::Length(originalAdaptor, first, last, GeometryEpsilon * 0.1);
+                // Length uses the same allowance as point/interval distance; do not implicitly double it.
                 if (!std::isfinite(boundaryLength) || !std::isfinite(originalLength) ||
-                    std::fabs(boundaryLength - originalLength) > 2.0 * tolerance) continue;
+                    std::fabs(boundaryLength - originalLength) > tolerance) continue;
                 if (!CurveWithin(bc, bf, bl, oc, first, last, tolerance) ||
                     !CurveWithin(oc, first, last, bc, bf, bl, tolerance)) continue;
                 bool reversed = end < start;

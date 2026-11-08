@@ -19,6 +19,9 @@ std::map<long long, std::unique_ptr<WorkingNative>> g_working;
 long long g_nextWorkingId = 1;
 // 커밋 자체는 성공했지만 마지막 Redraw가 실패했음을 App에 알리기 위한 플래그.
 bool g_lastCommitRedrawFailed = false;
+// 매핑점/투영점과 해당 지지면 사이에 허용하는 실제 3D 거리(mm).
+// 좌표별 허용이 아니라 BRepExtrema euclidean 거리 기준이다.
+constexpr double kSurfaceSupportTolerance = 0.1;
 std::vector<Handle(AIS_Shape)> g_workingBoundaries;
 struct WorkingPresentationNative
 {
@@ -918,7 +921,7 @@ bool StageSurfaceMappedRoutePieceNative(long long id, long long revision, int st
             if (!points.empty() && points.back().Distance(p) <= Precision::Confusion()) continue;
             BRepExtrema_DistShapeShape distance(BRepBuilderAPI_MakeVertex(p).Vertex(), target);
             if (!distance.IsDone()) return WorkingStageFail("distance-failure");
-            if (distance.Value() > 0.05)
+            if (distance.Value() > kSurfaceSupportTolerance)
                 return WorkingStageFail("off-surface " + std::to_string(distance.Value()));
             points.push_back(p);
         }
@@ -995,7 +998,7 @@ bool StageSurfaceMappedRoutePieceWithFacesNative(long long id, long long revisio
             if (!points.empty() && points.back().Distance(p) <= Precision::Confusion()) continue;
             BRepExtrema_DistShapeShape distance(BRepBuilderAPI_MakeVertex(p).Vertex(), g_faces[face]);
             if (!distance.IsDone()) return WorkingStageFail("distance-failure");
-            if (distance.Value() > 0.05)
+            if (distance.Value() > kSurfaceSupportTolerance)
                 return WorkingStageFail("off-surface " + std::to_string(distance.Value()));
             points.push_back(p);
         }

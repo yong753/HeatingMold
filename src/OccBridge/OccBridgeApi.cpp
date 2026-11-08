@@ -994,7 +994,8 @@ namespace
         // Sewing 사본 경계 Edge를 선택 면의 원본 경계 Edge로 되돌린다.
         // 표시용 샘플과 독립된 정확 경계 판정의 정본이며, 매칭 실패는
         // 폴리곤 근사로 대체하지 않고 추출 실패로 처리한다.
-        const double geometryMatchTolerance = 0.05;
+        // 원본 CAD edge 매칭 허용 거리(mm). 길이 차이도 같은 값을 쓴다.
+        const double geometryMatchTolerance = 0.1;
         TopTools_IndexedMapOfShape originalEdgeMap;
         std::vector<int> originalEdgeUses;
         for (int faceId : selected)
@@ -1495,7 +1496,8 @@ namespace
         try
         {
             const double sewingTolerance = 0.01;
-            const double geometryMatchTolerance = 0.05;
+            // 원본 CAD edge 매칭 허용 거리(mm). 길이 차이도 같은 값을 쓴다.
+            const double geometryMatchTolerance = 0.1;
             std::string faceList;
             for (int faceId : selected) { faceList += std::to_string(faceId); faceList += ','; }
             g_exitSideDiagnostic += "faces=" + faceList + "\n";

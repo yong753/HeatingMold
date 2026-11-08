@@ -410,7 +410,7 @@ public partial class MainWindow
 
         // 인출면은 확정 영역 외곽선의 반대편 면에서만 고른다 (근접 면 클릭 방식 대체).
         var frameNormal = area.Frame.Normal;
-        var sides = Bridge.GetBoundaryExitSides(SortedFaceIds(area), 0.05,
+        var sides = Bridge.GetBoundaryExitSides(SortedFaceIds(area), GeometryTolerancePolicy.DistanceTolerance,
             frameNormal.X, frameNormal.Y, frameNormal.Z);
         if (sides == null || sides.Length == 0)
         {
@@ -884,7 +884,9 @@ public partial class MainWindow
                 sb.Append(point.X.ToString("R", inv)).Append(',').Append(point.Y.ToString("R", inv)).Append(';');
             sb.Append(']');
         }
-        sb.Append("|EBP:cad-original-edge-v1,").Append(ExitBoundaryConstraint.Tolerance.ToString("R", inv));
+        sb.Append("|EBP:cad-original-edge-v2,").Append(ExitBoundaryConstraint.Tolerance.ToString("R", inv))
+          .Append(',').Append(ExitBoundaryConstraint.AcceptanceTolerance.ToString("R", inv))
+          .Append(',').Append(GeometryTolerancePolicy.Version);
         return sb.ToString();
     }
 
@@ -899,9 +901,9 @@ public partial class MainWindow
         SerpentineComponentsFailureReason.SplitByExclusion =>
             "제외영역이 작업영역을 완전히 가로질러 발열영역이 분리되었습니다 — 제외영역을 줄이거나 방향을 바꾸세요",
         SerpentineComponentsFailureReason.TooComplex =>
-            "제외영역으로 레인 조각이 너무 많아(20개 초과) 경로를 계산할 수 없습니다 — 제외영역을 줄이거나 간격을 조정하세요",
+            "제외영역으로 레인 조각 조합이 너무 많아 경로 탐색 계산 한도를 넘었습니다 — 제외영역을 줄이거나 간격을 조정하세요",
         SerpentineComponentsFailureReason.TooManyFragments =>
-            "레인 조각이 너무 많습니다(4000개 초과) — 제외영역을 줄이세요",
+            "레인 조각이 너무 많습니다 — 제외영역을 줄이세요",
         SerpentineComponentsFailureReason.NoCompletePath =>
             "제외영역 배치로 모든 레인을 한 번씩 잇는 경로가 없습니다 — 제외영역을 줄이거나 방향을 바꾸세요",
         SerpentineComponentsFailureReason.ExitBoundaryConflict => ExplainExitBoundaryFailure(boundaryFailure),

@@ -35,6 +35,11 @@ public sealed record ExitBoundaryResolution(ExitBoundaryPoint? Point, ExitBounda
 public static class ExitBoundaryConstraint
 {
     public const double Tolerance = 1e-7;
+
+    /// <summary>저장된 원본 parameter 평가 결과와 2D/3D 좌표의 허용 잔차(mm).
+    /// identity·parameter 일치 조건은 <see cref="Tolerance"/>로 별도 유지한다.</summary>
+    public const double AcceptanceTolerance = GeometryTolerancePolicy.DistanceTolerance;
+
     private const double ParallelTolerance = 1e-9;
 
     /// <summary>
@@ -173,7 +178,7 @@ public static class ExitBoundaryConstraint
         ExitBoundaryResolution result = RequireBinding(boundary.Evaluate(binding.Value));
         if (!result.Succeeded) return result;
         ExitBoundaryPoint evaluated = result.Point!.Value;
-        if (evaluated.Binding != binding || evaluated.Point.DistanceTo(expectedPoint) > Tolerance)
+        if (evaluated.Binding != binding || evaluated.Point.DistanceTo(expectedPoint) > AcceptanceTolerance)
             return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.GeometryFailure);
         return result;
     }

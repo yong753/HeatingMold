@@ -56,6 +56,31 @@ static class CircuitExitOverrideChecks
         Check(circuits.Count == 2 && pieces.Count == 2,
             "disabled right U-turn creates two circuit routes");
 
+        // 분할 회로의 파생 인출점도 발열경로 편집에서 고정된다 — 전용 버튼으로만 변경한다.
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var activeField = typeof(MainWindow).GetField("_activeArea", flags)!;
+        object previousActive = activeField.GetValue(window);
+        activeField.SetValue(window, area);
+        var groups = typeof(MainWindow).GetMethod("BuildVertexGroups", flags)!.Invoke(window, new[] { area })!;
+        typeof(MainWindow).GetField("_vertexGroups", flags)!.SetValue(window, groups);
+        var anchors = (IDictionary)typeof(MainWindow).GetField("_vertexCircuitAnchors", flags)!.GetValue(window)!;
+        Check(anchors.Count > 0, "split circuits expose derived endpoint groups");
+        int anchorGroup = (int)anchors.Keys.Cast<object>().First();
+        typeof(MainWindow).GetField("_vertexDragGroup", flags)!.SetValue(window, anchorGroup);
+        try
+        {
+            typeof(MainWindow).GetMethod("CommitVertex", flags)!
+                .Invoke(window, new object[] { new Vec2(100, 0) });
+        }
+        finally
+        {
+            typeof(MainWindow).GetField("_vertexDragGroup", flags)!.SetValue(window, -1);
+            typeof(MainWindow).GetField("_vertexGroups", flags)!.SetValue(window, new List<RouteVertexGroup>());
+            activeField.SetValue(window, previousActive);
+        }
+        Check(ReferenceEquals(areaType.GetProperty("Pattern")!.GetValue(area), generated.Pattern),
+            "vertex edit keeps a split-circuit derived endpoint fixed");
+
         int pieceIndex = pieces[0][^1];
         Vec2 original = circuits[0].EndExit.Point;
         Vec2 moved = new(100, original.Y - 2);

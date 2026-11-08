@@ -105,33 +105,65 @@ public class RouteRegionContainmentTests
     }
 
     [Theory]
-    [InlineData(0.000004)]
-    [InlineData(0.00001)]
-    [InlineData(0.0039)]
-    [InlineData(0.4999)]
-    public void RejectsNarrowExclusionsWithoutRoundingToClipperPrecision(double width)
+    [InlineData(0.000004, true)]
+    [InlineData(0.00001, true)]
+    [InlineData(0.0039, true)]
+    [InlineData(0.4999, false)]
+    public void AppliesAcceptanceDepthToNarrowExclusionsWithoutRoundingToClipperPrecision(
+        double width, bool expected)
     {
         var region = Region(Rect(-1, -1, 11, 1));
         var exclusions = new[] { (5.0, -0.5, 5.0 + width, 0.5) };
 
-        Assert.False(StaysInRegion(region, new Vec2(0, 0), new Vec2(10, 0), exclusions));
+        Assert.Equal(expected, StaysInRegion(region, new Vec2(0, 0), new Vec2(10, 0), exclusions));
+    }
+
+    [Theory]
+    [InlineData(0.2, true)]     // 정확히 허용 깊이 0.1mm
+    [InlineData(0.2002, false)] // 0.1001mm 침범
+    [InlineData(0.3, false)]
+    public void AcceptsExclusionPenetrationUpToAllowedDepth(double width, bool expected)
+    {
+        var region = Region(Rect(-1, -1, 11, 1));
+        var exclusions = new[] { (5.0, -0.5, 5.0 + width, 0.5) };
+
+        Assert.Equal(expected, StaysInRegion(region, new Vec2(0, 0), new Vec2(10, 0), exclusions));
     }
 
     [Fact]
-    public void DoesNotMergeDistinctIntersectionsUsingFixedParameterTolerance()
+    public void AllowsTheReportedRoundedExclusionEndpointButNotATenthMillimetreDeeper()
+    {
+        var region = Region(Rect(-500, -300, 700, 300));
+        Vec2 a = new(254.52, 29.414512655796898);
+        Vec2 b = new(-244.53234001461854, 29.414512655796898);
+        // 실제 실패 좌표: 원본 minX 254.519181... 대비 0.0008189mm 침범.
+        Assert.True(StaysInRegion(region, a, b,
+            new[] { (254.51918106986386, -165.76931655655562, 500.57058529162646, 67.380274593892182) }));
+        // 같은 구간에서 0.1mm를 넘는 침범은 계속 실패해야 한다.
+        Assert.False(StaysInRegion(region, new Vec2(254.619281, 29.414512655796898), b,
+            new[] { (254.51918106986386, -165.76931655655562, 500.57058529162646, 67.380274593892182) }));
+    }
+
+    [Fact]
+    public void DistinguishesThinAndWideExclusionsAtLargeCoordinates()
     {
         var region = Region(Rect(-1, -1, 1_000_000_001, 1));
-        var exclusions = new[] { (500_000_000.0, -0.5, 500_000_000.00001, 0.5) };
+        Vec2 a = new(0, 0), b = new(1_000_000_000, 0);
 
-        Assert.False(StaysInRegion(region, new Vec2(0, 0), new Vec2(1_000_000_000, 0), exclusions));
+        // 이전에는 1e-5 폭도 반올림으로 사라질 수 있었다. 이제 허용 깊이 이내는 통과하고,
+        // 그보다 넓은 제외영역은 좌표 크기와 무관하게 계속 실패한다.
+        Assert.True(StaysInRegion(region, a, b,
+            new[] { (500_000_000.0, -0.5, 500_000_000.00001, 0.5) }));
+        Assert.False(StaysInRegion(region, a, b,
+            new[] { (500_000_000.0, -0.5, 500_000_000.5, 0.5) }));
     }
 
     [Fact]
-    public void RejectsVeryShortSegmentBetweenTwoHoleBoundaryPoints()
+    public void AllowsVeryShortSegmentAcrossHoleNarrowerThanTolerance()
     {
         var region = Region(Rect(-1, -1, 11, 1), Rect(5, -0.5, 5.000004, 0.5));
 
-        Assert.False(StaysInRegion(region, new Vec2(5, 0), new Vec2(5.000004, 0)));
+        Assert.True(StaysInRegion(region, new Vec2(5, 0), new Vec2(5.000004, 0)));
     }
 
     [Theory]
@@ -222,8 +254,10 @@ public class RouteRegionContainmentTests
     [Theory]
     [InlineData(0.0000005, true)]
     [InlineData(0.000001, true)]
-    [InlineData(0.0000011, false)]
-    public void PreservesExistingBoundaryTolerance(double offset, bool expected)
+    [InlineData(0.0999, true)]
+    [InlineData(0.1, true)]
+    [InlineData(0.1001, false)]
+    public void PreservesBoundaryAcceptanceBandAndNumericTolerance(double offset, bool expected)
     {
         var region = Region(Rect(0, 0, 10, 10));
 
@@ -249,7 +283,7 @@ public class RouteRegionContainmentTests
 
         Assert.True(StaysInRegion(region, new Vec2(0, 0), new Vec2(10, 0)));
         Assert.True(StaysInRegion(region, new Vec2(1, 1), new Vec2(9, 9)));
-        Assert.False(StaysInRegion(region, new Vec2(-0.00001, 5), new Vec2(9, 5)));
+        Assert.False(StaysInRegion(region, new Vec2(-0.5, 5), new Vec2(9, 5)));
     }
 
     [Theory]
