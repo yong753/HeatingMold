@@ -80,6 +80,8 @@
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_ColoredShape.hxx>
 #include <AIS_ColoredDrawer.hxx>
+#include <Prs3d_LineAspect.hxx>
+#include <Graphic3d_AspectLine3d.hxx>
 #include <AIS_SelectionScheme.hxx>
 #include <AIS_Shape.hxx>
 #include <AIS_Point.hxx>
@@ -376,7 +378,13 @@ namespace
     const Standard_Real kHeatingRouteWidth = 3.0;
     const Standard_Real kAreaFillTransparency = 0.5;  // 발열면 채움 투명도 (0=불투명, 1=완전 투명)
 
-    void SetFaceColorOverride(int faceId, const Quantity_Color& color, Standard_Real transparency = 0.0)
+    /// <summary>
+    /// 면 색상 override. <paramref name="keepBaseFaceBoundary"/>가 true이면 면 채움에만
+    /// 영역 색을 적용하고 경계선은 모델 기본 스타일을 유지한다. 확정 영역 색상이
+    /// 공유 Edge까지 물들이는 현상을 막되, 기본 CAD Edge 표시 자체는 없애지 않는다.
+    /// </summary>
+    void SetFaceColorOverride(int faceId, const Quantity_Color& color, Standard_Real transparency = 0.0,
+                              bool keepBaseFaceBoundary = false)
     {
         if (g_aisShape.IsNull() || faceId < 0 || faceId >= static_cast<int>(g_faces.size())) return;
         Handle(AIS_ColoredShape) colored = Handle(AIS_ColoredShape)::DownCast(g_aisShape);
@@ -391,6 +399,20 @@ namespace
         // The colored face is coincident with the model face. Bias its fill
         // toward the camera to avoid depth-buffer z-fighting.
         faceStyle->ShadingAspect()->Aspect()->SetPolygonOffsets(Aspect_POM_Fill, -2.0f, -2.0f);
+        if (keepBaseFaceBoundary)
+        {
+            // AIS_Shape::setColor는 ShadingAspect뿐 아니라 FaceBoundaryAspect까지 같은
+            // 색으로 덮어쓴다. 확정 영역은 채움만 영역 색을 쓰고, 경계선은 모델 기본
+            // 선 스타일을 복사해 원래 Edge 표시를 유지한다.
+            const Handle(Prs3d_LineAspect)& baseBoundary =
+                g_aisShape->Attributes()->FaceBoundaryAspect();
+            if (!baseBoundary.IsNull())
+            {
+                const Handle(Graphic3d_AspectLine3d)& source = baseBoundary->Aspect();
+                faceStyle->SetFaceBoundaryAspect(
+                    new Prs3d_LineAspect(source->Color(), source->Type(), source->Width()));
+            }
+        }
     }
 
     void ClearFaceColorOverride(int faceId)
@@ -425,7 +447,7 @@ namespace
     {
         if (const Quantity_Color* confirmed = ConfirmedFaceColor(faceId))
         {
-            SetFaceColorOverride(faceId, *confirmed, kAreaFillTransparency);
+            SetFaceColorOverride(faceId, *confirmed, kAreaFillTransparency, true);
             return;
         }
         if (IsExitFaceHighlightNative(faceId))
@@ -467,7 +489,8 @@ namespace
                 const Quantity_Color* confirmed = ConfirmedFaceColor(faceId);
                 SetFaceColorOverride(faceId,
                     confirmed != nullptr ? *confirmed : kSelectedFaceColor,
-                    confirmed != nullptr ? kAreaFillTransparency : 0.0);
+                    confirmed != nullptr ? kAreaFillTransparency : 0.0,
+                    confirmed != nullptr);
             }
         g_selectedFaceIds.swap(current);
         g_ctx->Redisplay(g_aisShape, Standard_False);
@@ -493,7 +516,7 @@ namespace
                 else ClearFaceColorOverride(previous.first);
             }
         for (const auto& entry : colors)
-            SetFaceColorOverride(entry.first, entry.second, kAreaFillTransparency);
+            SetFaceColorOverride(entry.first, entry.second, kAreaFillTransparency, true);
         g_confirmedFaceColors = colors;
         if (!colors.empty()) g_faceHighlightsVisible = true;
         g_ctx->Redisplay(g_aisShape, Standard_False);
