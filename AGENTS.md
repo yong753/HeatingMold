@@ -80,6 +80,7 @@
 
 - Product DXF output is exactly **one plan view on the confirmed working plane**, plus the confirmed heating routes and the electrical specification table. The previous four orthographic views are not part of the product output.
 - Mold outline and heating routes must use the same confirmed working-plane origin and X/Y axes. Do not renormalize DXF coordinates to a min-corner origin.
+- On-screen heating route overlays and plan-view heating-route entities use the owning area's opaque color, the same color as the selected-area outline. This is display/export color only and never changes geometry, lengths, IDs, or endpoint binding.
 - Export heating geometry from the committed native route chains (ordered 3D points preserved at staging/commit), not from regeneration, remapping, or display tessellation. Exclude staged, missing, stale, disabled and preview geometry explicitly.
 - The plan-view length dimensions and the electrical table must use the committed 3D route lengths. Table rows must match the exported circuit IDs one-to-one in order.
 - Plan-view dimension text height is 20 mm. The vertical dimension line sits on the left of the mold with its extension lines extending right; the horizontal dimension line stays below the mold.

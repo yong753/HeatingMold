@@ -14,7 +14,7 @@ public partial class MainWindow
     /// <summary>내보내기용 확정 조각 하나. 좌표는 확정된 실제 3D 체인이다.</summary>
     private sealed record DxfPlanPieceExport(
         string AreaName, int PieceIndex, int NativePieceId, bool Connector,
-        IReadOnlyList<Vec3> Points);
+        IReadOnlyList<Vec3> Points, byte ColorR, byte ColorG, byte ColorB);
 
     /// <summary>내보내기용 확정 회로 하나. 조각 순서는 회로 정본과 같다.</summary>
     private sealed record DxfPlanCircuitExport(
@@ -145,7 +145,7 @@ public partial class MainWindow
                 circuitPieces.Add(new DxfPlanPieceExport(
                     area.Name, index, area.NativePieceIds[index],
                     area.Pattern.RoutePieces[index].Kind != SerpentineRoutePieceKind.HeatingRun,
-                    points));
+                    points, area.Color.R, area.Color.G, area.Color.B));
             }
             circuits.Add(new DxfPlanCircuitExport(prefix + "1", circuitPieces));
         }
@@ -292,7 +292,11 @@ public partial class MainWindow
                         + failure;
                     return false;
                 }
-                view.HeatLines.Add(new DxfPolyline { Points = projected.ToList() });
+                view.HeatLines.Add(new DxfPolyline
+                {
+                    Points = projected.ToList(),
+                    Color = new AciColor(piece.ColorR, piece.ColorG, piece.ColorB)
+                });
             }
         }
         if (view.HeatLines.Count == 0)

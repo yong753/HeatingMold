@@ -269,8 +269,14 @@ public partial class MainWindow
         activeLength = preparedActiveLength;
         activeCount = preparedActiveCount;
 
-        // 마커/Redraw 실패는 이미 적용한 형상과 정본을 되돌리는 이유가 아니다.
+        // 색상/마커/Redraw 실패는 이미 적용한 형상과 정본을 되돌리는 이유가 아니다.
         Exception presentationFailure = null;
+        try
+        {
+            if (!RefreshRouteColors())
+                presentationFailure = new InvalidOperationException("발열경로 색상 갱신에 실패했습니다");
+        }
+        catch (Exception ex) { presentationFailure = ex; }
         try
         {
             if (!Bridge.SetRouteEndpointsNoRedraw(endpoints))
@@ -451,7 +457,8 @@ public partial class MainWindow
         if (piece.Kind != SerpentineRoutePieceKind.TurnConnector) return;
         // 이 함수는 components 흐름에서만 호출되며 해당 조각은 항상 실제 connector로
         // 스테이징된다(exclusionMode:false). 회로를 나누지 않으므로 모든 커넥터는 활성이다.
-        if (!Bridge.SetConnectorEnabled(stageId, true, 1.0, 0.1, 0.1, false))
+        if (!Bridge.SetConnectorEnabled(stageId, true,
+                candidate.Color.R / 255.0, candidate.Color.G / 255.0, candidate.Color.B / 255.0, false))
             throw new InvalidOperationException("영역 " + candidate.Name + "의 후보 커넥터 상태를 적용하지 못했습니다");
     }
 

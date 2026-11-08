@@ -237,11 +237,46 @@ public partial class MainWindow
     }
 
     /// <summary>
+    /// 확정된 모든 영역의 발열경로를 그 영역의 원색(선택 외곽선과 같은 무광 색)으로 맞춘다.
+    /// 표시 전용이며 형상/길이/ID를 바꾸지 않는다. 하나라도 실패하면 아무 색도 바꾸지 않는다.
+    /// </summary>
+    private bool RefreshRouteColors()
+    {
+        WorkingSideDefinition side = _workingSide?.Confirmed;
+        if (side == null) return true;
+        var ids = new List<int>();
+        var rgb = new List<double>();
+        foreach (WorkingArea area in _areas)
+        {
+            if (!area.PatternDisplayed || area.NativePieceIds.Length == 0) continue;
+            double r = area.Color.R / 255.0, g = area.Color.G / 255.0, b = area.Color.B / 255.0;
+            foreach (int pieceId in area.NativePieceIds)
+            {
+                if (pieceId < 0) return false;
+                ids.Add(pieceId);
+                rgb.Add(r); rgb.Add(g); rgb.Add(b);
+            }
+        }
+        if (ids.Count == 0) return true;
+        try
+        {
+            return Bridge.SetRoutePieceColors(side.Id.Value, side.Revision.Value,
+                ids.ToArray(), rgb.ToArray(), false);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// 모든 영역의 발열면 표시를 다시 적용한다. 제외가 없는 영역은 기존처럼 Face 색칠을
     /// 쓰고, 제외가 있는 영역은 클리핑된 채움 메시만 표시한다(통짜 Face 색칠 금지).
     /// </summary>
     private void ApplyAreaColors()
     {
+        // 영역 외곽선과 같은 원색으로 경로도 맞춘다. Face 색칠 조기 반환과 무관하게 항상 실행한다.
+        RefreshRouteColors();
         // 같은 Face를 둘 이상 영역이 참조하면 어느 영역의 색도 그 Face 전체를 대표하지
         // 않는다. 마지막 영역 색으로 전체 Face를 덮지 않고, 영역 메시가 있는 경우에만
         // 부분 표시를 쓴다.

@@ -399,4 +399,46 @@ public class DxfExporterTests
             if (File.Exists(path)) File.Delete(path);
         }
     }
+
+    [Fact]
+    public void ExportPlan_WritesEachHeatRouteWithItsOwnColor()
+    {
+        var view = new DxfView();
+        view.VisibleEdges.Add(new DxfPolyline
+        {
+            Points = new[]
+            {
+                new Vec2(0, 0), new Vec2(1200, 0), new Vec2(1200, 600), new Vec2(0, 600)
+            },
+            Closed = true
+        });
+        view.HeatLines.Add(new DxfPolyline
+        {
+            Points = new[] { new Vec2(10, 20), new Vec2(590, 20) },
+            Color = new AciColor(255, 0, 0)
+        });
+        view.HeatLines.Add(new DxfPolyline
+        {
+            Points = new[] { new Vec2(610, 20), new Vec2(1190, 20) },
+            Color = new AciColor(0, 0, 255)
+        });
+
+        string path = Path.Combine(Path.GetTempPath(),
+            "hm_heat_line_color_" + Guid.NewGuid().ToString("N") + ".dxf");
+        try
+        {
+            Assert.True(DxfExporter.ExportPlan(path, view));
+
+            DxfDocument doc = DxfDocument.Load(path);
+            List<Polyline2D> lines = doc.Entities.All.OfType<Polyline2D>()
+                .Where(p => p.Layer.Name == DxfExporter.HeatWireLayer).ToList();
+            Assert.Equal(2, lines.Count);
+            Assert.Contains(lines, l => l.Color.R == 255 && l.Color.G == 0 && l.Color.B == 0);
+            Assert.Contains(lines, l => l.Color.R == 0 && l.Color.G == 0 && l.Color.B == 255);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
 }

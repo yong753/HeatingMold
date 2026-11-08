@@ -2448,6 +2448,37 @@ namespace
         return true;
     }
 
+    /// <summary>스테이징/확정 경로 조각의 색을 한 번에 바꾼다. 모든 조각을 먼저 검증하고
+    /// 하나라도 실패하면 어떤 색도 바꾸지 않는다(부분 적용 금지).</summary>
+    struct WorkingNative;
+    WorkingNative* FindWorking(long long id, long long revision);
+    bool SetRoutePieceColorsNative(long long contextId, long long revision,
+        const std::vector<int>& pieceIds, const std::vector<double>& rgb, bool redraw)
+    {
+        if (g_ctx.IsNull() || pieceIds.empty() || pieceIds.size() * 3 != rgb.size()) return false;
+        if (!FindWorking(contextId, revision)) return false;
+        for (double value : rgb)
+            if (!std::isfinite(value) || value < 0.0 || value > 1.0) return false;
+        std::set<int> unique;
+        for (int pieceId : pieceIds)
+        {
+            const auto found = g_routePieces.find(pieceId);
+            if (found == g_routePieces.end() || !unique.insert(pieceId).second ||
+                found->second.contextId != contextId || found->second.revision != revision)
+                return false;
+        }
+        // Overlay.color까지 함께 갱신해야 호버 해제 시 원래 영역 색으로 복원된다.
+        for (size_t i = 0; i < pieceIds.size(); ++i)
+        {
+            RoutePieceOverlay& overlay = g_routePieces[pieceIds[i]];
+            const Quantity_Color color(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2], Quantity_TOC_RGB);
+            overlay.color = color;
+            g_ctx->SetColor(overlay.ais, color, Standard_False);
+        }
+        if (redraw && !g_view.IsNull()) g_view->Redraw();
+        return true;
+    }
+
     void ClearRouteEndpointMarkersNative()
     {
         if (!g_ctx.IsNull())
@@ -4552,6 +4583,17 @@ RoutePieceResult^ Bridge::ProjectRoutePiece(int pieceId, String^ kind, array<dou
 bool Bridge::SetConnectorEnabled(int pieceId, bool enabled, double r, double g, double b, bool redraw)
 {
     return SetConnectorNative(pieceId, enabled, r, g, b, redraw);
+}
+
+bool Bridge::SetRoutePieceColors(long long id, long long revision, array<int>^ pieceIds,
+    array<double>^ rgb, bool redraw)
+{
+    if (pieceIds == nullptr || rgb == nullptr) return false;
+    std::vector<int> ids((size_t)pieceIds->Length);
+    std::vector<double> colors((size_t)rgb->Length);
+    for (int i = 0; i < pieceIds->Length; ++i) ids[(size_t)i] = pieceIds[i];
+    for (int i = 0; i < rgb->Length; ++i) colors[(size_t)i] = rgb[i];
+    return SetRoutePieceColorsNative(id, revision, ids, colors, redraw);
 }
 
 void Bridge::ClearRoutePieces() { ClearRoutePiecesNative(); if (!g_view.IsNull()) g_view->Redraw(); }

@@ -170,6 +170,8 @@ static class ProjectLoadChecks
                   chains[0].Points.Length == 6 && chains[0].SupportFaceIds != null &&
                   chains[0].SupportFaceIds.Length == 2,
                 "project load restores the committed 3D chain and support faces");
+            Check((bool)Invoke(window, "RefreshRouteColors"),
+                "project load re-colors committed routes with the area color");
             Check((bool)areaType.GetProperty("RouteEdited")!.GetValue(restored)!,
                 "project load preserves the manually edited route flag");
             Check((string)areaType.GetProperty("MarginText")!.GetValue(restored)! == "7",

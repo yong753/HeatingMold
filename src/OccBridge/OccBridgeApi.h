@@ -320,6 +320,11 @@ public:
     /// <summary>Toggle connector presentation; disabled connectors are shown as dashed guides.</summary>
     /// <summary>redraw=false면 호출측이 여러 커넥터를 갱신한 뒤 한 번만 Redraw한다.</summary>
     static bool SetConnectorEnabled(int pieceId, bool enabled, double r, double g, double b, bool redraw);
+    /// <summary>Re-color staged or committed route pieces of one working context in a single
+    /// validated batch. Any unknown piece, owner mismatch, duplicate id or invalid component
+    /// rejects the whole batch without changing a single color. No redraw when redraw=false.</summary>
+    static bool SetRoutePieceColors(long long id, long long revision, array<int>^ pieceIds,
+        array<double>^ rgb, bool redraw);
     static void ClearRoutePieces();
     /// <summary>Project datum start-to-destination onto heating faces, then continue externally.
     /// Returns [status (1=success; negative=failure), total, surface, external] lengths in mm.</summary>

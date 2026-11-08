@@ -205,6 +205,23 @@ static class GeometryRollbackChecks
             side.Id.Value, side.Revision.Value, new[] { finalId });
         Check(legacy != null && legacy.Length == 1 && legacy[0].SequenceEqual(chain.Points),
             "detailed points match legacy committed chain");
+        Check(!Bridge.SetRoutePieceColors(side.Id.Value, side.Revision.Value,
+                new[] { finalId }, new[] { 0.2, 0.8 }, false),
+            "route recolor rejects an rgb length mismatch");
+        Check(!Bridge.SetRoutePieceColors(side.Id.Value, side.Revision.Value,
+                new[] { 999999 }, new[] { 0.2, 0.8, 0.3 }, false),
+            "route recolor rejects an unknown piece");
+        Check(!Bridge.SetRoutePieceColors(side.Id.Value, side.Revision.Value + 1,
+                new[] { finalId }, new[] { 0.2, 0.8, 0.3 }, false),
+            "route recolor rejects a revision mismatch");
+        Check(!Bridge.SetRoutePieceColors(side.Id.Value, side.Revision.Value,
+                new[] { finalId }, new[] { double.NaN, 0.0, 0.0 }, false),
+            "route recolor rejects a non-finite component");
+        Check(Bridge.SetRoutePieceColors(side.Id.Value, side.Revision.Value,
+                new[] { finalId }, new[] { 0.2, 0.8, 0.3 }, false),
+            "route recolor applies to a committed piece");
+        Check(Bridge.GetCommittedRouteChains(side.Id.Value, side.Revision.Value, new[] { finalId }) != null,
+            "route recolor leaves the committed chain readable");
         Bridge.ClearRoutePieces();
     }
 
