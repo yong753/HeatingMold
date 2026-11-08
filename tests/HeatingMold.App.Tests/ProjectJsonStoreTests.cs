@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using HeatingMold.App.Persistence;
@@ -63,6 +64,28 @@ namespace HeatingMold.App.Tests
             {
                 try { Directory.Delete(directory, recursive: true); } catch { }
             }
+        }
+
+        [Fact]
+        public void FaceTopologySignaturesAreSerialized()
+        {
+            ProjectDocument document = CreateDocument();
+            document.Source.FaceTopologySignatures = new List<ProjectFaceTopologySignature>
+            {
+                new() { FaceId = 0, Signature = "face-a" },
+                new() { FaceId = 3, Signature = "face-b" }
+            };
+            document.Source.TopologyIdentityError = null;
+
+            byte[] json = ProjectJsonStore.Serialize(document);
+            using JsonDocument parsed = JsonDocument.Parse(json);
+            JsonElement signatures = parsed.RootElement
+                .GetProperty("source").GetProperty("faceTopologySignatures");
+            Assert.Equal(2, signatures.GetArrayLength());
+            Assert.Equal(0, signatures[0].GetProperty("faceId").GetInt32());
+            Assert.Equal("face-a", signatures[0].GetProperty("signature").GetString());
+            Assert.Equal(3, signatures[1].GetProperty("faceId").GetInt32());
+            Assert.Equal("face-b", signatures[1].GetProperty("signature").GetString());
         }
 
         [Fact]

@@ -155,6 +155,9 @@ namespace HeatingMold.App
             if (string.IsNullOrEmpty(sha256) && File.Exists(_modelPath))
                 sha256 = ProjectJsonStore.TryComputeFileSha256(_modelPath);
 
+            List<ProjectFaceTopologySignature> faceSignatures =
+                CaptureFaceTopologySignatures(out string topologyIdentityError);
+
             var document = new ProjectDocument
             {
                 AppVersion = typeof(MainWindow).Assembly.GetName().Version?.ToString() ?? "",
@@ -166,7 +169,9 @@ namespace HeatingMold.App
                     FileLength = File.Exists(_modelPath) ? new FileInfo(_modelPath).Length : 0,
                     Sha256 = sha256,
                     ModelRevision = _modelRevision,
-                    ImportPolicyVersion = 1
+                    ImportPolicyVersion = 1,
+                    FaceTopologySignatures = faceSignatures,
+                    TopologyIdentityError = topologyIdentityError
                 },
                 WorkingSide = workingSide,
                 Electrical = CaptureElectricalInputs(),
@@ -177,7 +182,56 @@ namespace HeatingMold.App
             foreach (WorkingArea area in _areas.OrderBy(a => a.AreaId))
                 document.Areas.Add(CaptureArea(area));
 
+            if (string.IsNullOrEmpty(document.Source.TopologyIdentityError) &&
+                document.Areas.SelectMany(a => a.ExitEdgeRefs ?? new List<ProjectExitEdgeReference>())
+                    .Any(r => string.IsNullOrWhiteSpace(r.EdgeSignature) ||
+                              string.Equals(r.EdgeSignature, "error", StringComparison.Ordinal)))
+            {
+                document.Source.TopologyIdentityError =
+                    "원본 Edge topology signature가 없어 인출 경계를 재결속할 수 없습니다.";
+            }
+
             return document;
+        }
+
+        /// <summary>
+        /// 모델 전체 Face의 재가져오기 안정 signature를 읽는다. 저장 자체를 막지는 않지만,
+        /// 하나라도 비어 있거나 중복이면 불러오기 때 안전하게 재결속할 수 없으므로 진단을 남긴다.
+        /// </summary>
+        private List<ProjectFaceTopologySignature> CaptureFaceTopologySignatures(out string error)
+        {
+            error = null;
+            var result = new List<ProjectFaceTopologySignature>();
+            try
+            {
+                string[] signatures = Bridge.GetFaceTopologySignatures();
+                if (signatures == null || signatures.Length == 0)
+                {
+                    error = "모델 Face topology signature를 읽지 못했습니다.";
+                    return result;
+                }
+
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                for (int i = 0; i < signatures.Length; i++)
+                {
+                    string signature = signatures[i];
+                    if (string.IsNullOrWhiteSpace(signature) ||
+                        string.Equals(signature, "error", StringComparison.Ordinal) ||
+                        !seen.Add(signature))
+                    {
+                        error = "Face topology signature가 비어 있거나 중복되어 재결속할 수 없습니다.";
+                        result.Clear();
+                        return result;
+                    }
+                    result.Add(new ProjectFaceTopologySignature { FaceId = i, Signature = signature });
+                }
+            }
+            catch (Exception ex)
+            {
+                error = "Face topology signature를 읽지 못했습니다: " + ex.Message;
+                result.Clear();
+            }
+            return result;
         }
 
         private ProjectWorkingSideDocument CaptureWorkingSide()
@@ -483,6 +537,7 @@ namespace HeatingMold.App
             {
                 Revision = reference.Revision,
                 EdgeKey = reference.EdgeKey,
+                EdgeSignature = reference.EdgeSignature,
                 FaceId = reference.FaceId,
                 FirstParameter = reference.FirstParameter,
                 LastParameter = reference.LastParameter,

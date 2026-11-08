@@ -1,4 +1,5 @@
 using System.Collections;
+using System.IO;
 using System.Reflection;
 using HeatingMold.App;
 using HeatingMold.Core.Geometry;
@@ -207,7 +208,94 @@ static class GeometryRollbackChecks
         Bridge.ClearRoutePieces();
     }
 
-    public static void Run(MainWindow window)
+    static void FaceIdentityChecks(string fixtureDir)
+    {
+        string path = Path.Combine(fixtureDir, "layers.stp");
+        Check(Bridge.LoadStep(path), "reload layered model for face identity");
+        string[] first = Bridge.GetFaceTopologySignatures();
+        Check(first != null && first.Length > 0, "face topology signatures are available");
+        if (first == null || first.Length == 0) return;
+
+        var seen = new HashSet<string>();
+        bool allIdentified = true, unique = true;
+        int identified = 0;
+        for (int i = 0; i < first.Length; ++i)
+        {
+            string signature = first[i];
+            if (string.IsNullOrEmpty(signature) || signature == "error") allIdentified = false;
+            else
+            {
+                ++identified;
+                if (!seen.Add(signature)) unique = false;
+            }
+        }
+        Console.WriteLine($"face topology signature coverage {identified}/{first.Length}");
+        Check(allIdentified, $"every face has a topology signature ({identified}/{first.Length})");
+        Check(unique, "face topology signatures are unique");
+
+        Check(Bridge.LoadStep(path), "reload same model for face identity stability");
+        string[] second = Bridge.GetFaceTopologySignatures();
+        bool stable = second != null && second.Length == first.Length;
+        if (stable)
+        {
+            for (int i = 0; i < first.Length; ++i)
+            {
+                if (string.IsNullOrEmpty(second[i]) || second[i] != first[i])
+                {
+                    stable = false;
+                    break;
+                }
+            }
+        }
+        Check(stable, "face topology signature is stable across reimport");
+    }
+
+    static int FindTopFace()
+    {
+        for (int id = 0; ; ++id)
+        {
+            var normal = Bridge.GetFaceNormal(id);
+            if (normal == null) return -1;
+            if (normal[2] > 0.9 && Math.Abs(normal[5] - 20) < 1e-6) return id;
+        }
+    }
+
+    static string[] EdgeSignatures(int topFace)
+    {
+        var sides = Bridge.GetBoundaryExitSides(new[] { topFace }, 0.05);
+        if (sides == null) return Array.Empty<string>();
+        return sides.SelectMany(side => side.EdgeReferences ?? Array.Empty<ExitEdgeReference>())
+            .Select(reference => reference.EdgeSignature)
+            .OrderBy(signature => signature, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    static void EdgeIdentityChecks(string fixtureDir)
+    {
+        string path = Path.Combine(fixtureDir, "exitSides.stp");
+        Check(Bridge.LoadStep(path), "reload exit-side model for edge identity");
+        int top = FindTopFace();
+        Check(top >= 0, "top face exists for edge identity");
+        if (top < 0) return;
+
+        string[] first = EdgeSignatures(top);
+        Check(first.Length == 4, "four boundary edges expose topology signatures");
+        Check(first.All(signature => !string.IsNullOrWhiteSpace(signature) &&
+                                    !string.Equals(signature, "error", StringComparison.Ordinal)),
+            "every boundary edge has a topology signature");
+        Check(first.Distinct(StringComparer.Ordinal).Count() == first.Length,
+            "boundary edge topology signatures are unique");
+
+        Check(Bridge.LoadStep(path), "reload same model for edge identity stability");
+        top = FindTopFace();
+        Check(top >= 0, "top face exists after reimport");
+        if (top < 0) return;
+        string[] second = EdgeSignatures(top);
+        Check(first.SequenceEqual(second, StringComparer.Ordinal),
+            "boundary edge topology signatures are stable across reimport");
+    }
+
+    public static void Run(MainWindow window, string fixtureDir)
     {
         var side = Field<WorkingSideSession>(window, "_workingSide").Confirmed;
         Check(side != null, "confirmed +Z side is available for geometry rollback checks");
@@ -227,6 +315,8 @@ static class GeometryRollbackChecks
         StageFailureChecks(window, areaType, side, topFace);
         ExactFrameChecks(side);
         SupportFaceProvenanceChecks(side, topFace);
+        FaceIdentityChecks(fixtureDir);
+        EdgeIdentityChecks(fixtureDir);
         Console.WriteLine($"{count} geometry rollback checks passed.");
     }
 }

@@ -45,6 +45,7 @@ public ref class ExitEdgeReference
 public:
     property long long Revision;       // 참조를 만든 모델 revision
     property long long EdgeKey;        // native가 보관하는 원본 Edge 영속 키
+    property System::String^ EdgeSignature; // 재가져오기 안정 원본 Edge topology signature
     property int FaceId;               // 이 구간의 반대편(인출 측면) 원본 Face
     property double FirstParameter;    // 원본 Edge trim 범위 시작
     property double LastParameter;     // 원본 Edge trim 범위 끝
@@ -231,6 +232,10 @@ public:
 
     /// <summary>솔리드·셸·면·평면 수</summary>
     static ShapeInfo^ GetShapeInfo();
+
+    /// <summary>현재 모델 Face별 토폴로지 지문. 같은 STEP 재로드 시 FaceId를
+    /// 재매핑하는 영속 참조다. 지문이 중복되면 복원 시 명시적으로 실패한다.</summary>
+    static array<System::String^>^ GetFaceTopologySignatures();
 
     /// <summary>면 타입 이름 (Plane/Cylinder/Cone/Sphere/Torus/BSplineSurface/...)</summary>
     static System::String^ GetFaceType(int faceIndex);

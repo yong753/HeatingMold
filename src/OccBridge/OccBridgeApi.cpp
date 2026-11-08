@@ -24,6 +24,8 @@
 #include <TopoDS_Edge.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopExp.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopAbs_Orientation.hxx>
 #include <BRep_Tool.hxx>
@@ -143,6 +145,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <sstream>
+#include <iomanip>
 #include <map>
 #include <memory>
 #include <set>
@@ -160,9 +164,15 @@ namespace
 {
     TopoDS_Shape g_shape;
     std::vector<TopoDS_Face> g_faces;
+    // g_faces와 같은 순서의 토폴로지 지문. 같은 STEP을 다시 읽었을 때 FaceId를
+    // 재매핑하는 영속 참조로 사용한다. 원본 런타임 인덱스를 그대로 믿지 않는다.
+    std::vector<std::string> g_faceTopologySignatures;
     std::set<std::pair<int,int>> g_faceAdjacency;
     long long g_faceAdjacencyRevision = -1;
     TopTools_IndexedMapOfShape g_faceMap;   // W3 픽킹: g_faces와 같은 순회로 구축 (인덱스 1:1)
+    // Edge의 인접 Face 목록. Edge topology signature에 인접 Face signature를 넣어
+    // 같은 형상이 겹쳐 있는 경우에도 원본 Edge를 구분하기 위해 사용한다.
+    TopTools_IndexedDataMapOfShapeListOfShape g_edgeFaceMap;
     gp_Dir g_autoAxes[3] = { gp::DX(), gp::DY(), gp::DZ() };
     long long g_modelRevision = 0;
     // 형상/삼각분할 세대. 작업면 생성처럼 모델 revision은 그대로인데 mesh만 다시
@@ -360,6 +370,134 @@ namespace
     int g_hoverColorFace = -1;
 
 
+    std::string SignatureNumber(double value)
+    {
+        if (!std::isfinite(value)) return "nan";
+        std::ostringstream out;
+        out << std::setprecision(12) << value;
+        return out.str();
+    }
+
+    void AppendSignaturePoint(std::ostringstream& out, const char* name, const gp_Pnt& point)
+    {
+        out << name << '=' << SignatureNumber(point.X()) << ','
+            << SignatureNumber(point.Y()) << ',' << SignatureNumber(point.Z()) << ';';
+    }
+
+    std::string FaceTopologySignature(const TopoDS_Face& face)
+    {
+        try
+        {
+            std::ostringstream out;
+            BRepAdaptor_Surface surface(face);
+            out << "t=" << static_cast<int>(surface.GetType()) << ';';
+            switch (surface.GetType())
+            {
+            case GeomAbs_Plane:
+            {
+                const gp_Pln plane = surface.Plane();
+                AppendSignaturePoint(out, "loc", plane.Location());
+                const gp_Dir normal = plane.Axis().Direction();
+                out << "n=" << SignatureNumber(normal.X()) << ','
+                    << SignatureNumber(normal.Y()) << ',' << SignatureNumber(normal.Z()) << ';';
+                break;
+            }
+            case GeomAbs_Cylinder:
+            {
+                const gp_Cylinder cylinder = surface.Cylinder();
+                AppendSignaturePoint(out, "loc", cylinder.Axis().Location());
+                const gp_Dir axis = cylinder.Axis().Direction();
+                out << "ax=" << SignatureNumber(axis.X()) << ','
+                    << SignatureNumber(axis.Y()) << ',' << SignatureNumber(axis.Z())
+                    << ";r=" << SignatureNumber(cylinder.Radius()) << ';';
+                break;
+            }
+            case GeomAbs_Cone:
+            {
+                const gp_Cone cone = surface.Cone();
+                AppendSignaturePoint(out, "loc", cone.Axis().Location());
+                const gp_Dir axis = cone.Axis().Direction();
+                out << "ax=" << SignatureNumber(axis.X()) << ','
+                    << SignatureNumber(axis.Y()) << ',' << SignatureNumber(axis.Z())
+                    << ";r=" << SignatureNumber(cone.RefRadius())
+                    << ";a=" << SignatureNumber(cone.SemiAngle()) << ';';
+                break;
+            }
+            case GeomAbs_Sphere:
+            {
+                const gp_Sphere sphere = surface.Sphere();
+                AppendSignaturePoint(out, "loc", sphere.Location());
+                out << "r=" << SignatureNumber(sphere.Radius()) << ';';
+                break;
+            }
+            case GeomAbs_Torus:
+            {
+                const gp_Torus torus = surface.Torus();
+                AppendSignaturePoint(out, "loc", torus.Location());
+                const gp_Dir axis = torus.Axis().Direction();
+                out << "ax=" << SignatureNumber(axis.X()) << ','
+                    << SignatureNumber(axis.Y()) << ',' << SignatureNumber(axis.Z())
+                    << ";r=" << SignatureNumber(torus.MajorRadius())
+                    << ";m=" << SignatureNumber(torus.MinorRadius()) << ';';
+                break;
+            }
+            default: break;
+            }
+
+            GProp_GProps props;
+            BRepGProp::SurfaceProperties(face, props);
+            out << "a=" << SignatureNumber(std::fabs(props.Mass())) << ';';
+            AppendSignaturePoint(out, "c", props.CentreOfMass());
+
+            Bnd_Box box;
+            BRepBndLib::Add(face, box);
+            if (!box.IsVoid())
+            {
+                double xmin, ymin, zmin, xmax, ymax, zmax;
+                box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+                out << "bb=" << SignatureNumber(xmin) << ',' << SignatureNumber(ymin) << ','
+                    << SignatureNumber(zmin) << ',' << SignatureNumber(xmax) << ','
+                    << SignatureNumber(ymax) << ',' << SignatureNumber(zmax) << ';';
+            }
+
+            int wires = 0, edges = 0, vertices = 0;
+            for (TopExp_Explorer ex(face, TopAbs_WIRE); ex.More(); ex.Next()) ++wires;
+            for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) ++edges;
+            for (TopExp_Explorer ex(face, TopAbs_VERTEX); ex.More(); ex.Next()) ++vertices;
+            out << "w=" << wires << ";e=" << edges << ";v=" << vertices << ';';
+
+            std::vector<std::string> edgeSignatures;
+            for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next())
+            {
+                const TopoDS_Edge& edge = TopoDS::Edge(ex.Current());
+                std::ostringstream edgeOut;
+                edgeOut << "eo=" << static_cast<int>(edge.Orientation()) << ';';
+                BRepAdaptor_Curve curve(edge);
+                edgeOut << "ct=" << static_cast<int>(curve.GetType()) << ';';
+                GProp_GProps edgeProps;
+                BRepGProp::LinearProperties(edge, edgeProps);
+                edgeOut << "el=" << SignatureNumber(std::fabs(edgeProps.Mass())) << ';';
+                TopoDS_Vertex first, last;
+                TopExp::Vertices(edge, first, last, Standard_False);
+                if (!first.IsNull()) AppendSignaturePoint(edgeOut, "p0", BRep_Tool::Pnt(first));
+                if (!last.IsNull()) AppendSignaturePoint(edgeOut, "p1", BRep_Tool::Pnt(last));
+                edgeSignatures.push_back(edgeOut.str());
+            }
+            std::sort(edgeSignatures.begin(), edgeSignatures.end());
+            for (const std::string& edge : edgeSignatures) out << edge << '|';
+            return out.str();
+        }
+        catch (...) { return "error"; }
+    }
+
+    void RebuildFaceTopologySignatures()
+    {
+        g_faceTopologySignatures.clear();
+        g_faceTopologySignatures.reserve(g_faces.size());
+        for (const TopoDS_Face& face : g_faces)
+            g_faceTopologySignatures.push_back(FaceTopologySignature(face));
+    }
+
     void RebuildFaceCache()
     {
         g_faces.clear();
@@ -371,6 +509,10 @@ namespace
             g_faces.push_back(f);
             g_faceMap.Add(f);   // g_faces와 동일 순회 → FindIndex == g_faces 인덱스 + 1
         }
+        RebuildFaceTopologySignatures();
+        g_edgeFaceMap.Clear();
+        if (!g_shape.IsNull())
+            TopExp::MapShapesAndAncestors(g_shape, TopAbs_EDGE, TopAbs_FACE, g_edgeFaceMap);
     }
 
     const Quantity_Color kSelectedFaceColor(0.12, 0.82, 0.38, Quantity_TOC_RGB);   // 선택 = 초록
@@ -829,12 +971,55 @@ namespace
         return true;
     }
 
+    // 원본 Edge를 다시 가져온 모델에서 찾기 위한 안정 signature. 인접 Face signature까지
+    // 포함해 동일 형상이 겹친 경우를 구분한다. 실패 시 "error"를 반환한다.
+    std::string EdgeTopologySignature(const TopoDS_Edge& edge)
+    {
+        std::ostringstream out;
+        try
+        {
+            BRepAdaptor_Curve curve(edge);
+            out << "curve=" << static_cast<int>(curve.GetType())
+                << ";closed=" << (curve.IsClosed() ? 1 : 0) << ';';
+            const double first = curve.FirstParameter();
+            const double last = curve.LastParameter();
+            out << "range=" << SignatureNumber(first) << ',' << SignatureNumber(last) << ';';
+            for (int i = 0; i <= 4; ++i)
+            {
+                const double t = first + (last - first) * (static_cast<double>(i) / 4.0);
+                AppendSignaturePoint(out, "s", curve.Value(t));
+            }
+            GProp_GProps props;
+            BRepGProp::LinearProperties(edge, props);
+            out << "len=" << SignatureNumber(std::fabs(props.Mass())) << ';';
+            std::vector<std::string> adjacent;
+            if (g_edgeFaceMap.Contains(edge))
+            {
+                for (const TopoDS_Shape& faceShape : g_edgeFaceMap.FindFromKey(edge))
+                {
+                    const int index = g_faceMap.FindIndex(faceShape);
+                    adjacent.push_back(index > 0 && index <= static_cast<int>(g_faceTopologySignatures.size())
+                        ? g_faceTopologySignatures[static_cast<size_t>(index - 1)]
+                        : std::string("?"));
+                }
+            }
+            std::sort(adjacent.begin(), adjacent.end());
+            for (const std::string& value : adjacent) out << "f=" << value << ';';
+        }
+        catch (...)
+        {
+            return "error";
+        }
+        return out.str();
+    }
+
     struct StoredExitEdge
     {
         TopoDS_Edge edge;
         long long revision = 0;
         int faceId = -1;
         int supportFaceId = -1;
+        std::string signature;
         struct Binding { double first, last; int faceId, supportFaceId; };
         std::vector<Binding> bindings;
     };
@@ -885,6 +1070,7 @@ namespace
             StoredExitEdge stored;
             stored.edge = source.edge; stored.revision = g_modelRevision;
             stored.faceId = faceId; stored.supportFaceId = supportFaceId;
+            stored.signature = EdgeTopologySignature(source.edge);
             entry = staged.edges.emplace(key, stored).first;
             TopoDS_Vertex first, last;
             TopExp::Vertices(source.edge, first, last, Standard_False);
@@ -914,6 +1100,7 @@ namespace
         bool reversed = false;
         int startIndex = 0; // 경계 polyline의 점 인덱스
         int endIndex = 0;   // 포함
+        std::string signature; // 재가져오기 안정 원본 Edge signature (실패 시 "error")
     };
 
     struct NativeBoundaryLoop
@@ -1174,6 +1361,8 @@ namespace
                 NativeExitEdgeRef ref;
                 ref.revision = g_modelRevision;
                 ref.key = StageOriginalExitEdge(staged, input.source, input.relatedFace, input.relatedFace);
+                const auto stagedEdge = staged.edges.find(ref.key);
+                if (stagedEdge != staged.edges.end()) ref.signature = stagedEdge->second.signature;
                 ref.faceId = input.relatedFace;
                 ref.firstParameter = input.source.first;
                 ref.lastParameter = input.source.last;
@@ -1713,6 +1902,8 @@ namespace
                     NativeExitEdgeRef ref;
                     ref.revision = g_modelRevision;
                     ref.key = StageOriginalExitEdge(staged, source, faceId, supportFace);
+                    const auto stagedEdge = staged.edges.find(ref.key);
+                    if (stagedEdge != staged.edges.end()) ref.signature = stagedEdge->second.signature;
                     ref.faceId = faceId;
                     ref.firstParameter = source.first;
                     ref.lastParameter = source.last;
@@ -3830,7 +4021,9 @@ bool Bridge::LoadStep(String^ path)
     ClearAllAreaHighlightsNative();
     g_shape.Nullify();
     g_faces.clear();
+    g_faceTopologySignatures.clear();
     g_faceMap.Clear();
+    g_edgeFaceMap.Clear();
     g_autoAxes[0] = gp::DX(); g_autoAxes[1] = gp::DY(); g_autoAxes[2] = gp::DZ();
     if (String::IsNullOrWhiteSpace(path)) return false;
     const std::string native = msclr::interop::marshal_as<std::string>(path);
@@ -3846,6 +4039,23 @@ ShapeInfo^ Bridge::GetShapeInfo()
     info->Faces = c.faces;
     info->Planes = c.planes;
     return info;
+}
+
+array<System::String^>^ Bridge::GetFaceTopologySignatures()
+{
+    try
+    {
+        const int count = static_cast<int>(g_faces.size());
+        auto result = gcnew array<System::String^>(count);
+        for (int i = 0; i < count; ++i)
+        {
+            result[i] = i < static_cast<int>(g_faceTopologySignatures.size())
+                ? gcnew System::String(g_faceTopologySignatures[i].c_str())
+                : System::String::Empty;
+        }
+        return result;
+    }
+    catch (...) { return nullptr; }
 }
 
 String^ Bridge::GetFaceType(int faceIndex)
@@ -3947,6 +4157,7 @@ array<RegionBoundaryLoop^>^ Bridge::GetSelectedRegionBoundary(array<int>^ faceId
             ExitEdgeReference^ reference = gcnew ExitEdgeReference();
             reference->Revision = source.revision;
             reference->EdgeKey = source.key;
+            reference->EdgeSignature = gcnew System::String(source.signature.c_str());
             reference->FaceId = source.faceId;
             reference->FirstParameter = source.firstParameter;
             reference->LastParameter = source.lastParameter;
@@ -4023,6 +4234,7 @@ array<ExitSideCandidate^>^ Bridge::GetBoundaryExitSides(array<int>^ faceIds, dou
             ExitEdgeReference^ reference = gcnew ExitEdgeReference();
             reference->Revision = source.revision;
             reference->EdgeKey = source.key;
+            reference->EdgeSignature = gcnew System::String(source.signature.c_str());
             reference->FaceId = source.faceId;
             reference->FirstParameter = source.firstParameter;
             reference->LastParameter = source.lastParameter;
@@ -4043,6 +4255,8 @@ static NativeExitEdgeRef CopyExitReference(ExitEdgeReference^ reference)
 {
     NativeExitEdgeRef native;
     native.revision = reference->Revision; native.key = reference->EdgeKey;
+    if (reference->EdgeSignature != nullptr)
+        native.signature = msclr::interop::marshal_as<std::string>(reference->EdgeSignature);
     native.faceId = reference->FaceId;
     native.firstParameter = reference->FirstParameter; native.lastParameter = reference->LastParameter;
     native.reversed = reference->Reversed;
