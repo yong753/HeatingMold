@@ -171,6 +171,10 @@ public:
     static bool AreWorkingFacesAdjacent(long long id, long long revision, int faceA, int faceB);
     static RoutePieceResult^ DisplayWorkingRoutePiece(long long id, long long revision, int pieceId,
         System::String^ kind, array<double>^ xyzFlat);
+    /// <summary>확정된 경로 조각의 순서 보존 3D 체인을 요청 순서대로 읽는다.
+    /// 재생성/재매핑 없이 staged/누락/비활성/소유 불일치가 하나라도 있으면 null.</summary>
+    static array<array<double>^>^ GetCommittedRouteChains(long long id, long long revision,
+        array<int>^ pieceIds);
     static bool StageWorkingPolyline(long long id, long long revision, int stageId, array<double>^ xyzFlat);
     static RoutePieceResult^ StageProjectedWorkingRoutePiece(long long id, long long revision, int stageId,
         System::String^ kind, array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);

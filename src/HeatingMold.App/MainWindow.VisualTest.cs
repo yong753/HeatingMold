@@ -1041,6 +1041,10 @@ namespace HeatingMold.App
             var texts = document.Entities.All.OfType<Text>().Select(t => t.Value ?? "").ToList();
             Require(texts.Contains("전기 사양표"), "DXF에 전기 사양표 제목이 없습니다.");
             Require(document.Layers.Contains(DxfExporter.ElectricalSpecLayer), "DXF에 전기 사양 레이어가 없습니다.");
+            Require(document.Layers.Contains("HEAT_WIRE"), "DXF에 발열경로 레이어가 없습니다.");
+            Require(document.Entities.All.OfType<Polyline2D>()
+                    .Any(p => string.Equals(p.Layer.Name, "HEAT_WIRE", StringComparison.OrdinalIgnoreCase)),
+                "DXF에 발열경로 형상이 없습니다.");
 
             ReviewSnapshot snapshot = BuildReviewSnapshot();
             foreach (CircuitLengthInfo circuit in snapshot.Circuits)
@@ -1517,6 +1521,10 @@ namespace HeatingMold.App
             var texts = document.Entities.All.OfType<Text>().Select(t => t.Value ?? "").ToList();
             Require(texts.Contains("전기 사양표"), "DXF에 전기 사양표 제목이 없습니다.");
             Require(document.Layers.Contains(DxfExporter.ElectricalSpecLayer), "DXF에 전기 사양 레이어가 없습니다.");
+            Require(document.Layers.Contains("HEAT_WIRE"), "DXF에 발열경로 레이어가 없습니다.");
+            Require(document.Entities.All.OfType<Polyline2D>()
+                    .Any(p => string.Equals(p.Layer.Name, "HEAT_WIRE", StringComparison.OrdinalIgnoreCase)),
+                "DXF에 발열경로 형상이 없습니다.");
 
             ReviewSnapshot snapshot = BuildReviewSnapshot();
             foreach (CircuitLengthInfo circuit in snapshot.Circuits)

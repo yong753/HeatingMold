@@ -636,7 +636,7 @@
                                     <StackPanel>
                                         <TextBlock Text="DXF 내보내기" Style="{StaticResource SectionTitle}"/>
                                         <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0"
-                                                   Text="현재 세션의 검토 결과를 하나의 DXF로 저장합니다."/>
+                                                   Text="확정된 작업평면 기준 평면도 한 장과 검토 결과를 하나의 DXF로 저장합니다."/>
                                         <TextBlock x:Name="ExportScopeText" Style="{StaticResource Hint}"
                                                    Margin="0,6,0,0"
                                                    Text="내보내기 범위: 전체 영역 전기 사양표"/>
@@ -644,9 +644,9 @@
                                                 AutomationProperties.Name="검토 결과 DXF 내보내기"
                                                 Style="{StaticResource PrimaryButton}" Margin="0,10,0,0"/>
                                         <TextBlock x:Name="ExportIncludeText" Style="{StaticResource Hint}" Margin="0,8,0,0"
-                                                   Text="포함: 전체 금형의 4방향 투상도·숨은선, 검토 범위의 전기 사양표."/>
+                                                   Text="포함: 작업평면 기준 금형 평면도·숨은선, 검토 범위의 확정 발열경로·전기 사양표."/>
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="미포함: 발열 경로 형상, 3D STEP, 작업 세션 데이터."/>
+                                                   Text="미포함: 다른 방향 투상도, 3D STEP, 작업 세션 데이터."/>
                                         <TextBlock Style="{StaticResource Hint}"
                                                    Text="작업 세션은 저장되지 않습니다. DXF 내보내기는 세션 저장이 아닙니다."/>
                                     </StackPanel>

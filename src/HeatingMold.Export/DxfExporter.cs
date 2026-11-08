@@ -24,31 +24,23 @@ public static class DxfExporter
     private const string ElectricalSpecTextStyle = "ELECTRICAL_SPEC_TEXT";
 
     /// <summary>
+    /// 표 배율 기준이 되는 모델 최대 치수(mm). 200mm당 1배.
+    /// 도면 대비 비율이 아니라 출력했을 때 읽을 수 있는 크기를 기준으로 한다.
+    /// </summary>
+    private const double SpecTableReferenceExtent = 200.0;
+
+    /// <summary>표가 도면을 과도하게 차지하지 않도록 하는 최대 배율.</summary>
+    private const double SpecTableMaxScale = 16.0;
+
+    /// <summary>
     /// Place multiple orthographic views into one DXF, laid out left-to-right with a gap.
     /// When a spec table is supplied the document is written as R2010 so Korean text is stored as UTF-8.
     /// </summary>
     public static bool ExportViews(string path, IReadOnlyList<DxfView> views,
         double gap = 60, double dimOffset = 20, ElectricalSpecTable? specTable = null)
     {
-        var doc = specTable == null ? new DxfDocument() : new DxfDocument(DxfVersion.AutoCad2010);
-        var moldLayer = new Layer(MoldOutlineLayer) { Color = AciColor.Cyan };
-        var hiddenLayer = new Layer(HiddenLayer) { Color = new AciColor(8) };
-        var heatLayer = new Layer(HeatWireLayer) { Color = AciColor.Red };
-        var dimLayer = new Layer(DimensionLayer) { Color = AciColor.Yellow };
-        doc.Layers.Add(moldLayer);
-        doc.Layers.Add(hiddenLayer);
-        doc.Layers.Add(heatLayer);
-        doc.Layers.Add(dimLayer);
-
-        Layer? specLayer = null;
-        TextStyle? specStyle = null;
-        if (specTable != null)
-        {
-            specLayer = new Layer(ElectricalSpecLayer) { Color = AciColor.Default };
-            specStyle = new TextStyle(ElectricalSpecTextStyle, "malgun.ttf");
-            doc.Layers.Add(specLayer);
-            doc.TextStyles.Add(specStyle);
-        }
+        var doc = CreateDocument(specTable, out Layer moldLayer, out Layer hiddenLayer,
+            out Layer heatLayer, out Layer dimLayer, out Layer? specLayer, out TextStyle? specStyle);
 
         double cursorX = 0;
         double contentMaxY = 0;
@@ -91,12 +83,99 @@ public static class DxfExporter
         return doc.Save(path);
     }
 
-    private static void AddElectricalSpecTable(DxfDocument doc, Layer layer, TextStyle style,
-        Vec2 origin, ElectricalSpecTable table)
+    /// <summary>
+    /// Write exactly one plan view in its own coordinate system. Coordinates are not
+    /// re-normalized: the confirmed working-plane origin and axes must survive into the
+    /// DXF. The spec table is placed below both the drawing and its dimension lines.
+    /// </summary>
+    public static bool ExportPlan(string path, DxfView view,
+        ElectricalSpecTable? specTable = null, double dimOffset = 20)
     {
-        const double textHeight = 3.2;
-        const double rowHeight = 7.0;
-        double[] widths = { 16, 22, 24, 22, 22, 24 };
+        if (view == null) return false;
+        var all = view.AllPolylines().SelectMany(p => p.Points).ToList();
+        if (all.Count == 0) return false;
+
+        var doc = CreateDocument(specTable, out Layer moldLayer, out Layer hiddenLayer,
+            out Layer heatLayer, out Layer dimLayer, out Layer? specLayer, out TextStyle? specStyle);
+
+        double minX = all.Min(v => v.X);
+        double minY = all.Min(v => v.Y);
+        double maxX = all.Max(v => v.X);
+        double maxY = all.Max(v => v.Y);
+
+        var off = new Vec2(0, 0);
+        AddPolylines(doc, view.VisibleEdges, moldLayer, off);
+        AddPolylines(doc, view.HiddenEdges, hiddenLayer, off);
+        AddPolylines(doc, view.HeatBands, heatLayer, off);
+        AddPolylines(doc, view.HeatLines, heatLayer, off);
+
+        // 치수는 금형 외곽 투상선만 측정한다. 발열경로가 외곽을 벗어나도 금형 치수를
+        // 오염시키지 않으며, 경로 길이는 전기 사양표의 커밋된 3D 길이를 쓴다.
+        var outline = view.VisibleEdges.SelectMany(p => p.Points).ToList();
+        if (outline.Count > 0)
+        {
+            double moldMinX = outline.Min(v => v.X);
+            double moldMinY = outline.Min(v => v.Y);
+            double moldMaxX = outline.Max(v => v.X);
+            double moldMaxY = outline.Max(v => v.Y);
+            doc.Entities.Add(new LinearDimension(
+                new Vector2(moldMinX, moldMinY), new Vector2(moldMaxX, moldMinY), -dimOffset, 0) { Layer = dimLayer });
+            doc.Entities.Add(new LinearDimension(
+                new Vector2(moldMinX, moldMinY), new Vector2(moldMinX, moldMaxY), -dimOffset, 90) { Layer = dimLayer });
+        }
+
+        // 표는 모델 좌표와 같은 mm 단위이므로, 큰 모델에서 고정 크기로 두면
+        // 상대적으로 사라진다. 금형 외곽선 크기에 비례해 확대하되 작은 모델은
+        // 기존 크기를 유지한다.
+        double tableScale = 1.0;
+        if (outline.Count > 0)
+        {
+            double extent = Math.Max(
+                outline.Max(v => v.X) - outline.Min(v => v.X),
+                outline.Max(v => v.Y) - outline.Min(v => v.Y));
+            if (double.IsFinite(extent) && extent > 0)
+                tableScale = Math.Clamp(extent / SpecTableReferenceExtent, 1.0, SpecTableMaxScale);
+        }
+        if (specTable != null)
+            AddElectricalSpecTable(doc, specLayer!, specStyle!,
+                new Vec2(minX, minY - dimOffset - 40 * tableScale), specTable, tableScale);
+
+        return doc.Save(path);
+    }
+
+    private static DxfDocument CreateDocument(ElectricalSpecTable? specTable,
+        out Layer moldLayer, out Layer hiddenLayer, out Layer heatLayer, out Layer dimLayer,
+        out Layer? specLayer, out TextStyle? specStyle)
+    {
+        var doc = specTable == null ? new DxfDocument() : new DxfDocument(DxfVersion.AutoCad2010);
+        moldLayer = new Layer(MoldOutlineLayer) { Color = AciColor.Cyan };
+        hiddenLayer = new Layer(HiddenLayer) { Color = new AciColor(8) };
+        heatLayer = new Layer(HeatWireLayer) { Color = AciColor.Red };
+        dimLayer = new Layer(DimensionLayer) { Color = AciColor.Yellow };
+        doc.Layers.Add(moldLayer);
+        doc.Layers.Add(hiddenLayer);
+        doc.Layers.Add(heatLayer);
+        doc.Layers.Add(dimLayer);
+
+        specLayer = null;
+        specStyle = null;
+        if (specTable != null)
+        {
+            specLayer = new Layer(ElectricalSpecLayer) { Color = AciColor.Default };
+            specStyle = new TextStyle(ElectricalSpecTextStyle, "malgun.ttf");
+            doc.Layers.Add(specLayer);
+            doc.TextStyles.Add(specStyle);
+        }
+        return doc;
+    }
+
+    private static void AddElectricalSpecTable(DxfDocument doc, Layer layer, TextStyle style,
+        Vec2 origin, ElectricalSpecTable table, double scale = 1.0)
+    {
+        if (!double.IsFinite(scale) || scale <= 0) scale = 1.0;
+        double textHeight = 3.2 * scale;
+        double rowHeight = 7.0 * scale;
+        double[] widths = { 16 * scale, 22 * scale, 24 * scale, 22 * scale, 22 * scale, 24 * scale };
         string[] headers = { "회로", "길이(m)", "저항(Ω)", "전압(V)", "전류(A)", "전력(W)" };
         double tableWidth = widths.Sum();
         double top = origin.Y;
@@ -104,9 +183,9 @@ public static class DxfExporter
         double bottom = top - rowHeight * rowCount;
         var inv = CultureInfo.InvariantCulture;
 
-        AddSpecText(doc, layer, style, "전기 사양표", origin.X, top + 18, 5.0);
+        AddSpecText(doc, layer, style, "전기 사양표", origin.X, top + 18 * scale, 5.0 * scale);
         AddSpecText(doc, layer, style, table.Wire.Describe() + " · " + table.Supply.Describe(),
-            origin.X, top + 11, 3.2);
+            origin.X, top + 11 * scale, 3.2 * scale);
 
         AddSpecLine(doc, layer, origin.X, top, origin.X + tableWidth, top);
         AddSpecLine(doc, layer, origin.X, bottom, origin.X + tableWidth, bottom);
@@ -125,7 +204,7 @@ public static class DxfExporter
         x = origin.X;
         for (int c = 0; c < headers.Length; c++)
         {
-            AddSpecText(doc, layer, style, headers[c], x + 1, top - rowHeight / 2, textHeight);
+            AddSpecText(doc, layer, style, headers[c], x + scale, top - rowHeight / 2, textHeight);
             x += widths[c];
         }
 
@@ -134,25 +213,25 @@ public static class DxfExporter
             ElectricalSpecRow row = table.Rows[r];
             double y = top - rowHeight * (r + 1) - rowHeight / 2;
             x = origin.X;
-            AddSpecText(doc, layer, style, row.CircuitId, x + 1, y, textHeight); x += widths[0];
-            AddSpecText(doc, layer, style, row.LengthM.ToString("F2", inv), x + 1, y, textHeight); x += widths[1];
-            AddSpecText(doc, layer, style, row.ResistanceOhm.ToString("F2", inv), x + 1, y, textHeight); x += widths[2];
-            AddSpecText(doc, layer, style, row.VoltageV.ToString("F1", inv), x + 1, y, textHeight); x += widths[3];
-            AddSpecText(doc, layer, style, row.CurrentA.ToString("F2", inv), x + 1, y, textHeight); x += widths[4];
-            AddSpecText(doc, layer, style, row.PowerW.ToString("F1", inv), x + 1, y, textHeight);
+            AddSpecText(doc, layer, style, row.CircuitId, x + scale, y, textHeight); x += widths[0];
+            AddSpecText(doc, layer, style, row.LengthM.ToString("F2", inv), x + scale, y, textHeight); x += widths[1];
+            AddSpecText(doc, layer, style, row.ResistanceOhm.ToString("F2", inv), x + scale, y, textHeight); x += widths[2];
+            AddSpecText(doc, layer, style, row.VoltageV.ToString("F1", inv), x + scale, y, textHeight); x += widths[3];
+            AddSpecText(doc, layer, style, row.CurrentA.ToString("F2", inv), x + scale, y, textHeight); x += widths[4];
+            AddSpecText(doc, layer, style, row.PowerW.ToString("F1", inv), x + scale, y, textHeight);
         }
 
         double totalY = top - rowHeight * (table.Rows.Count + 1) - rowHeight / 2;
         x = origin.X;
-        AddSpecText(doc, layer, style, "합계", x + 1, totalY, textHeight);
+        AddSpecText(doc, layer, style, "합계", x + scale, totalY, textHeight);
         x += widths[0] + widths[1] + widths[2] + widths[3];
-        AddSpecText(doc, layer, style, table.TotalCurrentA.ToString("F2", inv), x + 1, totalY, textHeight); x += widths[4];
-        AddSpecText(doc, layer, style, table.TotalPowerW.ToString("F1", inv), x + 1, totalY, textHeight);
+        AddSpecText(doc, layer, style, table.TotalCurrentA.ToString("F2", inv), x + scale, totalY, textHeight); x += widths[4];
+        AddSpecText(doc, layer, style, table.TotalPowerW.ToString("F1", inv), x + scale, totalY, textHeight);
 
         AddSpecText(doc, layer, style,
-            "L: 가열부 길이(인출부 제외). 외부 리드 저항은 반영하지 않음.", origin.X, bottom - 7, 2.8);
+            "L: 가열부 길이(인출부 제외). 외부 리드 저항은 반영하지 않음.", origin.X, bottom - 7 * scale, 2.8 * scale);
         AddSpecText(doc, layer, style,
-            "R = rL, I = V/R, P = V²/(rL). AC RMS, 상온 일정 저항 기준.", origin.X, bottom - 12, 2.8);
+            "R = rL, I = V/R, P = V²/(rL). AC RMS, 상온 일정 저항 기준.", origin.X, bottom - 12 * scale, 2.8 * scale);
     }
 
     private static void AddSpecText(DxfDocument doc, Layer layer, TextStyle style,

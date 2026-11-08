@@ -535,13 +535,13 @@ bool DisplayWorkingRoutePieceNative(long long id,long long revision,int pieceId,
             if (connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
             g_ctx->Display(ais,Standard_False); g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost); g_ctx->Activate(ais,Standard_False);
             if(pieceId<0) {
-                auto route=g_routePieces.emplace(pieceId,RoutePieceOverlay{ais,connector,true,color,width,id,revision});
+                auto route=g_routePieces.emplace(pieceId,RoutePieceOverlay{ais,connector,true,color,width,id,revision,xyz});
                 if(!route.second) { g_ctx->Remove(ais,Standard_False); return false; }
                 try {
                     auto owner=g_stagedWorkingRouteOwners.emplace(pieceId,std::make_pair(id,revision));
                     if(!owner.second) { g_routePieces.erase(route.first); g_ctx->Remove(ais,Standard_False); return false; }
                 } catch(...) { g_routePieces.erase(pieceId); g_ctx->Remove(ais,Standard_False); throw; }
-            } else g_routePieces[pieceId]={ais,connector,true,color,width,id,revision};
+            } else g_routePieces[pieceId]={ais,connector,true,color,width,id,revision,xyz};
         }
         return true;
     } catch (...) { if (!ais.IsNull() && !g_ctx.IsNull()) g_ctx->Remove(ais,Standard_False); return false; }
@@ -706,6 +706,8 @@ bool StageProjectedWorkingRouteNative(long long id,long long revision,int stageI
             +" line "+std::to_string(g_stagedWorkingPolylines.count(stageId)));
     g_workingStageDiagnostic.clear();
     TopoDS_Wire wire; if(!BuildProjectedWorkingWire(id,revision,xyz,faces,direction,wire,result)) return false;
+    std::vector<double> shownXyz;
+    if(!SampleWireOrderedNative(wire,0.1,shownXyz)) return WorkingStageFail("sample-export-chain");
     Handle(AIS_Shape) ais;
     try {
         ais=new AIS_Shape(wire); std::string k=kind;
@@ -716,7 +718,7 @@ bool StageProjectedWorkingRouteNative(long long id,long long revision,int stageI
         g_ctx->SetColor(ais,color,Standard_False); g_ctx->SetWidth(ais,width,Standard_False);
         if(connector) ais->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
         g_ctx->Display(ais,Standard_False);g_ctx->SetZLayer(ais,Graphic3d_ZLayerId_Topmost);g_ctx->Activate(ais,Standard_False);
-        auto inserted=g_routePieces.emplace(stageId,RoutePieceOverlay{ais,connector,true,color,width,id,revision});
+        auto inserted=g_routePieces.emplace(stageId,RoutePieceOverlay{ais,connector,true,color,width,id,revision,shownXyz});
         if(!inserted.second) { g_ctx->Remove(ais,Standard_False); return WorkingStageFail("display-id-collision"); }
         try { if(!g_stagedWorkingRouteOwners.emplace(stageId,std::make_pair(id,revision)).second)
                 throw std::runtime_error("staged route owner collision"); }
@@ -948,7 +950,10 @@ bool StageSurfaceMappedRoutePieceNative(long long id, long long revision, int st
         g_ctx->Display(ais, Standard_False);
         g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
         g_ctx->Activate(ais, Standard_False);
-        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, connector, true, color, width, id, revision});
+        std::vector<double> shownXyz;
+        shownXyz.reserve(points.size() * 3);
+        for (const gp_Pnt& p : points) { shownXyz.push_back(p.X()); shownXyz.push_back(p.Y()); shownXyz.push_back(p.Z()); }
+        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, connector, true, color, width, id, revision, shownXyz});
         if (!inserted.second) { g_ctx->Remove(ais, Standard_False); return WorkingStageFail("display-id-collision"); }
         try { if (!g_stagedWorkingRouteOwners.emplace(stageId, std::make_pair(id, revision)).second)
                 throw std::runtime_error("staged route owner collision"); }
@@ -1029,7 +1034,10 @@ bool StageSurfaceMappedRoutePieceWithFacesNative(long long id, long long revisio
         g_ctx->Display(ais, Standard_False);
         g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
         g_ctx->Activate(ais, Standard_False);
-        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, turnKind, true, color, width, id, revision});
+        std::vector<double> shownXyz;
+        shownXyz.reserve(points.size()*3);
+        for(const gp_Pnt& p:points) { shownXyz.push_back(p.X()); shownXyz.push_back(p.Y()); shownXyz.push_back(p.Z()); }
+        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, turnKind, true, color, width, id, revision, shownXyz});
         if (!inserted.second) { g_ctx->Remove(ais, Standard_False); return WorkingStageFail("display-id-collision"); }
         try { if (!g_stagedWorkingRouteOwners.emplace(stageId, std::make_pair(id, revision)).second)
                 throw std::runtime_error("staged route owner collision"); }
@@ -1175,6 +1183,34 @@ bool CommitWorkingGeometryNative(long long contextId, long long revision, const 
         if (!CommitWorkingGeometryDeltaNative(contextId, revision, stagedRoutes, finalRoutes, stagedLines, {}, deleted)) return false;
     } catch (...) { return false; }
     if (!g_view.IsNull()) { try { g_view->Redraw(); } catch (...) { g_lastCommitRedrawFailed = true; } }
+    return true;
+}
+
+// 확정된 경로 조각의 표시 3D 체인을 요청 순서대로 읽는다. 읽기 전용이며
+// 어떤 재생성/재매핑도 하지 않는다. 하나라도 누락/staged/비활성/소유 불일치면
+// 부분 결과를 내보내지 않고 전체 실패(null)로 보고한다.
+bool GetCommittedRouteChainsNative(long long contextId, long long revision,
+    const std::vector<int>& pieceIds, std::vector<std::vector<double>>& out)
+{
+    out.clear();
+    if (pieceIds.empty() || !FindWorking(contextId, revision)) return false;
+    std::set<int> unique;
+    try {
+        out.reserve(pieceIds.size());
+        for (int id : pieceIds) {
+            if (id < 0 || !unique.insert(id).second) { out.clear(); return false; }
+            const auto it = g_routePieces.find(id);
+            if (it == g_routePieces.end()) { out.clear(); return false; }
+            const RoutePieceOverlay& piece = it->second;
+            if (piece.contextId != contextId || piece.revision != revision ||
+                !piece.enabled || piece.ais.IsNull() ||
+                piece.sourceXyz.size() < 6 || piece.sourceXyz.size() % 3 ||
+                g_stagedWorkingRouteOwners.count(id)) { out.clear(); return false; }
+            for (double value : piece.sourceXyz)
+                if (!std::isfinite(value)) { out.clear(); return false; }
+            out.push_back(piece.sourceXyz);
+        }
+    } catch (...) { out.clear(); return false; }
     return true;
 }
 

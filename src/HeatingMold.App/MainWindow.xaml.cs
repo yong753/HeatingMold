@@ -1583,37 +1583,6 @@ namespace HeatingMold.App
             return true;
         }
 
-        private List<DxfView> BuildViews()
-        {
-            var views = new List<DxfView>();
-            double[] x = Bridge.GetAutoAxis(0), y = Bridge.GetAutoAxis(1), z = Bridge.GetAutoAxis(2);
-            if (x == null || y == null || z == null) return views;
-            views.Add(BuildHlrView(z[0], z[1], z[2], x[0], x[1], x[2]));
-            views.Add(BuildHlrView(-z[0], -z[1], -z[2], x[0], x[1], x[2]));
-            views.Add(BuildHlrView(-y[0], -y[1], -y[2], x[0], x[1], x[2]));
-            views.Add(BuildHlrView(x[0], x[1], x[2], y[0], y[1], y[2]));
-            return views;
-        }
-
-        private DxfView BuildHlrView(double nx, double ny, double nz,
-                                     double xx, double xy, double xz)
-        {
-            var view = new DxfView();
-            Vec3 xAxis = new Vec3(xx, xy, xz).Normalized();
-
-            foreach (var pl in Bridge.HlrEdges(nx, ny, nz, xAxis.X, xAxis.Y, xAxis.Z, true))
-            {
-                var pts = new List<Vec2>(pl.Points.Length / 2);
-                for (int k = 0; k + 1 < pl.Points.Length; k += 2)
-                    pts.Add(new Vec2(pl.Points[k], pl.Points[k + 1]));
-                var poly = new DxfPolyline { Points = pts };
-                if (pl.Visible) view.VisibleEdges.Add(poly);
-                else view.HiddenEdges.Add(poly);
-            }
-
-            return view;
-        }
-
         private void Export_Click(object sender, RoutedEventArgs e)
         {
             if (!TryEnterBusy("DXF 내보내기")) return;
@@ -1631,7 +1600,7 @@ namespace HeatingMold.App
 
         /// <summary>
         /// DXF 저장의 공통 경로. explicitPath가 있으면 저장 대화상자만 생략하고
-        /// 검토/재검사/4투상/임시파일/원자적 교체 보호 로직은 그대로 공유한다.
+        /// 검토/재검사/작업평면 평면도/임시파일/원자적 교체 보호 로직은 그대로 공유한다.
         /// </summary>
         private ExportDxfResult ExportDxfCore(string explicitPath, out string error)
         {
@@ -1695,10 +1664,9 @@ namespace HeatingMold.App
                 if (!snapshot.CanExport)
                     throw new IOException("내보내기 조건이 바뀌었습니다 — " + snapshot.BlockReason);
 
-                var views = BuildViews();
-                if (views.Count != 4 || views.Any(v => v.VisibleEdges.Count == 0))
-                    throw new IOException(
-                        "금형 4방향 투상선을 만들지 못했습니다. 모델 로드 상태와 자동 축을 확인하세요.");
+                DxfView plan = BuildPlanExportView(snapshot, out string planError);
+                if (plan == null)
+                    throw new IOException(planError);
 
                 // 대화상자에서 동의한 시점의 대상 상태를 기록한다. 쓰기 직후 이 상태가
                 // 달라졌다면 사용자가 동의한 파일이 아니므로 덮어쓰지 않는다.
@@ -1716,7 +1684,7 @@ namespace HeatingMold.App
                 if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
                 // 최종 파일에 바로 쓰지 않는다. 기존 파일은 교체가 성공할 때까지 그대로 둔다.
-                if (!DxfExporter.ExportViews(temp, views, specTable: snapshot.Table))
+                if (!DxfExporter.ExportPlan(temp, plan, specTable: snapshot.Table))
                     throw new IOException("DXF 작성기가 저장을 완료하지 못했습니다.");
                 if (!File.Exists(temp) || new FileInfo(temp).Length == 0)
                     throw new IOException("DXF 임시 파일이 생성되지 않았습니다.");

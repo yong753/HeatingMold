@@ -176,9 +176,9 @@ public partial class MainWindow
             AutomationProperties.SetName(ElectricalSpecGrid, scopeLabel + " 전기 사양");
         if (ExportIncludeText != null)
             ExportIncludeText.Text = string.Format(
-                "포함: 전체 금형의 4방향 투상도·숨은선, {0} 전기 사양표.", scopeLabel);
+                "포함: 확정 작업평면 기준 금형 평면도·숨은선, {0} 발열경로·전기 사양표.", scopeLabel);
         string baseText = string.Format(
-            "내보내기 범위: {0} · 준비 {1}/{2}개 — 전기 사양표와 전체 모델 4투상/숨은선을 저장합니다. 가열 경로·3D STEP·세션은 포함되지 않습니다.",
+            "내보내기 범위: {0} · 준비 {1}/{2}개 — 확정 작업평면 기준 평면도와 발열경로·전기 사양표를 저장합니다. 다른 방향 투상·3D STEP·세션은 포함되지 않습니다.",
             scope, snapshot.ReadyCount, snapshot.RequestedCount);
         ExportScopeText.Text = snapshot.CanExport
             ? baseText

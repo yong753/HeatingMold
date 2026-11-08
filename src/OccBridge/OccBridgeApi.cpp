@@ -309,6 +309,9 @@ namespace
     struct RoutePieceOverlay {
         Handle(AIS_Shape) ais; bool connector; bool enabled; Quantity_Color color; double width;
         long long contextId = 0, revision = 0;
+        // 확정 표시에 실제로 사용한 순서 보존 3D 점 체인. 내보내기는 AIS 형상에서
+        // topology를 다시 추론하지 않고 이 체인을 그대로 사용한다.
+        std::vector<double> sourceXyz;
     };
     std::map<int, RoutePieceOverlay> g_routePieces;
     struct StagedWorkingPolyline { Handle(AIS_Shape) ais; long long contextId, revision; };
@@ -2020,6 +2023,57 @@ namespace
 
     // ================= 오버레이 natives (S3) =================
 
+    // 표시 wire의 순서를 유지한 채 3D 점 체인을 만든다. Edge 방향(TopAbs_REVERSED)을
+    // 반영하고 연속 중복점만 제거한다. 내보내기는 이 체인을 재사용해야 하므로
+    // 실패하면 표시 자체를 만들지 않는 호출측 정책을 따른다.
+    bool SampleWireOrderedNative(const TopoDS_Wire& wire, double deflection,
+        std::vector<double>& out)
+    {
+        out.clear();
+        if (wire.IsNull() || !std::isfinite(deflection) || deflection <= 0) return false;
+        try
+        {
+            auto append = [&out](const gp_Pnt& p) {
+                if (out.size() >= 3)
+                {
+                    const double dx = p.X() - out[out.size() - 3];
+                    const double dy = p.Y() - out[out.size() - 2];
+                    const double dz = p.Z() - out[out.size() - 1];
+                    if (dx * dx + dy * dy + dz * dz <= 1e-14) return;
+                }
+                out.push_back(p.X()); out.push_back(p.Y()); out.push_back(p.Z());
+            };
+            auto appendChecked = [&append, &out](const gp_Pnt& p) {
+                if (!std::isfinite(p.X()) || !std::isfinite(p.Y()) || !std::isfinite(p.Z()))
+                {
+                    out.clear();
+                    return false;
+                }
+                append(p);
+                return true;
+            };
+            for (BRepTools_WireExplorer ex(wire); ex.More(); ex.Next())
+            {
+                BRepAdaptor_Curve curve(ex.Current());
+                GCPnts_QuasiUniformDeflection sampler(curve, deflection);
+                if (!sampler.IsDone() || sampler.NbPoints() < 2) { out.clear(); return false; }
+                if (ex.Current().Orientation() == TopAbs_REVERSED)
+                {
+                    for (Standard_Integer i = sampler.NbPoints(); i >= 1; --i)
+                        if (!appendChecked(sampler.Value(i))) return false;
+                }
+                else
+                {
+                    for (Standard_Integer i = 1; i <= sampler.NbPoints(); ++i)
+                        if (!appendChecked(sampler.Value(i))) return false;
+                }
+            }
+            if (out.size() < 6) { out.clear(); return false; }
+            return true;
+        }
+        catch (...) { out.clear(); return false; }
+    }
+
     bool ProjectRoutePieceNative(int pieceId, const std::string& kind, const std::vector<double>& xyz,
         const std::vector<int>& faceIds, const gp_Dir& direction, double depth, double* result)
     {
@@ -2074,13 +2128,38 @@ namespace
             auto transverseDistance = [&direction](const gp_Pnt& p, const gp_Pnt& q) {
                 gp_Vec v(p, q); return (v - gp_Vec(direction) * v.Dot(gp_Vec(direction))).Magnitude();
             };
-            // OCCT may reverse the resulting wire. Results must follow the source route order.
-            if (transverseDistance(a, sourceA) > 0.01 || transverseDistance(b, sourceB) > 0.01) std::swap(a, b);
+            // OCCT may reverse the resulting wire. Results and the preserved export chain
+            // must both follow the source route order.
+            bool reversed = false;
+            if (transverseDistance(a, sourceA) > 0.01 || transverseDistance(b, sourceB) > 0.01)
+            {
+                std::swap(a, b);
+                reversed = true;
+            }
             if (transverseDistance(a, sourceA) > 0.01 || transverseDistance(b, sourceB) > 0.01) return false;
             const gp_Vec offset = gp_Vec(direction) * depth;
             const gp_Pnt shownA = a.Translated(offset), shownB = b.Translated(offset);
             result[0] = props.Mass(); result[1] = shownA.X(); result[2] = shownA.Y(); result[3] = shownA.Z();
             result[4] = shownB.X(); result[5] = shownB.Y(); result[6] = shownB.Z();
+            // 표시 wire를 그대로 샘플링해 깊이 이동까지 반영한 3D 체인을 보존한다.
+            std::vector<double> shownXyz;
+            if (!SampleWireOrderedNative(wires.front(), 0.1, shownXyz)) return false;
+            if (depth > 0)
+            {
+                const gp_Vec shift = gp_Vec(direction) * depth;
+                for (size_t i = 0; i + 2 < shownXyz.size(); i += 3) {
+                    shownXyz[i] += shift.X(); shownXyz[i + 1] += shift.Y(); shownXyz[i + 2] += shift.Z();
+                }
+            }
+            if (reversed)
+            {
+                for (size_t lo = 0, hi = shownXyz.size() - 3; lo < hi; lo += 3, hi -= 3)
+                {
+                    std::swap(shownXyz[lo], shownXyz[hi]);
+                    std::swap(shownXyz[lo + 1], shownXyz[hi + 1]);
+                    std::swap(shownXyz[lo + 2], shownXyz[hi + 2]);
+                }
+            }
             std::string normalizedKind = kind;
             std::transform(normalizedKind.begin(), normalizedKind.end(), normalizedKind.begin(),
                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -2099,7 +2178,7 @@ namespace
                 g_ctx->Display(ais, Standard_False); g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
                 // Every run and connector remains selectable for circuit hover.
                 g_ctx->Activate(ais, Standard_False);
-                g_routePieces[pieceId] = { ais, connector, true, color, width };
+                g_routePieces[pieceId] = { ais, connector, true, color, width, 0, 0, shownXyz };
             }
             return true;
         } catch (const Standard_Failure&) { return false; }
@@ -3319,7 +3398,7 @@ namespace
     struct NativeHlrLine { bool visible; std::vector<double> pts; };
 
     void CollectHlrEdges(const TopoDS_Shape& shape, bool visible,
-                         std::vector<NativeHlrLine>& out, double deflection)
+                         std::vector<NativeHlrLine>& out, double deflection, bool& failed)
     {
         if (shape.IsNull()) return;
         for (TopExp_Explorer ex(shape, TopAbs_EDGE); ex.More(); ex.Next())
@@ -3330,18 +3409,35 @@ namespace
             {
                 BRepAdaptor_Curve curve(edge);
                 GCPnts_QuasiUniformDeflection sampler(curve, deflection);
-                if (!sampler.IsDone() || sampler.NbPoints() < 2) continue;
+                // 부분 투상선을 성공으로 저장하지 않는다.
+                if (!sampler.IsDone() || sampler.NbPoints() < 2)
+                {
+                    failed = true;
+                    out.clear();
+                    return;
+                }
                 NativeHlrLine line;
                 line.visible = visible;
                 for (Standard_Integer i = 1; i <= sampler.NbPoints(); ++i)
                 {
                     const gp_Pnt p = curve.Value(sampler.Parameter(i));
+                    if (!std::isfinite(p.X()) || !std::isfinite(p.Y()))
+                    {
+                        failed = true;
+                        out.clear();
+                        return;
+                    }
                     line.pts.push_back(p.X());
                     line.pts.push_back(p.Y());
                 }
                 out.push_back(line);
             }
-            catch (const Standard_Failure&) { }
+            catch (const Standard_Failure&)
+            {
+                failed = true;
+                out.clear();
+                return;
+            }
         }
     }
 
@@ -3368,14 +3464,21 @@ namespace
 
         HLRBRep_HLRToShape hlr(algo);
         const double defl = 1.0;
-        CollectHlrEdges(hlr.VCompound(), true, out, defl);
-        CollectHlrEdges(hlr.Rg1LineVCompound(), true, out, defl);
-        CollectHlrEdges(hlr.OutLineVCompound(), true, out, defl);
+        bool failed = false;
+        CollectHlrEdges(hlr.VCompound(), true, out, defl, failed);
+        if (failed) return {};
+        CollectHlrEdges(hlr.Rg1LineVCompound(), true, out, defl, failed);
+        if (failed) return {};
+        CollectHlrEdges(hlr.OutLineVCompound(), true, out, defl, failed);
+        if (failed) return {};
         if (hiddenToo)
         {
-            CollectHlrEdges(hlr.HCompound(), false, out, defl);
-            CollectHlrEdges(hlr.Rg1LineHCompound(), false, out, defl);
-            CollectHlrEdges(hlr.OutLineHCompound(), false, out, defl);
+            CollectHlrEdges(hlr.HCompound(), false, out, defl, failed);
+            if (failed) return {};
+            CollectHlrEdges(hlr.Rg1LineHCompound(), false, out, defl, failed);
+            if (failed) return {};
+            CollectHlrEdges(hlr.OutLineHCompound(), false, out, defl, failed);
+            if (failed) return {};
         }
         return out;
     }
@@ -3491,6 +3594,23 @@ RoutePieceResult^ Bridge::DisplayWorkingRoutePiece(long long id,long long revisi
         if (!DisplayWorkingRoutePieceNative(id,revision,pieceId,msclr::interop::marshal_as<std::string>(kind),xyz,data)) return nullptr;
         auto result=gcnew RoutePieceResult(); result->Length=data[0];
         result->Start=gcnew array<double>{data[1],data[2],data[3]}; result->End=gcnew array<double>{data[4],data[5],data[6]};
+        return result;
+    } catch (...) { return nullptr; }
+}
+array<array<double>^>^ Bridge::GetCommittedRouteChains(long long id,long long revision,array<int>^ pieceIds)
+{
+    if (pieceIds==nullptr || pieceIds->Length==0) return nullptr;
+    try {
+        std::vector<int> ids; ids.reserve(pieceIds->Length);
+        for each(int pieceId in pieceIds) ids.push_back(pieceId);
+        std::vector<std::vector<double>> chains;
+        if (!GetCommittedRouteChainsNative(id,revision,ids,chains) || chains.size()!=ids.size()) return nullptr;
+        auto result=gcnew array<array<double>^>(static_cast<int>(chains.size()));
+        for (size_t i=0;i<chains.size();++i) {
+            auto points=gcnew array<double>(static_cast<int>(chains[i].size()));
+            for (size_t k=0;k<chains[i].size();++k) points[static_cast<int>(k)]=chains[i][k];
+            result[static_cast<int>(i)]=points;
+        }
         return result;
     } catch (...) { return nullptr; }
 }
