@@ -105,10 +105,10 @@ static class SidebarTabChecks
         viewport.VertexEditMode = true;
         Invoke(window, "UpdateActionStates");
         Check(!excludeBox.IsEnabled, "vertex edit locks the exclude control");
-        viewport.ConnectorEditMode = true;
+        viewport.VertexEditMode = true;
         tabs.SelectedIndex = 0;
-        Check(!viewport.VertexEditMode && !viewport.ConnectorEditMode,
-            "leaving the path tab exits transient vertex/connector modes");
+        Check(!viewport.VertexEditMode,
+            "leaving the path tab exits transient vertex mode");
         Check(viewport.FaceSelectionEnabled,
             "returning to the area tab restores face selection");
         tabs.SelectedIndex = 1;

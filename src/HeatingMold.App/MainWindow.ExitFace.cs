@@ -364,8 +364,6 @@ public partial class MainWindow
         if (Viewport == null || !Viewport.IsReady) return;
 
         // 다른 뷰포트 편집 모드와 상호 배타.
-        Viewport.ConnectorEditMode = false;
-        if (ConnectorEditModeBox != null) ConnectorEditModeBox.IsChecked = false;
         CancelPowerSetup();
         ExitExclusionSketch();
         Viewport.RectangleSelectionMode = false;

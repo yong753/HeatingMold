@@ -70,26 +70,16 @@ public sealed record SerpentineComponentsResult(
         new(Array.Empty<IReadOnlyList<SerpentineRoutePiece>>(), reason);
 }
 
-/// <summary>Pure topology projection of route pieces. Disabling a turn separates the route;</summary>
-/// <summary>fixed same-lane connectors are never editable and remain in their component.</summary>
+/// <summary>Pure topology projection of route pieces into one continuous polyline.</summary>
 public static class SerpentineTopology
 {
     public static IReadOnlyList<IReadOnlyList<Vec2>> Compute(
-        IReadOnlyList<SerpentineRoutePiece> pieces, IReadOnlyList<bool>? turnEnabled = null)
+        IReadOnlyList<SerpentineRoutePiece> pieces)
     {
-        if (turnEnabled != null && turnEnabled.Count != pieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector))
-            throw new ArgumentException("One enabled state is required per turn connector", nameof(turnEnabled));
         var components = new List<IReadOnlyList<Vec2>>();
         var current = new List<Vec2>();
-        int turn = 0;
         foreach (var piece in pieces)
         {
-            bool enabled = piece.Kind != SerpentineRoutePieceKind.TurnConnector || turnEnabled == null || turnEnabled[turn++];
-            if (!enabled)
-            {
-                if (current.Count > 0) { components.Add(current); current = new List<Vec2>(); }
-                continue;
-            }
             if (piece.Points.Count == 0) continue;
             if (current.Count == 0) current.AddRange(piece.Points);
             else current.AddRange(piece.Points.Skip(current[^1] == piece.Points[0] ? 1 : 0));

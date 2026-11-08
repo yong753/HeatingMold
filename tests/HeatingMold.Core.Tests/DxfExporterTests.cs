@@ -257,4 +257,146 @@ public class DxfExporterTests
         Assert.Equal(new Vec2(0, 0), projected[0]);
         Assert.Equal(new Vec2(10, 0), projected[1]);
     }
+
+    [Fact]
+    public void ExportPlan_WritesClosedHeatAreaOnDedicatedLayer()
+    {
+        var view = new DxfView();
+        view.VisibleEdges.Add(new DxfPolyline
+        {
+            Points = new[]
+            {
+                new Vec2(0, 0), new Vec2(1200, 0), new Vec2(1200, 600), new Vec2(0, 600)
+            },
+            Closed = true
+        });
+        view.HeatAreas.Add(new DxfPolyline
+        {
+            Points = new[]
+            {
+                new Vec2(10, 20), new Vec2(1190, 20), new Vec2(1190, 580), new Vec2(10, 580)
+            },
+            Closed = true
+        });
+
+        string path = Path.Combine(Path.GetTempPath(),
+            "hm_heat_area_" + Guid.NewGuid().ToString("N") + ".dxf");
+        try
+        {
+            Assert.True(DxfExporter.ExportPlan(path, view));
+
+            DxfDocument doc = DxfDocument.Load(path);
+            Assert.True(doc.Layers.Contains(DxfExporter.HeatAreaLayer));
+
+            Polyline2D area = Assert.Single(doc.Entities.All.OfType<Polyline2D>()
+                .Where(p => p.Layer.Name == DxfExporter.HeatAreaLayer));
+            Assert.True(area.IsClosed);
+            Assert.Equal(4, area.Vertexes.Count);
+            Assert.Equal(10, area.Vertexes[0].Position.X, 6);
+            Assert.Equal(20, area.Vertexes[0].Position.Y, 6);
+            Assert.Equal(1190, area.Vertexes[2].Position.X, 6);
+            Assert.Equal(580, area.Vertexes[2].Position.Y, 6);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void ExportPlan_WritesEachHeatAreaWithItsOwnColor()
+    {
+        var table = ElectricalSpecTableBuilder.Build(
+            new[] { new ElectricalCircuitInput("A-1", 20000) },
+            HeatingWireSpec.Case1, new PowerSupplySpec());
+        var view = new DxfView();
+        view.VisibleEdges.Add(new DxfPolyline
+        {
+            Points = new[]
+            {
+                new Vec2(0, 0), new Vec2(1200, 0), new Vec2(1200, 600), new Vec2(0, 600)
+            },
+            Closed = true
+        });
+        view.HeatAreas.Add(new DxfPolyline
+        {
+            Points = new[]
+            {
+                new Vec2(10, 20), new Vec2(590, 20), new Vec2(590, 580), new Vec2(10, 580)
+            },
+            Closed = true,
+            Color = new AciColor(255, 0, 0)
+        });
+        view.HeatAreas.Add(new DxfPolyline
+        {
+            Points = new[]
+            {
+                new Vec2(610, 20), new Vec2(1190, 20), new Vec2(1190, 580), new Vec2(610, 580)
+            },
+            Closed = true,
+            Color = new AciColor(0, 0, 255)
+        });
+
+        string path = Path.Combine(Path.GetTempPath(),
+            "hm_heat_area_color_" + Guid.NewGuid().ToString("N") + ".dxf");
+        try
+        {
+            Assert.True(DxfExporter.ExportPlan(path, view, table));
+
+            DxfDocument doc = DxfDocument.Load(path);
+            List<Polyline2D> areas = doc.Entities.All.OfType<Polyline2D>()
+                .Where(p => p.Layer.Name == DxfExporter.HeatAreaLayer).ToList();
+            Assert.Equal(2, areas.Count);
+
+            Polyline2D red = areas.Single(a =>
+                a.Color.R == 255 && a.Color.G == 0 && a.Color.B == 0);
+            Polyline2D blue = areas.Single(a =>
+                a.Color.R == 0 && a.Color.G == 0 && a.Color.B == 255);
+            Assert.Equal(10, red.Vertexes[0].Position.X, 6);
+            Assert.Equal(610, blue.Vertexes[0].Position.X, 6);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void ExportPlan_PlacesVerticalDimensionOnLeftWithReadableText()
+    {
+        var view = new DxfView();
+        view.VisibleEdges.Add(new DxfPolyline
+        {
+            Points = new[]
+            {
+                new Vec2(0, 0), new Vec2(1200, 0), new Vec2(1200, 600), new Vec2(0, 600)
+            },
+            Closed = true
+        });
+
+        string path = Path.Combine(Path.GetTempPath(),
+            "hm_plan_dim_" + Guid.NewGuid().ToString("N") + ".dxf");
+        try
+        {
+            Assert.True(DxfExporter.ExportPlan(path, view));
+
+            DxfDocument doc = DxfDocument.Load(path);
+            List<AlignedDimension> dims = doc.Entities.All.OfType<AlignedDimension>().ToList();
+            Assert.Equal(2, dims.Count);
+
+            AlignedDimension vertical = dims.Single(d => Math.Abs(d.Measurement - 600) < 1e-6);
+            AlignedDimension horizontal = dims.Single(d => Math.Abs(d.Measurement - 1200) < 1e-6);
+
+            Assert.All(dims, d => Assert.Equal(20.0, d.Style.TextHeight, 6));
+
+            // 세로 치수선은 금형 왼쪽(minX - 20)에 있고 보조선은 오른쪽으로 뻗는다.
+            Assert.Equal(-20.0, vertical.DimLinePosition.X, 6);
+            // 기존 가로 치수선은 금형 아래에 유지된다.
+            Assert.Equal(-20.0, horizontal.DimLinePosition.Y, 6);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
 }

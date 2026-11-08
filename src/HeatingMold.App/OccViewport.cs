@@ -171,13 +171,7 @@ namespace HeatingMold.App
         private bool _rectPreviewPending;
         private bool _rectPreviewSession;
         private int _rectPreviewX, _rectPreviewY;
-        private bool _connectorEditMode;
         private bool _circuitHoverMode;
-        public bool ConnectorEditMode
-        {
-            get => _connectorEditMode;
-            set { if (_connectorEditMode == value) return; _connectorEditMode = value; if (!value) ConnectorHovered?.Invoke(-1); }
-        }
         public bool CircuitHoverMode
         {
             get => _circuitHoverMode;
@@ -208,9 +202,7 @@ namespace HeatingMold.App
         public event Action<int, int, int, int> ExclusionSketchMoved;
         public event Action<int, int, int, int> ExclusionSketchCompleted;
         public event Action ExclusionSketchCancelled;
-        public event Action<int> ConnectorHovered;
         public event Action<int> RoutePieceHovered;
-        public event Action<int> ConnectorPicked;
         public event Action<int, int> PowerLocationPicked;
         public event Action<int, int> PowerLocationMoved;
         public event Action<int, int> ExitFacePicked;
@@ -782,10 +774,6 @@ namespace HeatingMold.App
                         // Do not highlight/select faces or connectors while choosing destinations.
                         QueuePowerLocationPreview(x, y);
                     }
-                    else if (_ready && ConnectorEditMode)
-                    {
-                        ConnectorHovered?.Invoke(Bridge.PickConnector(x, y));
-                    }
                     else if (_ready && CircuitHoverMode)
                     {
                         RoutePieceHovered?.Invoke(Bridge.PickRoutePiece(x, y));
@@ -806,7 +794,6 @@ namespace HeatingMold.App
                     CancelPowerLeadPreview();
                     _trackingMouse = false;
                     Bridge.ClearHover();
-                    ConnectorHovered?.Invoke(-1);
                     RoutePieceHovered?.Invoke(-1);
                     if (VertexEditMode)
                     {
@@ -860,10 +847,6 @@ namespace HeatingMold.App
                         {
                             CancelPowerLeadPreview();
                             PowerLocationPicked?.Invoke(LoWord(lParam), HiWord(lParam));
-                        }
-                        else if (_activeDragMode == 0 && ConnectorEditMode)
-                        {
-                            ConnectorPicked?.Invoke(Bridge.PickConnector(LoWord(lParam), HiWord(lParam)));
                         }
                         else if (_activeDragMode == 0 && FaceSelectionEnabled)
                         {

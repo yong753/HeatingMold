@@ -10,18 +10,23 @@ namespace HeatingMold.Export;
 
 /// <summary>
 /// S3 — 투영 2D(면 중심 법선 정사영) 기반 DXF 내보내기.
-/// 레이어: MOLD_OUTLINE(면 경계) / HEAT_WIRE(사행, 선폭) / DIMENSION(치수).
+/// 레이어: MOLD_OUTLINE(면 경계) / HEAT_AREA(발열영역) / HEAT_WIRE(사행, 선폭) / DIMENSION(치수).
 /// </summary>
 public static class DxfExporter
 {
     public const string MoldOutlineLayer = "MOLD_OUTLINE";
     public const string HeatWireLayer = "HEAT_WIRE";
+    public const string HeatAreaLayer = "HEAT_AREA";
     public const string DimensionLayer = "DIMENSION";
 
     public const string HiddenLayer = "HIDDEN_LINE";
     public const string ElectricalSpecLayer = "ELECTRICAL_SPEC";
 
     private const string ElectricalSpecTextStyle = "ELECTRICAL_SPEC_TEXT";
+    private const string DimensionStyleName = "HEATINGMOLD_DIM";
+
+    /// <summary>치수 문자 높이(mm).</summary>
+    private const double DimensionTextHeight = 20.0;
 
     /// <summary>
     /// 표 배율 기준이 되는 모델 최대 치수(mm). 200mm당 1배.
@@ -40,7 +45,8 @@ public static class DxfExporter
         double gap = 60, double dimOffset = 20, ElectricalSpecTable? specTable = null)
     {
         var doc = CreateDocument(specTable, out Layer moldLayer, out Layer hiddenLayer,
-            out Layer heatLayer, out Layer dimLayer, out Layer? specLayer, out TextStyle? specStyle);
+            out Layer heatLayer, out Layer heatAreaLayer, out Layer dimLayer, out Layer? specLayer,
+            out TextStyle? specStyle, out DimensionStyle dimStyle);
 
         double cursorX = 0;
         double contentMaxY = 0;
@@ -55,6 +61,7 @@ public static class DxfExporter
             double maxY = all.SelectMany(p => p.Points).Max(v => v.Y);
             var off = new Vec2(cursorX - minX, -minY);
 
+            AddPolylines(doc, view.HeatAreas, heatAreaLayer, off);
             AddPolylines(doc, view.VisibleEdges, moldLayer, off);
             AddPolylines(doc, view.HiddenEdges, hiddenLayer, off);
             AddPolylines(doc, view.HeatBands, heatLayer, off);
@@ -63,10 +70,11 @@ public static class DxfExporter
             double w = maxX - minX, h = maxY - minY;
             var wDim = new LinearDimension(
                 new Vector2(minX + off.X, minY + off.Y),
-                new Vector2(maxX + off.X, minY + off.Y), -dimOffset, 0) { Layer = dimLayer };
+                new Vector2(maxX + off.X, minY + off.Y), -dimOffset, 0, dimStyle) { Layer = dimLayer };
+            // 회전 90°에서 기준선이 아래→위이므로 양수 offset이 금형 왼쪽을 가리킨다.
             var hDim = new LinearDimension(
                 new Vector2(minX + off.X, minY + off.Y),
-                new Vector2(minX + off.X, maxY + off.Y), -dimOffset, 90) { Layer = dimLayer };
+                new Vector2(minX + off.X, maxY + off.Y), dimOffset, 90, dimStyle) { Layer = dimLayer };
             doc.Entities.Add(wDim);
             doc.Entities.Add(hDim);
 
@@ -96,7 +104,8 @@ public static class DxfExporter
         if (all.Count == 0) return false;
 
         var doc = CreateDocument(specTable, out Layer moldLayer, out Layer hiddenLayer,
-            out Layer heatLayer, out Layer dimLayer, out Layer? specLayer, out TextStyle? specStyle);
+            out Layer heatLayer, out Layer heatAreaLayer, out Layer dimLayer, out Layer? specLayer,
+            out TextStyle? specStyle, out DimensionStyle dimStyle);
 
         double minX = all.Min(v => v.X);
         double minY = all.Min(v => v.Y);
@@ -104,6 +113,7 @@ public static class DxfExporter
         double maxY = all.Max(v => v.Y);
 
         var off = new Vec2(0, 0);
+        AddPolylines(doc, view.HeatAreas, heatAreaLayer, off);
         AddPolylines(doc, view.VisibleEdges, moldLayer, off);
         AddPolylines(doc, view.HiddenEdges, hiddenLayer, off);
         AddPolylines(doc, view.HeatBands, heatLayer, off);
@@ -119,9 +129,10 @@ public static class DxfExporter
             double moldMaxX = outline.Max(v => v.X);
             double moldMaxY = outline.Max(v => v.Y);
             doc.Entities.Add(new LinearDimension(
-                new Vector2(moldMinX, moldMinY), new Vector2(moldMaxX, moldMinY), -dimOffset, 0) { Layer = dimLayer });
+                new Vector2(moldMinX, moldMinY), new Vector2(moldMaxX, moldMinY), -dimOffset, 0, dimStyle) { Layer = dimLayer });
+            // 회전 90°에서 기준선이 아래→위이므로 양수 offset이 금형 왼쪽을 가리킨다.
             doc.Entities.Add(new LinearDimension(
-                new Vector2(moldMinX, moldMinY), new Vector2(moldMinX, moldMaxY), -dimOffset, 90) { Layer = dimLayer });
+                new Vector2(moldMinX, moldMinY), new Vector2(moldMinX, moldMaxY), dimOffset, 90, dimStyle) { Layer = dimLayer });
         }
 
         // 표는 모델 좌표와 같은 mm 단위이므로, 큰 모델에서 고정 크기로 두면
@@ -144,17 +155,23 @@ public static class DxfExporter
     }
 
     private static DxfDocument CreateDocument(ElectricalSpecTable? specTable,
-        out Layer moldLayer, out Layer hiddenLayer, out Layer heatLayer, out Layer dimLayer,
-        out Layer? specLayer, out TextStyle? specStyle)
+        out Layer moldLayer, out Layer hiddenLayer, out Layer heatLayer, out Layer heatAreaLayer,
+        out Layer dimLayer, out Layer? specLayer, out TextStyle? specStyle, out DimensionStyle dimStyle)
     {
         var doc = specTable == null ? new DxfDocument() : new DxfDocument(DxfVersion.AutoCad2010);
         moldLayer = new Layer(MoldOutlineLayer) { Color = AciColor.Cyan };
         hiddenLayer = new Layer(HiddenLayer) { Color = new AciColor(8) };
         heatLayer = new Layer(HeatWireLayer) { Color = AciColor.Red };
+        heatAreaLayer = new Layer(HeatAreaLayer) { Color = AciColor.Default };
         dimLayer = new Layer(DimensionLayer) { Color = AciColor.Yellow };
+        // netDxf 기본 치수 스타일의 문자 높이는 0.18이라 사실상 읽을 수 없다.
+        // 제품 평면도 기준으로 20mm 높이의 전용 스타일을 사용한다.
+        dimStyle = new DimensionStyle(DimensionStyleName) { TextHeight = DimensionTextHeight };
+        doc.DimensionStyles.Add(dimStyle);
         doc.Layers.Add(moldLayer);
         doc.Layers.Add(hiddenLayer);
         doc.Layers.Add(heatLayer);
+        doc.Layers.Add(heatAreaLayer);
         doc.Layers.Add(dimLayer);
 
         specLayer = null;
@@ -261,6 +278,7 @@ public static class DxfExporter
             var poly = new Polyline2D(
                 pl.Points.Select(v => new Vector2(v.X + off.X, v.Y + off.Y)),
                 isClosed: pl.Closed) { Layer = layer };
+            if (pl.Color != null) poly.Color = pl.Color;
             doc.Entities.Add(poly);
         }
     }
@@ -271,13 +289,17 @@ public sealed class DxfPolyline
 {
     public IReadOnlyList<Vec2> Points { get; init; } = Array.Empty<Vec2>();
     public bool Closed { get; init; }
+
+    /// <summary>엔티티 색상. null이면 ByLayer 색상을 사용한다.</summary>
+    public AciColor? Color { get; set; }
 }
 
-/// <summary>One DXF view: visible / hidden / heat polylines.</summary>
+/// <summary>One DXF view: visible / hidden / heat-area / heat polylines.</summary>
 public sealed class DxfView
 {
     public List<DxfPolyline> VisibleEdges { get; } = new();
     public List<DxfPolyline> HiddenEdges { get; } = new();
+    public List<DxfPolyline> HeatAreas { get; } = new();
     public List<DxfPolyline> HeatLines { get; } = new();
     public List<DxfPolyline> HeatBands { get; } = new();
 
@@ -285,6 +307,7 @@ public sealed class DxfView
     {
         foreach (var p in VisibleEdges) yield return p;
         foreach (var p in HiddenEdges) yield return p;
+        foreach (var p in HeatAreas) yield return p;
         foreach (var p in HeatBands) yield return p;
         foreach (var p in HeatLines) yield return p;
     }

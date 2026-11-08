@@ -36,7 +36,6 @@ namespace HeatingMold.App
             "작업영역 선택·확정",
             "인출면·시작/종료점 선택",
             "발열경로 생성",
-            "회로 분할",
             "전기 사양 확인",
             "DXF 저장·재읽기"
         };
@@ -211,9 +210,8 @@ namespace HeatingMold.App
                 case 1: return Task.FromResult(StepSelectArea());
                 case 2: return Task.FromResult(StepSelectExitAndAnchor());
                 case 3: return Task.FromResult(StepGeneratePattern());
-                case 4: return Task.FromResult(StepSplitCircuit());
-                case 5: return Task.FromResult(StepCheckElectrical());
-                case 6: return StepExportDxfAsync();
+                case 4: return Task.FromResult(StepCheckElectrical());
+                case 5: return StepExportDxfAsync();
                 default: return Task.FromResult(VisualStepOutcome.Fail("알 수 없는 단계 번호입니다: " + index));
             }
         }
@@ -238,8 +236,6 @@ namespace HeatingMold.App
                 case "pickExit": return VisualPickExit(step.Spec, scenario);
                 case "cancelExitPick": return VisualCancelExitPick(step.Spec);
                 case "generate": return VisualGenerate(step.Spec, scenario);
-                case "splitTurn": return VisualToggleTurn(step.Spec, enable: false);
-                case "mergeTurn": return VisualToggleTurn(step.Spec, enable: true);
                 case "checkArea": return VisualCheckArea(step.Spec, scenario);
                 case "checkAllAreas": return VisualCheckAllAreas(step.Spec, scenario);
                 case "addExclusion": return VisualAddExclusion(step.Spec, scenario);
@@ -595,57 +591,6 @@ namespace HeatingMold.App
             return VisualStepOutcome.Ok("발열경로 생성·검증", data);
         }
 
-        private VisualStepOutcome VisualToggleTurn(VisualActionSpec spec, bool enable)
-        {
-            Require(spec.TurnIndex != null && spec.TurnIndex.Value >= 0, "turnIndex가 필요합니다.");
-            WorkingArea area = ResolveVisualArea(spec.Area);
-            ActivateArea(area);
-            RefreshAreaList();
-            SidebarTabs.SelectedIndex = PatternTabIndex;
-            Require(area.Pattern != null, "발열경로가 없습니다.");
-            Require(!IsPatternInputStale(area), "stale 상태에서는 연결구간을 바꿀 수 없습니다.");
-
-            ConnectorEditModeBox.IsChecked = true;
-            Require(Viewport.ConnectorEditMode, "회로 분할 편집 모드가 켜지지 않았습니다.");
-
-            int turnOrdinal = 0;
-            int routeIndex = -1;
-            for (int i = 0; i < area.Pattern.RoutePieces.Count; i++)
-            {
-                if (area.Pattern.RoutePieces[i].Kind != SerpentineRoutePieceKind.TurnConnector) continue;
-                if (turnOrdinal == spec.TurnIndex.Value) { routeIndex = i; break; }
-                turnOrdinal++;
-            }
-            Require(routeIndex >= 0, "TurnConnector 순번을 찾지 못했습니다: " + spec.TurnIndex.Value);
-            Require(area.TurnEnabled.Count == area.Pattern.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector),
-                "TurnEnabled 수가 연결구간 수와 다릅니다.");
-
-            int circuitsBefore = GetCircuitLengths(area).Count;
-            if (enable)
-                Require(!area.TurnEnabled[turnOrdinal], "재연결할 연결구간이 이미 활성입니다.");
-            else
-                Require(area.TurnEnabled[turnOrdinal], "분할할 연결구간이 이미 비활성입니다.");
-
-            int nativeId = area.NativePieceIds[routeIndex];
-            OnConnectorPicked(nativeId);
-
-            Require(area.TurnEnabled[turnOrdinal] == enable, "연결구간 상태가 요청과 다릅니다. " + StatusText.Text);
-            int circuitsAfter = GetCircuitLengths(area).Count;
-            if (enable) Require(circuitsAfter == circuitsBefore - 1, "재연결 후 회로 수가 줄지 않았습니다.");
-            else Require(circuitsAfter == circuitsBefore + 1, "분할 후 회로 수가 늘지 않았습니다.");
-
-            var data = new Dictionary<string, string>
-            {
-                ["alias"] = spec.Area,
-                ["turnIndex"] = spec.TurnIndex.Value.ToString(CultureInfo.InvariantCulture),
-                ["nativePieceId"] = nativeId.ToString(CultureInfo.InvariantCulture),
-                ["enabled"] = enable.ToString(),
-                ["circuitsBefore"] = circuitsBefore.ToString(CultureInfo.InvariantCulture),
-                ["circuitsAfter"] = circuitsAfter.ToString(CultureInfo.InvariantCulture)
-            };
-            return VisualStepOutcome.Ok(enable ? "연결구간 재연결" : "연결구간 분할", data);
-        }
-
         private VisualStepOutcome VisualCheckArea(VisualActionSpec spec, VisualScenario scenario)
         {
             VisualAreaDefinition definition = RequireAreaDefinition(scenario, spec.Area);
@@ -665,7 +610,6 @@ namespace HeatingMold.App
 
             var pieces = 0;
             var turns = 0;
-            var disabled = 0;
             var lengthTotal = 0.0;
             var checkedAliases = new List<string>();
 
@@ -677,8 +621,7 @@ namespace HeatingMold.App
                     return VisualStepOutcome.Fail("영역 " + definition.Alias + ": " + error);
                 checkedAliases.Add(definition.Alias);
                 pieces += area.Pattern.RoutePieces.Count;
-                turns += area.TurnEnabled.Count;
-                disabled += area.TurnEnabled.Count(v => !v);
+                turns += area.Pattern.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector);
                 lengthTotal += area.RoutePieceLengths.Sum();
             }
 
@@ -690,10 +633,10 @@ namespace HeatingMold.App
             Dictionary<string, int> diagnostic = ParseDisplayDiagnostic(Bridge.GetDisplayDiagnostic());
             Require(NativeCount(diagnostic, "routes") == pieces, "네이티브 경로 조각 수가 관리 상태와 다릅니다.");
             Require(NativeCount(diagnostic, "displayed") == pieces,
-                string.Format("화면에 표시된 네이티브 조각 수가 다릅니다. 표시 {0}, 기대 {1} (전체 {2}, 비활성 {3})",
-                    NativeCount(diagnostic, "displayed"), pieces, pieces, disabled));
+                string.Format("화면에 표시된 네이티브 조각 수가 다릅니다. 표시 {0}, 기대 {1} (전체 {2})",
+                    NativeCount(diagnostic, "displayed"), pieces, pieces));
             Require(NativeCount(diagnostic, "connectors") == turns, "네이티브 연결구간 수가 다릅니다.");
-            Require(NativeCount(diagnostic, "enabled") == pieces - disabled, "네이티브 활성 조각 수가 다릅니다.");
+            Require(NativeCount(diagnostic, "enabled") == pieces, "네이티브 활성 조각 수가 다릅니다.");
             Require(NativeCount(diagnostic, "markers") == 2 * _areas.Where(a => a.Pattern != null && a.Pattern.RoutePieces.Count > 0).Sum(a => Math.Max(1, a.Circuits.Count)),
                 "발열경로 끝점 마커 수가 영역 수와 다릅니다.");
 
@@ -723,7 +666,6 @@ namespace HeatingMold.App
                 ["aliases"] = string.Join(",", checkedAliases),
                 ["pieces"] = pieces.ToString(CultureInfo.InvariantCulture),
                 ["turns"] = turns.ToString(CultureInfo.InvariantCulture),
-                ["disabledTurns"] = disabled.ToString(CultureInfo.InvariantCulture),
                 ["circuits"] = snapshot.Circuits.Count.ToString(CultureInfo.InvariantCulture),
                 ["totalLengthMm"] = lengthTotal.ToString("0.###", CultureInfo.InvariantCulture),
                 ["native"] = Bridge.GetDisplayDiagnostic() ?? ""
@@ -752,8 +694,8 @@ namespace HeatingMold.App
             Require(area.Exclusions.Count == before + 1, "제외영역 목록이 증가하지 않았습니다.");
             Require(area.Pattern == null, "제외영역 추가 후 이전 경로가 남아 있습니다.");
             Require(!area.PatternDisplayed, "제외영역 추가 후 이전 경로가 표시된 상태입니다.");
-            Require(area.NativePieceIds.Length == 0 && area.TurnEnabled.Count == 0,
-                "제외영역 추가 후 조각/연결구간 상태가 남아 있습니다.");
+            Require(area.NativePieceIds.Length == 0,
+                "제외영역 추가 후 조각 상태가 남아 있습니다.");
 
             string rawDiagnostic = Bridge.GetDisplayDiagnostic() ?? "";
             Dictionary<string, int> diagnostic = ParseDisplayDiagnostic(rawDiagnostic);
@@ -814,7 +756,6 @@ namespace HeatingMold.App
             Require(area.Pattern == null, "경로가 없는 상태여야 합니다.");
             Require(!area.PatternDisplayed, "경로 표시가 꺼져 있어야 합니다.");
             Require(area.NativePieceIds.Length == 0, "네이티브 조각 ID가 남아 있습니다.");
-            Require(area.TurnEnabled.Count == 0, "TurnEnabled 상태가 남아 있습니다.");
             Require(area.ExclusionPieces == null, "제외영역 조각 상태가 남아 있습니다.");
 
             string rawDiagnostic = Bridge.GetDisplayDiagnostic() ?? "";
@@ -1077,16 +1018,12 @@ namespace HeatingMold.App
                 return "조각 길이 수가 패턴 조각 수와 다릅니다: " + area.Name;
 
             int turnCount = area.Pattern.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector);
-            if (area.TurnEnabled.Count != turnCount)
-                return "TurnEnabled 수가 연결구간 수와 다릅니다: " + area.Name;
-
             int circuits = GetCircuitLengths(area).Count;
             double length = area.RoutePieceLengths.Sum();
             data["areaName"] = area.Name;
             data["faceIds"] = string.Join(",", area.FaceIdSet.OrderBy(v => v));
             data["pieces"] = area.Pattern.RoutePieces.Count.ToString(CultureInfo.InvariantCulture);
             data["turns"] = turnCount.ToString(CultureInfo.InvariantCulture);
-            data["disabledTurns"] = area.TurnEnabled.Count(v => !v).ToString(CultureInfo.InvariantCulture);
             data["routeEdited"] = area.RouteEdited.ToString();
             data["circuits"] = circuits.ToString(CultureInfo.InvariantCulture);
             data["totalLengthMm"] = length.ToString("0.###", CultureInfo.InvariantCulture);
@@ -1109,10 +1046,6 @@ namespace HeatingMold.App
             if (expect.Circuits != null && circuits != expect.Circuits.Value)
                 return string.Format("회로 수가 기대와 다릅니다: {0} 기대 {1} 실제 {2}",
                     area.Name, expect.Circuits.Value, circuits);
-            int disabledTurns = area.TurnEnabled.Count(v => !v);
-            if (expect.DisabledTurns != null && disabledTurns != expect.DisabledTurns.Value)
-                return string.Format("비활성 연결구간 수가 기대와 다릅니다: {0} 기대 {1} 실제 {2}",
-                    area.Name, expect.DisabledTurns.Value, disabledTurns);
             if (expect.RouteEdited != null && area.RouteEdited != expect.RouteEdited.Value)
                 return string.Format("편집 상태가 기대와 다릅니다: {0} 기대 {1} 실제 {2}",
                     area.Name, expect.RouteEdited.Value, area.RouteEdited);
@@ -1380,7 +1313,6 @@ namespace HeatingMold.App
                 "조각 길이 수가 패턴 조각 수와 다릅니다.");
 
             int turnCount = area.Pattern.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector);
-            Require(area.TurnEnabled.Count == turnCount, "TurnEnabled 수가 연결구간 수와 다릅니다.");
             if (scenario.Expect?.PieceCount != null)
                 Require(area.Pattern.RoutePieces.Count == scenario.Expect.PieceCount.Value,
                     string.Format("조각 수가 기대값과 다릅니다. 기대 {0}, 실제 {1}",
@@ -1392,9 +1324,6 @@ namespace HeatingMold.App
 
             ReviewSnapshot snapshot = BuildReviewSnapshot();
             Require(snapshot.Circuits.Count == 1, "생성 직후 회로 수가 1이 아닙니다.");
-            if (scenario.Expect?.CircuitCountBeforeSplit != null)
-                Require(snapshot.Circuits.Count == scenario.Expect.CircuitCountBeforeSplit.Value,
-                    "생성 직후 회로 수가 시나리오 기대값과 다릅니다.");
 
             var data = new Dictionary<string, string>
             {
@@ -1402,54 +1331,9 @@ namespace HeatingMold.App
                 ["turns"] = turnCount.ToString(CultureInfo.InvariantCulture),
                 ["lanes"] = area.Pattern.LaneCount.ToString(CultureInfo.InvariantCulture),
                 ["totalLengthMm"] = area.RoutePieceLengths.Sum().ToString("0.###", CultureInfo.InvariantCulture),
-                ["circuitsBeforeSplit"] = snapshot.Circuits.Count.ToString(CultureInfo.InvariantCulture)
+                ["circuits"] = snapshot.Circuits.Count.ToString(CultureInfo.InvariantCulture)
             };
             return VisualStepOutcome.Ok("발열경로 생성·화면 표시 확인", data);
-        }
-
-        private VisualStepOutcome StepSplitCircuit()
-        {
-            VisualScenario scenario = RequireScenario();
-            WorkingArea area = RequireActiveArea();
-            SidebarTabs.SelectedIndex = PatternTabIndex;
-
-            int circuitsBefore = BuildReviewSnapshot().Circuits.Count;
-            ConnectorEditModeBox.IsChecked = true;
-            Require(Viewport.ConnectorEditMode, "회로 분할 편집 모드가 켜지지 않았습니다.");
-
-            int turnOrdinal = 0;
-            int routeIndex = -1;
-            for (int i = 0; i < area.Pattern.RoutePieces.Count; i++)
-            {
-                if (area.Pattern.RoutePieces[i].Kind != SerpentineRoutePieceKind.TurnConnector) continue;
-                if (turnOrdinal == scenario.Split.TurnIndex) { routeIndex = i; break; }
-                turnOrdinal++;
-            }
-            Require(routeIndex >= 0, "시나리오의 TurnConnector 순번을 찾지 못했습니다.");
-            Require(area.TurnEnabled[turnOrdinal], "분할할 연결구간이 이미 비활성입니다.");
-            int disabledBefore = area.TurnEnabled.Count(v => !v);
-            Require(disabledBefore == 0, "분할 전에 비활성 연결구간이 있습니다.");
-
-            int nativeId = area.NativePieceIds[routeIndex];
-            OnConnectorPicked(nativeId);
-
-            Require(!area.TurnEnabled[turnOrdinal], "지정한 연결구간이 비활성화되지 않았습니다. " + StatusText.Text);
-            Require(area.TurnEnabled.Count(v => !v) == 1, "지정한 연결구간 외에 비활성화된 구간이 있습니다.");
-
-            int circuitsAfter = BuildReviewSnapshot().Circuits.Count;
-            Require(circuitsAfter > circuitsBefore, "회로 분할 후 회로 수가 증가하지 않았습니다.");
-            if (scenario.Expect?.CircuitCountAfterSplit != null)
-                Require(circuitsAfter == scenario.Expect.CircuitCountAfterSplit.Value,
-                    "분할 후 회로 수가 시나리오 기대값과 다릅니다.");
-
-            var data = new Dictionary<string, string>
-            {
-                ["turnIndex"] = scenario.Split.TurnIndex.ToString(CultureInfo.InvariantCulture),
-                ["nativePieceId"] = nativeId.ToString(CultureInfo.InvariantCulture),
-                ["circuitsBefore"] = circuitsBefore.ToString(CultureInfo.InvariantCulture),
-                ["circuitsAfter"] = circuitsAfter.ToString(CultureInfo.InvariantCulture)
-            };
-            return VisualStepOutcome.Ok("연결구간 1개 분할·회로 수 증가 확인", data);
         }
 
         private VisualStepOutcome StepCheckElectrical()

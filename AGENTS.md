@@ -33,7 +33,7 @@
 - Do not introduce automatic detours, new self-intersection/pitch/bend-radius checks, Undo/Redo, power-connection changes or expanded DXF output without explicit approval.
 - Preserve the existing supported-face/region gates and general-edit policy. Do not replace all polygon Boolean/offset operations with CAD Boolean operations.
 - Keep legacy APIs unless actual caller/compatibility analysis justifies removal. Historical phase documents are not the current geometry contract.
-- Add regressions for inclined/curved edges, sewing subranges, identical projection at different depths, endpoints/periodicity, ambiguity/staleness, fixed-edge dragging, split/reconnect preservation, narrow exclusions, and cross-area draft/commit isolation.
+- Add regressions for inclined/curved edges, sewing subranges, identical projection at different depths, endpoints/periodicity, ambiguity/staleness, fixed-edge dragging, same-FACE multi-area independence, narrow exclusions, and cross-area draft/commit isolation.
 - Native builds must match the App reference at `x64/Release/OccBridge.dll`; record the actual loaded DLL when diagnosing native regressions.
 - Run focused tests per change and a review/correction/retest cycle for significant changes. Automated scenario completion is not recorded visual or manual-drag verification.
 - Never claim the user's failing CAD model is fixed unless that model was reproduced and tested; report unverified coverage explicitly.
@@ -44,7 +44,8 @@
 - Use one sequential generation rule whether or not exclusion regions exist. An exclusion removes heating lanes only; connectors between lanes and across same-lane cuts may pass through the margin-expanded exclusion region. Never split a circuit, detour, or reject generation merely because a connector crosses an exclusion.
 - Heating runs must stay outside the margin-expanded exclusion region. A lead added to reach a selected exit is a connector, not a restored heating run.
 - Do not reintroduce fixed generation-count caps into the product generation path: lane count, split/fragment count, total interval count, the 20-node exact-search limit, the 4000-fragment fallback, or a 100000-lane loop bound. End lane generation from the actual sweep range and spacing. Numerical exhaustion or resource failure must be explicit; never return a partial route as success.
-- Preserve the single `Pattern` route-piece + `TurnEnabled` + `Circuits`/`CircuitPieceIndices` structure, manual split/reconnect, original CAD endpoint binding, surface mapping, actual 3D length, and atomic commit policies.
+- A generated area is exactly one continuous circuit covering every route piece in its original order. Preserve the single `Pattern` + `Circuits`/`CircuitPieceIndices` structure, original CAD endpoint binding, surface mapping, actual 3D length, and atomic commit policies. Do not reintroduce a turn-enabled split/merge state.
+- Multiple confirmed areas may reference the same CAD Face. Their effective heating regions (`applied region − exclusions`, before generation margin) are a user input precondition: they must not overlap. Do not add automatic overlap rejection, region allocation, detours, or partial-region drafting tools.
 - Connector exclusion penetration is not a reason to reclassify a conductor as a dashed guide or to change its length semantics.
 - The legacy compatibility APIs `GenerateComponents`, `ComputeCandidatesComponents`, and `GenerateAnchoredComponents` still use the exact DP/candidate path. Their limits are not the product policy for the selected-exit generation path; do not copy those limits into new generation code.
 
@@ -54,5 +55,7 @@
 - Mold outline and heating routes must use the same confirmed working-plane origin and X/Y axes. Do not renormalize DXF coordinates to a min-corner origin.
 - Export heating geometry from the committed native route chains (ordered 3D points preserved at staging/commit), not from regeneration, remapping, or display tessellation. Exclude staged, missing, stale, disabled and preview geometry explicitly.
 - The plan-view length dimensions and the electrical table must use the committed 3D route lengths. Table rows must match the exported circuit IDs one-to-one in order.
+- Plan-view dimension text height is 20 mm. The vertical dimension line sits on the left of the mold with its extension lines extending right; the horizontal dimension line stays below the mold.
+- The plan view draws the effective heating-area boundary on the `HEAT_AREA` layer: the applied region minus exclusions, with no generation margin. Each boundary uses its area's viewport color as a true-color entity; the layer color is only a neutral fallback. Multiple or degenerate rings, exclusions that leave a hole or split the area, and working-plane mismatches are explicit export failures.
 - Degenerate or missing projections, duplicate/missing circuit piece indices, and context/model-revision mismatches are explicit export failures that preserve the previous file state.
 

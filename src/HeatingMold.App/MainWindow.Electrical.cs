@@ -82,9 +82,6 @@ public partial class MainWindow
         for (int i = 0; i < count; i++)
             if (!double.IsFinite(area.RoutePieceLengths[i]) || area.RoutePieceLengths[i] < 0)
             { reason = "유효하지 않은 조각 길이가 있습니다"; return false; }
-        int turns = area.Pattern.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector);
-        if (area.TurnEnabled == null || area.TurnEnabled.Count != turns)
-        { reason = "회로 분할 상태가 조각과 일치하지 않습니다"; return false; }
         if (!HasUsableCircuits(area, out reason)) return false;
         return true;
     }

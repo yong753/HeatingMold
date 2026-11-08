@@ -173,13 +173,12 @@ public class EffectiveRegionBoundaryTests
             parameters, PatternDirection.FrameX, start, end, boundary);
         Assert.True(result.Succeeded, result.Failure?.ToString());
         CircuitRoute route = CircuitRoute.FromResult(result.Pattern!);
-        int turnCount = route.Pieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector);
 
-        CircuitRouteSetResult split = CircuitRouteTopology.Split(
-            route, Enumerable.Repeat(true, turnCount).ToArray(), Array.Empty<Vec2>(), boundary);
+        CircuitRouteSetResult constrained = CircuitRouteTopology.Constrain(
+            route, Array.Empty<Vec2>(), boundary);
 
-        Assert.True(split.Succeeded, split.Detail);
-        CircuitRoute single = Assert.Single(split.Routes);
+        Assert.True(constrained.Succeeded, constrained.Detail);
+        CircuitRoute single = Assert.Single(constrained.Routes);
         Assert.Equal(start.ArtificialBinding, single.StartExit.ArtificialBinding);
         Assert.Equal(end.ArtificialBinding, single.EndExit.ArtificialBinding);
     }

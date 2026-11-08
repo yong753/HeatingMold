@@ -118,7 +118,6 @@ static class Program
         areaType.GetProperty("Pattern")!.SetValue(area,pattern);
         areaType.GetProperty("NativePieceIds")!.SetValue(area,
             Enumerable.Range(0,pattern.RoutePieces.Count).ToArray());
-        var turns = (List<bool>)areaType.GetProperty("TurnEnabled")!.GetValue(area)!;
         var projected = (List<RoutePieceResult>)areaType.GetProperty("ProjectedPieces")!.GetValue(area)!;
         var lengths = new double[pattern.RoutePieces.Count];
         double expected = 0;
@@ -127,13 +126,11 @@ static class Program
             var p = pattern.RoutePieces[i]; lengths[i]=p.Length*1.5; expected+=lengths[i];
             var a=p.Points[0]; var b=p.Points[p.Points.Count-1];
             projected.Add(new RoutePieceResult{Length=lengths[i],Start=new[]{a.X,a.Y,10.0},End=new[]{b.X,b.Y,20.0}});
-            if(p.Kind==SerpentineRoutePieceKind.TurnConnector) turns.Add(true);
         }
         areaType.GetProperty("RoutePieceLengths")!.SetValue(area,lengths);
         ((IList)Field("_areas")).Add(area);
         typeof(MainWindow).GetMethod("ActivateArea",flags)!.Invoke(window,new object[]{area});
         ((HashSet<int>)Field("_selectedFaceIds")).Add(0);
-        typeof(MainWindow).GetMethod("ApplyConnectorStates",flags).Invoke(window,null);
         var grid=(DataGrid)window.FindName("CircuitLengthGrid");
         double SumColumn(string name)
         {
@@ -142,11 +139,6 @@ static class Program
             return sum;
         }
         Check(Near(SumColumn("HeatingLength"),expected),"UI table uses native lengths rather than planar lengths");
-        turns[0]=false;
-        typeof(MainWindow).GetMethod("ApplyConnectorStates",flags).Invoke(window,null);
-        int firstTurn=0;
-        while(pattern.RoutePieces[firstTurn].Kind!=SerpentineRoutePieceKind.TurnConnector) firstTurn++;
-        Check(grid.Items.Count==2 && Near(SumColumn("HeatingLength"),expected-lengths[firstTurn]),"split circuit table excludes disabled connector native length");
         Invoke("PowerSetup_Click");
         var pending=(IList)Field("_pendingLeads");
         var viewport=(OccViewport)window.FindName("Viewport");
@@ -163,11 +155,11 @@ static class Program
         var revision=new ModelRevision(uiContext.Revision);
         session.SetPreview(new WorkingSideDefinition(new WorkingSideId(uiContext.Id),revision,uiFrame));
         session.Confirm(revision);
-        viewport.RectangleSelectionMode=true; viewport.ConnectorEditMode=true;
+        viewport.RectangleSelectionMode=true;
         Invoke("PowerSetup_Click");
-        Check(pending.Count==0 && !viewport.PowerLocationMode && viewport.RectangleSelectionMode && viewport.ConnectorEditMode &&
+        Check(pending.Count==0 && !viewport.PowerLocationMode && viewport.RectangleSelectionMode &&
             status.Text.StartsWith("생성 보류: 전원 경로"),"confirmed side alone cannot enter incompatible legacy power flow or disable other modes");
-        viewport.RectangleSelectionMode=false; viewport.ConnectorEditMode=false;
+        viewport.RectangleSelectionMode=false;
 
         // Seed restored pending state, rather than bypassing/re-enabling the gate. Keep cancellation,
         // actual-3D endpoint and late-hover regressions meaningful for lifecycle cleanup of old state.

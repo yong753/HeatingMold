@@ -3040,7 +3040,7 @@ namespace
         DropExitFaceHoverNative();
         g_exitFaceHover = faceId;
         if (faceId >= 0 && g_selectedFaceIds.count(faceId) == 0 &&
-            g_confirmedFaceColors.count(faceId) == 0 && !IsFaceInAreaHighlightNative(faceId) &&
+            g_confirmedFaceColors.count(faceId) == 0 &&
             !IsExitFaceHighlightNative(faceId))
             SetFaceColorOverride(faceId, HoverFaceColorNative());
         g_ctx->Redisplay(g_aisShape, Standard_False);
@@ -3099,9 +3099,9 @@ namespace
         int faceId = -1;
         const PickStatusNative status = PickFaceAtPixelNative(x, y, faceId);
         int idx = (status == PickStatusNative::Ok) ? faceId : -1;
-        // 제외영역 클리핑 메시가 표시 중인 면은 통짜 색칠이 없으므로 호버에서 제외한다.
-        // 지속 강조 중인 인출면도 소유 색을 유지하도록 호버 대상에서 뺀다.
-        if (idx >= 0 && (IsFaceInAreaHighlightNative(idx) || IsExitFaceHighlightNative(idx))) idx = -1;
+        // 지속 강조 중인 인출면은 소유 색을 유지하도록 호버 대상에서 뺀다.
+        // 클리핑 메시가 있는 Face도 같은 Face를 다시 선택할 수 있어야 하므로 호버를 막지 않는다.
+        if (idx >= 0 && IsExitFaceHighlightNative(idx)) idx = -1;
         if (idx == g_lastHoverFace) return idx;
         const int previous = g_lastHoverFace;
         g_lastHoverFace = idx;
@@ -3146,8 +3146,7 @@ namespace
                 if (it != owners.end()) owner = it->second;
             }
         }
-        if (status != PickStatusNative::Ok || owner.IsNull() ||
-            IsFaceInAreaHighlightNative(faceId))
+        if (status != PickStatusNative::Ok || owner.IsNull())
         {
             // Empty space keeps an existing AIS selection when a working area is
             // confirmed. A picker/owner failure must not rewrite the selection.

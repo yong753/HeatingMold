@@ -6,7 +6,7 @@ namespace HeatingMold.App;
 
 /// <summary>
 /// 제외영역 변경/재생성 실패 시 되돌릴 작업영역 경로 상태.
-/// 제자리에서 변경되는 목록(TurnEnabled, CircuitExitOverrides)은 캡처 시점 복사본을 보관한다.
+/// 제자리에서 변경되는 목록(Circuits, CircuitPieceIndices)은 캡처 시점 복사본을 보관한다.
 /// </summary>
 internal sealed record AreaRouteSnapshot(
     List<(double MinX, double MinY, double MaxX, double MaxY)> Exclusions,
@@ -16,7 +16,6 @@ internal sealed record AreaRouteSnapshot(
     int[] NativePieceIds,
     double[] RoutePieceLengths,
     List<RoutePieceResult> ProjectedPieces,
-    List<bool> TurnEnabled,
     bool PatternDisplayed,
     string LastExitFailure,
     Vec2? StartAnchor,
@@ -28,7 +27,6 @@ internal sealed record AreaRouteSnapshot(
     string ExcludedPlanKey,
     List<CircuitRoute> Circuits,
     List<List<int>> CircuitPieceIndices,
-    List<CircuitExitOverride> CircuitExitOverrides,
     List<ExitEdgeReference> ExitEdgeRefs,
     AppliedGenerationInputs AppliedInputs,
     CommittedRouteContext CommittedMapping,

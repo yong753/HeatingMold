@@ -51,7 +51,6 @@ public partial class MainWindow
                 Pieces = route.Pieces.Select(CopyRoutePiece).ToList()
             }).ToList(),
             CircuitPieceIndices = source.CircuitPieceIndices.Select(indices => indices.ToList()).ToList(),
-            CircuitExitOverrides = source.CircuitExitOverrides.ToList(),
             AnchorCandidates = source.AnchorCandidates.ToList(),
             ExcludedCandidates = source.ExcludedCandidates.Select(CopyExcludedCandidate).ToList(),
             ExcludedPlan = CopyExcludedCandidate(source.ExcludedPlan),
@@ -59,7 +58,6 @@ public partial class MainWindow
             ExcludedPlanKey = source.ExcludedPlanKey,
             LastExitFailure = source.LastExitFailure,
             Pattern = CopyRoutePattern(source.Pattern),
-            TurnEnabled = source.TurnEnabled.ToList(),
             ProjectedPieces = source.ProjectedPieces.Select(piece => piece == null ? null : new RoutePieceResult
             {
                 Length = piece.Length,
@@ -362,22 +360,12 @@ public partial class MainWindow
                     PrepareConnectorState(candidate, index, stageId);
                 }
             }
-            // 비활성 턴도 원본 조각/ID로 스테이징하지만 회로와 발열 길이에는 포함하지 않는다.
+            // 회로에 포함되지 않은 조각(비활성 턴 등)은 허용하지 않는다. 생성 경로 전체가
+            // 하나의 회로이며, 누락된 조각은 조용히 스테이징하지 않고 명시적으로 실패한다.
             for (int i = 0; i < count; i++)
-            {
-                if (stagedIndices[i]) continue;
-                SerpentineRoutePiece piece = candidate.Pattern.RoutePieces[i];
-                if (piece.Kind != SerpentineRoutePieceKind.TurnConnector || piece.Points.Count < 2)
-                    throw new InvalidOperationException("회로에 대응하지 않는 경로 조각이 있습니다");
-                int stageId = PrepareStageId(ref nextStageId);
-                stagedRoutes.Add(stageId);
-                finalIds.Add(candidate.NativePieceIds[i]);
-                RoutePieceResult shown = StageCurvedRoutePiece(candidate, side, piece, i, count, stageId,
-                    exclusionMode: false, mappingContext: mapping, validatedSamples: samples);
-                ValidateProjectedRoutePiece(shown);
-                projected[i] = shown;
-                PrepareConnectorState(candidate, i, stageId);
-            }
+                if (!stagedIndices[i])
+                    throw new InvalidOperationException(
+                        "영역 " + candidate.Name + " 조각 " + (i + 1) + "이 회로에 포함되지 않았습니다");
         }
         else if (candidate.ExclusionPieces is { Count: > 0 })
         {
@@ -462,12 +450,8 @@ public partial class MainWindow
         SerpentineRoutePiece piece = candidate.Pattern.RoutePieces[pieceIndex];
         if (piece.Kind != SerpentineRoutePieceKind.TurnConnector) return;
         // 이 함수는 components 흐름에서만 호출되며 해당 조각은 항상 실제 connector로
-        // 스테이징된다(exclusionMode:false). legacy ExcludedBridge 가이드는 이 경로를 타지 않는다.
-        int turn = 0;
-        for (int i = 0; i < pieceIndex; i++)
-            if (candidate.Pattern.RoutePieces[i].Kind == SerpentineRoutePieceKind.TurnConnector) turn++;
-        if (turn >= candidate.TurnEnabled.Count ||
-            !Bridge.SetConnectorEnabled(stageId, candidate.TurnEnabled[turn], 1.0, 0.1, 0.1, false))
+        // 스테이징된다(exclusionMode:false). 회로를 나누지 않으므로 모든 커넥터는 활성이다.
+        if (!Bridge.SetConnectorEnabled(stageId, true, 1.0, 0.1, 0.1, false))
             throw new InvalidOperationException("영역 " + candidate.Name + "의 후보 커넥터 상태를 적용하지 못했습니다");
     }
 
@@ -539,7 +523,6 @@ public partial class MainWindow
         target.SelectedAnchorCandidate = candidate.SelectedAnchorCandidate;
         target.Circuits = candidate.Circuits;
         target.CircuitPieceIndices = candidate.CircuitPieceIndices;
-        target.CircuitExitOverrides = candidate.CircuitExitOverrides;
         target.AnchorCandidates = candidate.AnchorCandidates;
         target.ExcludedCandidates = candidate.ExcludedCandidates;
         target.ExcludedPlan = candidate.ExcludedPlan;
@@ -547,7 +530,6 @@ public partial class MainWindow
         target.ExcludedPlanKey = candidate.ExcludedPlanKey;
         target.LastExitFailure = candidate.LastExitFailure;
         target.Pattern = candidate.Pattern;
-        target.TurnEnabled = candidate.TurnEnabled;
         target.ProjectedPieces = candidate.ProjectedPieces;
         target.NativePieceIds = candidate.NativePieceIds;
         target.RoutePieceLengths = candidate.RoutePieceLengths;

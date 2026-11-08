@@ -194,62 +194,13 @@ public sealed class BoundSerpentineTests
     }
 
     [Fact]
-    public void SplitUsesExactQueriesForBothCutsAndRetainsAllBindings()
-    {
-        var boundary = new CircleBoundary();
-        CircuitRoute route = GenerateRoute(boundary);
-        Vec2[] before = route.Path.ToArray();
-
-        var split = CircuitRouteTopology.Split(route, new[] { true, false, true, true, true },
-            MisleadingGuide, boundary);
-
-        Assert.True(split.Succeeded, split.Detail);
-        Assert.Equal(2, split.Routes.Count);
-        Assert.Equal(route.StartExit, split.Routes[0].StartExit);
-        Assert.Equal(route.EndExit, split.Routes[^1].EndExit);
-        foreach (var part in split.Routes)
-        {
-            Assert.Equal(route.CandidateId, part.CandidateId);
-            Assert.NotNull(part.StartExit.Binding);
-            Assert.NotNull(part.EndExit.Binding);
-            Assert.Equal(part.StartExit.Point, part.Path[0]);
-            Assert.Equal(part.EndExit.Point, part.Path[^1]);
-            Assert.Equal(2, part.Pieces[0].Points.Count);
-            Assert.Equal(2, part.Pieces[^1].Points.Count);
-        }
-        Assert.Equal(before, route.Path);
-    }
-
-    [Fact]
-    public void SplitIsAllOrNothingWhenSecondCutFails()
-    {
-        var boundary = new CircleBoundary();
-        CircuitRoute route = GenerateRoute(boundary);
-        var originalPieces = route.Pieces;
-        var startBinding = route.StartExit.Binding;
-        var endBinding = route.EndExit.Binding;
-        boundary.FailOutwardAboveY = 25; // Left cut y=20 succeeds, right cut y=30 fails.
-
-        var result = CircuitRouteTopology.Split(route, new[] { true, false, true, true, true },
-            ChordGuide, boundary);
-
-        Assert.False(result.Succeeded);
-        Assert.Empty(result.Routes);
-        Assert.Contains("right cut end", result.Detail);
-        Assert.Same(originalPieces, route.Pieces);
-        Assert.Equal(startBinding, route.StartExit.Binding);
-        Assert.Equal(endBinding, route.EndExit.Binding);
-    }
-
-    [Fact]
     public void RetainAndConstrainValidateSavedParametersWithoutUnboundSearch()
     {
         var boundary = new CircleBoundary();
         CircuitRoute route = GenerateRoute(boundary);
         int previousProjects = boundary.ProjectCount, previousRays = boundary.OutwardCount;
 
-        var result = CircuitRouteTopology.Split(route, Enumerable.Repeat(true, 5).ToArray(),
-            Array.Empty<Vec2>(), boundary);
+        var result = CircuitRouteTopology.Constrain(route, Array.Empty<Vec2>(), boundary);
         Assert.True(result.Succeeded, result.Detail);
         Assert.Same(route, Assert.Single(result.Routes));
         Assert.Equal(previousProjects, boundary.ProjectCount);
@@ -260,121 +211,6 @@ public sealed class BoundSerpentineTests
         Assert.False(stale.Succeeded);
         Assert.Empty(stale.Routes);
         Assert.Contains(nameof(ExitBoundaryFailureReason.StaleContext), stale.Detail);
-    }
-
-    [Fact]
-    public void ExistingCutParametersSurviveNextBendEditWithoutNewRaySearch()
-    {
-        var boundary = new CircleBoundary();
-        CircuitRoute route = GenerateRoute(boundary);
-        var initial = CircuitRouteTopology.Split(route, new[] { true, false, true, true, true }, ChordGuide, boundary);
-        Assert.True(initial.Succeeded, initial.Detail);
-        var existing = ExistingFirstCut(initial);
-        var pieces = route.Pieces.ToArray();
-        // Change the bend before the left cut run. Re-extending this edited line would
-        // select a different parameter; the endpoint itself was not edited.
-        pieces[1] = pieces[1] with { Points = new[] { pieces[1].Points[0], new Vec2(5, 19) } };
-        pieces[2] = pieces[2] with { Points = new[] { new Vec2(5, 19), pieces[2].Points[^1] } };
-        var editedSource = route with { Pieces = pieces };
-        boundary.OutwardFailure = ExitBoundaryFailureReason.GeometryFailure;
-        int raysBefore = boundary.OutwardCount;
-
-        var repeated = CircuitRouteTopology.Split(editedSource, new[] { true, false, true, true, true },
-            MisleadingGuide, boundary, existingExits: existing);
-
-        Assert.True(repeated.Succeeded, repeated.Detail);
-        Assert.Equal(raysBefore, boundary.OutwardCount);
-        Assert.Equal(initial.Routes[0].EndExit, repeated.Routes[0].EndExit);
-        Assert.Equal(initial.Routes[1].StartExit, repeated.Routes[1].StartExit);
-        Assert.Equal(new Vec2(5, 19), repeated.Routes[0].Pieces[^1].Points[0]);
-    }
-
-    [Fact]
-    public void ExistingCutsUseOriginalPieceIndicesWhenAnotherGroupIsSplit()
-    {
-        var boundary = new CircleBoundary();
-        CircuitRoute route = GenerateRoute(boundary);
-        var initial = CircuitRouteTopology.Split(route, new[] { true, false, true, true, true }, ChordGuide, boundary);
-        Assert.True(initial.Succeeded, initial.Detail);
-        var existing = ExistingFirstCut(initial);
-        int raysBefore = boundary.OutwardCount;
-
-        var further = CircuitRouteTopology.Split(route, new[] { true, false, true, false, true },
-            MisleadingGuide, boundary, existing);
-
-        Assert.True(further.Succeeded, further.Detail);
-        Assert.Equal(3, further.Routes.Count);
-        Assert.Equal(raysBefore + 2, boundary.OutwardCount); // Only the newly disabled turn.
-        Assert.Equal(initial.Routes[0].EndExit, further.Routes[0].EndExit);
-        Assert.Equal(initial.Routes[1].StartExit, further.Routes[1].StartExit);
-        Assert.Equal(route.EndExit, further.Routes[^1].EndExit);
-    }
-
-    [Fact]
-    public void SourcePatternEndpointsTakePriorityOverExistingCircuitEndpointDictionary()
-    {
-        var boundary = new CircleBoundary();
-        CircuitRoute route = GenerateRoute(boundary);
-        var initial = CircuitRouteTopology.Split(route, new[] { true, false, true, true, true }, ChordGuide, boundary);
-        Assert.True(initial.Succeeded, initial.Detail);
-        var existing = ExistingFirstCut(initial);
-        existing[(0, CircuitExitRole.Start)] = route.StartExit;
-        existing[(route.Pieces.Count - 1, CircuitExitRole.End)] = route.EndExit;
-        // Directly edited original anchors are authoritative even at identical 2D coordinates.
-        CircuitRoute edited = route with
-        {
-            StartExit = route.StartExit with { Binding = route.StartExit.Binding!.Value with { EdgeKey = 22 } },
-            EndExit = route.EndExit with { Binding = route.EndExit.Binding!.Value with { EdgeKey = 22 } },
-        };
-
-        var result = CircuitRouteTopology.Split(edited, new[] { true, false, true, true, true },
-            MisleadingGuide, boundary, existing);
-
-        Assert.True(result.Succeeded, result.Detail);
-        Assert.Equal(edited.StartExit, result.Routes[0].StartExit);
-        Assert.Equal(edited.EndExit, result.Routes[^1].EndExit);
-        Assert.Equal(22, result.Routes[0].StartExit.Binding!.Value.EdgeKey);
-    }
-
-    [Fact]
-    public void StaleExistingCutFailsWithoutResolvingReplacement()
-    {
-        var boundary = new CircleBoundary();
-        CircuitRoute route = GenerateRoute(boundary);
-        var initial = CircuitRouteTopology.Split(route, new[] { true, false, true, true, true }, ChordGuide, boundary);
-        Assert.True(initial.Succeeded, initial.Detail);
-        var existing = ExistingFirstCut(initial);
-        CircuitExitPoint cut = existing[(2, CircuitExitRole.End)];
-        existing[(2, CircuitExitRole.End)] = cut with
-        { Binding = cut.Binding!.Value with { WorkingContextRevision = 4 } };
-        int raysBefore = boundary.OutwardCount;
-
-        var failed = CircuitRouteTopology.Split(route, new[] { true, false, true, true, true },
-            ChordGuide, boundary, existing);
-
-        Assert.False(failed.Succeeded);
-        Assert.Empty(failed.Routes);
-        Assert.Contains(nameof(ExitBoundaryFailureReason.StaleContext), failed.Detail);
-        Assert.Equal(raysBefore, boundary.OutwardCount);
-        Assert.Equal(cut, initial.Routes[0].EndExit);
-    }
-
-    [Fact]
-    public void UnboundPolylineExistingCutsRemainSupported()
-    {
-        var candidate = Assert.Single(Serpentine.ComputeCandidates(
-            Outer(), null, Parameters, ChordGuide, PatternDirection.FrameX));
-        var generated = Serpentine.GenerateAnchored(
-            Outer(), null, Parameters, ChordGuide, candidate.Start, candidate.End, PatternDirection.FrameX);
-        CircuitRoute route = CircuitRoute.FromResult(generated.Pattern!);
-        var initial = CircuitRouteTopology.Split(route, new[] { true, false, true, true, true }, ChordGuide);
-
-        var repeated = CircuitRouteTopology.Split(route, new[] { true, false, true, true, true },
-            ChordGuide, existingExits: ExistingFirstCut(initial));
-
-        Assert.True(repeated.Succeeded, repeated.Detail);
-        Assert.Equal(initial.Routes[0].EndExit, repeated.Routes[0].EndExit);
-        Assert.Null(repeated.Routes[0].EndExit.Binding);
     }
 
     [Fact]
@@ -389,13 +225,6 @@ public sealed class BoundSerpentineTests
         Assert.False(result.Succeeded);
         Assert.Contains(nameof(ExitBoundaryFailureReason.InvalidInput), result.Detail);
     }
-
-    private static Dictionary<(int PieceIndex, CircuitExitRole Role), CircuitExitPoint> ExistingFirstCut(
-        CircuitRouteSetResult split) => new()
-        {
-            [(2, CircuitExitRole.End)] = split.Routes[0].EndExit,
-            [(4, CircuitExitRole.Start)] = split.Routes[1].StartExit,
-        };
 
     private static CircuitRoute GenerateRoute(CircleBoundary boundary)
     {

@@ -194,7 +194,6 @@ static class Program
         RunGroup("VertexEditChecks", () => VertexEditChecks.Run(window, args[0]));
         RunGroup("ElectricalRefreshChecks", () => ElectricalRefreshChecks.Run(window));
         RunGroup("PatternStateChecks", () => PatternStateChecks.Run(window));
-        RunGroup("CircuitExitOverrideChecks", () => CircuitExitOverrideChecks.Run(window));
         RunGroup("GeometryRollbackChecks", () => GeometryRollbackChecks.Run(window));
         Check(typeof(Bridge).GetMethod("HlrProject")==null && typeof(Bridge).GetMethod("HlrEdges")!=null,
             "HLR smoke API removed while exporter HlrEdges remains");

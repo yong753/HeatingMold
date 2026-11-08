@@ -498,14 +498,6 @@
                                                    Style="{StaticResource Hint}"/>
 
                                         <Separator Margin="0,12,0,8"/>
-                                        <TextBlock Text="경로 도구" Style="{StaticResource FieldLabel}"
-                                                   FontWeight="SemiBold"/>
-                                        <CheckBox x:Name="ConnectorEditModeBox" Content="회로 분할"
-                                                  AutomationProperties.Name="회로 분할 편집 모드"
-                                                  Checked="ConnectorEditMode_Changed"
-                                                  Unchecked="ConnectorEditMode_Changed"/>
-                                        <TextBlock Style="{StaticResource Hint}"
-                                                   Text="연결 구간을 클릭해 회로를 분할하거나 다시 연결합니다. 회로별 길이는 검토 탭에 반영됩니다."/>
                                         <TextBlock Text="전원 연결" Style="{StaticResource FieldLabel}"
                                                    FontWeight="SemiBold" Margin="0,10,0,0"/>
                                         <TextBlock x:Name="PowerMigrationHint" Style="{StaticResource Hint}"

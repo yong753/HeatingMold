@@ -87,12 +87,9 @@ public partial class MainWindow
         switch (tabIndex)
         {
             case PatternTabIndex:
-                // 인출면 후보 강조/선택 모드와 회로 분할 모드를 종료한다.
+                // 인출면 후보 강조/선택 모드를 종료한다.
                 // 확정된 인출면·시작점·회로 설정은 유지된다.
                 CancelExitFacePick();
-                if (Viewport != null) Viewport.ConnectorEditMode = false;
-                if (ConnectorEditModeBox != null && ConnectorEditModeBox.IsChecked == true)
-                    ConnectorEditModeBox.IsChecked = false;
                 break;
         }
     }

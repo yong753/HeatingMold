@@ -290,15 +290,15 @@ public class BoundExitStateTests
     }
 
     [Fact]
-    public void CircuitEndpointOverrideRetainsOriginalParameterAndOrientation()
+    public void CircuitExitPointRetainsOriginalParameterAndOrientation()
     {
         var binding = StartBinding with { Parameter = 5.25, Reversed = true };
-        var moved = new CircuitExitOverride(4, CircuitExitRole.End, new Vec2(20, 5.25))
+        var moved = new CircuitExitPoint(CircuitExitRole.End, new Vec2(20, 5.25), 4, 5.25)
         { Binding = binding };
 
         Assert.Equal(binding, moved.Binding);
-        Assert.Equal(binding, (moved with { PieceIndex = 6 }).Binding);
-        Assert.Null(new CircuitExitOverride(4, CircuitExitRole.End, moved.Point).Binding);
+        Assert.Equal(binding, (moved with { Role = CircuitExitRole.Start }).Binding);
+        Assert.Null(new CircuitExitPoint(CircuitExitRole.End, moved.Point, 4, 5.25).Binding);
     }
 
     [Theory]

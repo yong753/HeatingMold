@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 2,
+  "name": "06-same-face-multi-area",
+  "description": "같은 Face 9에 영역 A를 생성한 뒤 두 번째 영역 B를 같은 Face로 확정하고, 다른 Face의 C 생성·A 재생성이 B의 초안과 서로의 경로를 바꾸지 않는지 확인한다. B는 미생성 초안이며, 같은 Face의 두 영역을 동시에 생성하려면 실제 유효 발열영역이 겹치지 않도록 제외영역을 먼저 구성해야 한다.",
+  "model": {
+    "path": "resource/Mold_Solids.stp",
+    "sha256": "9FF44A610102168C97871E158FB153DF6A9043C2D6CA7DD6C5D58F2375E7085C",
+    "faceCount": 574,
+    "solidCount": 30
+  },
+  "areas": [
+    {
+      "alias": "A",
+      "faceIds": [9],
+      "marginMm": 5,
+      "spacingMm": 10,
+      "direction": 0,
+      "exit": {
+        "faceId": 79,
+        "startPoint3D": [1628.67, -1515.75, -3895.55],
+        "endPoint3D": [1629.82, -1416.67, -3963.90],
+        "toleranceMm": 1.0
+      },
+      "anchor": { "index": 0 },
+      "expect": {
+        "pieces": 15,
+        "turns": 7,
+        "circuits": 1,
+        "exitFaceId": 79,
+        "lengthMm": 5266.022,
+        "lengthToleranceMm": 1.0,
+        "marginMm": 5,
+        "spacingMm": 10
+      }
+    },
+    {
+      "alias": "B",
+      "faceIds": [9],
+      "marginMm": 7,
+      "spacingMm": 14,
+      "direction": 0
+    },
+    {
+      "alias": "C",
+      "faceIds": [27],
+      "marginMm": 5,
+      "spacingMm": 10,
+      "direction": 0,
+      "exit": { "faceId": 34, "toleranceMm": 1.0 },
+      "anchor": {
+        "index": 0,
+        "startUv": [522.8, 7.554],
+        "endUv": [-447.2, -306.697],
+        "toleranceMm": 0.5
+      },
+      "expect": {
+        "pieces": 195,
+        "turns": 97,
+        "circuits": 1,
+        "exitFaceId": 34,
+        "lengthMm": 3767.323,
+        "lengthToleranceMm": 1.0,
+        "marginMm": 5,
+        "spacingMm": 10
+      }
+    }
+  ],
+  "steps": [
+    { "id": "06.1", "name": "면 9 선택", "action": "selectFaces", "faces": [9] },
+    { "id": "06.2", "name": "영역 A 확정", "action": "confirmArea", "area": "A" },
+    { "id": "06.3", "name": "A 조건 입력 5/10", "action": "setAreaInputs", "area": "A", "marginMm": 5, "spacingMm": 10, "direction": 0 },
+    { "id": "06.4", "name": "A 인출면 79·앵커 0", "action": "pickExit", "area": "A" },
+    {
+      "id": "06.5", "name": "A 발열경로 생성", "action": "generate", "area": "A",
+      "expect": { "pieces": 15, "turns": 7, "circuits": 1, "exitFaceId": 79, "lengthMm": 5266.022, "lengthToleranceMm": 1.0 }
+    },
+    { "id": "06.6", "name": "이미 경로가 있는 같은 면 9 재선택", "action": "selectFaces", "faces": [9] },
+    { "id": "06.7", "name": "영역 B 확정(같은 Face)", "action": "confirmArea", "area": "B" },
+    { "id": "06.8", "name": "B 조건 초안 7/14", "action": "setAreaInputs", "area": "B", "marginMm": 7, "spacingMm": 14, "direction": 0 },
+    { "id": "06.9", "name": "면 27 선택", "action": "selectFaces", "faces": [27] },
+    { "id": "06.10", "name": "영역 C 확정", "action": "confirmArea", "area": "C" },
+    { "id": "06.11", "name": "C 조건 입력 5/10", "action": "setAreaInputs", "area": "C", "marginMm": 5, "spacingMm": 10, "direction": 0 },
+    { "id": "06.12", "name": "C 인출면 34·앵커 0", "action": "pickExit", "area": "C" },
+    {
+      "id": "06.13", "name": "C 발열경로 생성", "action": "generate", "area": "C",
+      "expect": { "pieces": 195, "turns": 97, "circuits": 1, "exitFaceId": 34, "lengthMm": 3767.323, "lengthToleranceMm": 1.0 }
+    },
+    { "id": "06.14", "name": "A로 복귀", "action": "activateArea", "area": "A" },
+    { "id": "06.15", "name": "A 경로·길이 보존 확인", "action": "checkArea", "area": "A" },
+    { "id": "06.16", "name": "B로 이동", "action": "activateArea", "area": "B" },
+    { "id": "06.17", "name": "B 초안 7/14 보존 확인", "action": "expectAreaInputs", "area": "B", "marginMm": 7, "spacingMm": 14, "direction": 0 },
+    { "id": "06.18", "name": "B 미생성 확인", "action": "expectNoPattern", "area": "B" },
+    { "id": "06.19", "name": "A로 복귀", "action": "activateArea", "area": "A" },
+    { "id": "06.20", "name": "A 같은 조건 재생성", "action": "generate", "area": "A" },
+    { "id": "06.21", "name": "A 재생성 후 단일 회로·길이 확인", "action": "checkArea", "area": "A" },
+    { "id": "06.22", "name": "B로 이동", "action": "activateArea", "area": "B" },
+    { "id": "06.23", "name": "A 재생성 후 B 초안 보존 확인", "action": "expectAreaInputs", "area": "B", "marginMm": 7, "spacingMm": 14, "direction": 0 },
+    { "id": "06.24", "name": "C로 이동", "action": "activateArea", "area": "C" },
+    { "id": "06.25", "name": "C 경로 보존 확인", "action": "checkArea", "area": "C" },
+    { "id": "06.26", "name": "같은 Face의 B 삭제", "action": "deleteArea", "area": "B" },
+    { "id": "06.27", "name": "B 삭제 후 A 보존 확인", "action": "checkArea", "area": "A" },
+    { "id": "06.28", "name": "B 삭제 후 C 보존 확인", "action": "checkArea", "area": "C" },
+    { "id": "06.29", "name": "남은 전체 영역 상태 검사", "action": "checkAllAreas" },
+    { "id": "06.30", "name": "전체 DXF 저장·재읽기", "action": "exportDxf", "fileName": "result.dxf", "scope": 0 }
+  ]
+}

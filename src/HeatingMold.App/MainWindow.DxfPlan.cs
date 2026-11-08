@@ -5,6 +5,7 @@ using HeatingMold.Core.Electrical;
 using HeatingMold.Core.Geometry;
 using HeatingMold.Export;
 using HeatingMold.OccBridge;
+using netDxf;
 
 namespace HeatingMold.App;
 
@@ -51,6 +52,7 @@ public partial class MainWindow
 
         var view = new DxfView();
         if (!AddPlanOutline(view, side.Frame, out error)) return null;
+        if (!AddHeatAreas(view, snapshot.ReadyAreas, side.Frame, out error)) return null;
         if (!AddHeatRoutes(view, circuits, side.Frame, out error)) return null;
         return view;
     }
@@ -67,82 +69,35 @@ public partial class MainWindow
             if (!TryValidateAreaRouteIndex(area, usedNativeIds, out error)) return null;
 
             var pieces = area.Pattern.RoutePieces;
-            var enabledByPiece = new bool[pieces.Count];
-            int turn = 0;
-            for (int i = 0; i < pieces.Count; i++)
+            // 하나의 영역은 하나의 연속 회로다. 조각 인덱스는 원본 순서를 정확히 한 번 포함해야 한다.
+            if (area.Circuits.Count != 1 || area.CircuitPieceIndices.Count != 1)
             {
-                if (pieces[i].Kind != SerpentineRoutePieceKind.TurnConnector)
-                {
-                    enabledByPiece[i] = true;
-                    continue;
-                }
-                enabledByPiece[i] = turn < area.TurnEnabled.Count && area.TurnEnabled[turn];
-                turn++;
-            }
-
-            // 조각 그룹은 TurnEnabled로 다시 만든 정본과 순서까지 같아야 한다.
-            // 역순/병합/재배열된 인덱스는 네이티브 체인 순서를 조용히 뒤틀기 때문이다.
-            List<List<int>> canonical = BuildCircuitPieceGroups(pieces, area.TurnEnabled);
-            if (canonical.Count != area.CircuitPieceIndices.Count)
-            {
-                error = "영역 " + area.Name + "의 회로 조각 그룹이 분할 정본과 일치하지 않습니다.";
+                error = "영역 " + area.Name + "의 회로 정본이 단일 회로가 아닙니다.";
                 return null;
             }
-            for (int c = 0; c < canonical.Count; c++)
+            List<int> group = area.CircuitPieceIndices[0];
+            if (group == null || group.Count != pieces.Count || area.Circuits[0].Pieces.Count != pieces.Count)
             {
-                if (!canonical[c].SequenceEqual(area.CircuitPieceIndices[c])
-                    || area.Circuits[c].Pieces.Count != canonical[c].Count)
-                {
-                    error = "영역 " + area.Name + " 회로 " + (c + 1)
-                        + "의 조각 순서가 분할 정본과 일치하지 않습니다.";
-                    return null;
-                }
+                error = "영역 " + area.Name + "의 회로가 모든 경로 조각을 포함하지 않습니다.";
+                return null;
             }
 
-            var inCircuit = new bool[pieces.Count];
-            var areaNativeIds = new List<int>();
-            var areaGroups = new List<List<int>>();
-            for (int c = 0; c < area.CircuitPieceIndices.Count; c++)
+            var areaNativeIds = new List<int>(group.Count);
+            for (int position = 0; position < group.Count; position++)
             {
-                List<int> group = area.CircuitPieceIndices[c];
-                if (group == null || group.Count == 0)
+                int index = group[position];
+                if (index != position)
                 {
-                    error = "영역 " + area.Name + " 회로 " + (c + 1) + "의 조각 목록이 비어 있습니다.";
+                    error = "영역 " + area.Name + "의 회로 조각 순서가 원본 경로와 일치하지 않습니다.";
                     return null;
                 }
-                foreach (int index in group)
+                int nativeId = area.NativePieceIds[index];
+                if (nativeId < 0)
                 {
-                    if (index < 0 || index >= pieces.Count || inCircuit[index])
-                    {
-                        error = "영역 " + area.Name + " 회로 " + (c + 1) + "의 조각 대응이 중복되었거나 범위를 벗어났습니다.";
-                        return null;
-                    }
-                    if (!enabledByPiece[index])
-                    {
-                        error = "영역 " + area.Name + " 회로 " + (c + 1) + "에 비활성 연결구간이 포함되어 있습니다.";
-                        return null;
-                    }
-                    int nativeId = area.NativePieceIds[index];
-                    if (nativeId < 0)
-                    {
-                        error = "영역 " + area.Name + " 조각 " + (index + 1) + "의 네이티브 ID가 없습니다.";
-                        return null;
-                    }
-                    inCircuit[index] = true;
-                    areaNativeIds.Add(nativeId);
-                }
-                areaGroups.Add(group);
-            }
-
-            // 회로 밖에는 비활성 턴만 남을 수 있다. 활성 조각이 표에서 빠지면 안 된다.
-            for (int i = 0; i < pieces.Count; i++)
-            {
-                if (inCircuit[i]) continue;
-                if (pieces[i].Kind != SerpentineRoutePieceKind.TurnConnector || enabledByPiece[i])
-                {
-                    error = "영역 " + area.Name + " 조각 " + (i + 1) + "이 어떤 회로에도 속하지 않습니다.";
+                    error = "영역 " + area.Name + " 조각 " + (index + 1) + "의 네이티브 ID가 없습니다.";
                     return null;
                 }
+                areaNativeIds.Add(nativeId);
             }
 
             foreach (int nativeId in areaNativeIds)
@@ -165,37 +120,34 @@ public partial class MainWindow
 
             string prefix = string.IsNullOrEmpty(area.Name) ? "A-" : area.Name + "-";
             int chainCursor = 0;
-            for (int c = 0; c < areaGroups.Count; c++)
+            var circuitPieces = new List<DxfPlanPieceExport>(group.Count);
+            foreach (int index in group)
             {
-                var circuitPieces = new List<DxfPlanPieceExport>(areaGroups[c].Count);
-                foreach (int index in areaGroups[c])
+                double[] chain = chains[chainCursor++];
+                if (chain == null || chain.Length < 6 || chain.Length % 3 != 0)
                 {
-                    double[] chain = chains[chainCursor++];
-                    if (chain == null || chain.Length < 6 || chain.Length % 3 != 0)
+                    error = "영역 " + area.Name + " 회로 1 조각 " + (index + 1)
+                        + "의 확정 좌표가 없습니다.";
+                    return null;
+                }
+                var points = new List<Vec3>(chain.Length / 3);
+                for (int k = 0; k + 2 < chain.Length; k += 3)
+                {
+                    var point = new Vec3(chain[k], chain[k + 1], chain[k + 2]);
+                    if (!double.IsFinite(point.X) || !double.IsFinite(point.Y) || !double.IsFinite(point.Z))
                     {
-                        error = "영역 " + area.Name + " 회로 " + (c + 1) + " 조각 " + (index + 1)
-                            + "의 확정 좌표가 없습니다.";
+                        error = "영역 " + area.Name + " 회로 1 조각 " + (index + 1)
+                            + "의 확정 좌표가 유한하지 않습니다.";
                         return null;
                     }
-                    var points = new List<Vec3>(chain.Length / 3);
-                    for (int k = 0; k + 2 < chain.Length; k += 3)
-                    {
-                        var point = new Vec3(chain[k], chain[k + 1], chain[k + 2]);
-                        if (!double.IsFinite(point.X) || !double.IsFinite(point.Y) || !double.IsFinite(point.Z))
-                        {
-                            error = "영역 " + area.Name + " 회로 " + (c + 1) + " 조각 " + (index + 1)
-                                + "의 확정 좌표가 유한하지 않습니다.";
-                            return null;
-                        }
-                        points.Add(point);
-                    }
-                    circuitPieces.Add(new DxfPlanPieceExport(
-                        area.Name, index, area.NativePieceIds[index],
-                        area.Pattern.RoutePieces[index].Kind != SerpentineRoutePieceKind.HeatingRun,
-                        points));
+                    points.Add(point);
                 }
-                circuits.Add(new DxfPlanCircuitExport(prefix + (c + 1), circuitPieces));
+                circuitPieces.Add(new DxfPlanPieceExport(
+                    area.Name, index, area.NativePieceIds[index],
+                    area.Pattern.RoutePieces[index].Kind != SerpentineRoutePieceKind.HeatingRun,
+                    points));
             }
+            circuits.Add(new DxfPlanCircuitExport(prefix + "1", circuitPieces));
         }
 
         if (circuits.Count == 0)
@@ -211,7 +163,7 @@ public partial class MainWindow
     {
         error = null;
         if (area?.Pattern == null || area.NativePieceIds == null || area.RoutePieceLengths == null
-            || area.Circuits == null || area.CircuitPieceIndices == null || area.TurnEnabled == null)
+            || area.Circuits == null || area.CircuitPieceIndices == null)
         {
             error = "영역 " + (area?.Name ?? "") + "의 경로 정본이 불완전합니다.";
             return false;
@@ -225,13 +177,6 @@ public partial class MainWindow
         if (area.CircuitPieceIndices.Count != area.Circuits.Count)
         {
             error = "영역 " + area.Name + "의 회로와 조각 대응이 일치하지 않습니다.";
-            return false;
-        }
-        int turnCount = area.Pattern.RoutePieces.Count(
-            p => p.Kind == SerpentineRoutePieceKind.TurnConnector);
-        if (area.TurnEnabled.Count != turnCount)
-        {
-            error = "영역 " + area.Name + "의 회로 분할 상태가 조각과 일치하지 않습니다.";
             return false;
         }
         return true;
@@ -301,6 +246,31 @@ public partial class MainWindow
         {
             error = "금형의 가시 평면 투상선이 없습니다. 작업평면 방향을 확인하세요.";
             return false;
+        }
+        return true;
+    }
+
+    private static bool AddHeatAreas(
+        DxfView view, IReadOnlyList<WorkingArea> areas,
+        ProjectionFrame frame, out string error)
+    {
+        error = null;
+        if (areas == null || areas.Count == 0)
+        {
+            error = "평면도에 출력할 발열영역이 없습니다.";
+            return false;
+        }
+        foreach (WorkingArea area in areas)
+        {
+            if (!PlanHeatAreaBuilder.TryBuild(
+                    area.Name, area.Region, area.Exclusions, area.Frame, frame,
+                    out DxfPolyline ring, out string failure))
+            {
+                error = failure;
+                return false;
+            }
+            ring.Color = new AciColor(area.Color.R, area.Color.G, area.Color.B);
+            view.HeatAreas.Add(ring);
         }
         return true;
     }

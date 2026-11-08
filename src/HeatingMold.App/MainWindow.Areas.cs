@@ -17,11 +17,7 @@ public partial class MainWindow
         CancelPowerSetup();
         CancelExitFacePick();
         if (Viewport != null)
-        {
-            Viewport.ConnectorEditMode = false;
             Viewport.PowerLocationMode = false;
-        }
-        if (ConnectorEditModeBox != null) ConnectorEditModeBox.IsChecked = false;
         if (CircuitLengthGrid != null) CircuitLengthGrid.ItemsSource = null;
     }
 
@@ -134,7 +130,6 @@ public partial class MainWindow
         area.NativePieceIds,
         area.RoutePieceLengths,
         area.ProjectedPieces,
-        area.TurnEnabled.ToList(),
         area.PatternDisplayed,
         area.LastExitFailure,
         area.StartAnchor,
@@ -146,7 +141,6 @@ public partial class MainWindow
         area.ExcludedPlanKey,
         area.Circuits,
         area.CircuitPieceIndices,
-        area.CircuitExitOverrides.ToList(),
         area.ExitEdgeRefs,
         area.AppliedInputs,
         area.CommittedMapping,
@@ -172,7 +166,6 @@ public partial class MainWindow
         area.NativePieceIds = snapshot.NativePieceIds;
         area.RoutePieceLengths = snapshot.RoutePieceLengths;
         area.ProjectedPieces = snapshot.ProjectedPieces;
-        area.TurnEnabled = snapshot.TurnEnabled;
         area.PatternDisplayed = snapshot.PatternDisplayed;
         area.LastExitFailure = snapshot.LastExitFailure;
         area.StartAnchor = snapshot.StartAnchor;
@@ -184,7 +177,6 @@ public partial class MainWindow
         area.ExcludedPlanKey = snapshot.ExcludedPlanKey;
         area.Circuits = snapshot.Circuits;
         area.CircuitPieceIndices = snapshot.CircuitPieceIndices;
-        area.CircuitExitOverrides = snapshot.CircuitExitOverrides;
         area.ExitEdgeRefs = snapshot.ExitEdgeRefs;
         area.AppliedInputs = snapshot.AppliedInputs;
         area.CommittedMapping = snapshot.CommittedMapping;
@@ -250,6 +242,14 @@ public partial class MainWindow
     /// </summary>
     private void ApplyAreaColors()
     {
+        // 같은 Face를 둘 이상 영역이 참조하면 어느 영역의 색도 그 Face 전체를 대표하지
+        // 않는다. 마지막 영역 색으로 전체 Face를 덮지 않고, 영역 메시가 있는 경우에만
+        // 부분 표시를 쓴다.
+        var owners = new Dictionary<int, int>();
+        foreach (var area in _areas)
+            foreach (int faceId in area.FaceIdSet)
+                owners[faceId] = owners.TryGetValue(faceId, out int owned) ? owned + 1 : 1;
+
         var faceIds = new List<int>();
         var rgb = new List<double>();
         var clipped = new List<WorkingArea>();
@@ -259,6 +259,7 @@ public partial class MainWindow
             double r = area.Color.R / 255.0, g = area.Color.G / 255.0, b = area.Color.B / 255.0;
             foreach (int faceId in area.FaceIdSet)
             {
+                if (owners[faceId] > 1) continue;
                 faceIds.Add(faceId);
                 rgb.Add(r); rgb.Add(g); rgb.Add(b);
             }
@@ -553,20 +554,6 @@ public partial class MainWindow
         return TryCommitAreaRouteCandidates(areas, candidates, out activeLength, out activeCount);
     }
 
-    private void ApplyAreaConnectorStates(WorkingArea area)
-    {
-        if (area.Pattern == null) return;
-        int turn = 0;
-        for (int i = 0; i < area.Pattern.RoutePieces.Count; i++)
-        {
-            if (area.Pattern.RoutePieces[i].Kind != SerpentineRoutePieceKind.TurnConnector) continue;
-            bool enabled = turn < area.TurnEnabled.Count ? area.TurnEnabled[turn] : true;
-            // Rebuild 끝의 RedrawView가 일괄 반영한다 — 커넥터마다 Redraw하지 않는다.
-            Bridge.SetConnectorEnabled(area.NativePieceIds[i], enabled, 1.0, 0.1, 0.1, false);
-            turn++;
-        }
-    }
-
     private void ClearAllAreas(bool clearNative)
     {
         ExitExclusionSketch();
@@ -577,7 +564,6 @@ public partial class MainWindow
             area.FaceIdSet.Clear();
             area.Region.Clear();
             area.Exclusions.Clear();
-            area.TurnEnabled.Clear();
             area.ProjectedPieces.Clear();
         }
         _areas.Clear();

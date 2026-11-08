@@ -7,13 +7,6 @@ using HeatingMold.OccBridge;
 
 namespace HeatingMold.App;
 
-/// <summary>분할로 새로 생긴 회로 끝 인출점의 수동 이동값. 원본 Pattern 조각 인덱스와 역할로 식별한다.</summary>
-internal sealed record CircuitExitOverride(int PieceIndex, CircuitExitRole Role, Vec2 Point)
-{
-    public ExitEdgeBinding? Binding { get; init; }
-    public ArtificialEdgeBinding? ArtificialBinding { get; init; }
-}
-
 /// <summary>
 /// 확정된 작업영역 하나. 확정 시점의 Face 집합/투영 프레임과 해당 영역에서
 /// 생성한 발열 경로 상태를 함께 보관해 다른 영역과 독립적으로 유지한다.
@@ -80,14 +73,11 @@ internal sealed class WorkingArea
     /// <summary>선택한 후보의 identity와 양끝 원본 parameter를 보존한다.</summary>
     public AnchoredCandidate SelectedAnchorCandidate { get; set; }
 
-    /// <summary>분할·재연결을 반영한 회로별 완결 경로. 인출점/길이/표시의 정본이다.</summary>
+    /// <summary>영역의 완결 회로 경로. 생성된 발열경로 전체가 하나의 회로다.</summary>
     public List<CircuitRoute> Circuits { get; set; } = new();
 
     /// <summary>회로별 조각이 원본 Pattern에서 차지하는 인덱스. 길이/ID 대응에 쓴다.</summary>
     public List<List<int>> CircuitPieceIndices { get; set; } = new();
-
-    /// <summary>분할 회로 끝 인출점의 수동 이동값. Pattern 재생성/인출면 변경 시 비운다.</summary>
-    public List<CircuitExitOverride> CircuitExitOverrides { get; set; } = new();
 
     /// <summary>현재 방향에서 같은 인출면으로 양 끝을 맞출 수 있는 후보 쌍.</summary>
     public List<AnchoredCandidate> AnchorCandidates { get; set; } = new();
@@ -108,7 +98,6 @@ internal sealed class WorkingArea
     public string LastExitFailure { get; set; }
 
     public SerpentineResult Pattern { get; set; }
-    public List<bool> TurnEnabled { get; set; } = new();
     public List<RoutePieceResult> ProjectedPieces { get; set; } = new();
     public int[] NativePieceIds { get; set; } = Array.Empty<int>();
     public double[] RoutePieceLengths { get; set; } = Array.Empty<double>();

@@ -68,6 +68,20 @@ namespace HeatingMold.App.Tests
         }
 
         [Fact]
+        public void Load_RejectsRemovedLegacySplitStep()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string scenarioPath = WriteScenario(temp, model, sha256: VisualScenario.ComputeSha256(model),
+                split: "\"split\":{\"turnIndex\":0},");
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(scenario);
+            Assert.Contains("split", error);
+        }
+
+        [Fact]
         public void Load_RejectsUnsupportedSchema()
         {
             using var temp = new TempDirectory();
@@ -132,7 +146,8 @@ namespace HeatingMold.App.Tests
 
         private static string WriteScenario(TempDirectory temp, string model, string sha256,
             int schemaVersion = 1, string faceIds = "[1, 2]",
-            string electrical = "\"presetIndex\": 0, \"voltageV\": 220, \"reviewScope\": 0")
+            string electrical = "\"presetIndex\": 0, \"voltageV\": 220, \"reviewScope\": 0",
+            string split = "")
         {
             string json = "{" +
                 "\"schemaVersion\":" + schemaVersion + "," +
@@ -140,7 +155,7 @@ namespace HeatingMold.App.Tests
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + sha256 + "\",\"faceCount\":2,\"solidCount\":1}," +
                 "\"area\":{\"faceIds\":" + faceIds + ",\"marginMm\":5,\"spacingMm\":10,\"direction\":0}," +
                 "\"exit\":{\"faceId\":3}," +
-                "\"split\":{\"turnIndex\":0}," +
+                split +
                 "\"electrical\":{" + electrical + "}" +
                 "}";
             return temp.WriteFile("scenario.json", json);

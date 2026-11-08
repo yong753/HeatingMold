@@ -26,7 +26,6 @@
         "pieces": 15,
         "turns": 7,
         "circuits": 1,
-        "disabledTurns": 0,
         "exitFaceId": 79,
         "lengthMm": 5266.022,
         "lengthToleranceMm": 1.0,

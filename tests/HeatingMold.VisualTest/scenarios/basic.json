@@ -22,9 +22,6 @@
   "anchor": {
     "index": 0
   },
-  "split": {
-    "turnIndex": 1
-  },
   "electrical": {
     "presetIndex": 0,
     "voltageV": 220,
@@ -33,8 +30,6 @@
   "expect": {
     "areaCount": 1,
     "pieceCount": 15,
-    "turnCount": 7,
-    "circuitCountBeforeSplit": 1,
-    "circuitCountAfterSplit": 2
+    "turnCount": 7
   }
 }

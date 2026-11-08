@@ -80,7 +80,6 @@ namespace HeatingMold.App
         private void SetPowerEditingLock(bool locked)
         {
             _powerEditingLocked = locked;
-            if (ConnectorEditModeBox != null) ConnectorEditModeBox.IsEnabled = !locked;
             UpdateActionStates();
         }
 
@@ -97,12 +96,10 @@ namespace HeatingMold.App
             Viewport.ExclusionSketchMoved += OnExclusionSketchMoved;
             Viewport.ExclusionSketchCompleted += OnExclusionSketchCompleted;
             Viewport.ExclusionSketchCancelled += () => Bridge.SetExclusionPreview(null);
-            Viewport.ConnectorPicked += OnConnectorPicked;
             Viewport.PowerLocationPicked += OnPowerLocationPicked;
             Viewport.ExitFacePicked += OnExitFacePicked;
             Viewport.ExitFacePickMoved += OnExitFacePickMoved;
             Viewport.PowerLocationMoved += OnPowerLocationMoved;
-            Viewport.ConnectorHovered += OnConnectorHovered;
             Viewport.RoutePieceHovered += OnRoutePieceHovered;
             Viewport.VertexHovered += OnVertexHovered;
             Viewport.VertexDragStarted += OnVertexDragStarted;
@@ -194,11 +191,6 @@ namespace HeatingMold.App
                 && _activeArea.Paths.Count == 0
                 && !activeStale;
             if (VertexEditModeBox != null) VertexEditModeBox.IsEnabled = (vertexEligible || vertexActive) && !_isBusy;
-            if (ConnectorEditModeBox != null)
-                ConnectorEditModeBox.IsEnabled = !_isBusy
-                    && !_powerEditingLocked
-                    && _activeArea?.Pattern != null
-                    && !activeStale;
 
             // 제외 도구는 확정 작업영역이 있을 때만, 다른 편집/전원 대기 중에는 비활성화한다.
             bool exclusionEligible = ExclusionEligible() && !vertexActive && !_powerEditingLocked && !_isBusy;
@@ -433,16 +425,6 @@ namespace HeatingMold.App
                 AppendExitBinding(sb, circuit.EndExit?.Binding, inv);
                 sb.Append(']');
             }
-            sb.Append("|CO:");
-            foreach (CircuitExitOverride endpoint in area.CircuitExitOverrides
-                         .OrderBy(endpoint => endpoint.PieceIndex).ThenBy(endpoint => endpoint.Role))
-            {
-                sb.Append(endpoint.PieceIndex).Append(',').Append((int)endpoint.Role).Append(';');
-                AppendAnchor(sb, endpoint.Point, inv);
-                sb.Append(';');
-                AppendExitBinding(sb, endpoint.Binding, inv);
-                sb.Append('|');
-            }
             sb.Append("|X:");
             foreach (var e in area.Exclusions)
                 sb.Append(e.MinX.ToString("R", inv)).Append(',')
@@ -540,8 +522,6 @@ namespace HeatingMold.App
                 if (IsPatternInputStale(_activeArea))
                 {
                     if (Viewport != null && Viewport.VertexEditMode) ExitVertexEdit();
-                    if (ConnectorEditModeBox?.IsChecked == true) ConnectorEditModeBox.IsChecked = false;
-                    if (Viewport != null) Viewport.ConnectorEditMode = false;
                 }
             }
             UpdateActionStates();
@@ -736,13 +716,11 @@ namespace HeatingMold.App
             candidate.Pattern = null;
             candidate.Circuits = new List<CircuitRoute>();
             candidate.CircuitPieceIndices = new List<List<int>>();
-            candidate.CircuitExitOverrides.Clear();
             candidate.Paths = new List<List<Vec2>>();
             candidate.ExclusionPieces = null;
             candidate.NativePieceIds = Array.Empty<int>();
             candidate.RoutePieceLengths = Array.Empty<double>();
             candidate.ProjectedPieces = new List<RoutePieceResult>();
-            candidate.TurnEnabled = new List<bool>();
             candidate.PatternDisplayed = false;
             candidate.RouteEdited = false;
             candidate.AppliedInputs = null;
@@ -875,7 +853,7 @@ namespace HeatingMold.App
                 string assigned = AreaNameForFace(faceIndex);
                 StatusText.Text = assigned == null
                     ? string.Format("적용면에 추가 — #{0} ({1}) · 총 {2}개", faceIndex, type, _selectedFaceIds.Count)
-                    : string.Format("적용면에 추가 — #{0} ({1}) · 이미 {2} 영역에 속함", faceIndex, type, assigned);
+                    : string.Format("적용면에 추가 — #{0} ({1}) · {2} 영역과 같은 Face", faceIndex, type, assigned);
             }
             RefreshSelectedRegion();
         }
@@ -916,21 +894,8 @@ namespace HeatingMold.App
                 return;
             }
 
-            int[] overlap = _areas.SelectMany(area => area.FaceIdSet)
-                                  .Where(_selectedFaceIds.Contains)
-                                  .Distinct()
-                                  .OrderBy(id => id)
-                                  .ToArray();
-            if (overlap.Length > 0)
-            {
-                string owner = string.Join(", ", overlap.Select(id => AreaNameForFace(id) ?? "?").Distinct());
-                ErrorReporter.ShowWarning("작업영역 확정 실패",
-                    string.Format("선택한 Face 중 {0}개가 이미 다른 작업영역({1})에 속해 있습니다.\n각 Face는 하나의 작업영역에만 포함될 수 있습니다.",
-                        overlap.Length, owner));
-                StatusText.Text = "작업영역 확정 실패 — 다른 영역과 겹치는 Face가 있습니다";
-                return;
-            }
-
+            // 같은 Face를 여러 작업영역이 참조할 수 있다. 실제 발열영역이 겹치지 않는지는
+            // 사용자가 제외영역/인출점으로 구성하는 입력 전제이며, 여기서 자동 배분하지 않는다.
             if (!TryBuildSelectedRegion(out List<List<Vec2>> region, out ProjectionFrame frame,
                     out ExactRegionContainment regionBoundary, out CadExitBoundary2D exitBoundary,
                     out List<Vec2> sourceChain2D, out List<Vec3> sourceChain3D,
@@ -1130,10 +1095,6 @@ namespace HeatingMold.App
             if (_activeArea != null && !ConfirmDiscardRouteEdits(_activeArea, "패턴 재생성")) return;
             ExitVertexEdit();
             CancelExitFacePick();
-            // 같은 경로 탭에서 생성하므로 진행 중인 회로 분할 모드도 명시적으로 끝낸다.
-            if (Viewport != null) Viewport.ConnectorEditMode = false;
-            if (ConnectorEditModeBox != null && ConnectorEditModeBox.IsChecked == true)
-                ConnectorEditModeBox.IsChecked = false;
             CancelPowerSetup();
             if (!WorkingGenerationReady()) return;
             var area = _activeArea;
@@ -1268,15 +1229,11 @@ namespace HeatingMold.App
             }
             bool routePiecesMode = editablePattern != null && editablePattern.RoutePieces.Count > 0;
 
-            // 새 생성은 이전 Pattern의 파생 분할 binding을 상속하지 않는다. 이 모든
-            // 준비는 후보 안에서만 수행하며, 실패 시 확정 영역은 수정조차 하지 않는다.
+            // 새 생성은 이전 Pattern의 파생 상태를 상속하지 않는다. 이 모든 준비는
+            // 후보 안에서만 수행하며, 실패 시 확정 영역은 수정조차 하지 않는다.
             candidate.Pattern = routePiecesMode ? editablePattern : null;
             candidate.Circuits = new List<CircuitRoute>();
             candidate.CircuitPieceIndices = new List<List<int>>();
-            candidate.CircuitExitOverrides.Clear();
-            candidate.TurnEnabled = routePiecesMode
-                ? editablePattern.RoutePieces.Where(p => p.Kind == SerpentineRoutePieceKind.TurnConnector).Select(_ => true).ToList()
-                : new List<bool>();
             candidate.Paths = routePiecesMode ? new List<List<Vec2>>() : paths.Select(p => p.ToList()).ToList();
             candidate.ExclusionPieces = null;
             if (routePiecesMode)
@@ -1325,7 +1282,7 @@ namespace HeatingMold.App
                     ? string.Format(" · 연결선 {0}개", turnCount)
                     : string.Empty;
                 StatusText.Text = string.Format(
-                    "{0} 영역 — {1}개 경로 · 길이 {2:F1}mm · 회로 {3}개 · 회로 분할 가능",
+                    "{0} 영역 — {1}개 경로 · 길이 {2:F1}mm · 회로 {3}개",
                     area.Name, projectedCount, total, circuits) + counts + LaneNote(area.Pattern);
             }
             else
@@ -1337,28 +1294,6 @@ namespace HeatingMold.App
             UpdateActionStates();
         }
 
-        private void ConnectorEditMode_Changed(object sender, RoutedEventArgs e)
-        {
-            SerpentineResult pattern = _activeArea?.Pattern;
-            bool unavailable = pattern == null || pattern.RoutePieces.Count == 0;
-            bool stale = _activeArea != null && IsPatternInputStale(_activeArea);
-            bool enabled = ConnectorEditModeBox.IsChecked == true && !unavailable && !stale;
-            if (ConnectorEditModeBox.IsChecked == true && !enabled)
-            {
-                ConnectorEditModeBox.IsChecked = false;
-                StatusText.Text = stale
-                    ? "입력 조건이 변경되었습니다 — 패턴을 다시 생성한 뒤 회로를 분할하세요"
-                    : "먼저 턴 커넥터가 있는 패턴을 생성하세요";
-                return;
-            }
-            // 꼭지점 편집과 회로 분할은 상호 배타 — 편집 중에는 뷰포트가 꼭지점 입력을 우선 처리한다.
-            if (enabled && Viewport.VertexEditMode) ExitVertexEdit();
-            if (enabled && ExcludeModeBox.IsChecked == true) ExcludeModeBox.IsChecked = false;
-            Viewport.ConnectorEditMode = enabled;
-            if (enabled) { Bridge.ClearHover(); StatusText.Text = "회로 분할 — 연결 구간을 클릭해 회로를 분할하거나 다시 연결합니다"; }
-        }
-
-        private void OnConnectorHovered(int id) => HoverText.Text = id < 0 ? "" : "커넥터 #" + id;
         private void OnRoutePieceHovered(int id)
         {
             var area = _areas.FirstOrDefault(a => a.NativePieceIds.Contains(id));
@@ -1370,49 +1305,6 @@ namespace HeatingMold.App
         }
         private static double Distance3D(double[] a, double[] b) =>
             Math.Sqrt((a[0]-b[0])*(a[0]-b[0]) + (a[1]-b[1])*(a[1]-b[1]) + (a[2]-b[2])*(a[2]-b[2]));
-        private void OnConnectorPicked(int id)
-        {
-            var area = _activeArea;
-            if (!Viewport.ConnectorEditMode || area?.Pattern == null) return;
-            if (IsPatternInputStale(area))
-            {
-                Viewport.ConnectorEditMode = false;
-                if (ConnectorEditModeBox != null) ConnectorEditModeBox.IsChecked = false;
-                StatusText.Text = "입력 조건이 변경되었습니다 — 패턴을 다시 생성한 뒤 회로를 분할하세요";
-                return;
-            }
-            int local = Array.IndexOf(area.NativePieceIds, id);
-            if (local < 0) return;
-            var connectors = area.Pattern.RoutePieces.Select((p, i) => (p, i)).Where(x => x.p.Kind == SerpentineRoutePieceKind.TurnConnector).ToList();
-            int ci = connectors.FindIndex(x => x.i == local);
-            if (ci < 0) return;
-            if (ci >= area.TurnEnabled.Count)
-            {
-                StatusText.Text = "회로 분할 상태가 턴 개수와 일치하지 않습니다";
-                return;
-            }
-            var candidate = ForkAreaRoute(area);
-            bool next = !area.TurnEnabled[ci];
-            var beforeGroups = area.CircuitPieceIndices.Select(g => g.ToList()).ToList();
-            candidate.TurnEnabled[ci] = next;
-            if (next) RemoveOverridesForMerge(candidate, local, beforeGroups);
-            if (!RebuildNativePatternGeometry(area, candidate, out _, out _)) return;
-            ApplyConnectorStates();
-        }
-        private void ApplyConnectorStates()
-        {
-            CancelPowerSetup();
-            var area = _activeArea;
-            if (area?.Pattern == null) return;
-            Bridge.RedrawView();
-            var circuits = area.Circuits;
-            double length = 0;
-            foreach (List<int> group in area.CircuitPieceIndices)
-                foreach (int index in group)
-                    length += area.RoutePieceLengths.ElementAtOrDefault(index);
-            UpdateCircuitTable();
-            StatusText.Text = string.Format("{0} 영역 · 회로 {1}개 · 길이 합계 {2:F1}mm", area.Name, circuits.Count, length);
-        }
         private void UpdateCircuitTable()
         {
             if (CircuitLengthGrid == null) return;
@@ -1468,7 +1360,7 @@ namespace HeatingMold.App
             if (!WorkingRouteMigrationComplete) { StatusText.Text = "생성 보류: 전원 경로는 아직 작업 방향 첫 충돌 경로로 마이그레이션되지 않았습니다"; return; }
             if (!WorkingGenerationReady()) return;
             WorkingArea area = _activeArea;
-            if (area?.Pattern == null || area.Frame == null) { StatusText.Text = "먼저 회로 분할 가능한 패턴을 생성하세요"; return; }
+            if (area?.Pattern == null || area.Frame == null) { StatusText.Text = "먼저 발열 패턴을 생성하세요"; return; }
             CancelPowerSetup();
             if (area.ProjectedPieces.Count != area.Pattern.RoutePieces.Count) { StatusText.Text = "3D 경로 끝점이 없습니다. 패턴을 다시 생성하세요"; return; }
             var groups = CircuitPieceGroups();
@@ -1482,8 +1374,6 @@ namespace HeatingMold.App
                 _pendingLeads.Add(new PendingLead(i, true, new Vec3(a[0], a[1], a[2])));
                 _pendingLeads.Add(new PendingLead(i, false, new Vec3(b[0], b[1], b[2])));
             }
-            ConnectorEditModeBox.IsChecked = false;
-            Viewport.ConnectorEditMode = false;
             ExitExclusionSketch();
             Viewport.RectangleSelectionMode = false;
             Bridge.ClearHover();

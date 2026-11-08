@@ -19,7 +19,9 @@ internal sealed class VisualScenario
     public VisualAreaSpec Area { get; set; }
     public VisualExitSpec Exit { get; set; }
     public VisualAnchorSpec Anchor { get; set; }
-    public VisualSplitSpec Split { get; set; }
+    /// <summary>구 schemaVersion 1의 회로 분할 단계. 더 이상 지원하지 않으며,
+    /// 기존 시나리오 파일이 조용히 분할 없이 실행되지 않도록 명시적으로 거부한다.</summary>
+    public JsonElement? Split { get; set; }
     public VisualElectricalSpec Electrical { get; set; }
     public VisualExpectSpec Expect { get; set; }
 
@@ -86,7 +88,9 @@ internal sealed class VisualScenario
     {
         if (Area == null) throw new ArgumentException("area 섹션이 없습니다.");
         if (Exit == null) throw new ArgumentException("exit 섹션이 없습니다.");
-        if (Split == null) throw new ArgumentException("split 섹션이 없습니다.");
+        if (Split.HasValue && Split.Value.ValueKind != JsonValueKind.Null)
+            throw new ArgumentException("schemaVersion 1의 split 단계는 더 이상 지원하지 않습니다. "
+                + "회로 분할 없이 영역별 단일 회로를 사용하는 schemaVersion 2 시나리오로 변환하세요.");
         if (Electrical == null) throw new ArgumentException("electrical 섹션이 없습니다.");
 
         ValidateFaceIds(Area.FaceIds, "area.faceIds");
@@ -95,8 +99,6 @@ internal sealed class VisualScenario
 
         if (Anchor != null && Anchor.Index < 0)
             throw new ArgumentException("anchor.index는 0 이상이어야 합니다.");
-        if (Split.TurnIndex < 0)
-            throw new ArgumentException("split.turnIndex는 0 이상이어야 합니다.");
         if (Electrical.PresetIndex < 0 || Electrical.PresetIndex > 2)
             throw new ArgumentException("electrical.presetIndex는 0, 1, 2 중 하나여야 합니다.");
         if (!double.IsFinite(Electrical.VoltageV) || Electrical.VoltageV < 0)
@@ -166,15 +168,8 @@ internal sealed class VisualScenario
                 case "pickExit":
                 case "cancelExitPick":
                 case "generate":
-                case "splitTurn":
-                case "mergeTurn":
                 case "checkArea":
                     RequireAlias(step.Area, aliases, i);
-                    if (action == "splitTurn" || action == "mergeTurn")
-                    {
-                        if (step.TurnIndex == null || step.TurnIndex.Value < 0)
-                            throw new ArgumentException("steps[" + i + "].turnIndex는 0 이상이어야 합니다.");
-                    }
                     if (action == "generate" || action == "checkArea")
                         ValidateExpect(step.Expect, "steps[" + i + "].expect");
                     if (action == "pickExit")
@@ -292,8 +287,6 @@ internal sealed class VisualScenario
             throw new ArgumentException(section + ".turns는 0 이상이어야 합니다.");
         if (expect.Circuits != null && expect.Circuits.Value < 0)
             throw new ArgumentException(section + ".circuits는 0 이상이어야 합니다.");
-        if (expect.DisabledTurns != null && expect.DisabledTurns.Value < 0)
-            throw new ArgumentException(section + ".disabledTurns는 0 이상이어야 합니다.");
         if (expect.MarginMm != null && (!double.IsFinite(expect.MarginMm.Value) || expect.MarginMm.Value <= 0))
             throw new ArgumentException(section + ".marginMm는 0보다 큰 유한 숫자여야 합니다.");
         if (expect.SpacingMm != null && (!double.IsFinite(expect.SpacingMm.Value) || expect.SpacingMm.Value <= 0))
@@ -390,11 +383,6 @@ internal sealed class VisualAnchorSpec
     public double ToleranceMm { get; set; } = 0.5;
 }
 
-internal sealed class VisualSplitSpec
-{
-    public int TurnIndex { get; set; }
-}
-
 internal sealed class VisualElectricalSpec
 {
     public int PresetIndex { get; set; }
@@ -409,8 +397,6 @@ internal sealed class VisualExpectSpec
     public int? AreaCount { get; set; }
     public int? PieceCount { get; set; }
     public int? TurnCount { get; set; }
-    public int? CircuitCountBeforeSplit { get; set; }
-    public int? CircuitCountAfterSplit { get; set; }
 }
 
 /// <summary>영역 하나의 최종 기대 상태. 선언된 값만 검사한다.</summary>
@@ -419,7 +405,6 @@ internal sealed class VisualAreaExpect
     public int? Pieces { get; set; }
     public int? Turns { get; set; }
     public int? Circuits { get; set; }
-    public int? DisabledTurns { get; set; }
     public int? ExitFaceId { get; set; }
     public double? LengthMm { get; set; }
     public double LengthToleranceMm { get; set; } = 0.5;
@@ -442,7 +427,6 @@ internal sealed class VisualActionSpec
     public double? MarginMm { get; set; }
     public double? SpacingMm { get; set; }
     public int? Direction { get; set; }
-    public int? TurnIndex { get; set; }
     public int? Scope { get; set; }
     public double[] Rect { get; set; }
     public int? VertexIndex { get; set; }

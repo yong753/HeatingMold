@@ -16,8 +16,6 @@ namespace HeatingMold.App;
 public partial class MainWindow
 {
     private List<RouteVertexGroup> _vertexGroups = new();
-    /// <summary>분할 회로의 파생 인출점 핸들 → 원본 Pattern 조각 인덱스/역할.</summary>
-    private readonly Dictionary<int, (int PieceIndex, CircuitExitRole Role)> _vertexCircuitAnchors = new();
     private int _vertexHover = -1;
     // 표시 인덱스 → _vertexGroups 인덱스. 매핑에 실패한 꼭지점은 핸들을 만들지 않는다.
     private readonly List<int> _vertexHandleGroupMap = new();
@@ -33,13 +31,12 @@ public partial class MainWindow
     private const string RouteEndpointEditMessage =
         "시작점/종료점은 편집 모드에서 이동할 수 없습니다 — 전용 '시작점 선택'/'종료점 선택' 버튼으로 변경하세요";
 
-    /// <summary>시작/종료 인출점과 분할 회로의 파생 인출점은 발열경로 편집에서 고정한다.
+    /// <summary>시작/종료 인출점은 발열경로 편집에서 고정한다.
     /// 이 점들은 전용 '시작점 선택'/'종료점 선택' 버튼으로만 변경한다.</summary>
     private bool IsRouteEndpointGroup(int groupIndex)
     {
         var area = _activeArea;
         if (area?.Pattern == null || groupIndex < 0 || groupIndex >= _vertexGroups.Count) return false;
-        if (_vertexCircuitAnchors.ContainsKey(groupIndex)) return true;
         return IsAnchorGroup(area, _vertexGroups[groupIndex], out _);
     }
 
@@ -70,8 +67,6 @@ public partial class MainWindow
         { RejectVertexEdit("전원 연결 설정을 취소한 뒤 다시 시도하세요"); return; }
 
         // 다른 편집 모드와 상호 배타.
-        Viewport.ConnectorEditMode = false;
-        if (ConnectorEditModeBox != null) ConnectorEditModeBox.IsChecked = false;
         CancelExitFacePick();
         ExitExclusionSketch();
         Viewport.RectangleSelectionMode = false;
@@ -128,7 +123,6 @@ public partial class MainWindow
         _vertexPresentation = null;
         _vertexPresentationHeld = false;
         _vertexGroups.Clear();
-        _vertexCircuitAnchors.Clear();
         _vertexHandleGroupMap.Clear();
         _vertexHover = -1;
         _suppressVertexEditToggle = true;
@@ -200,7 +194,6 @@ public partial class MainWindow
     private List<RouteVertexGroup> BuildVertexGroups(WorkingArea area)
     {
         var groups = new List<RouteVertexGroup>();
-        _vertexCircuitAnchors.Clear();
         if (area.Circuits.Count == 0 || area.Circuits.Count != area.CircuitPieceIndices.Count)
             return RouteVertexGroups.Build(area.Pattern.RoutePieces).ToList();
         for (int i = 0; i < area.Circuits.Count; i++)
@@ -213,20 +206,10 @@ public partial class MainWindow
                 var occurrences = local.Occurrences.Select(o =>
                     new RouteVertexOccurrence(indices[o.Piece], o.Point)).ToArray();
                 groups.Add(new RouteVertexGroup(occurrences, local.Datum));
-                if (indices[0] != 0 && local.Occurrences.Any(o => o.Piece == 0 && o.Point == 0))
-                    _vertexCircuitAnchors[groups.Count - 1] = (indices[0], CircuitExitRole.Start);
-                int last = route.Pieces.Count - 1;
-                if (indices[^1] != area.Pattern.RoutePieces.Count - 1 &&
-                    local.Occurrences.Any(o => o.Piece == last && o.Point == route.Pieces[last].Points.Count - 1))
-                    _vertexCircuitAnchors[groups.Count - 1] = (indices[^1], CircuitExitRole.End);
             }
         }
         return groups;
     }
-
-    private static int FindCircuitEndpoint(WorkingArea area, (int PieceIndex, CircuitExitRole Role) key) =>
-        area.CircuitPieceIndices.FindIndex(g => g.Count > 0 &&
-            (key.Role == CircuitExitRole.Start ? g[0] == key.PieceIndex : g[^1] == key.PieceIndex));
 
     private void OnVertexHovered(int handle)
     {
@@ -241,7 +224,7 @@ public partial class MainWindow
         }
         int group = _vertexHandleGroupMap[handle];
         RouteVertexGroup vertex = _vertexGroups[group];
-        bool anchor = IsAnchorGroup(_activeArea, vertex, out _) || _vertexCircuitAnchors.ContainsKey(group);
+        bool anchor = IsAnchorGroup(_activeArea, vertex, out _);
         HoverText.Text = string.Format("꼭지점 ({0:F2}, {1:F2})mm{2}",
             vertex.Datum.X, vertex.Datum.Y, anchor ? " · 인출 앵커" : "");
     }
@@ -362,13 +345,6 @@ public partial class MainWindow
             return false;
         }
         RouteVertexGroup group = _vertexGroups[_vertexDragGroup];
-        if (_vertexCircuitAnchors.TryGetValue(_vertexDragGroup, out var circuitKey))
-        {
-            anchor = true;
-            isStart = circuitKey.Role == CircuitExitRole.Start;
-            return TryBuildCircuitAnchor(circuitKey, datum, strict: false,
-                out pieces, out mappedPieces, out applied, out failure, out _);
-        }
         anchor = IsAnchorGroup(area, group, out isStart);
         var side = _workingSide.Confirmed;
         if (side == null) { failure = "작업면이 확정되지 않았습니다"; return false; }
@@ -436,18 +412,6 @@ public partial class MainWindow
             return false;
         }
         RouteVertexGroup group = _vertexGroups[_vertexDragGroup];
-        if (_vertexCircuitAnchors.TryGetValue(_vertexDragGroup, out var circuitKey))
-        {
-            anchor = true;
-            isStart = circuitKey.Role == CircuitExitRole.Start;
-            if (!TryBuildCircuitAnchor(circuitKey, datum, strict: true,
-                    out _, out mappedPieces, out applied, out failure, out CircuitExitPoint moved))
-                return false;
-            movedBinding = moved.Binding;
-            movedArtificialBinding = moved.ArtificialBinding;
-            candidate = area.Pattern;
-            return true;
-        }
         anchor = IsAnchorGroup(area, group, out isStart);
         var side = _workingSide.Confirmed;
         if (side == null) { failure = "작업면이 확정되지 않았습니다"; return false; }
@@ -497,73 +461,6 @@ public partial class MainWindow
             if (!ok) { failure = "모델 표면 매핑 실패 — " + mapFailure; return false; }
             mappedPieces[pieceIndex] = samples;
         }
-        return true;
-    }
-
-    /// <summary>분할 회로의 파생 인출점 하나를 이동한 후보를 만든다.</summary>
-    private bool TryBuildCircuitAnchor((int PieceIndex, CircuitExitRole Role) key, Vec2 datum, bool strict,
-        out Dictionary<int, IReadOnlyList<Vec2>> pieces,
-        out Dictionary<int, List<SurfaceMappedSample>> mappedPieces,
-        out Vec2 applied, out string failure, out CircuitExitPoint movedExit)
-    {
-        pieces = new Dictionary<int, IReadOnlyList<Vec2>>();
-        mappedPieces = new Dictionary<int, List<SurfaceMappedSample>>();
-        applied = datum;
-        failure = string.Empty;
-        movedExit = null;
-        var area = _activeArea;
-        var side = _workingSide.Confirmed;
-        if (area?.Pattern == null || side == null) { failure = "편집할 경로가 없습니다"; return false; }
-        int circuitIndex = FindCircuitEndpoint(area, key);
-        if (circuitIndex < 0 || circuitIndex >= area.Circuits.Count)
-        { failure = "분할 회로의 인출점을 찾을 수 없습니다"; return false; }
-        CircuitRoute route = area.Circuits[circuitIndex];
-        var context = CommittedRouteContext.Capture(area);
-        CircuitExitPoint boundExit = key.Role == CircuitExitRole.Start ? route.StartExit : route.EndExit;
-        if (!TryProjectExitDatum(side, context, boundExit.Binding, boundExit.ArtificialBinding, datum, 5.0,
-                out ExitBoundaryPoint projected, out SurfaceMappedSample anchorSample, out failure)) return false;
-        applied = projected.Point;
-        movedExit = boundExit with { Point = applied, Binding = projected.Binding,
-            ArtificialBinding = projected.ArtificialBinding,
-            BoundarySegmentIndex = projected.SegmentIndex, BoundaryParameter = projected.SegmentParameter };
-        if (applied.DistanceTo(route.StartExit.Point) <= 1e-6 && key.Role == CircuitExitRole.Start ||
-            applied.DistanceTo(route.EndExit.Point) <= 1e-6 && key.Role == CircuitExitRole.End)
-        { failure = "인출점 위치가 변경되지 않았습니다"; return false; }
-
-        CircuitExitPoint start = key.Role == CircuitExitRole.Start
-            ? movedExit
-            : route.StartExit;
-        CircuitExitPoint end = key.Role == CircuitExitRole.End
-            ? movedExit
-            : route.EndExit;
-        if (!CircuitRouteBuilder.TryTrimToExit(route.Pieces, ToBoundary(start), ToBoundary(end),
-                route.AngleDeg, route.LaneCount, route.NominalLaneCount,
-                out CircuitRoute candidate, out failure))
-            return false;
-        IReadOnlyList<Vec2> points = key.Role == CircuitExitRole.Start
-            ? candidate.Pieces[0].Points
-            : candidate.Pieces[^1].Points;
-        if (points.Count < 2) { failure = "인출점 주변 구간이 퇴화합니다"; return false; }
-        var overrides = new Dictionary<int, SurfaceMappedSample>
-        {
-            [key.Role == CircuitExitRole.Start ? 0 : points.Count - 1] =
-                anchorSample
-        };
-        if (candidate.Pieces.Count == 1)
-        {
-            CircuitExitPoint other = key.Role == CircuitExitRole.Start ? end : start;
-            if (!TryEvaluateExitSample(side, context, other.Binding, other.ArtificialBinding,
-                    other.Point, out var otherSample, out failure))
-                return false;
-            overrides[key.Role == CircuitExitRole.Start ? points.Count - 1 : 0] = otherSample;
-        }
-        var hit = BuildSurfaceMapDelegate(area, side, context: context);
-        bool ok = strict
-            ? SurfacePathMapper.TryMapRouteStrict(points, hit, overrides, out var samples, out failure, 0.1)
-            : SurfacePathMapper.TryMapRoute(points, hit, overrides, out samples, out failure);
-        if (!ok) { failure = "모델 표면 매핑 실패 — " + failure; return false; }
-        pieces[key.PieceIndex] = points;
-        mappedPieces[key.PieceIndex] = samples;
         return true;
     }
 
@@ -667,45 +564,30 @@ public partial class MainWindow
         }
 
         WorkingArea edited = ForkAreaRoute(area);
-        bool circuitAnchor = _vertexCircuitAnchors.TryGetValue(_vertexDragGroup, out var circuitKey);
-        if (circuitAnchor)
+        edited.Pattern = candidate;
+        if (anchor)
         {
-            edited.CircuitExitOverrides.RemoveAll(o =>
-                o.PieceIndex == circuitKey.PieceIndex && o.Role == circuitKey.Role);
-            edited.CircuitExitOverrides.Add(new CircuitExitOverride(
-                circuitKey.PieceIndex, circuitKey.Role, applied)
+            if (isStart) edited.StartAnchor = applied;
+            else edited.EndAnchor = applied;
+            // 새 인출점 방식의 정본도 같은 이동값/binding으로 함께 갱신한다.
+            ExitBoundaryPoint? previous = isStart ? edited.SelectedStartExit : edited.SelectedEndExit;
+            var updatedExit = new ExitBoundaryPoint(applied,
+                previous?.SegmentIndex ?? -1,
+                (movedBinding?.Parameter ?? movedArtificialBinding?.Parameter) ?? previous?.SegmentParameter ?? 0)
             {
                 Binding = movedBinding,
                 ArtificialBinding = movedArtificialBinding
-            });
-        }
-        else
-        {
-            edited.Pattern = candidate;
-            if (anchor)
+            };
+            if (isStart) edited.SelectedStartExit = updatedExit;
+            else edited.SelectedEndExit = updatedExit;
+            if (edited.SelectedAnchorCandidate != null)
             {
-                if (isStart) edited.StartAnchor = applied;
-                else edited.EndAnchor = applied;
-                // 새 인출점 방식의 정본도 같은 이동값/binding으로 함께 갱신한다.
-                ExitBoundaryPoint? previous = isStart ? edited.SelectedStartExit : edited.SelectedEndExit;
-                var updatedExit = new ExitBoundaryPoint(applied,
-                    previous?.SegmentIndex ?? -1,
-                    (movedBinding?.Parameter ?? movedArtificialBinding?.Parameter) ?? previous?.SegmentParameter ?? 0)
-                {
-                    Binding = movedBinding,
-                    ArtificialBinding = movedArtificialBinding
-                };
-                if (isStart) edited.SelectedStartExit = updatedExit;
-                else edited.SelectedEndExit = updatedExit;
-                if (edited.SelectedAnchorCandidate != null)
-                {
-                    if (movedBinding.HasValue)
-                        edited.SelectedAnchorCandidate = isStart
-                            ? edited.SelectedAnchorCandidate with { Start = applied, StartBinding = movedBinding }
-                            : edited.SelectedAnchorCandidate with { End = applied, EndBinding = movedBinding };
-                    else
-                        edited.SelectedAnchorCandidate = null;
-                }
+                if (movedBinding.HasValue)
+                    edited.SelectedAnchorCandidate = isStart
+                        ? edited.SelectedAnchorCandidate with { Start = applied, StartBinding = movedBinding }
+                        : edited.SelectedAnchorCandidate with { End = applied, EndBinding = movedBinding };
+                else
+                    edited.SelectedAnchorCandidate = null;
             }
         }
         edited.RouteEdited = true;

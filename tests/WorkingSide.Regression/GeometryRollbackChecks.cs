@@ -61,13 +61,11 @@ static class GeometryRollbackChecks
         var paths = new List<List<Vec2>> { new() { new(-8, 0), new(8, 0) } };
         var projected = new List<RoutePieceResult>();
         var lengths = new[] { 16.0 };
-        var turnEnabled = new List<bool> { true };
         type.GetProperty("Pattern")!.SetValue(area, pattern);
         type.GetProperty("Paths")!.SetValue(area, paths);
         type.GetProperty("ProjectedPieces")!.SetValue(area, projected);
         type.GetProperty("NativePieceIds")!.SetValue(area, new[] { 9201 });
         type.GetProperty("RoutePieceLengths")!.SetValue(area, lengths);
-        type.GetProperty("TurnEnabled")!.SetValue(area, turnEnabled);
         type.GetProperty("PatternDisplayed")!.SetValue(area, true);
         type.GetProperty("StartAnchor")!.SetValue(area, new Vec2(-8, 0));
         type.GetProperty("EndAnchor")!.SetValue(area, new Vec2(8, 0));
