@@ -318,6 +318,32 @@ public class BoundExitStateTests
             ExitBoundaryFailureReason.MissingReference, result.Failure);
     }
 
+    [Fact]
+    public void CadBoundaryCopyPreservesTopologySignature()
+    {
+        var source = new ExitEdgeReference
+        {
+            Revision = 7,
+            EdgeKey = 21,
+            EdgeSignature = "edge-signature",
+            FaceId = 3,
+            FirstParameter = 2,
+            LastParameter = 8,
+            Reversed = true,
+            StartIndex = 1,
+            EndIndex = 4
+        };
+
+        ExitEdgeReference copy = CadExitBoundary2D.CopyReference(source);
+
+        Assert.NotSame(source, copy);
+        Assert.Equal("edge-signature", copy.EdgeSignature);
+        Assert.Equal(source.EdgeKey, copy.EdgeKey);
+        Assert.Equal(source.FirstParameter, copy.FirstParameter);
+        Assert.Equal(source.LastParameter, copy.LastParameter);
+        Assert.Equal(source.Reversed, copy.Reversed);
+    }
+
     private sealed class RecordingBoundary : IExitBoundary2D
     {
         public List<ExitEdgeBinding> Evaluated { get; } = new();

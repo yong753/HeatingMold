@@ -50,9 +50,16 @@
 ## Project persistence (Phase A implemented)
 
 - The product project file is one UTF-8 JSON document that references the external original STEP by relative path and SHA-256; CAD/BREP geometry is not embedded.
-- Phase A is save-only. Loading/restoring a project is not implemented yet; do not describe the JSON as reopenable until the restore candidate and portable topology identity phases land.
+- Phase A is save-only. Loading/restoring a project is not implemented yet; do not describe the JSON as reopenable until the restore candidate and load/rebind phases land. Portable Face/Edge topology signatures are saved, but no load path exists.
 - Save uses a same-directory temporary file, flush, and atomic replace. A save failure must preserve the current work and the previous JSON file; never overwrite the source STEP.
 - Do not persist native pointers, temporary stage IDs, AIS/presentation objects, caches, hover/preview state, or runtime-only FACE/Edge IDs as durable identity.
+
+## Topology identity (Phase B in progress)
+
+- Saved FACE/Edge runtime IDs are not durable. Projects store per-Face and per-Edge topology signatures and remap them to fresh runtime IDs after reimport; raw IDs are diagnostic provenance only.
+- An edge signature includes its adjacent Face signatures. Face/edge signatures must be nonempty, unique, and byte-stable across reimport of the same STEP, hash, and import policy. Missing, duplicate, ambiguous, or changed signatures are explicit load-time failures.
+- Every exit-edge copy must preserve `EdgeSignature`; never reconstruct a saved binding by nearest XY or nearest-edge matching.
+- Loading/restoring is still not implemented. The exact saved working frame and per-point route support-face provenance are available for the future restore candidate.
 
 ## Circuit generation contract
 

@@ -26,7 +26,7 @@ internal sealed class CadExitBoundary2D : IExitBoundary2D
 
     internal static ExitEdgeReference CopyReference(ExitEdgeReference edge) => new()
     {
-        Revision = edge.Revision, EdgeKey = edge.EdgeKey, FaceId = edge.FaceId,
+        Revision = edge.Revision, EdgeKey = edge.EdgeKey, EdgeSignature = edge.EdgeSignature, FaceId = edge.FaceId,
         FirstParameter = edge.FirstParameter, LastParameter = edge.LastParameter,
         Reversed = edge.Reversed, StartIndex = edge.StartIndex, EndIndex = edge.EndIndex
     };
