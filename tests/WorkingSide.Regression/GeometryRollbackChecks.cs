@@ -148,6 +148,65 @@ static class GeometryRollbackChecks
         Invoke(window, "ClearAllAreas", false);
     }
 
+    static void ExactFrameChecks(WorkingSideDefinition side)
+    {
+        ProjectionFrame frame = side.Frame;
+        double[] saved =
+        {
+            frame.Origin.X, frame.Origin.Y, frame.Origin.Z,
+            frame.AxisX.X, frame.AxisX.Y, frame.AxisX.Z,
+            frame.AxisY.X, frame.AxisY.Y, frame.AxisY.Z,
+            frame.Normal.X, frame.Normal.Y, frame.Normal.Z
+        };
+        // bbox 중심 재계산과 구분되도록 저장 원점을 N 방향으로 조금 더 띄운다.
+        saved[0] += frame.Normal.X * 2.0;
+        saved[1] += frame.Normal.Y * 2.0;
+        saved[2] += frame.Normal.Z * 2.0;
+        WorkingContext context = Bridge.CreateWorkingContextWithFrame(saved);
+        Check(context != null, "exact saved working frame creates a context");
+        if (context != null)
+        {
+            Check(context.Frame != null && context.Frame.Length == 12 &&
+                  context.Frame.Zip(saved, (a, b) => Math.Abs(a - b) < 1e-8).All(ok => ok),
+                "exact saved working frame preserves origin and axes");
+            Bridge.ReleaseWorkingContext(context.Id);
+        }
+        double[] invalid = (double[])saved.Clone();
+        invalid[3] = invalid[4] = invalid[5] = 0;
+        Check(Bridge.CreateWorkingContextWithFrame(invalid) == null,
+            "invalid saved working frame is rejected");
+    }
+
+    static void SupportFaceProvenanceChecks(WorkingSideDefinition side, int topFace)
+    {
+        Bridge.ClearRoutePieces();
+        const int stageId = -9701;
+        const int finalId = 9701;
+        var staged = Bridge.StageSurfaceMappedRoutePieceWithFaces(
+            side.Id.Value, side.Revision.Value, stageId, "HeatingRun",
+            new[] { -10.0, 0, 20, 10.0, 0, 20 }, new[] { topFace, topFace });
+        Check(staged != null, "support-face route stages");
+        Check(Bridge.CommitWorkingRouteGeometryDelta(
+            side.Id.Value, side.Revision.Value, new[] { stageId }, new[] { finalId },
+            Array.Empty<int>(), Array.Empty<int>(), Array.Empty<int>()),
+            "support-face route commits");
+        CommittedRouteChain[] detailed = Bridge.GetCommittedRouteChainsDetailed(
+            side.Id.Value, side.Revision.Value, new[] { finalId });
+        Check(detailed != null && detailed.Length == 1,
+            "detailed committed chain reads");
+        CommittedRouteChain chain = detailed[0];
+        Check(chain.Points != null && chain.Points.Length == 6,
+            "detailed chain keeps ordered points");
+        Check(chain.SupportFaceIds != null && chain.SupportFaceIds.Length == 2 &&
+              chain.SupportFaceIds.All(f => f == topFace),
+            "detailed chain keeps per-point support faces");
+        double[][] legacy = Bridge.GetCommittedRouteChains(
+            side.Id.Value, side.Revision.Value, new[] { finalId });
+        Check(legacy != null && legacy.Length == 1 && legacy[0].SequenceEqual(chain.Points),
+            "detailed points match legacy committed chain");
+        Bridge.ClearRoutePieces();
+    }
+
     public static void Run(MainWindow window)
     {
         var side = Field<WorkingSideSession>(window, "_workingSide").Confirmed;
@@ -166,6 +225,8 @@ static class GeometryRollbackChecks
         var areaType = typeof(MainWindow).Assembly.GetType("HeatingMold.App.WorkingArea")!;
         SnapshotOwnershipChecks(areaType, side);
         StageFailureChecks(window, areaType, side, topFace);
+        ExactFrameChecks(side);
+        SupportFaceProvenanceChecks(side, topFace);
         Console.WriteLine($"{count} geometry rollback checks passed.");
     }
 }

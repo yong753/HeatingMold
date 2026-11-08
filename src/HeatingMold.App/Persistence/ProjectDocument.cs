@@ -184,6 +184,7 @@ namespace HeatingMold.App.Persistence
     {
         public int NativePieceId { get; set; }
         public List<ProjectVec3> Points { get; set; } = new();
+        public int[] SupportFaceIds { get; set; } = Array.Empty<int>();
     }
 
     public sealed class ProjectCommittedContextDocument

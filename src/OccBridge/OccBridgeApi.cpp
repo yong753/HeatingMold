@@ -314,6 +314,9 @@ namespace
         // 확정 표시에 실제로 사용한 순서 보존 3D 점 체인. 내보내기는 AIS 형상에서
         // topology를 다시 추론하지 않고 이 체인을 그대로 사용한다.
         std::vector<double> sourceXyz;
+        // sourceXyz의 각 점이 어느 원본 Face에서 매핑됐는지 점 단위로 보존한다.
+        // WithFaces 스테이징이 아니면 비어 있다.
+        std::vector<int> sourceSupportFaces;
     };
     std::map<int, RoutePieceOverlay> g_routePieces;
     struct StagedWorkingPolyline { Handle(AIS_Shape) ais; long long contextId, revision; };
@@ -3530,6 +3533,24 @@ WorkingContext^ Bridge::CreateWorkingContext(double nx,double ny,double nz,doubl
     for (int i=0;i<result->Triangles->Length;++i) result->Triangles[i]=c->triangles[i];
     return result;
 }
+WorkingContext^ Bridge::CreateWorkingContextWithFrame(array<double>^ frame)
+{
+    if (frame==nullptr || frame->Length!=12) return nullptr;
+    for each(double value in frame) if (!std::isfinite(value)) return nullptr;
+    const long long id = CreateWorkingNativeAtFrame(
+        frame[0],frame[1],frame[2], frame[3],frame[4],frame[5],
+        frame[6],frame[7],frame[8], frame[9],frame[10],frame[11]);
+    if (!id) return nullptr;
+    auto* c = FindWorking(id,g_modelRevision);
+    if (c == nullptr) return nullptr;
+    auto result = gcnew WorkingContext();
+    result->Id=id; result->Revision=c->revision; result->MeshDeflection=c->deflection;
+    result->Frame=gcnew array<double>{c->origin.X(),c->origin.Y(),c->origin.Z(),
+        c->x.X(),c->x.Y(),c->x.Z(),c->y.X(),c->y.Y(),c->y.Z(),c->n.X(),c->n.Y(),c->n.Z()};
+    result->Triangles=gcnew array<double>(static_cast<int>(c->triangles.size()));
+    for (int i=0;i<result->Triangles->Length;++i) result->Triangles[i]=c->triangles[i];
+    return result;
+}
 WorkingHit^ Bridge::QueryWorkingSurface(long long id,long long revision,double u,double v)
 {
     double p[3]={}, n[3]={}; int face=-1;
@@ -3632,6 +3653,30 @@ array<array<double>^>^ Bridge::GetCommittedRouteChains(long long id,long long re
             auto points=gcnew array<double>(static_cast<int>(chains[i].size()));
             for (size_t k=0;k<chains[i].size();++k) points[static_cast<int>(k)]=chains[i][k];
             result[static_cast<int>(i)]=points;
+        }
+        return result;
+    } catch (...) { return nullptr; }
+}
+array<CommittedRouteChain^>^ Bridge::GetCommittedRouteChainsDetailed(long long id,long long revision,array<int>^ pieceIds)
+{
+    if (pieceIds==nullptr || pieceIds->Length==0) return nullptr;
+    try {
+        std::vector<int> ids; ids.reserve(pieceIds->Length);
+        for each(int pieceId in pieceIds) ids.push_back(pieceId);
+        std::vector<std::vector<double>> chains;
+        std::vector<std::vector<int>> faces;
+        if (!GetCommittedRouteChainsDetailedNative(id,revision,ids,chains,faces) ||
+            chains.size()!=ids.size() || faces.size()!=ids.size()) return nullptr;
+        auto result=gcnew array<CommittedRouteChain^>(static_cast<int>(chains.size()));
+        for (size_t i=0;i<chains.size();++i) {
+            auto chain=gcnew CommittedRouteChain();
+            auto points=gcnew array<double>(static_cast<int>(chains[i].size()));
+            for (size_t k=0;k<chains[i].size();++k) points[static_cast<int>(k)]=chains[i][k];
+            chain->Points=points;
+            auto support=gcnew array<int>(static_cast<int>(faces[i].size()));
+            for (size_t k=0;k<faces[i].size();++k) support[static_cast<int>(k)]=faces[i][k];
+            chain->SupportFaceIds=support;
+            result[static_cast<int>(i)]=chain;
         }
         return result;
     } catch (...) { return nullptr; }

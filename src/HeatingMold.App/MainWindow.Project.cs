@@ -282,7 +282,7 @@ namespace HeatingMold.App
 
             try
             {
-                double[][] chains = Bridge.GetCommittedRouteChains(
+                CommittedRouteChain[] chains = Bridge.GetCommittedRouteChainsDetailed(
                     side.Id.Value, side.Revision.Value, area.NativePieceIds);
                 if (chains == null || chains.Length != area.NativePieceIds.Length)
                 {
@@ -292,23 +292,48 @@ namespace HeatingMold.App
 
                 for (int i = 0; i < chains.Length; i++)
                 {
-                    double[] chain = chains[i];
-                    if (chain == null || chain.Length < 6 || chain.Length % 3 != 0)
+                    CommittedRouteChain chain = chains[i];
+                    if (chain == null || chain.Points == null ||
+                        chain.Points.Length < 6 || chain.Points.Length % 3 != 0)
                     {
                         error = "확정 3D 경로 조각 " + (i + 1) + "의 좌표가 올바르지 않습니다.";
                         result.Clear();
                         return result;
                     }
 
-                    var points = new List<ProjectVec3>(chain.Length / 3);
-                    for (int k = 0; k + 2 < chain.Length; k += 3)
+                    int pointCount = chain.Points.Length / 3;
+                    int[] supportFaces = chain.SupportFaceIds ?? Array.Empty<int>();
+                    if (supportFaces.Length != 0 && supportFaces.Length != pointCount)
                     {
-                        points.Add(new ProjectVec3 { X = chain[k], Y = chain[k + 1], Z = chain[k + 2] });
+                        error = "확정 3D 경로 조각 " + (i + 1) + "의 지지 Face 수가 좌표 점 수와 일치하지 않습니다.";
+                        result.Clear();
+                        return result;
+                    }
+                    for (int f = 0; f < supportFaces.Length; f++)
+                    {
+                        if (supportFaces[f] < 0)
+                        {
+                            error = "확정 3D 경로 조각 " + (i + 1) + "의 지지 Face ID가 올바르지 않습니다.";
+                            result.Clear();
+                            return result;
+                        }
+                    }
+
+                    var points = new List<ProjectVec3>(pointCount);
+                    for (int k = 0; k + 2 < chain.Points.Length; k += 3)
+                    {
+                        points.Add(new ProjectVec3
+                        {
+                            X = chain.Points[k],
+                            Y = chain.Points[k + 1],
+                            Z = chain.Points[k + 2]
+                        });
                     }
                     result.Add(new ProjectCommittedChain
                     {
                         NativePieceId = area.NativePieceIds[i],
-                        Points = points
+                        Points = points,
+                        SupportFaceIds = (int[])supportFaces.Clone()
                     });
                 }
 

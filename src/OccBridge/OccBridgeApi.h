@@ -107,6 +107,14 @@ public:
     property array<double>^ End;
 };
 
+/// <summary>확정 경로 조각의 순서 보존 3D 점 체인과 점별 원본 지지 Face.</summary>
+public ref class CommittedRouteChain
+{
+public:
+    property array<double>^ Points;
+    property array<int>^ SupportFaceIds;
+};
+
 /// <summary>
 /// OCCT 최소 브리지 (S1 스파이크, /clr:netcore net8.0).
 /// 상태는 프로세스 전역(단일 문서) — 본 개발에서 handle 기반으로 전환 예정.
@@ -160,6 +168,9 @@ public ref class Bridge abstract sealed
 public:
     static long long GetModelRevision();
     static WorkingContext^ CreateWorkingContext(double nx, double ny, double nz, double xx, double xy, double xz);
+    /// <summary>저장된 origin/X/Y/N(12 doubles)을 그대로 사용해 복원용 컨텍스트를 만든다.
+    /// bbox 중심으로 원점을 재계산하지 않으며, 축이 정규직교 우수 좌표계가 아니면 null.</summary>
+    static WorkingContext^ CreateWorkingContextWithFrame(array<double>^ frame);
     static void ReleaseWorkingContext(long long id);
     static WorkingHit^ QueryWorkingSurface(long long id, long long revision, double u, double v);
     /// <summary>Cast against the complete model; succeeds only when its nearest trimmed hit belongs to faceIds.</summary>
@@ -174,6 +185,10 @@ public:
     /// <summary>확정된 경로 조각의 순서 보존 3D 체인을 요청 순서대로 읽는다.
     /// 재생성/재매핑 없이 staged/누락/비활성/소유 불일치가 하나라도 있으면 null.</summary>
     static array<array<double>^>^ GetCommittedRouteChains(long long id, long long revision,
+        array<int>^ pieceIds);
+    /// <summary>GetCommittedRouteChains와 같은 검증으로 3D 점 체인과 점별 지지 Face를 함께 읽는다.
+    /// 지지 Face 정보가 없는 기존 조각은 빈 배열이며, 하나라도 불일치하면 null.</summary>
+    static array<CommittedRouteChain^>^ GetCommittedRouteChainsDetailed(long long id, long long revision,
         array<int>^ pieceIds);
     static bool StageWorkingPolyline(long long id, long long revision, int stageId, array<double>^ xyzFlat);
     static RoutePieceResult^ StageProjectedWorkingRoutePiece(long long id, long long revision, int stageId,

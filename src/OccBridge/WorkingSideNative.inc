@@ -264,24 +264,28 @@ IntCurvesFace_ShapeIntersector* GetWorkingFaceTarget(WorkingNative* ctx, const s
     return intersector.get();
 }
 
-long long CreateWorkingNative(double nx, double ny, double nz, double xx, double xy, double xz)
+long long CreateWorkingNativeCore(const gp_Dir& xDir, const gp_Dir& yDir, const gp_Dir& nDir,
+    const gp_Pnt* exactOrigin)
 {
-    if (g_shape.IsNull() || !std::isfinite(nx) || !std::isfinite(ny) || !std::isfinite(nz) ||
-        !std::isfinite(xx) || !std::isfinite(xy) || !std::isfinite(xz)) return 0;
     try {
-        gp_Vec n(nx, ny, nz), x(xx, xy, xz);
-        if (n.SquareMagnitude() < 1e-18) return 0;
-        n.Normalize(); x -= n * x.Dot(n);
-        if (x.SquareMagnitude() < 1e-18) return 0;
-        x.Normalize();
         auto ctx = std::make_unique<WorkingNative>();
-        ctx->n = gp_Dir(n); ctx->x = gp_Dir(x); ctx->y = gp_Dir(n.Crossed(x));
+        ctx->n = nDir; ctx->x = xDir; ctx->y = yDir;
         double b[6];
         if (!GetModelBoundsInFrameNative(ctx->x, ctx->y, ctx->n, b)) return 0;
         const double margin = std::max(1.0, (b[5] - b[4]) * 0.01);
-        ctx->rayLength = b[5]-b[4]+margin+1;
-        ctx->origin = gp::Origin().Translated(x * ((b[0]+b[1])/2) +
-            gp_Vec(ctx->y) * ((b[2]+b[3])/2) + n * (b[5]+margin));
+        if (exactOrigin != nullptr) {
+            // 복원 시에는 저장된 작업평면 원점을 그대로 사용한다. bbox 중심으로
+            // 다시 계산하면 저장 당시의 2D 좌표계와 경로가 조용히 이동한다.
+            ctx->origin = *exactOrigin;
+            const double originN = gp_Vec(gp::Origin(), ctx->origin).Dot(gp_Vec(ctx->n));
+            const double depth = originN - b[4];
+            if (!std::isfinite(depth) || depth <= 0) return 0;
+            ctx->rayLength = depth + margin + 1;
+        } else {
+            ctx->rayLength = b[5]-b[4]+margin+1;
+            ctx->origin = gp::Origin().Translated(gp_Vec(ctx->x) * ((b[0]+b[1])/2) +
+                gp_Vec(ctx->y) * ((b[2]+b[3])/2) + gp_Vec(ctx->n) * (b[5]+margin));
+        }
         ctx->intersector = std::make_unique<IntCurvesFace_ShapeIntersector>();
         ctx->intersector->Load(g_shape, Precision::Confusion());
         // Rebuild once per preview, never per hover. Absolute deflection, explicit angular control.
@@ -310,6 +314,44 @@ long long CreateWorkingNative(double nx, double ny, double nz, double xx, double
         const long long id = ctx->id;
         g_working.emplace(id, std::move(ctx));
         return id;
+    } catch (const Standard_Failure&) { return 0; }
+}
+
+long long CreateWorkingNative(double nx, double ny, double nz, double xx, double xy, double xz)
+{
+    if (g_shape.IsNull() || !std::isfinite(nx) || !std::isfinite(ny) || !std::isfinite(nz) ||
+        !std::isfinite(xx) || !std::isfinite(xy) || !std::isfinite(xz)) return 0;
+    try {
+        gp_Vec n(nx, ny, nz), x(xx, xy, xz);
+        if (n.SquareMagnitude() < 1e-18) return 0;
+        n.Normalize(); x -= n * x.Dot(n);
+        if (x.SquareMagnitude() < 1e-18) return 0;
+        x.Normalize();
+        const gp_Dir nd(n), xd(x), yd(nd.Crossed(xd));
+        return CreateWorkingNativeCore(xd, yd, nd, nullptr);
+    } catch (const Standard_Failure&) { return 0; }
+}
+
+// 저장된 origin/X/Y/N을 그대로 사용하는 복원 전용 컨텍스트 생성. 축은 정규직교
+// 우수 좌표계여야 하며, 원점은 모델의 최저점보다 앞쪽(-N 방향 기준)에 있어야 한다.
+long long CreateWorkingNativeAtFrame(double ox, double oy, double oz,
+    double xx, double xy, double xz, double yx, double yy, double yz,
+    double nx, double ny, double nz)
+{
+    if (g_shape.IsNull() || !std::isfinite(ox) || !std::isfinite(oy) || !std::isfinite(oz) ||
+        !std::isfinite(xx) || !std::isfinite(xy) || !std::isfinite(xz) ||
+        !std::isfinite(yx) || !std::isfinite(yy) || !std::isfinite(yz) ||
+        !std::isfinite(nx) || !std::isfinite(ny) || !std::isfinite(nz)) return 0;
+    try {
+        gp_Vec xv(xx, xy, xz), yv(yx, yy, yz), nv(nx, ny, nz);
+        if (nv.SquareMagnitude() < 1e-18 || xv.SquareMagnitude() < 1e-18 ||
+            yv.SquareMagnitude() < 1e-18) return 0;
+        nv.Normalize(); xv.Normalize(); yv.Normalize();
+        if (std::abs(xv.Dot(nv)) > 1e-6 || std::abs(yv.Dot(nv)) > 1e-6 ||
+            std::abs(xv.Dot(yv)) > 1e-6) return 0;
+        if (xv.Crossed(yv).Dot(nv) < 1.0 - 1e-6) return 0;
+        const gp_Pnt origin(ox, oy, oz);
+        return CreateWorkingNativeCore(gp_Dir(xv), gp_Dir(yv), gp_Dir(nv), &origin);
     } catch (const Standard_Failure&) { return 0; }
 }
 
@@ -993,6 +1035,7 @@ bool StageSurfaceMappedRoutePieceWithFacesNative(long long id, long long revisio
     Handle(AIS_Shape) ais;
     try {
         std::vector<gp_Pnt> points;
+        std::vector<int> faces;
         for (size_t i = 0; i < xyz.size(); i += 3) {
             if (!std::isfinite(xyz[i]) || !std::isfinite(xyz[i + 1]) || !std::isfinite(xyz[i + 2]))
                 return WorkingStageFail("nonfinite-point");
@@ -1006,6 +1049,7 @@ bool StageSurfaceMappedRoutePieceWithFacesNative(long long id, long long revisio
             if (distance.Value() > kSurfaceSupportTolerance)
                 return WorkingStageFail("off-surface " + std::to_string(distance.Value()));
             points.push_back(p);
+            faces.push_back(face);
         }
         if (points.size() < 2) return WorkingStageFail("degenerate-polyline");
         BRepBuilderAPI_MakePolygon poly;
@@ -1035,9 +1079,15 @@ bool StageSurfaceMappedRoutePieceWithFacesNative(long long id, long long revisio
         g_ctx->SetZLayer(ais, Graphic3d_ZLayerId_Topmost);
         g_ctx->Activate(ais, Standard_False);
         std::vector<double> shownXyz;
+        std::vector<int> shownFaces;
         shownXyz.reserve(points.size()*3);
-        for(const gp_Pnt& p:points) { shownXyz.push_back(p.X()); shownXyz.push_back(p.Y()); shownXyz.push_back(p.Z()); }
-        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, turnKind, true, color, width, id, revision, shownXyz});
+        shownFaces.reserve(points.size());
+        for (size_t i = 0; i < points.size(); ++i) {
+            const gp_Pnt& p = points[i];
+            shownXyz.push_back(p.X()); shownXyz.push_back(p.Y()); shownXyz.push_back(p.Z());
+            shownFaces.push_back(faces[i]);
+        }
+        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, turnKind, true, color, width, id, revision, shownXyz, shownFaces});
         if (!inserted.second) { g_ctx->Remove(ais, Standard_False); return WorkingStageFail("display-id-collision"); }
         try { if (!g_stagedWorkingRouteOwners.emplace(stageId, std::make_pair(id, revision)).second)
                 throw std::runtime_error("staged route owner collision"); }
@@ -1211,6 +1261,46 @@ bool GetCommittedRouteChainsNative(long long contextId, long long revision,
             out.push_back(piece.sourceXyz);
         }
     } catch (...) { out.clear(); return false; }
+    return true;
+}
+
+// GetCommittedRouteChainsNative와 같은 검증을 적용하되, 점별 원본 지지 Face까지
+// 함께 반환한다. 지지 Face 정보가 없는 기존 조각은 빈 배열로 반환한다.
+// 하나라도 불일치하면 두 출력 모두 비우고 전체 실패로 보고한다.
+bool GetCommittedRouteChainsDetailedNative(long long contextId, long long revision,
+    const std::vector<int>& pieceIds, std::vector<std::vector<double>>& outXyz,
+    std::vector<std::vector<int>>& outFaces)
+{
+    outXyz.clear();
+    outFaces.clear();
+    if (pieceIds.empty() || !FindWorking(contextId, revision)) return false;
+    std::set<int> unique;
+    try {
+        outXyz.reserve(pieceIds.size());
+        outFaces.reserve(pieceIds.size());
+        for (int id : pieceIds) {
+            if (id < 0 || !unique.insert(id).second) { outXyz.clear(); outFaces.clear(); return false; }
+            const auto it = g_routePieces.find(id);
+            if (it == g_routePieces.end()) { outXyz.clear(); outFaces.clear(); return false; }
+            const RoutePieceOverlay& piece = it->second;
+            if (piece.contextId != contextId || piece.revision != revision ||
+                !piece.enabled || piece.ais.IsNull() ||
+                piece.sourceXyz.size() < 6 || piece.sourceXyz.size() % 3 ||
+                g_stagedWorkingRouteOwners.count(id)) { outXyz.clear(); outFaces.clear(); return false; }
+            if (!piece.sourceSupportFaces.empty() &&
+                piece.sourceSupportFaces.size() != piece.sourceXyz.size() / 3) {
+                outXyz.clear(); outFaces.clear(); return false;
+            }
+            for (double value : piece.sourceXyz)
+                if (!std::isfinite(value)) { outXyz.clear(); outFaces.clear(); return false; }
+            for (int face : piece.sourceSupportFaces)
+                if (face < 0 || face >= static_cast<int>(g_faces.size())) {
+                    outXyz.clear(); outFaces.clear(); return false;
+                }
+            outXyz.push_back(piece.sourceXyz);
+            outFaces.push_back(piece.sourceSupportFaces);
+        }
+    } catch (...) { outXyz.clear(); outFaces.clear(); return false; }
     return true;
 }
 
