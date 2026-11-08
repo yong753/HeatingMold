@@ -243,7 +243,8 @@ static class PatternStateChecks
         // bad를 확정 상태로 위장하되 길이 배열을 어긋나게 만들어 확정 재검증이 실패하게 한다.
         var capture = typeof(MainWindow).Assembly.GetType("HeatingMold.App.CommittedRouteContext")!;
         areaType.GetProperty("CommittedMapping")!.SetValue(bad,
-            capture.GetMethod("Capture", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!
+            capture.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(method => method.Name == "Capture" && method.GetParameters().Length == 1)
                 .Invoke(null, new[] { bad }));
         areaType.GetProperty("NativePieceIds")!.SetValue(bad, new[] { -4504 });
         areaType.GetProperty("RoutePieceLengths")!.SetValue(bad, Array.Empty<double>());

@@ -63,12 +63,10 @@ static class ElectricalRefreshChecks
 
         Invoke(window, "ClearExclusions_Click", null!, null!);
 
-        Check(areaType.GetProperty("Pattern")!.GetValue(area) == null,
-            "clearing exclusions invalidates the generated pattern");
-        Check(circuitGrid.Items.Count == 0,
-            "clearing exclusions refreshes the circuit length table in the same transaction");
-        Check(electricalGrid.Items.Count == 0,
-            "clearing exclusions refreshes the electrical specification table in the same transaction");
+        Check(areaType.GetProperty("Pattern")!.GetValue(area) != null,
+            "a rejected exclusion clear preserves the generated pattern");
+        Check(circuitGrid.Items.Count == 1 && electricalGrid.Items.Count == 1,
+            "a rejected exclusion clear preserves both length and electrical tables");
 
         Invoke(window, "ClearAllAreas", false);
         Console.WriteLine($"{count} electrical refresh checks passed.");

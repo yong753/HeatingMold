@@ -102,6 +102,9 @@ static class AreaHighlightChecks
         areaRegion.Add(new() { new(-20, -10), new(20, -10), new(20, 10), new(-20, 10) });
         var areaExclusions = (IList)areaType.GetProperty("Exclusions")!.GetValue(area)!;
         areaExclusions.Add((-5d, -5d, 5d, 5d));
+        // 합성 영역이므로 원본 CAD 경계 추출 없이 동일 계약(비어 있는 참조 집합)을 부여한다.
+        areaType.GetProperty("RegionCadBoundary")!.SetValue(area,
+            new CadExitBoundary2D(side.Id.Value, side.Revision.Value, Array.Empty<ExitEdgeReference>()));
         var areas = (IList)Field<object>(window, "_areas");
         areas.Add(area);
         Invoke(window, "ActivateArea", area);
