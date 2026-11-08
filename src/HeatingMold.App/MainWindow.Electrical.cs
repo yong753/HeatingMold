@@ -175,7 +175,7 @@ public partial class MainWindow
             ExportIncludeText.Text = string.Format(
                 "포함: 확정 작업평면 기준 금형 평면도·숨은선, {0} 발열경로·전기 사양표.", scopeLabel);
         string baseText = string.Format(
-            "내보내기 범위: {0} · 준비 {1}/{2}개 — 확정 작업평면 기준 평면도와 발열경로·전기 사양표를 저장합니다. 다른 방향 투상·3D STEP·세션은 포함되지 않습니다.",
+            "내보내기 범위: {0} · 준비 {1}/{2}개 — 확정 작업평면 기준 평면도와 발열경로·전기 사양표를 저장합니다. 다른 방향 투상·3D STEP·프로젝트 JSON은 포함되지 않습니다.",
             scope, snapshot.ReadyCount, snapshot.RequestedCount);
         ExportScopeText.Text = snapshot.CanExport
             ? baseText

@@ -205,6 +205,8 @@ namespace HeatingMold.App
                 ActiveAreaStateText.Text = _activeArea == null
                     ? (_areas.Count == 0 ? "영역 없음" : "선택 없음")
                     : AreaResultState(_activeArea);
+
+            UpdateProjectActionStates();
         }
 
         /// <summary>영역 목록/선택기에 표시할 결과 상태. 입력 초안과 적용 조건을 구분한다.</summary>
@@ -304,6 +306,7 @@ namespace HeatingMold.App
                 _multiFaceRegionFailure = null;
                 _modelFileName = "";
                 _modelPath = "";
+                ResetProjectBaselineAfterModelLoad(path, false);
                 if (ModelPathText != null) ModelPathText.Text = "모델 없음";
                 ExitExclusionSketch();
                 Viewport.RectangleSelectionMode = false;
@@ -324,6 +327,7 @@ namespace HeatingMold.App
                 ModelPathText.ToolTip = path;
             }
             _modelRevision = Bridge.GetModelRevision();
+            ResetProjectBaselineAfterModelLoad(path, true);
             // 새 모델이 로드된 뒤에만 편집 표시를 지운다(로드 실패 분기는 아래에서 별도 처리).
             ClearAllRouteEditStates();
 

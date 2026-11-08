@@ -234,6 +234,14 @@
                     <Button x:Name="OpenButton" Content="STEP 열기…" Click="Open_Click"
                             AutomationProperties.Name="STEP 모델 열기"
                             Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"/>
+                    <Button x:Name="SaveProjectButton" Content="저장" Click="SaveProject_Click"
+                            AutomationProperties.Name="프로젝트 저장"
+                            ToolTip="현재 작업을 JSON 프로젝트로 저장"
+                            Style="{StaticResource FlatButton}" Margin="0,0,8,0"/>
+                    <Button x:Name="SaveProjectAsButton" Content="다른 이름…" Click="SaveProjectAs_Click"
+                            AutomationProperties.Name="프로젝트 다른 이름으로 저장"
+                            ToolTip="현재 작업을 새 JSON 프로젝트로 저장"
+                            Style="{StaticResource FlatButton}" Margin="0,0,8,0"/>
                     <Button x:Name="OpenExampleButton" Content="예제 열기" Click="OpenExample_Click"
                             AutomationProperties.Name="예제 모델 열기"
                             Style="{StaticResource FlatButton}" Margin="0,0,8,0"/>
@@ -638,9 +646,9 @@
                                         <TextBlock x:Name="ExportIncludeText" Style="{StaticResource Hint}" Margin="0,8,0,0"
                                                    Text="포함: 작업평면 기준 금형 평면도·숨은선, 검토 범위의 확정 발열경로·전기 사양표."/>
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="미포함: 다른 방향 투상도, 3D STEP, 작업 세션 데이터."/>
+                                                   Text="미포함: 다른 방향 투상도, 3D STEP, 프로젝트 JSON."/>
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="작업 세션은 저장되지 않습니다. DXF 내보내기는 세션 저장이 아닙니다."/>
+                                                   Text="프로젝트 저장은 상단 저장 버튼을 사용하세요. DXF 내보내기는 프로젝트 저장이 아닙니다."/>
                                     </StackPanel>
                                 </Border>
                             </ScrollViewer>

@@ -47,6 +47,13 @@
   - `src\HeatingMold.Core`, `src\HeatingMold.Export`, `tests\HeatingMold.Core.Tests` declare no `<Platforms>` → map to `Release|Any CPU`.
 - A mapping to a configuration the project does not expose produces VS's "unknown project configuration mapping" dialog; `dotnet build`/`msbuild` on the solution can still succeed, so only reopening in VS validates this.
 
+## Project persistence (Phase A implemented)
+
+- The product project file is one UTF-8 JSON document that references the external original STEP by relative path and SHA-256; CAD/BREP geometry is not embedded.
+- Phase A is save-only. Loading/restoring a project is not implemented yet; do not describe the JSON as reopenable until the restore candidate and portable topology identity phases land.
+- Save uses a same-directory temporary file, flush, and atomic replace. A save failure must preserve the current work and the previous JSON file; never overwrite the source STEP.
+- Do not persist native pointers, temporary stage IDs, AIS/presentation objects, caches, hover/preview state, or runtime-only FACE/Edge IDs as durable identity.
+
 ## Circuit generation contract
 
 - A circuit is one continuous serpentine path chunk made of multiple lanes joined by connectors. One straight lane fragment, or one area split by an exclusion, is not automatically a separate circuit.

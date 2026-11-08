@@ -634,18 +634,18 @@ public partial class MainWindow
         return result == MessageBoxResult.Yes;
     }
 
-    /// <summary>모델 교체·앱 종료 전에 저장되지 않는 작업 세션 전체의 손실을 확인한다.</summary>
+    /// <summary>모델 교체·앱 종료 전에 저장되지 않은 프로젝트 변경의 손실을 확인한다.</summary>
     private bool ConfirmDiscardSession(string action)
     {
-        if (_areas.Count == 0) return true;
+        if (!HasUnsavedProjectChanges()) return true;
         if (VisualTestSession.Current != null) return ResolveVisualTestConfirm(action);
         MessageBoxResult result = MessageBox.Show(this,
-            action + " 작업을 계속하면 현재 작업 세션(영역 " + _areas.Count
-            + "개, 생성 경로, 입력 조건)이 사라집니다." + Environment.NewLine
-            + "이 앱은 작업 세션 저장을 지원하지 않으며 DXF 내보내기는 세션 저장이 아닙니다."
-            + Environment.NewLine + "계속할까요?",
-            "작업 세션 손실", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
-        return result == MessageBoxResult.Yes;
+            action + " 작업을 계속하면 저장하지 않은 현재 작업이 사라집니다." + Environment.NewLine
+            + "저장할까요?",
+            "저장하지 않은 작업", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning, MessageBoxResult.Yes);
+        if (result == MessageBoxResult.Cancel) return false;
+        if (result == MessageBoxResult.No) return true;
+        return SaveProject();
     }
 
     private void ClearAllRouteEditStates()
