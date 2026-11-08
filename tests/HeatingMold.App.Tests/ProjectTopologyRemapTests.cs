@@ -205,6 +205,100 @@ public class ProjectTopologyRemapTests
         Assert.Equal(0.5, mapped.Parameter);
     }
 
+    [Fact]
+    public void ExitBoundaryPointMapsCadBindingToFreshContextAndKey()
+    {
+        var savedReferences = new[]
+        {
+            SavedReference(edgeKey: 10, faceId: 0, signature: "edge-a", first: 1, last: 2)
+        };
+        var fresh = new[]
+        {
+            FreshReference(edgeKey: 99, faceId: 1, signature: "edge-a", first: 1, last: 2)
+        };
+        Assert.True(ProjectTopologyRemap.TryMapExitEdgeReferences(savedReferences, fresh, new[] { 1 },
+            out ExitEdgeReference[] mappedReferences, out string mapError), mapError);
+
+        var savedPoint = new ProjectExitBoundaryPoint
+        {
+            Point = new ProjectVec2 { X = 1.25, Y = 2.5 },
+            SegmentIndex = -1,
+            SegmentParameter = 1.5,
+            Binding = new ProjectExitEdgeBinding
+            {
+                EdgeKey = 10,
+                FirstParameter = 1,
+                LastParameter = 2,
+                Parameter = 1.5,
+                Reversed = false
+            }
+        };
+
+        Assert.True(ProjectTopologyRemap.TryMapExitBoundaryPoint(savedPoint, savedReferences, mappedReferences,
+            freshModelRevision: 7, contextId: 8, contextRevision: 9,
+            out ExitBoundaryPoint mapped, out string error), error);
+
+        Assert.Equal(1.25, mapped.Point.X);
+        Assert.Equal(2.5, mapped.Point.Y);
+        Assert.Equal(-1, mapped.SegmentIndex);
+        Assert.Equal(1.5, mapped.SegmentParameter);
+        Assert.NotNull(mapped.Binding);
+        Assert.Equal(99, mapped.Binding.Value.EdgeKey);
+        Assert.Equal(8, mapped.Binding.Value.WorkingContextId);
+        Assert.Equal(9, mapped.Binding.Value.WorkingContextRevision);
+        Assert.Equal(1.5, mapped.Binding.Value.Parameter);
+    }
+
+    [Fact]
+    public void ExitBoundaryPointMapsArtificialBinding()
+    {
+        var savedPoint = new ProjectExitBoundaryPoint
+        {
+            Point = new ProjectVec2 { X = -1, Y = 3 },
+            SegmentIndex = 4,
+            SegmentParameter = 0.5,
+            ArtificialBinding = new ProjectArtificialEdgeBinding
+            {
+                MinX = -2,
+                MinY = 1,
+                MaxX = 2,
+                MaxY = 4,
+                Side = 0,
+                FirstParameter = 0.25,
+                LastParameter = 0.75,
+                Parameter = 0.5
+            }
+        };
+
+        Assert.True(ProjectTopologyRemap.TryMapExitBoundaryPoint(savedPoint,
+            Array.Empty<ProjectExitEdgeReference>(), Array.Empty<ExitEdgeReference>(),
+            freshModelRevision: 7, contextId: 8, contextRevision: 9,
+            out ExitBoundaryPoint mapped, out string error), error);
+
+        Assert.NotNull(mapped.ArtificialBinding);
+        Assert.Equal(8, mapped.ArtificialBinding.Value.WorkingContextId);
+        Assert.Equal(9, mapped.ArtificialBinding.Value.WorkingContextRevision);
+        Assert.Equal(-2, mapped.ArtificialBinding.Value.MinX);
+        Assert.Equal(0, mapped.ArtificialBinding.Value.Side);
+    }
+
+    [Fact]
+    public void ExitBoundaryPointRejectsMissingOrMixedProvenance()
+    {
+        var noBinding = new ProjectExitBoundaryPoint
+        {
+            Point = new ProjectVec2 { X = 0, Y = 0 },
+            SegmentIndex = -1,
+            SegmentParameter = 0
+        };
+
+        Assert.False(ProjectTopologyRemap.TryMapExitBoundaryPoint(noBinding,
+            Array.Empty<ProjectExitEdgeReference>(), Array.Empty<ExitEdgeReference>(),
+            freshModelRevision: 7, contextId: 8, contextRevision: 9,
+            out _, out string error));
+        Assert.Contains("하나만", error);
+    }
+
     private static ProjectExitEdgeReference SavedReference(long edgeKey, int faceId, string signature,
         double first, double last) => new()
     {

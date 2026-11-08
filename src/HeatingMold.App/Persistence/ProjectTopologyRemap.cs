@@ -247,6 +247,98 @@ namespace HeatingMold.App.Persistence
             return true;
         }
 
+        internal static bool TryMapExitBoundaryPoint(
+            ProjectExitBoundaryPoint saved,
+            IReadOnlyList<ProjectExitEdgeReference> savedReferences,
+            IReadOnlyList<ExitEdgeReference> freshReferences,
+            long freshModelRevision,
+            long contextId,
+            long contextRevision,
+            out ExitBoundaryPoint mapped,
+            out string error)
+        {
+            mapped = default;
+            error = null;
+
+            if (saved == null || saved.Point == null)
+            {
+                error = "저장된 exit boundary point가 없습니다.";
+                return false;
+            }
+            if (!double.IsFinite(saved.Point.X) || !double.IsFinite(saved.Point.Y) ||
+                !double.IsFinite(saved.SegmentParameter))
+            {
+                error = "저장된 exit boundary point에 유한하지 않은 값이 있습니다.";
+                return false;
+            }
+
+            bool hasCad = saved.Binding != null;
+            bool hasArtificial = saved.ArtificialBinding != null;
+            if (hasCad == hasArtificial)
+            {
+                error = "저장된 exit boundary point에는 CAD 또는 artificial binding 중 하나만 있어야 합니다.";
+                return false;
+            }
+
+            ExitEdgeBinding? cadBinding = null;
+            ArtificialEdgeBinding? artificialBinding = null;
+            if (hasCad)
+            {
+                if (savedReferences == null || freshReferences == null ||
+                    savedReferences.Count != freshReferences.Count)
+                {
+                    error = "저장된 exit edge reference와 새 edge reference 수가 일치하지 않습니다.";
+                    return false;
+                }
+
+                int index = -1;
+                for (int i = 0; i < savedReferences.Count; i++)
+                {
+                    ProjectExitEdgeReference reference = savedReferences[i];
+                    if (reference == null) continue;
+                    if (reference.EdgeKey == saved.Binding.EdgeKey &&
+                        reference.FirstParameter == saved.Binding.FirstParameter &&
+                        reference.LastParameter == saved.Binding.LastParameter &&
+                        reference.Reversed == saved.Binding.Reversed)
+                    {
+                        if (index >= 0)
+                        {
+                            error = "저장된 exit boundary point의 edge reference가 여러 개입니다.";
+                            return false;
+                        }
+                        index = i;
+                    }
+                }
+                if (index < 0)
+                {
+                    error = "저장된 exit boundary point의 edge reference를 찾지 못했습니다.";
+                    return false;
+                }
+                if (!TryMapExitBinding(saved.Binding, savedReferences[index], freshReferences[index],
+                        freshModelRevision, contextId, contextRevision,
+                        out ExitEdgeBinding mappedCad, out error))
+                    return false;
+                cadBinding = mappedCad;
+            }
+            else
+            {
+                if (!TryMapArtificialBinding(saved.ArtificialBinding, contextId, contextRevision,
+                        out ArtificialEdgeBinding mappedArtificial, out error))
+                    return false;
+                artificialBinding = mappedArtificial;
+            }
+
+            mapped = new ExitBoundaryPoint(
+                new Vec2(saved.Point.X, saved.Point.Y),
+                saved.SegmentIndex,
+                saved.SegmentParameter)
+            {
+                Binding = cadBinding,
+                ArtificialBinding = artificialBinding
+            };
+            return true;
+        }
+
         internal static bool TryMapArtificialBinding(
             ProjectArtificialEdgeBinding saved,
             long contextId,
