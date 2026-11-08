@@ -392,10 +392,12 @@ bool CommitAreaHighlightNative(int areaId)
             for (Standard_Integer i = 1; i <= entry.mesh->NbNodes(); ++i) colors->SetValue(i, packed);
             presentation->SetColors(colors);
             presentation->SetTransparency(kAreaFillTransparency);
-            // 원본 면과 같은 위치이므로 기존 면 색칠과 동일한 폴리곤 오프셋으로 z-fighting을 피한다.
-            presentation->SetPolygonOffsets(Aspect_POM_Fill, -2.0f, -2.0f);
+            // 면 색 오버라이드(호버/선택/확정)는 -2로 당긴다. 채움 메시가 같은 -2를 쓰면
+            // 서로 다른 삼각분할의 보간 깊이 차이로 컷 경계에서 깊이 승패가 갈려 깜빡인다.
+            // 채움을 한 단계 더 당겨(-4) 항상 면 색 위에 오도록 순서를 고정한다.
+            presentation->SetPolygonOffsets(Aspect_POM_Fill, -4.0f, -4.0f);
             presentation->Attributes()->SetupOwnShadingAspect();
-            presentation->Attributes()->ShadingAspect()->Aspect()->SetPolygonOffsets(Aspect_POM_Fill, -2.0f, -2.0f);
+            presentation->Attributes()->ShadingAspect()->Aspect()->SetPolygonOffsets(Aspect_POM_Fill, -4.0f, -4.0f);
             if (!entry.presentation.IsNull()) g_ctx->Remove(entry.presentation, Standard_False);
             // AIS_Triangulation::Compute는 모드 0(AIS_WireFrame)에서만 프리미티브를 만든다.
             // AIS_Shaded(1)로 표시하면 Compute가 즉시 반환해 빈 presentation이 된다.
