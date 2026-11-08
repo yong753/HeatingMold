@@ -234,6 +234,10 @@
                     <Button x:Name="OpenButton" Content="STEP 열기…" Click="Open_Click"
                             AutomationProperties.Name="STEP 모델 열기"
                             Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"/>
+                    <Button x:Name="OpenProjectButton" Content="프로젝트 열기…" Click="OpenProject_Click"
+                            AutomationProperties.Name="프로젝트 열기"
+                            ToolTip="저장된 JSON 프로젝트를 열고 원본 STEP을 다시 불러옵니다"
+                            Style="{StaticResource FlatButton}" Margin="0,0,8,0"/>
                     <Button x:Name="SaveProjectButton" Content="저장" Click="SaveProject_Click"
                             AutomationProperties.Name="프로젝트 저장"
                             ToolTip="현재 작업을 JSON 프로젝트로 저장"

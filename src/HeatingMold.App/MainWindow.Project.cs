@@ -128,6 +128,7 @@ namespace HeatingMold.App
         private void UpdateProjectActionStates()
         {
             bool hasModel = !string.IsNullOrEmpty(_modelPath);
+            if (OpenProjectButton != null) OpenProjectButton.IsEnabled = !_isBusy;
             if (SaveProjectButton != null) SaveProjectButton.IsEnabled = hasModel && !_isBusy;
             if (SaveProjectAsButton != null) SaveProjectAsButton.IsEnabled = hasModel && !_isBusy;
         }
@@ -386,6 +387,9 @@ namespace HeatingMold.App
                     result.Add(new ProjectCommittedChain
                     {
                         NativePieceId = area.NativePieceIds[i],
+                        Kind = area.Pattern?.RoutePieces != null && i < area.Pattern.RoutePieces.Count
+                            ? area.Pattern.RoutePieces[i].Kind.ToString()
+                            : null,
                         Points = points,
                         SupportFaceIds = (int[])supportFaces.Clone()
                     });

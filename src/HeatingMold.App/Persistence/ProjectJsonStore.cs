@@ -43,6 +43,33 @@ namespace HeatingMold.App.Persistence
             }
         }
 
+        public static ProjectDocument Load(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException("프로젝트 파일 경로가 비어 있습니다.", nameof(path));
+
+            string fullPath = Path.GetFullPath(path);
+            if (!File.Exists(fullPath))
+                throw new FileNotFoundException("프로젝트 파일을 찾을 수 없습니다.", fullPath);
+
+            try
+            {
+                using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                ProjectDocument document = JsonSerializer.Deserialize<ProjectDocument>(stream, Options);
+                if (document == null)
+                    throw new InvalidDataException("프로젝트 JSON이 비어 있습니다.");
+                if (!string.Equals(document.Format, "HeatingMold.Project", StringComparison.Ordinal))
+                    throw new InvalidDataException("HeatingMold 프로젝트 파일이 아닙니다.");
+                if (document.SchemaVersion != SchemaVersion)
+                    throw new InvalidDataException("지원하지 않는 프로젝트 스키마 버전입니다: " + document.SchemaVersion);
+                return document;
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidDataException("프로젝트 JSON을 읽지 못했습니다: " + ex.Message, ex);
+            }
+        }
+
         public static string ComputeFingerprint(ProjectDocument document)
         {
             ProjectDocument copy = document.CloneForFingerprint();

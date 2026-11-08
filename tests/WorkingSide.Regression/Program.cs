@@ -645,6 +645,7 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
         Check(!Bridge.LoadStep(Path.Combine(args[0],"absent.stp")),"failed model load");
         Check(Bridge.QueryWorkingSurface(afterStageReload.Id,afterStageReload.Revision,0,0).Status==WorkingQueryStatus.StaleContext,"failed reload also invalidates context");
         Check(Bridge.CreateWorkingContext(0,0,1,1,0,0)==null,"no context available without model");
+        ProjectLoadChecks.Run(window,args[0]);
         window.Close();
         Console.WriteLine($"{count} working-side checks passed.");
     }

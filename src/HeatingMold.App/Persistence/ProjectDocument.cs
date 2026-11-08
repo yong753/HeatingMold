@@ -193,6 +193,8 @@ namespace HeatingMold.App.Persistence
     public sealed class ProjectCommittedChain
     {
         public int NativePieceId { get; set; }
+        /// <summary>표시 스타일 복원용 경로 조각 종류. 이전 저장 파일에는 없을 수 있다.</summary>
+        public string Kind { get; set; }
         public List<ProjectVec3> Points { get; set; } = new();
         public int[] SupportFaceIds { get; set; } = Array.Empty<int>();
     }

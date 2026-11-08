@@ -247,6 +247,114 @@ namespace HeatingMold.App.Persistence
             return true;
         }
 
+        internal static bool TryMapExitBindingByReference(
+            ProjectExitEdgeBinding saved,
+            IReadOnlyList<ProjectExitEdgeReference> savedReferences,
+            IReadOnlyList<ExitEdgeReference> freshReferences,
+            long freshModelRevision,
+            long contextId,
+            long contextRevision,
+            out ExitEdgeBinding mapped,
+            out string error)
+        {
+            mapped = default;
+            error = null;
+
+            if (saved == null || savedReferences == null || freshReferences == null ||
+                savedReferences.Count != freshReferences.Count)
+            {
+                error = "저장된 exit binding과 edge reference 수가 일치하지 않습니다.";
+                return false;
+            }
+
+            int index = -1;
+            for (int i = 0; i < savedReferences.Count; i++)
+            {
+                ProjectExitEdgeReference reference = savedReferences[i];
+                if (reference == null) continue;
+                if (reference.EdgeKey == saved.EdgeKey &&
+                    reference.FirstParameter == saved.FirstParameter &&
+                    reference.LastParameter == saved.LastParameter &&
+                    reference.Reversed == saved.Reversed)
+                {
+                    if (index >= 0)
+                    {
+                        error = "저장된 exit binding에 대응하는 edge reference가 여러 개입니다.";
+                        return false;
+                    }
+                    index = i;
+                }
+            }
+            if (index < 0)
+            {
+                error = "저장된 exit binding에 대응하는 edge reference를 찾지 못했습니다.";
+                return false;
+            }
+
+            return TryMapExitBinding(saved, savedReferences[index], freshReferences[index],
+                freshModelRevision, contextId, contextRevision, out mapped, out error);
+        }
+
+        internal static bool TryMapCircuitExitPoint(
+            ProjectExitPoint saved,
+            IReadOnlyList<ProjectExitEdgeReference> savedReferences,
+            IReadOnlyList<ExitEdgeReference> freshReferences,
+            long freshModelRevision,
+            long contextId,
+            long contextRevision,
+            out CircuitExitPoint mapped,
+            out string error)
+        {
+            mapped = null;
+            error = null;
+
+            if (saved == null || saved.Point == null)
+            {
+                error = "저장된 회로 인출점이 없습니다.";
+                return false;
+            }
+            if (!double.IsFinite(saved.Point.X) || !double.IsFinite(saved.Point.Y) ||
+                !double.IsFinite(saved.BoundaryParameter))
+            {
+                error = "저장된 회로 인출점에 유한하지 않은 값이 있습니다.";
+                return false;
+            }
+            if (!Enum.TryParse(saved.Role, true, out CircuitExitRole role))
+            {
+                error = "저장된 회로 인출점의 역할이 올바르지 않습니다.";
+                return false;
+            }
+
+            ExitEdgeBinding? cadBinding = null;
+            ArtificialEdgeBinding? artificialBinding = null;
+            if (saved.Binding != null)
+            {
+                if (!TryMapExitBindingByReference(saved.Binding, savedReferences, freshReferences,
+                        freshModelRevision, contextId, contextRevision,
+                        out ExitEdgeBinding mappedCad, out error))
+                    return false;
+                cadBinding = mappedCad;
+            }
+            else if (saved.ArtificialBinding != null)
+            {
+                if (!TryMapArtificialBinding(saved.ArtificialBinding, contextId, contextRevision,
+                        out ArtificialEdgeBinding mappedArtificial, out error))
+                    return false;
+                artificialBinding = mappedArtificial;
+            }
+
+            mapped = new CircuitExitPoint(
+                role,
+                new Vec2(saved.Point.X, saved.Point.Y),
+                saved.BoundarySegmentIndex,
+                saved.BoundaryParameter)
+            {
+                Binding = cadBinding,
+                ArtificialBinding = artificialBinding
+            };
+            return true;
+        }
+
         internal static bool TryMapExitBoundaryPoint(
             ProjectExitBoundaryPoint saved,
             IReadOnlyList<ProjectExitEdgeReference> savedReferences,

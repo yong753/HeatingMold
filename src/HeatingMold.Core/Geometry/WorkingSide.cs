@@ -26,6 +26,12 @@ public sealed class WorkingSideSession
     }
     public void Invalidate() { Preview = null; Confirmed = null; }
     public void CancelPreview() => Preview = null;
+    public void RestoreConfirmed(WorkingSideDefinition side)
+    {
+        if (side == null) throw new ArgumentNullException(nameof(side));
+        Confirmed = side;
+        Preview = null;
+    }
 }
 
 /// <summary>Mesh projection candidates, NOT exact CAD boundaries. Negative rings are holes.

@@ -47,19 +47,22 @@
   - `src\HeatingMold.Core`, `src\HeatingMold.Export`, `tests\HeatingMold.Core.Tests` declare no `<Platforms>` → map to `Release|Any CPU`.
 - A mapping to a configuration the project does not expose produces VS's "unknown project configuration mapping" dialog; `dotnet build`/`msbuild` on the solution can still succeed, so only reopening in VS validates this.
 
-## Project persistence (Phase A implemented)
+## Project persistence (save + load implemented)
 
 - The product project file is one UTF-8 JSON document that references the external original STEP by relative path and SHA-256; CAD/BREP geometry is not embedded.
-- Phase A is save-only. Loading/restoring a project is not implemented yet; do not describe the JSON as reopenable until the restore candidate and load/rebind phases land. Portable Face/Edge topology signatures are saved, but no load path exists.
 - Save uses a same-directory temporary file, flush, and atomic replace. A save failure must preserve the current work and the previous JSON file; never overwrite the source STEP.
+- Project load verifies the JSON format/schema, the source STEP length and SHA-256, the import policy version, and the saved topology identity before restoring. It may ask the user to reselect the original STEP but never substitutes a different hash.
+- Load prepares an isolated native STEP candidate, remaps saved Face/Edge signatures to fresh runtime IDs, commits the candidate once, restores the exact saved working-plane frame, and rebuilds areas, boundaries, committed 3D route chains, lengths, endpoint provenance, electrical inputs, and active area.
+- Committed routes are staged with their saved support-face provenance and published with one native route commit. Missing support-face provenance is an explicit load failure; do not approximate it from nearest surfaces.
+- Failure before the native candidate commit preserves the current document. A failure after that commit cannot restore the previous native model; the load reports the failure and clears the incomplete restored document explicitly.
 - Do not persist native pointers, temporary stage IDs, AIS/presentation objects, caches, hover/preview state, or runtime-only FACE/Edge IDs as durable identity.
 
-## Topology identity (Phase B in progress)
+## Topology identity (implemented for load)
 
 - Saved FACE/Edge runtime IDs are not durable. Projects store per-Face and per-Edge topology signatures and remap them to fresh runtime IDs after reimport; raw IDs are diagnostic provenance only.
 - An edge signature includes its adjacent Face signatures. Face/edge signatures must be nonempty, unique, and byte-stable across reimport of the same STEP, hash, and import policy. Missing, duplicate, ambiguous, or changed signatures are explicit load-time failures.
 - Every exit-edge copy must preserve `EdgeSignature`; never reconstruct a saved binding by nearest XY or nearest-edge matching.
-- Loading/restoring is still not implemented. The exact saved working frame and per-point route support-face provenance are available for the future restore candidate.
+- The exact saved working frame and per-point route support-face provenance are persisted and restored; raw runtime IDs are rebased.
 
 ## Circuit generation contract
 

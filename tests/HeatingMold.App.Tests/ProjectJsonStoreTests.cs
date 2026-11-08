@@ -67,6 +67,73 @@ namespace HeatingMold.App.Tests
         }
 
         [Fact]
+        public void LoadReadsSavedDocument()
+        {
+            string directory = Path.Combine(Path.GetTempPath(), "HeatingMold.ProjectTests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                string path = Path.Combine(directory, "work.json");
+                ProjectDocument document = CreateDocument();
+                ProjectJsonStore.Save(document, path);
+
+                ProjectDocument loaded = ProjectJsonStore.Load(path);
+
+                Assert.Equal(document.Format, loaded.Format);
+                Assert.Equal(document.SchemaVersion, loaded.SchemaVersion);
+                Assert.Equal(ProjectJsonStore.ComputeFingerprint(document),
+                    ProjectJsonStore.ComputeFingerprint(loaded));
+                Assert.Equal("A", loaded.Areas[0].Name);
+            }
+            finally
+            {
+                try { Directory.Delete(directory, recursive: true); } catch { }
+            }
+        }
+
+        [Fact]
+        public void LoadRejectsWrongFormat()
+        {
+            string directory = Path.Combine(Path.GetTempPath(), "HeatingMold.ProjectTests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                string path = Path.Combine(directory, "work.json");
+                ProjectDocument document = CreateDocument();
+                document.Format = "Other.Project";
+                File.WriteAllBytes(path, ProjectJsonStore.Serialize(document));
+
+                Assert.Throws<InvalidDataException>(() => ProjectJsonStore.Load(path));
+            }
+            finally
+            {
+                try { Directory.Delete(directory, recursive: true); } catch { }
+            }
+        }
+
+        [Fact]
+        public void LoadRejectsFutureSchemaAndMalformedJson()
+        {
+            string directory = Path.Combine(Path.GetTempPath(), "HeatingMold.ProjectTests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                string futurePath = Path.Combine(directory, "future.json");
+                File.WriteAllText(futurePath,
+                    "{\"format\":\"HeatingMold.Project\",\"schemaVersion\":2}");
+                Assert.Throws<InvalidDataException>(() => ProjectJsonStore.Load(futurePath));
+
+                string malformedPath = Path.Combine(directory, "malformed.json");
+                File.WriteAllText(malformedPath, "{ not json");
+                Assert.Throws<InvalidDataException>(() => ProjectJsonStore.Load(malformedPath));
+            }
+            finally
+            {
+                try { Directory.Delete(directory, recursive: true); } catch { }
+            }
+        }
+
+        [Fact]
         public void FaceTopologySignaturesAreSerialized()
         {
             ProjectDocument document = CreateDocument();
