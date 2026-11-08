@@ -38,6 +38,15 @@
 - Run focused tests per change and a review/correction/retest cycle for significant changes. Automated scenario completion is not recorded visual or manual-drag verification.
 - Never claim the user's failing CAD model is fixed unless that model was reproduced and tested; report unverified coverage explicitly.
 
+## Build configuration (verified)
+
+- `HeatingMold.Mvp.sln` declares exactly one solution configuration, `Release|x64`. Do not re-add Debug/Any CPU/x86 rows without verifying every project exposes them.
+- The right-hand side of each solution→project mapping must be a configuration the project actually exposes:
+  - `src\OccBridge\OccBridge.vcxproj` defines only `Release|x64` → map to `Release|x64`.
+  - `src\HeatingMold.App\HeatingMold.App.csproj` and `tests\HeatingMold.App.Tests\HeatingMold.App.Tests.csproj` declare `<Platforms>x64</Platforms>` → map to `Release|x64`.
+  - `src\HeatingMold.Core`, `src\HeatingMold.Export`, `tests\HeatingMold.Core.Tests` declare no `<Platforms>` → map to `Release|Any CPU`.
+- A mapping to a configuration the project does not expose produces VS's "unknown project configuration mapping" dialog; `dotnet build`/`msbuild` on the solution can still succeed, so only reopening in VS validates this.
+
 ## Circuit generation contract
 
 - A circuit is one continuous serpentine path chunk made of multiple lanes joined by connectors. One straight lane fragment, or one area split by an exclusion, is not automatically a separate circuit.
