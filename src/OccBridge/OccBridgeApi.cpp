@@ -191,9 +191,9 @@ namespace
         FaceApply_Failed = -1
     };
 
-    bool TryGetSupplementalAxes(const Handle(StepData_StepModel)& model)
+    bool TryGetSupplementalAxes(const Handle(StepData_StepModel)& model, gp_Dir outAxes[3])
     {
-        if (model.IsNull()) return false;
+        if (model.IsNull() || outAxes == nullptr) return false;
         for (Standard_Integer i = 1; i <= model->NbEntities(); ++i)
         {
             Handle(StepRepr_Representation) rep =
@@ -232,29 +232,30 @@ namespace
                 gp_Vec y = z.Crossed(x);
                 if (y.SquareMagnitude() < 1e-12) continue;
                 y.Normalize();
-                g_autoAxes[0] = gp_Dir(x);
-                g_autoAxes[1] = gp_Dir(y);
-                g_autoAxes[2] = gp_Dir(z);
+                outAxes[0] = gp_Dir(x);
+                outAxes[1] = gp_Dir(y);
+                outAxes[2] = gp_Dir(z);
                 return true;
             }
         }
         return false;
     }
 
-    void ComputeAutoAxes(const Handle(StepData_StepModel)& stepModel)
+    void ComputeAutoAxesForShape(const Handle(StepData_StepModel)& stepModel,
+                                 const TopoDS_Shape& shape, gp_Dir outAxes[3])
     {
-        g_autoAxes[0] = gp::DX(); g_autoAxes[1] = gp::DY(); g_autoAxes[2] = gp::DZ();
-        if (TryGetSupplementalAxes(stepModel)) return;
-        if (g_shape.IsNull()) return;
+        outAxes[0] = gp::DX(); outAxes[1] = gp::DY(); outAxes[2] = gp::DZ();
+        if (TryGetSupplementalAxes(stepModel, outAxes)) return;
+        if (shape.IsNull()) return;
         GProp_GProps props;
         bool hasSolid = false;
-        for (TopExp_Explorer ex(g_shape, TopAbs_SOLID); ex.More(); ex.Next()) { hasSolid = true; break; }
+        for (TopExp_Explorer ex(shape, TopAbs_SOLID); ex.More(); ex.Next()) { hasSolid = true; break; }
         if (hasSolid)
-            BRepGProp::VolumeProperties(g_shape, props, Standard_True, Standard_True, Standard_False);
+            BRepGProp::VolumeProperties(shape, props, Standard_True, Standard_True, Standard_False);
         if (!hasSolid || std::fabs(props.Mass()) <= 1e-12)
         {
             props = GProp_GProps();
-            BRepGProp::SurfaceProperties(g_shape, props, Standard_True, Standard_False);
+            BRepGProp::SurfaceProperties(shape, props, Standard_True, Standard_False);
         }
         if (std::fabs(props.Mass()) <= 1e-12) return;
         const GProp_PrincipalProps principal = props.PrincipalProperties();
@@ -274,23 +275,33 @@ namespace
         axes[1].Normalize();
         axes[2] = axes[0].Crossed(axes[1]);
         axes[2].Normalize();
-        for (int i = 0; i < 3; ++i) g_autoAxes[i] = gp_Dir(axes[i]);
+        for (int i = 0; i < 3; ++i) outAxes[i] = gp_Dir(axes[i]);
     }
 
-    void AlignShapeToWorldAxes()
+    void ComputeAutoAxes(const Handle(StepData_StepModel)& stepModel)
+    {
+        ComputeAutoAxesForShape(stepModel, g_shape, g_autoAxes);
+    }
+
+    TopoDS_Shape AlignShapeToWorldAxesForShape(const TopoDS_Shape& shape, const gp_Dir axes[3])
     {
         // Express every point in the detected model frame. Keep the origin fixed;
         // only remove the model's rotational misalignment.
-        const gp_Dir& x = g_autoAxes[0];
-        const gp_Dir& y = g_autoAxes[1];
-        const gp_Dir& z = g_autoAxes[2];
+        const gp_Dir& x = axes[0];
+        const gp_Dir& y = axes[1];
+        const gp_Dir& z = axes[2];
         gp_Trsf rotation;
         rotation.SetValues(
             x.X(), x.Y(), x.Z(), 0.0,
             y.X(), y.Y(), y.Z(), 0.0,
             z.X(), z.Y(), z.Z(), 0.0);
-        BRepBuilderAPI_Transform aligned(g_shape, rotation, Standard_True);
-        g_shape = aligned.Shape();
+        BRepBuilderAPI_Transform aligned(shape, rotation, Standard_True);
+        return aligned.Shape();
+    }
+
+    void AlignShapeToWorldAxes()
+    {
+        g_shape = AlignShapeToWorldAxesForShape(g_shape, g_autoAxes);
         g_autoAxes[0] = gp::DX();
         g_autoAxes[1] = gp::DY();
         g_autoAxes[2] = gp::DZ();
@@ -490,29 +501,44 @@ namespace
         catch (...) { return "error"; }
     }
 
+    std::vector<std::string> BuildFaceTopologySignatures(const std::vector<TopoDS_Face>& faces)
+    {
+        std::vector<std::string> signatures;
+        signatures.reserve(faces.size());
+        for (const TopoDS_Face& face : faces)
+            signatures.push_back(FaceTopologySignature(face));
+        return signatures;
+    }
+
+    void BuildFaceCache(const TopoDS_Shape& shape,
+                        std::vector<TopoDS_Face>& faces,
+                        TopTools_IndexedMapOfShape& faceMap,
+                        TopTools_IndexedDataMapOfShapeListOfShape& edgeFaceMap,
+                        std::vector<std::string>& signatures)
+    {
+        faces.clear();
+        faceMap.Clear();
+        signatures.clear();
+        if (shape.IsNull()) return;
+        for (TopExp_Explorer ex(shape, TopAbs_FACE); ex.More(); ex.Next())
+        {
+            const TopoDS_Face f = TopoDS::Face(ex.Current());
+            faces.push_back(f);
+            faceMap.Add(f);   // faces 순회와 동일 → FindIndex == faces 인덱스 + 1
+        }
+        signatures = BuildFaceTopologySignatures(faces);
+        edgeFaceMap.Clear();
+        TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeFaceMap);
+    }
+
     void RebuildFaceTopologySignatures()
     {
-        g_faceTopologySignatures.clear();
-        g_faceTopologySignatures.reserve(g_faces.size());
-        for (const TopoDS_Face& face : g_faces)
-            g_faceTopologySignatures.push_back(FaceTopologySignature(face));
+        g_faceTopologySignatures = BuildFaceTopologySignatures(g_faces);
     }
 
     void RebuildFaceCache()
     {
-        g_faces.clear();
-        g_faceMap.Clear();
-        if (g_shape.IsNull()) return;
-        for (TopExp_Explorer ex(g_shape, TopAbs_FACE); ex.More(); ex.Next())
-        {
-            const TopoDS_Face f = TopoDS::Face(ex.Current());
-            g_faces.push_back(f);
-            g_faceMap.Add(f);   // g_faces와 동일 순회 → FindIndex == g_faces 인덱스 + 1
-        }
-        RebuildFaceTopologySignatures();
-        g_edgeFaceMap.Clear();
-        if (!g_shape.IsNull())
-            TopExp::MapShapesAndAncestors(g_shape, TopAbs_EDGE, TopAbs_FACE, g_edgeFaceMap);
+        BuildFaceCache(g_shape, g_faces, g_faceMap, g_edgeFaceMap, g_faceTopologySignatures);
     }
 
     const Quantity_Color kSelectedFaceColor(0.12, 0.82, 0.38, Quantity_TOC_RGB);   // 선택 = 초록
@@ -973,7 +999,10 @@ namespace
 
     // 원본 Edge를 다시 가져온 모델에서 찾기 위한 안정 signature. 인접 Face signature까지
     // 포함해 동일 형상이 겹친 경우를 구분한다. 실패 시 "error"를 반환한다.
-    std::string EdgeTopologySignature(const TopoDS_Edge& edge)
+    std::string EdgeTopologySignature(const TopoDS_Edge& edge,
+        const TopTools_IndexedDataMapOfShapeListOfShape& edgeFaceMap,
+        const TopTools_IndexedMapOfShape& faceMap,
+        const std::vector<std::string>& faceSignatures)
     {
         std::ostringstream out;
         try
@@ -993,13 +1022,13 @@ namespace
             BRepGProp::LinearProperties(edge, props);
             out << "len=" << SignatureNumber(std::fabs(props.Mass())) << ';';
             std::vector<std::string> adjacent;
-            if (g_edgeFaceMap.Contains(edge))
+            if (edgeFaceMap.Contains(edge))
             {
-                for (const TopoDS_Shape& faceShape : g_edgeFaceMap.FindFromKey(edge))
+                for (const TopoDS_Shape& faceShape : edgeFaceMap.FindFromKey(edge))
                 {
-                    const int index = g_faceMap.FindIndex(faceShape);
-                    adjacent.push_back(index > 0 && index <= static_cast<int>(g_faceTopologySignatures.size())
-                        ? g_faceTopologySignatures[static_cast<size_t>(index - 1)]
+                    const int index = faceMap.FindIndex(faceShape);
+                    adjacent.push_back(index > 0 && index <= static_cast<int>(faceSignatures.size())
+                        ? faceSignatures[static_cast<size_t>(index - 1)]
                         : std::string("?"));
                 }
             }
@@ -1011,6 +1040,11 @@ namespace
             return "error";
         }
         return out.str();
+    }
+
+    std::string EdgeTopologySignature(const TopoDS_Edge& edge)
+    {
+        return EdgeTopologySignature(edge, g_edgeFaceMap, g_faceMap, g_faceTopologySignatures);
     }
 
     struct StoredExitEdge
@@ -2800,14 +2834,15 @@ namespace
         g_view->Redraw();
     }
 
-    bool GetModelBoundsInFrameNative(const gp_Dir& xAxis, const gp_Dir& yAxis,
-                                     const gp_Dir& zAxis, double* out)
+    bool GetModelBoundsInFrameForShape(const TopoDS_Shape& shape,
+                                       const gp_Dir& xAxis, const gp_Dir& yAxis,
+                                       const gp_Dir& zAxis, double* out)
     {
-        if (g_shape.IsNull() || out == nullptr) return false;
+        if (shape.IsNull() || out == nullptr) return false;
         try
         {
             Bnd_Box box;
-            BRepBndLib::Add(g_shape, box);
+            BRepBndLib::Add(shape, box);
             if (box.IsVoid()) return false;
             double xmin, ymin, zmin, xmax, ymax, zmax;
             box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
@@ -2836,6 +2871,12 @@ namespace
             return true;
         }
         catch (const Standard_Failure&) { return false; }
+    }
+
+    bool GetModelBoundsInFrameNative(const gp_Dir& xAxis, const gp_Dir& yAxis,
+                                     const gp_Dir& zAxis, double* out)
+    {
+        return GetModelBoundsInFrameForShape(g_shape, xAxis, yAxis, zAxis, out);
     }
 
     bool ProjectPathWireOntoSelectedFacesNative(const std::vector<int>& faceIds,
@@ -3704,6 +3745,7 @@ namespace
 #include "FaceIdSelectionRefinementNative.inc"
 
 #include "ExitEdgeQueriesNative.inc"
+#include "ProjectRestoreNative.inc"
 }
 #pragma managed(pop)
 
@@ -4013,18 +4055,7 @@ void Bridge::ReleaseWorkingPresentation(long long id) { g_workingPresentations.e
 bool Bridge::LoadStep(String^ path)
 {
     ++g_modelRevision;
-    ClearExitEdgeStoreNative();
-    InvalidateWorkingContexts();
-    ClearDisplayedShape();
-    ClearOverlayNative();
-    ClearExclusionOverlaysNative();
-    ClearAllAreaHighlightsNative();
-    g_shape.Nullify();
-    g_faces.clear();
-    g_faceTopologySignatures.clear();
-    g_faceMap.Clear();
-    g_edgeFaceMap.Clear();
-    g_autoAxes[0] = gp::DX(); g_autoAxes[1] = gp::DY(); g_autoAxes[2] = gp::DZ();
+    ClearLiveModelForRestore();
     if (String::IsNullOrWhiteSpace(path)) return false;
     const std::string native = msclr::interop::marshal_as<std::string>(path);
     return LoadStepFile(native.c_str());
@@ -4056,6 +4087,50 @@ array<System::String^>^ Bridge::GetFaceTopologySignatures()
         return result;
     }
     catch (...) { return nullptr; }
+}
+
+ProjectRestoreCandidateInfo^ Bridge::BeginProjectRestoreCandidate(String^ path)
+{
+    if (String::IsNullOrWhiteSpace(path)) return nullptr;
+    try
+    {
+        const std::string native = msclr::interop::marshal_as<std::string>(path);
+        std::string error;
+        const int id = BeginProjectRestoreCandidateNative(native, error);
+        if (id <= 0) return nullptr;
+        const auto it = g_projectRestoreCandidates.find(id);
+        if (it == g_projectRestoreCandidates.end() || !it->second)
+        {
+            DiscardProjectRestoreCandidateNative(id);
+            return nullptr;
+        }
+        const auto& candidate = *it->second;
+        auto info = gcnew ProjectRestoreCandidateInfo();
+        info->CandidateId = id;
+        info->FaceSignatures = gcnew array<System::String^>(static_cast<int>(candidate.faceSignatures.size()));
+        for (int i = 0; i < static_cast<int>(candidate.faceSignatures.size()); ++i)
+            info->FaceSignatures[i] = gcnew System::String(candidate.faceSignatures[i].c_str());
+        info->EdgeSignatures = gcnew array<System::String^>(static_cast<int>(candidate.edgeSignatures.size()));
+        for (int i = 0; i < static_cast<int>(candidate.edgeSignatures.size()); ++i)
+            info->EdgeSignatures[i] = gcnew System::String(candidate.edgeSignatures[i].c_str());
+        return info;
+    }
+    catch (...) { return nullptr; }
+}
+
+bool Bridge::CommitProjectRestoreCandidate(int candidateId)
+{
+    return CommitProjectRestoreCandidateNative(candidateId);
+}
+
+void Bridge::DiscardProjectRestoreCandidate(int candidateId)
+{
+    DiscardProjectRestoreCandidateNative(candidateId);
+}
+
+System::String^ Bridge::GetProjectRestoreCandidateError()
+{
+    return gcnew System::String(g_projectRestoreCandidateError.c_str());
 }
 
 String^ Bridge::GetFaceType(int faceIndex)

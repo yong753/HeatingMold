@@ -293,6 +293,40 @@ static class GeometryRollbackChecks
         string[] second = EdgeSignatures(top);
         Check(first.SequenceEqual(second, StringComparer.Ordinal),
             "boundary edge topology signatures are stable across reimport");
+
+        string[] beforeCandidate = Bridge.GetFaceTopologySignatures();
+        long beforeRevision = Bridge.GetModelRevision();
+        var candidate = Bridge.BeginProjectRestoreCandidate(path);
+        Check(candidate != null, "project restore candidate loads without touching the live model");
+        if (candidate == null) return;
+        Check(candidate.CandidateId > 0, "project restore candidate has an id");
+        Check(candidate.FaceSignatures != null && candidate.FaceSignatures.SequenceEqual(beforeCandidate, StringComparer.Ordinal),
+            "candidate face signatures match the live model");
+        Check(candidate.EdgeSignatures != null && candidate.EdgeSignatures.Length > 0,
+            "candidate exposes edge signatures");
+        Check(candidate.EdgeSignatures.All(signature => !string.IsNullOrWhiteSpace(signature) &&
+                                                       !string.Equals(signature, "error", StringComparison.Ordinal)),
+            "candidate edge signatures are valid");
+        Check(Bridge.GetModelRevision() == beforeRevision,
+            "candidate load does not change the live model revision");
+        Check(Bridge.GetFaceTopologySignatures().SequenceEqual(beforeCandidate, StringComparer.Ordinal),
+            "candidate load leaves the live face signatures unchanged");
+
+        Check(Bridge.CommitProjectRestoreCandidate(candidate.CandidateId),
+            "project restore candidate commits once");
+        Check(Bridge.GetModelRevision() > beforeRevision,
+            "candidate commit advances the model revision");
+        Check(Bridge.GetFaceTopologySignatures().SequenceEqual(beforeCandidate, StringComparer.Ordinal),
+            "candidate commit preserves face signatures");
+
+        var discarded = Bridge.BeginProjectRestoreCandidate(path);
+        Check(discarded != null, "second project restore candidate loads");
+        if (discarded != null)
+        {
+            Bridge.DiscardProjectRestoreCandidate(discarded.CandidateId);
+            Check(Bridge.GetFaceTopologySignatures().SequenceEqual(beforeCandidate, StringComparer.Ordinal),
+                "discarding a candidate leaves the live model unchanged");
+        }
     }
 
     public static void Run(MainWindow window, string fixtureDir)

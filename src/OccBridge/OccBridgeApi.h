@@ -116,6 +116,15 @@ public:
     property array<int>^ SupportFaceIds;
 };
 
+/// <summary>격리된 STEP 복원 후보의 Face/Edge 토폴로지 지문.</summary>
+public ref class ProjectRestoreCandidateInfo
+{
+public:
+    property int CandidateId;
+    property array<System::String^>^ FaceSignatures;
+    property array<System::String^>^ EdgeSignatures;
+};
+
 /// <summary>
 /// OCCT 최소 브리지 (S1 스파이크, /clr:netcore net8.0).
 /// 상태는 프로세스 전역(단일 문서) — 본 개발에서 handle 기반으로 전환 예정.
@@ -236,6 +245,13 @@ public:
     /// <summary>현재 모델 Face별 토폴로지 지문. 같은 STEP 재로드 시 FaceId를
     /// 재매핑하는 영속 참조다. 지문이 중복되면 복원 시 명시적으로 실패한다.</summary>
     static array<System::String^>^ GetFaceTopologySignatures();
+
+    /// <summary>현재 문서를 건드리지 않고 STEP을 격리 후보로 읽는다. 실패 시 null.</summary>
+    static ProjectRestoreCandidateInfo^ BeginProjectRestoreCandidate(System::String^ path);
+    /// <summary>후보를 현재 문서로 한 번에 교체한다. 표시/카메라는 새 모델에 맞춘다.</summary>
+    static bool CommitProjectRestoreCandidate(int candidateId);
+    static void DiscardProjectRestoreCandidate(int candidateId);
+    static System::String^ GetProjectRestoreCandidateError();
 
     /// <summary>면 타입 이름 (Plane/Cylinder/Cone/Sphere/Torus/BSplineSurface/...)</summary>
     static System::String^ GetFaceType(int faceIndex);
