@@ -71,8 +71,9 @@ public partial class MainWindow
         var segments = new List<(Vec2 A, Vec2 B)>();
         foreach (SerpentineRoutePiece piece in route.Pieces)
         {
-            // 제외영역의 TurnConnector/FixedConnector는 도체가 아닌 점선 가이드이므로
-            // 영역 검증 대상에서 제외한다. 인출 연장선은 HeatingRun 끝 구간에 포함된다.
+            // 영역 안쪽 발열 여부는 HeatingRun만 검사한다. TurnConnector/FixedConnector는
+            // 제외영역을 관통할 수 있는 실제 도체이며, 선택 종료점까지의 리드도 이 조각으로
+            // 표현되므로 영역 검증 대상에서 제외한다.
             if (piece.Kind != SerpentineRoutePieceKind.HeatingRun) continue;
             for (int i = 1; i < piece.Points.Count; i++)
                 segments.Add((piece.Points[i - 1], piece.Points[i]));

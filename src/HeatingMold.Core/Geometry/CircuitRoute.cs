@@ -16,8 +16,9 @@ public sealed record CircuitExitPoint(
 }
 
 /// <summary>
-/// 한 회로의 완결 경로 정본. 모든 조각의 첫 점과 마지막 점은 각각 시작/종료 인출점이며,
-/// 두 인출점 사이에 별도의 마진 꼭지점을 두지 않는다.
+/// 한 회로의 완결 경로 정본. 첫 조각의 첫 점과 마지막 조각의 마지막 점은 각각 시작/종료
+/// 인출점이다. 마지막 발열선은 축과 평행하게 유지하고, 그 끝에서 종료 인출점까지의 리드는
+/// 별도 연결선 조각으로 둘 수 있다.
 /// </summary>
 public sealed record CircuitRoute(
     IReadOnlyList<SerpentineRoutePiece> Pieces,

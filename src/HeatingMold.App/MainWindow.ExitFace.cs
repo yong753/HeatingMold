@@ -1153,6 +1153,8 @@ public partial class MainWindow
             "선택한 인출점과 제외영역 조건으로 모든 레인을 잇는 완전 경로를 만들 수 없습니다 — 제외영역을 줄이거나 간격/방향을 조정하세요",
         AnchoredFailureReason.IndeterminateDirection =>
             "시작점과 종료점이 배치 축에서 같은 위치입니다 — 가로 배치는 두 점의 높이를, 세로 배치는 두 점의 좌우 위치를 다르게 선택하세요",
+        AnchoredFailureReason.RequiredExtraLaneOutsideRegion =>
+            "마지막 레인이 종료점 반대편에서 끝나 같은 간격으로 레인을 한 줄 더 만들어야 하지만, 그 위치에 발열영역 구간이 없습니다 — 기존 결과를 유지합니다",
         AnchoredFailureReason.ExitBoundaryConflict => ExplainExitBoundaryFailure(boundaryFailure),
         AnchoredFailureReason.InvalidInput =>
             "선택한 인출점 또는 영역 입력이 올바르지 않습니다",

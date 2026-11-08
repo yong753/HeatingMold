@@ -9,8 +9,8 @@ using HeatingMold.OccBridge;
 
 /// <summary>
 /// 경계 Edge 위 두 인출점을 직접 고르는 새 생성 경로 검사.
-/// 같은 인출면을 요구하지 않고, 짧은 두 점을 골라도 첫/마지막 레인만 비스듬해지며
-/// 조각 수가 늘지 않는지 실제 CAD 원본 경계로 확인한다.
+/// 같은 인출면을 요구하지 않고, 마지막 발열 레인이 축과 평행한 채로 유지되며
+/// 선택 종료점까지의 리드가 별도 연결선으로 붙는지 실제 CAD 원본 경계로 확인한다.
 /// </summary>
 static class SelectedExitChecks
 {
@@ -93,7 +93,8 @@ static class SelectedExitChecks
         double minX = ring.Min(p => p.X), maxX = ring.Max(p => p.X);
         double minY = ring.Min(p => p.Y), maxY = ring.Max(p => p.Y);
         // 첫 레인은 왼쪽→오른쪽, 홀수 3레인이 되도록 시작점을 간격 중간에 두고
-        // 종료점은 마지막 레인보다 살짝 바깥(+14)에 둬 마지막 레인만 경사지게 한다.
+        // 종료점은 마지막 레인보다 살짝 바깥(+14)에 둔다. 마지막 레인이 종료점과
+        // 같은 쪽에서 끝나므로 추가 레인 없이 별도 연결선만 붙어야 한다.
         var startResolution = exitBoundary.Project(new Vec2(minX, (minY + maxY) / 2 - 8), 1.0);
         var endResolution = exitBoundary.Project(new Vec2(maxX, (minY + maxY) / 2 + 14), 1.0);
         Check(startResolution.Succeeded && endResolution.Succeeded &&
@@ -135,15 +136,22 @@ static class SelectedExitChecks
             "odd three-lane layout is kept without forced even-lane reduction");
         int heatingRuns = pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun);
         int turns = pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.TurnConnector);
-        Check(heatingRuns == 3 && turns == 2,
-            "start-anchored generation does not add heating runs or turn connectors");
+        int fixedConnectors = pattern.RoutePieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.FixedConnector);
+        Check(heatingRuns == 3 && turns == 2 && fixedConnectors == 1,
+            "start-anchored generation keeps three heating runs and adds one terminal connector");
         Check(pattern.RoutePieces[0].Points[0].DistanceTo(selectedStart.Point) < 1e-6 &&
               pattern.RoutePieces[^1].Points[^1].DistanceTo(selectedEnd.Point) < 1e-6,
-            "first and last lane endpoints are the selected points");
+            "first piece starts at the selected start and last piece ends at the selected end");
         Check(Math.Abs(pattern.RoutePieces[0].Points[0].Y - pattern.RoutePieces[0].Points[^1].Y) < 1e-6,
             "first heating run leaves the selected start point parallel to the layout axis");
-        Check(Math.Abs(pattern.RoutePieces[^1].Points[0].Y - pattern.RoutePieces[^1].Points[^1].Y) > 1e-6,
-            "last heating run is slanted toward the manual end point");
+
+        SerpentineRoutePiece lastHeating = pattern.RoutePieces.Last(
+            piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun);
+        Check(Math.Abs(lastHeating.Points[0].Y - lastHeating.Points[^1].Y) < 1e-6,
+            "last heating run stays parallel to the layout axis");
+        Check(pattern.RoutePieces[^1].Kind == SerpentineRoutePieceKind.FixedConnector &&
+              pattern.RoutePieces[^1].Points[0].DistanceTo(lastHeating.Points[^1]) < 1e-6,
+            "terminal connector starts at the natural end of the last heating run");
 
         var projected = (List<RoutePieceResult>)areaType.GetProperty("ProjectedPieces")!.GetValue(area)!;
         Check(projected.Count == pattern.RoutePieces.Count && projected.All(piece => piece != null),

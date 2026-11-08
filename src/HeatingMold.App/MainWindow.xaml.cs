@@ -1204,7 +1204,8 @@ namespace HeatingMold.App
                     }
                     else
                     {
-                        // 선택점은 첫/마지막 발열선 끝만 교체한다. 실패해도 무앵커 경로로 대체하지 않는다.
+                        // 선택 시작점은 첫 발열선 시작에, 선택 종료점은 마지막 별도 연결선 끝에만 적용한다.
+                        // 실패해도 무앵커 경로로 대체하지 않는다.
                         var anchored = Serpentine.GenerateWithSelectedExits(candidate.Region[0], null,
                             parameters, candidate.Direction,
                             candidate.SelectedStartExit.Value, candidate.SelectedEndExit.Value,

@@ -323,8 +323,8 @@ public partial class MainWindow
 
     /// <summary>
     /// 현재 회로별 전체 발열 길이를 표시 순서대로 만든다. 인출점 사이의 경로 전체를
-    /// 한 번만 합산하며 별도의 인출부 길이는 두지 않는다. 점선 가이드(비회로 조각)는
-    /// 회로 조각 목록에 없거나 길이가 이미 0이므로 여기서 따로 걸러내지 않는다.
+    /// 한 번만 합산하며 별도의 인출부 길이는 두지 않는다. 선택 인출 경로의 마지막 연결선도
+    /// 회로 조각으로 실제 길이를 가지므로 여기서 따로 걸러내지 않는다.
     /// </summary>
     private List<CircuitLengthInfo> GetCircuitLengths(WorkingArea area, string prefix = "")
     {

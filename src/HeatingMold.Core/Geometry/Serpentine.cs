@@ -579,7 +579,10 @@ public static class Serpentine
 
     /// <summary>선택한 시작점을 첫 레인의 기준으로 삼아 사행을 만든다.
     /// 첫 발열선은 시작점에서 배치 축과 평행하게 출발하고, 각 레인은 이미 마진이 적용된
-    /// region 경계에서 멈춘다. 시작점 반대편으로 자동 왕복하지 않는다.</summary>
+    /// region 경계에서 멈춘다. 시작점 반대편으로 자동 왕복하지 않는다.
+    /// 마지막 레인이 종료 인출점의 반대편에서 끝나면 같은 간격으로 레인을 정확히 한 줄만
+    /// 더 만들고, 그 발열선 끝에서 종료점으로 돌아가는 연결선은 상위 단계가 붙인다.
+    /// 추가 레인 위치에 발열구간이 없으면 일부만 만들지 않고 명시적으로 실패한다.</summary>
     private static bool TryBuildAnchoredLocalRoute(
         List<List<Vec2>> region,
         IReadOnlyList<Vec2> outerLocal,
@@ -682,6 +685,8 @@ public static class Serpentine
         var pts = new List<Vec2>();
         int traversed = 0;
         Vec2? prevEnd = null;
+        Vec2? lastLaneEntry = null;
+        double lastLaneY = startLocal.Y;
 
         // 레인 위치는 실제 배치 범위에서 자연히 끝난다. 진행 거리가 유한하고 간격이
         // 0보다 크므로 별도의 고정 레인 개수 상한을 두지 않는다. 부동소수 정밀도 때문에
@@ -698,6 +703,7 @@ public static class Serpentine
 
             if (intervals.Count > 0)
             {
+                lastLaneY = y;
                 bool ltr = (traversed % 2 == 0) == startLow;
                 List<(double X0, double X1)> ordered = ltr
                     ? intervals.OrderBy(i => i.X0).ToList()
@@ -721,6 +727,7 @@ public static class Serpentine
                     Vec2 b = ltr ? new Vec2(x1, y) : new Vec2(x0, y);
                     if (step == 0 && firstOnLane)
                         a = new Vec2(startLocal.X, y); // 첫 발열선의 시작점 고정
+                    if (firstOnLane) lastLaneEntry = a;
 
                     if (pts.Count > 0 && firstOnLane && prevEnd.HasValue)
                     {
@@ -757,9 +764,87 @@ public static class Serpentine
             return false;
         }
 
+        // 마지막 레인이 종료 인출점의 반대편에서 끝났으면 간격을 유지한 채 다음 레인을
+        // 정확히 한 줄만 더 만든다. 이 레인은 선택 종료점보다 더 진행할 수 있지만,
+        // 해당 위치에 발열구간이 하나도 없으면 실패한다.
+        if (prevEnd.HasValue && lastLaneEntry.HasValue &&
+            prevEnd.Value.DistanceTo(endLocal) > lastLaneEntry.Value.DistanceTo(endLocal))
+        {
+            double extraY = lastLaneY + stepSign * p.Spacing;
+            if (extraY == lastLaneY)
+            {
+                failure = AnchoredFailureReason.NoLanes;
+                return false;
+            }
+            if (!TryAppendAnchoredLane(region, extraY, traversed, startLow,
+                    ref prevEnd, pts, segments, routePieces, out failure))
+                return false;
+            traversed++;
+        }
+
         // RequestedLaneCount=0 → 레인 수를 짝수로 줄이지 않았음을 의미한다.
         route = new LocalRoute(pts, segments, routePieces, traversed, 0);
         failure = AnchoredFailureReason.InvalidInput;
+        return true;
+    }
+
+    /// <summary>종료점 연결을 위한 마지막 레인 한 줄을 추가한다. 해당 위치에 발열구간이
+    /// 하나라도 있으면 길이와 무관하게 그 구간을 모두 사용하고, 없으면 명시적으로 실패한다.</summary>
+    private static bool TryAppendAnchoredLane(
+        List<List<Vec2>> region,
+        double y,
+        int laneIndex,
+        bool startLow,
+        ref Vec2? prevEnd,
+        List<Vec2> pts,
+        List<SerpentineSegment> segments,
+        List<SerpentineRoutePiece> routePieces,
+        out AnchoredFailureReason failure)
+    {
+        failure = AnchoredFailureReason.InvalidInput;
+        List<(double X0, double X1)> intervals = ScanlineIntervals(region, y);
+        if (intervals.Count == 0)
+        {
+            failure = AnchoredFailureReason.RequiredExtraLaneOutsideRegion;
+            return false;
+        }
+
+        bool ltr = (laneIndex % 2 == 0) == startLow;
+        List<(double X0, double X1)> ordered = ltr
+            ? intervals.OrderBy(i => i.X0).ToList()
+            : intervals.OrderByDescending(i => i.X1).ToList();
+
+        bool firstOnLane = true;
+        foreach ((double x0, double x1) in ordered)
+        {
+            Vec2 a = ltr ? new Vec2(x0, y) : new Vec2(x1, y);
+            Vec2 b = ltr ? new Vec2(x1, y) : new Vec2(x0, y);
+
+            if (prevEnd.HasValue)
+            {
+                if (firstOnLane)
+                {
+                    routePieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.TurnConnector,
+                        laneIndex, new[] { prevEnd.Value, a }));
+                }
+                else
+                {
+                    List<Vec2> connector = RouteAlongBoundary(region, prevEnd.Value, a);
+                    pts.AddRange(connector);
+                    routePieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.FixedConnector,
+                        laneIndex, new[] { prevEnd.Value }.Concat(connector).Append(a).ToList()));
+                }
+            }
+
+            pts.Add(a);
+            pts.Add(b);
+            segments.Add(new SerpentineSegment(laneIndex, a, b));
+            routePieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun,
+                laneIndex, new[] { a, b }));
+            prevEnd = b;
+            firstOnLane = false;
+        }
+
         return true;
     }
 
@@ -878,9 +963,10 @@ public static class Serpentine
         double.IsFinite(point.X) && double.IsFinite(point.Y);
 
     /// <summary>사용자가 직접 고른 시작점에서 사행 전체를 생성한다.
-    /// 첫 발열선은 시작점에서 배치 축과 평행하게 출발하고, 레인은 수동 종료점 쪽으로만 진행하며,
-    /// 반대편은 마진이 적용된 영역 경계에서 멈춘다. 마지막 발열선의 끝만 종료점으로 이어 붙이므로
-    /// 그 구간은 비스듬할 수 있다.</summary>
+    /// 첫 발열선은 시작점에서 배치 축과 평행하게 출발하고, 레인은 수동 종료점 쪽으로 진행하며,
+    /// 반대편은 마진이 적용된 영역 경계에서 멈춘다. 마지막 레인이 종료점의 반대편에서 끝나면
+    /// 같은 간격으로 한 줄만 더 만든 뒤, 마지막 발열선의 정상 끝에서 종료점으로 돌아가는
+    /// 별도 연결선을 붙인다. 발열선 자체는 축과 평행하게 유지된다.</summary>
     public static AnchoredResult GenerateWithSelectedExits(
         IReadOnlyList<Vec2> outer,
         IReadOnlyList<IReadOnlyList<Vec2>>? holes,
@@ -917,7 +1003,7 @@ public static class Serpentine
         if (route == null || route.Pieces.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
 
         SerpentineResult world = ToWorld(route, rad, angleDeg);
-        return TrimToSelectedExits(world, savedStart, savedEnd, boundary);
+        return FinalizeSelectedExits(world, savedStart, savedEnd, boundary);
     }
 
     private static AnchoredResult GenerateAnchoredCore(
@@ -1189,8 +1275,9 @@ public static class Serpentine
     }
 
     /// <summary>제외영역이 있는 영역에서도 사용자가 고른 시작점에서 사행을 시작한다.
-    /// 첫 레인은 시작점 기준으로 고정하고, 모든 레인 노드를 한 번에 방문하는 완전 경로만 채택한다.
-    /// 마지막 발열선의 끝만 수동 종료점으로 이어 붙인다.</summary>
+    /// 첫 레인은 시작점 기준으로 고정하고, 제외영역을 피한 레인 구간을 순서대로 한 번씩 잇는다.
+    /// 마지막 레인이 종료점의 반대편에서 끝나면 같은 간격으로 한 줄만 더 만든 뒤,
+    /// 마지막 발열선의 정상 끝에서 종료점으로 돌아가는 별도 연결선을 붙인다.</summary>
     public static AnchoredResult GenerateComponentsWithSelectedExits(
         IReadOnlyList<Vec2> outer,
         IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
@@ -1254,13 +1341,14 @@ public static class Serpentine
             world = BuildPatternFromPieces(worldPieces, angleDeg, laneCount);
         }
 
-        return TrimToSelectedExits(world, savedStart, savedEnd, boundary);
+        return FinalizeSelectedExits(world, savedStart, savedEnd, boundary);
     }
 
     /// <summary>제외영역이 있는 영역의 레인 구간을 진행 순서대로 한 번씩 이어 단일 사슬을 만든다.
-    /// 각 레인은 이전 끝점에 가까운 쪽으로 진입하고, 마지막 구간의 반대 끝에서 다음 레인으로
-    /// 넘어간다. 레인 사이 연결선과 소프트웨어 제외영역이 만든 같은 레인 틈은 직선이며,
-    /// 그 직선이 마진 확장 제외영역을 관통하는 것은 허용한다. 발열선만 제외영역을 피한다.</summary>
+    /// 각 레인은 이전 끝점에 가까운 쪽으로 진입하며, 마지막 레인도 방향을 뒤집지 않는다.
+    /// 마지막 레인이 종료점의 반대편에서 끝나면 같은 간격으로 한 줄만 더 만들고, 그 위치에
+    /// 발열구간이 없으면 실패한다. 레인 사이 연결선과 소프트웨어 제외영역이 만든 같은 레인
+    /// 틈은 직선이며, 그 직선이 마진 확장 제외영역을 관통하는 것은 허용한다. 발열선만 제외영역을 피한다.</summary>
     private static bool TryBuildExcludedSequentialPieces(
         IReadOnlyList<IReadOnlyList<Vec2>> region,
         IReadOnlyList<IReadOnlyList<Vec2>> cadRegion,
@@ -1348,39 +1436,27 @@ public static class Serpentine
             ltr = Math.Abs(startLocal.X - leftEntry) <= Math.Abs(startLocal.X - rightEntry);
         }
 
-        int lastPopulated = firstPopulated;
-        for (int i = firstPopulated; i < lanes.Count; i++)
-            if (lanes[i].Intervals.Count > 0) lastPopulated = i;
-
         var built = new List<SerpentineRoutePiece>();
         Vec2? previousEnd = null;
         int previousCad = -1;
         int traversed = 0;
         bool firstLane = true;
+        Vec2? lastLaneEntry = null;
+        double lastLaneY = startLocal.Y;
 
-        for (int laneIndex = firstPopulated; laneIndex < lanes.Count; laneIndex++)
+        void EmitLane(LaneScan lane, bool laneLtr)
         {
-            LaneScan lane = lanes[laneIndex];
-            if (lane.Intervals.Count == 0) continue;
-
-            if (!firstLane && previousEnd.HasValue)
-            {
-                // 마지막 레인은 종료 인출점과 가까운 끝에서 끝나도록 방향을 고른다.
-                // 그 외 레인은 이전 끝점에서 가까운 쪽으로 진입한다.
-                ltr = laneIndex == lastPopulated
-                    ? ChooseExitNear(lane, endLocal)
-                    : ChooseEntryLow(lane, previousEnd.Value);
-            }
-
+            lastLaneY = lane.Y;
             List<(double X0, double X1)> ordered = lane.Intervals.ToList();
-            if (ltr) ordered.Sort((a, b) => a.X0.CompareTo(b.X0));
+            if (laneLtr) ordered.Sort((a, b) => a.X0.CompareTo(b.X0));
             else ordered.Sort((a, b) => b.X1.CompareTo(a.X1));
 
             bool firstOnLane = true;
             foreach ((double x0, double x1) in ordered)
             {
-                Vec2 a = ltr ? new Vec2(x0, lane.Y) : new Vec2(x1, lane.Y);
-                Vec2 b = ltr ? new Vec2(x1, lane.Y) : new Vec2(x0, lane.Y);
+                Vec2 a = laneLtr ? new Vec2(x0, lane.Y) : new Vec2(x1, lane.Y);
+                Vec2 b = laneLtr ? new Vec2(x1, lane.Y) : new Vec2(x0, lane.Y);
+                if (firstOnLane) lastLaneEntry = a;
                 int cad = FindContainingInterval(lane.CadIntervals, x0, x1);
 
                 if (previousEnd.HasValue)
@@ -1417,7 +1493,39 @@ public static class Serpentine
             firstLane = false;
         }
 
+        for (int laneIndex = firstPopulated; laneIndex < lanes.Count; laneIndex++)
+        {
+            LaneScan lane = lanes[laneIndex];
+            if (lane.Intervals.Count == 0) continue;
+
+            // 중간 레인과 마지막 레인 모두 이전 끝점에서 가까운 쪽으로 진입한다.
+            // 종료점에 맞추기 위해 마지막 레인만 방향을 뒤집지 않는다.
+            if (!firstLane && previousEnd.HasValue)
+                ltr = ChooseEntryLow(lane, previousEnd.Value);
+
+            EmitLane(lane, ltr);
+        }
+
         if (built.Count == 0) { failure = AnchoredFailureReason.NoLanes; return false; }
+
+        // 마지막 레인이 종료 인출점의 반대편에서 끝났으면 간격을 유지한 채 다음 레인을
+        // 정확히 한 줄만 더 만든다. 이 레인은 선택 종료점보다 더 진행할 수 있지만,
+        // 해당 위치에 발열구간이 하나도 없으면 실패한다.
+        if (previousEnd.HasValue && lastLaneEntry.HasValue &&
+            previousEnd.Value.DistanceTo(endLocal) > lastLaneEntry.Value.DistanceTo(endLocal))
+        {
+            double extraY = lastLaneY + stepSign * p.Spacing;
+            if (extraY == lastLaneY) { failure = AnchoredFailureReason.NoLanes; return false; }
+            LaneScan extra = new(extraY,
+                ScanlineIntervals(region, extraY).ToList(),
+                ScanlineIntervals(cadRegion, extraY).ToList());
+            if (extra.Intervals.Count == 0)
+            {
+                failure = AnchoredFailureReason.RequiredExtraLaneOutsideRegion;
+                return false;
+            }
+            EmitLane(extra, ChooseEntryLow(extra, previousEnd.Value));
+        }
 
         Vec2 firstRunStart = built[0].Points[0];
         if (firstRunStart.DistanceTo(startLocal) > 1e-9)
@@ -1439,15 +1547,8 @@ public static class Serpentine
             }
         }
 
-        Vec2 lastRunEnd = built[^1].Points[^1];
-        if (lastRunEnd.DistanceTo(endLocal) > 1e-9 &&
-            SegmentCrossesExpandedExclusions(lastRunEnd, endLocal, exclusions, p.Margin))
-        {
-            // 종료 인출점까지의 리드가 제외영역을 지나면 마지막 발열선을 늘리지 않고
-            // 연결선을 덧붙인다. 그 외에는 기존처럼 마지막 발열선 끝을 선택점으로 맞춘다.
-            built.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.FixedConnector,
-                built[^1].LaneIndex, new[] { lastRunEnd, endLocal }));
-        }
+        // 종료 인출점까지의 리드는 제외영역 통과 여부와 무관하게 상위 단계가 항상
+        // 별도 연결선으로 붙인다. 여기서는 발열선을 종료점으로 늘리지 않는다.
 
         pieces = built;
         failure = AnchoredFailureReason.InvalidInput;
@@ -1465,15 +1566,6 @@ public static class Serpentine
         double left = Math.Abs(from.X - lane.Intervals.Min(i => i.X0));
         double right = Math.Abs(from.X - lane.Intervals.Max(i => i.X1));
         return left <= right;
-    }
-
-    /// <summary>마지막 레인의 두 출구 끝 중 종료 인출점에 가까운 쪽을 고른다.
-    /// true면 왼쪽→오른쪽(출구가 오른쪽)이다.</summary>
-    private static bool ChooseExitNear(LaneScan lane, Vec2 to)
-    {
-        double leftExit = Math.Abs(to.X - lane.Intervals.Min(i => i.X0));
-        double rightExit = Math.Abs(to.X - lane.Intervals.Max(i => i.X1));
-        return rightExit <= leftExit;
     }
 
     private static int FindContainingInterval(
@@ -1549,11 +1641,20 @@ public static class Serpentine
         return true;
     }
 
-    private static AnchoredResult TrimToSelectedExits(SerpentineResult world, ExitBoundaryPoint start,
+    /// <summary>생성된 마지막 발열선을 그대로 두고, 그 끝에서 선택 종료점까지의 리드를
+    /// 별도 연결선으로 붙인다. 발열선 끝이 이미 종료점과 같으면 연결선을 만들지 않는다.</summary>
+    private static AnchoredResult FinalizeSelectedExits(SerpentineResult world, ExitBoundaryPoint start,
         ExitBoundaryPoint end, IExitBoundary2D? boundary)
     {
         if (world.RoutePieces.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
-        if (!CircuitRouteBuilder.TryTrimToExit(world.RoutePieces, start, end,
+        List<SerpentineRoutePiece> pieces = world.RoutePieces.ToList();
+        Vec2 lastPoint = pieces[^1].Points[^1];
+        if (lastPoint.DistanceTo(end.Point) > ExitBoundaryConstraint.Tolerance)
+        {
+            pieces.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.FixedConnector,
+                pieces[^1].LaneIndex, new[] { lastPoint, end.Point }));
+        }
+        if (!CircuitRouteBuilder.TryTrimToExit(pieces, start, end,
                 world.AngleDeg, world.LaneCount, world.NominalLaneCount,
                 out CircuitRoute? trimmed, out _))
             return boundary != null
@@ -2041,6 +2142,9 @@ public enum AnchoredFailureReason
     ExitBoundaryConflict,
     NoCompletePath,
     IndeterminateDirection,
+    /// <summary>종료 인출점 반대편에서 끝난 마지막 레인 뒤에 같은 간격으로 한 줄을 더
+    /// 만들어야 하지만, 그 위치에 발열구간이 하나도 없다.</summary>
+    RequiredExtraLaneOutsideRegion,
 }
 
 public sealed record AnchoredResult(SerpentineResult? Pattern, AnchoredFailureReason? Failure)
