@@ -11,6 +11,7 @@ namespace HeatingMold.App;
 internal sealed record CircuitExitOverride(int PieceIndex, CircuitExitRole Role, Vec2 Point)
 {
     public ExitEdgeBinding? Binding { get; init; }
+    public ArtificialEdgeBinding? ArtificialBinding { get; init; }
 }
 
 /// <summary>
@@ -63,8 +64,11 @@ internal sealed class WorkingArea
     /// <summary>원본 edge의 작업평면 투영 질의. 표시용 체인과는 독립된 설계 제약이다.</summary>
     public IExitBoundary2D ExitBoundary { get; set; }
 
-    /// <summary>적용영역 전체 외곽 경계의 원본 CAD edge 질의. 인출점 직접 선택은 이 경계만 쓴다.</summary>
+    /// <summary>적용영역 전체 외곽 경계의 원본 CAD edge 질의. 인출점 직접 선택과 생성이 쓴다.</summary>
     public IExitBoundary2D RegionExitBoundary { get; set; }
+
+    /// <summary>제외영역과 무관한 적용영역 원본 CAD 외곽. 유효 경계를 다시 만들 때 기준이다.</summary>
+    public CadExitBoundary2D RegionCadBoundary { get; set; }
 
     /// <summary>사용자가 외곽 Edge 위에서 직접 고른 시작/종료 인출점. 원본 edge/parameter binding을 포함한다.</summary>
     public ExitBoundaryPoint? SelectedStartExit { get; set; }
@@ -132,7 +136,8 @@ internal sealed class WorkingArea
 
     /// <summary>새 인출점 방식의 생성 준비: 두 점이 모두 원본 edge binding을 가져야 한다.</summary>
     public bool HasSelectedExits => RegionExitBoundary != null && HasExitBoundary
-        && SelectedStartExit?.Binding.HasValue == true && SelectedEndExit?.Binding.HasValue == true;
+        && (SelectedStartExit?.Binding.HasValue == true || SelectedStartExit?.ArtificialBinding.HasValue == true)
+        && (SelectedEndExit?.Binding.HasValue == true || SelectedEndExit?.ArtificialBinding.HasValue == true);
 
     public bool HasExitAnchors => HasExitFace && StartAnchor.HasValue && EndAnchor.HasValue &&
         SelectedAnchorCandidate?.StartBinding.HasValue == true && SelectedAnchorCandidate?.EndBinding.HasValue == true;

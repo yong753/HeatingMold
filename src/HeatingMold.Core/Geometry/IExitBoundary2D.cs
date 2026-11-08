@@ -15,6 +15,37 @@ public readonly record struct ExitEdgeBinding(
     bool Reversed);
 
 /// <summary>
+/// Immutable provenance for a point on a straight boundary created by an exclusion
+/// rectangle. This is not a CAD edge: the rectangle, side and normalized parameter
+/// are the complete identity. Side: 0=bottom, 1=right, 2=top, 3=left.
+/// </summary>
+public readonly record struct ArtificialEdgeBinding(
+    long WorkingContextId,
+    long WorkingContextRevision,
+    double MinX,
+    double MinY,
+    double MaxX,
+    double MaxY,
+    int Side,
+    double FirstParameter,
+    double LastParameter,
+    double Parameter);
+
+/// <summary>
+/// Plane-only queries for the non-CAD portion of an effective region boundary.
+/// Implementations must reject stale/missing rectangles, sides or intervals.
+/// </summary>
+public interface IArtificialExitBoundary2D
+{
+    /// <summary>Move only on the saved exclusion side and its saved valid interval.</summary>
+    ExitBoundaryResolution ProjectArtificial(
+        ArtificialEdgeBinding binding, Vec2 point, double tolerance);
+
+    /// <summary>Evaluate a previously resolved artificial parameter without a new search.</summary>
+    ExitBoundaryResolution EvaluateArtificial(ArtificialEdgeBinding binding);
+}
+
+/// <summary>
 /// Plane-only boundary queries. Implementations may use CAD geometry without
 /// exposing CAD types to Core. Sampled guide chains are not authoritative tests.
 /// Every successful CAD result must carry Binding. Tolerance is geometric, not a

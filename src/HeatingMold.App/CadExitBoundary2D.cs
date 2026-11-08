@@ -21,6 +21,9 @@ internal sealed class CadExitBoundary2D : IExitBoundary2D
         _edges = edges.Select(CopyReference).ToArray();
     }
 
+    internal long ContextId => _contextId;
+    internal long Revision => _revision;
+
     internal static ExitEdgeReference CopyReference(ExitEdgeReference edge) => new()
     {
         Revision = edge.Revision, EdgeKey = edge.EdgeKey, FaceId = edge.FaceId,

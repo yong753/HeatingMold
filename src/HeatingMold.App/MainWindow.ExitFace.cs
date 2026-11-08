@@ -78,7 +78,22 @@ public partial class MainWindow
     private void ApplyActiveExitEdgeHighlight()
     {
         var area = _activeArea;
-        if (area == null || area.ExitBoundary == null || area.ExitChain3D == null || area.ExitChain3D.Count < 2)
+        if (area == null)
+        {
+            Bridge.ClearExitEdgeHighlight();
+            return;
+        }
+        IReadOnlyList<Vec3> source = null;
+        // 인출면 방식(legacy)은 그 면의 경계를, 선택 인출점 방식은 적용영역 전체
+        // 경계를 보여 준다. 선택점이 하나라도 있거나 선택 중이면 영역 경계가 정본이다.
+        bool showRegionOutline = area.ExitFaceId < 0 || _exitPointPickRole >= 0 ||
+            area.SelectedStartExit.HasValue || area.SelectedEndExit.HasValue;
+        if (showRegionOutline && area.RegionExitBoundary is EffectiveRegionBoundary2D effective &&
+            effective.Segments.Count > 0 && area.FaceIdSet.Count > 0)
+            source = BuildEffectiveOutline3D(area, effective);
+        else if (area.ExitBoundary != null && area.ExitChain3D != null && area.ExitChain3D.Count >= 2)
+            source = area.ExitChain3D;
+        if (source == null || source.Count < 2)
         {
             Bridge.ClearExitEdgeHighlight();
             return;
@@ -86,7 +101,7 @@ public partial class MainWindow
         // 정본 체인은 native 점 인덱스를 그대로 보존한다. 렌더링 배열에서만 실제로
         // 같은 3D 점을 제거하며, 같은 XY/다른 깊이의 점은 합치지 않는다.
         var displayPoints = new List<Vec3>();
-        foreach (Vec3 point in area.ExitChain3D)
+        foreach (Vec3 point in source)
             if (displayPoints.Count == 0 || point != displayPoints[^1]) displayPoints.Add(point);
         if (displayPoints.Count < 2)
         {
@@ -103,6 +118,121 @@ public partial class MainWindow
         }
         Color c = area.Color;
         Bridge.SetExitEdgeHighlight(points, c.R / 255.0, c.G / 255.0, c.B / 255.0);
+    }
+
+    /// <summary>
+    /// 제외영역이 외곽을 깎은 경우의 표시용 단일 링. CAD 구간은 원본 체인을 보간하고,
+    /// 제외로 생긴 인공 직선은 작업면 → 선택 면 표면 매핑으로 3D 점을 만든다.
+    /// 이 표시는 설계 구속이 아니며, 선택/검증은 EffectiveRegionBoundary2D가 담당한다.
+    /// </summary>
+    private static List<Vec3> BuildEffectiveOutline3D(
+        WorkingArea area, EffectiveRegionBoundary2D effective)
+    {
+        IReadOnlyList<Vec2> outline = effective.Outline;
+        if (outline.Count < 3) return null;
+        var result = new List<Vec3>();
+        for (int i = 0; i < outline.Count; i++)
+        {
+            Vec2 a = outline[i];
+            Vec2 b = outline[(i + 1) % outline.Count];
+            if (a.DistanceTo(b) <= 1e-9) continue;
+            if (IsArtificialOutlineEdge(effective, a, b))
+            {
+                int steps = Math.Clamp((int)Math.Ceiling(a.DistanceTo(b) / 2.0), 1, 512);
+                for (int step = 0; step <= steps; step++)
+                    AddMappedOutlinePoint(result, area, effective.CadBoundary,
+                        new Vec2(a.X + (b.X - a.X) * step / steps,
+                            a.Y + (b.Y - a.Y) * step / steps));
+            }
+            else
+            {
+                AddCadOutlinePoints(result, area, a, b);
+            }
+        }
+        if (result.Count >= 2 && result[0] != result[^1]) result.Add(result[0]);
+        return result.Count >= 2 ? result : null;
+    }
+
+    private static bool IsArtificialOutlineEdge(
+        EffectiveRegionBoundary2D effective, Vec2 a, Vec2 b)
+    {
+        Vec2 midpoint = new((a.X + b.X) / 2, (a.Y + b.Y) / 2);
+        foreach (EffectiveRegionBoundary2D.ArtificialSegment segment in effective.Segments)
+        {
+            if (DistanceToSegment(segment.A, segment.B, midpoint) <= 0.05 &&
+                DistanceToSegment(segment.A, segment.B, a) <= 0.05 &&
+                DistanceToSegment(segment.A, segment.B, b) <= 0.05)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// CAD 구간은 원본 3D 체인의 중간점도 함께 보간한다. 2D에서 직선이어도
+    /// 경사/곡면 위에서는 3D가 휘 수 있으므로 끝점 코드만으로 대체하지 않는다.
+    /// </summary>
+    private static void AddCadOutlinePoints(
+        List<Vec3> points, WorkingArea area, Vec2 a, Vec2 b)
+    {
+        AddUniqueOutlinePoint(points, PointOnExitChain3D(area, a, out _));
+        Vec2 ab = b - a;
+        double lengthSq = ab.X * ab.X + ab.Y * ab.Y;
+        if (lengthSq > 1e-18 && area.ExitChain != null && area.ExitChain3D != null)
+        {
+            int count = Math.Min(area.ExitChain.Count, area.ExitChain3D.Count);
+            var interior = new List<(double T, Vec3 Point)>();
+            for (int i = 0; i < count; i++)
+            {
+                Vec2 point = area.ExitChain[i];
+                if (DistanceToSegment(a, b, point) > 0.02) continue;
+                double t = ((point.X - a.X) * ab.X + (point.Y - a.Y) * ab.Y) / lengthSq;
+                if (t <= 1e-9 || t >= 1 - 1e-9) continue;
+                interior.Add((t, area.ExitChain3D[i]));
+            }
+            interior.Sort((left, right) => left.T.CompareTo(right.T));
+            foreach ((double _, Vec3 point) in interior)
+                AddUniqueOutlinePoint(points, point);
+        }
+        AddUniqueOutlinePoint(points, PointOnExitChain3D(area, b, out _));
+    }
+
+    private static void AddMappedOutlinePoint(
+        List<Vec3> points, WorkingArea area, CadExitBoundary2D cad, Vec2 datum)
+    {
+        int[] faces = area.FaceIdSet.OrderBy(id => id).ToArray();
+        var direct = Bridge.MapWorkingPointOntoFaces(
+            cad.ContextId, cad.Revision, faces, datum.X, datum.Y);
+        Vec3 value;
+        if (direct != null && direct.Status == WorkingQueryStatus.Hit &&
+            direct.Point is { Length: >= 3 })
+        {
+            value = new Vec3(direct.Point[0], direct.Point[1], direct.Point[2]);
+        }
+        else
+        {
+            var global = Bridge.QueryWorkingSurface(cad.ContextId, cad.Revision, datum.X, datum.Y);
+            value = global != null &&
+                (global.Status == WorkingQueryStatus.Hit || global.Status == WorkingQueryStatus.Tangent) &&
+                global.Point is { Length: >= 3 }
+                ? new Vec3(global.Point[0], global.Point[1], global.Point[2])
+                : area.Frame.Unproject(datum);
+        }
+        AddUniqueOutlinePoint(points, value);
+    }
+
+    private static void AddUniqueOutlinePoint(List<Vec3> points, Vec3 point)
+    {
+        if (points.Count == 0 || points[^1] != point) points.Add(point);
+    }
+
+    private static double DistanceToSegment(Vec2 a, Vec2 b, Vec2 point)
+    {
+        Vec2 ab = b - a;
+        double lengthSq = ab.X * ab.X + ab.Y * ab.Y;
+        if (lengthSq <= 1e-18) return point.DistanceTo(a);
+        double t = Math.Clamp(
+            ((point.X - a.X) * ab.X + (point.Y - a.Y) * ab.Y) / lengthSq, 0, 1);
+        return point.DistanceTo(a + ab * t);
     }
 
     /// <summary>시작/종료점 후보 목록을 현재 영역 후보와 선택 상태에 맞춰 다시 만든다.</summary>
@@ -292,13 +422,15 @@ public partial class MainWindow
         return true;
     }
 
-    private static bool TryEvaluateSelectedExit3D(WorkingArea area, ExitBoundaryPoint point, out Vec3 position)
+    private bool TryEvaluateSelectedExit3D(WorkingArea area, ExitBoundaryPoint point, out Vec3 position)
     {
         position = default;
-        if (area?.RegionExitBoundary is not CadExitBoundary2D boundary || !point.Binding.HasValue) return false;
-        ExitEdgeHit hit = boundary.EvaluateNative(point.Binding.Value);
-        if (hit?.Status != ExitEdgeQueryStatus.Hit || hit.Point is not { Length: >= 3 }) return false;
-        position = new Vec3(hit.Point[0], hit.Point[1], hit.Point[2]);
+        var side = _workingSide?.Confirmed;
+        if (area == null || side == null) return false;
+        var context = CommittedRouteContext.CaptureRegion(area);
+        if (!TryEvaluateExitSample(side, context, point.Binding, point.ArtificialBinding, point.Point,
+                out SurfaceMappedSample sample, out _)) return false;
+        position = sample.Point;
         return double.IsFinite(position.X) && double.IsFinite(position.Y) && double.IsFinite(position.Z);
     }
 

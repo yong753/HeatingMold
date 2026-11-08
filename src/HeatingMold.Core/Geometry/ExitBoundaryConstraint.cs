@@ -17,8 +17,11 @@ public enum ExitBoundaryFailureReason
 /// CAD 구속의 정본은 Binding의 원본 에지와 파라미터다.</summary>
 public readonly record struct ExitBoundaryPoint(Vec2 Point, int SegmentIndex, double SegmentParameter)
 {
-    /// <summary>Original CAD provenance, absent only for explicit non-CAD/Core fixtures.</summary>
+    /// <summary>Original CAD provenance, absent for explicit non-CAD/Core fixtures.</summary>
     public ExitEdgeBinding? Binding { get; init; }
+
+    /// <summary>Exclusion-created straight-boundary provenance. Never set together with Binding.</summary>
+    public ArtificialEdgeBinding? ArtificialBinding { get; init; }
 }
 
 public sealed record ExitBoundaryResolution(ExitBoundaryPoint? Point, ExitBoundaryFailureReason? Failure)
@@ -59,7 +62,7 @@ public static class ExitBoundaryConstraint
         if (!double.IsFinite(length) || length <= tolerance)
             return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.DegenerateSegment);
         if (boundary != null)
-            return RequireBinding(boundary.ResolveOutward(endpoint, next, tolerance));
+            return RequireProvenance(boundary.ResolveOutward(endpoint, next, tolerance));
         if (chain == null || chain.Count < 2)
             return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.InvalidInput);
         Vec2 d = direction * (1.0 / length);
@@ -179,6 +182,70 @@ public static class ExitBoundaryConstraint
         if (!result.Succeeded) return result;
         ExitBoundaryPoint evaluated = result.Point!.Value;
         if (evaluated.Binding != binding || evaluated.Point.DistanceTo(expectedPoint) > AcceptanceTolerance)
+            return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.GeometryFailure);
+        return result;
+    }
+
+    /// <summary>A boundary result must carry exactly one provenance kind.</summary>
+    internal static ExitBoundaryResolution RequireProvenance(ExitBoundaryResolution resolution)
+    {
+        if (resolution.Failure.HasValue)
+            return ExitBoundaryResolution.Fail(resolution.Failure.Value);
+        if (!resolution.Point.HasValue || !IsFinite(resolution.Point.Value.Point))
+            return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.GeometryFailure);
+        ExitBoundaryPoint point = resolution.Point.Value;
+        bool cad = point.Binding.HasValue;
+        bool artificial = point.ArtificialBinding.HasValue;
+        if (cad == artificial)
+            return ExitBoundaryResolution.Fail(
+                cad ? ExitBoundaryFailureReason.GeometryFailure
+                    : ExitBoundaryFailureReason.MissingReference);
+        if (cad)
+        {
+            ExitEdgeBinding binding = point.Binding!.Value;
+            if (!double.IsFinite(binding.FirstParameter) || !double.IsFinite(binding.LastParameter)
+                || !double.IsFinite(binding.Parameter))
+                return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.GeometryFailure);
+        }
+        else
+        {
+            ArtificialEdgeBinding binding = point.ArtificialBinding!.Value;
+            if (!double.IsFinite(binding.MinX) || !double.IsFinite(binding.MinY)
+                || !double.IsFinite(binding.MaxX) || !double.IsFinite(binding.MaxY)
+                || !double.IsFinite(binding.FirstParameter) || !double.IsFinite(binding.LastParameter)
+                || !double.IsFinite(binding.Parameter))
+                return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.GeometryFailure);
+        }
+        return resolution;
+    }
+
+    /// <summary>Validate a saved point (CAD or exclusion-created) without a new search.</summary>
+    public static ExitBoundaryResolution EvaluateSaved(
+        IExitBoundary2D boundary, ExitBoundaryPoint point)
+    {
+        if (!IsFinite(point.Point))
+            return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.InvalidInput);
+        bool cad = point.Binding.HasValue;
+        bool artificial = point.ArtificialBinding.HasValue;
+        if (cad == artificial)
+            return ExitBoundaryResolution.Fail(
+                cad ? ExitBoundaryFailureReason.GeometryFailure
+                    : ExitBoundaryFailureReason.MissingReference);
+
+        if (cad)
+            return EvaluateSaved(boundary, point.Binding, point.Point);
+
+        if (boundary is not IArtificialExitBoundary2D artificialBoundary)
+            return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.MissingReference);
+
+        ArtificialEdgeBinding binding = point.ArtificialBinding!.Value;
+        ExitBoundaryResolution result =
+            RequireProvenance(artificialBoundary.EvaluateArtificial(binding));
+        if (!result.Succeeded) return result;
+        ExitBoundaryPoint evaluated = result.Point!.Value;
+        if (evaluated.Binding.HasValue
+            || evaluated.ArtificialBinding != binding
+            || evaluated.Point.DistanceTo(point.Point) > AcceptanceTolerance)
             return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.GeometryFailure);
         return result;
     }

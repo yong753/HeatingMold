@@ -41,7 +41,7 @@ public partial class MainWindow
     private SurfaceMappedSample? MapExitDatum(
         WorkingSideDefinition side, CommittedRouteContext context, CircuitExitPoint exit)
     {
-        return TryEvaluateExitSample(side, context, exit?.Binding, exit?.Point,
+        return TryEvaluateExitSample(side, context, exit?.Binding, exit?.ArtificialBinding, exit?.Point,
             out SurfaceMappedSample sample, out _) ? sample : null;
     }
 
@@ -49,9 +49,9 @@ public partial class MainWindow
     private SurfaceMappedSample? BuildExitVertexOverride(
         WorkingSideDefinition side, CommittedRouteContext context, CircuitExitPoint exit)
     {
-        if (!TryEvaluateExitSample(side, context, exit?.Binding, exit?.Point,
+        if (!TryEvaluateExitSample(side, context, exit?.Binding, exit?.ArtificialBinding, exit?.Point,
                 out SurfaceMappedSample sample, out string failure))
-            throw new InvalidOperationException("인출점 원본 CAD 평가 실패 — " + failure);
+            throw new InvalidOperationException("인출 경계 평가 실패 — " + failure);
         return sample;
     }
 
@@ -60,29 +60,48 @@ public partial class MainWindow
     /// snap 허용 거리는 커서용이며, 확정 parameter의 평가 공차를 완화하지 않는다.
     /// </summary>
     private bool TryProjectExitDatum(WorkingSideDefinition side, CommittedRouteContext context,
-        ExitEdgeBinding? binding, Vec2 datum, double tolerance,
+        ExitEdgeBinding? binding, ArtificialEdgeBinding? artificialBinding, Vec2 datum, double tolerance,
         out ExitBoundaryPoint projected, out SurfaceMappedSample sample, out string failure)
     {
         projected = default;
         sample = default;
         failure = "MissingReference: 인출점의 원본 edge/parameter가 없습니다";
-        if (!binding.HasValue || context?.Boundary == null) return false;
-        ExitBoundaryResolution result = context.Boundary.ProjectBound(binding.Value, datum, tolerance);
+        if (context?.Boundary == null) return false;
+        if (binding.HasValue == artificialBinding.HasValue) return false;
+        ExitBoundaryResolution result;
+        if (binding.HasValue)
+        {
+            result = context.Boundary.ProjectBound(binding.Value, datum, tolerance);
+        }
+        else
+        {
+            if (context.Boundary is not IArtificialExitBoundary2D artificial)
+            { failure = "MissingReference: 인공 외곽선 경계가 없습니다"; return false; }
+            result = artificial.ProjectArtificial(artificialBinding!.Value, datum, tolerance);
+        }
         if (!result.Succeeded)
-        { failure = result.Failure + ": 지정한 원본 edge에서 이동 위치를 정하지 못했습니다"; return false; }
+        { failure = result.Failure + ": 지정한 인출 경계에서 이동 위치를 정하지 못했습니다"; return false; }
         projected = result.Point.Value;
-        if (!TryEvaluateExitSample(side, context, projected.Binding, projected.Point, out sample, out failure))
+        if (!TryEvaluateExitSample(side, context, projected.Binding, projected.ArtificialBinding,
+                projected.Point, out sample, out failure))
             return false;
         return true;
     }
 
     private static bool TryEvaluateExitSample(WorkingSideDefinition side, CommittedRouteContext context,
-        ExitEdgeBinding? binding, Vec2? expected, out SurfaceMappedSample sample, out string failure)
+        ExitEdgeBinding? binding, ArtificialEdgeBinding? artificialBinding, Vec2? expected,
+        out SurfaceMappedSample sample, out string failure)
     {
         sample = default;
-        failure = "MissingReference: 원본 edge/parameter 또는 투영 경계가 없습니다";
-        if (!binding.HasValue || context?.Boundary is not CadExitBoundary2D boundary) return false;
-        ExitEdgeBinding saved = binding.Value;
+        failure = "MissingReference: 인출 경계의 원본 식별자가 없습니다";
+        if (context?.Boundary == null || binding.HasValue == artificialBinding.HasValue) return false;
+        if (artificialBinding.HasValue)
+            return TryEvaluateArtificialExitSample(side, context, artificialBinding.Value, expected, out sample, out failure);
+
+        ExitEdgeBinding saved = binding!.Value;
+        CadExitBoundary2D boundary = context.Boundary as CadExitBoundary2D
+            ?? (context.Boundary as EffectiveRegionBoundary2D)?.CadBoundary;
+        if (boundary == null) return false;
         if (side == null || saved.WorkingContextId != side.Id.Value || saved.WorkingContextRevision != side.Revision.Value)
         { failure = "StaleContext: 인출점과 확정 작업평면이 일치하지 않습니다"; return false; }
         ExitEdgeHit hit = boundary.EvaluateNative(saved);
@@ -103,4 +122,58 @@ public partial class MainWindow
         failure = null;
         return true;
     }
+
+    private static bool TryEvaluateArtificialExitSample(WorkingSideDefinition side,
+        CommittedRouteContext context, ArtificialEdgeBinding saved, Vec2? expected,
+        out SurfaceMappedSample sample, out string failure)
+    {
+        sample = default;
+        failure = "MissingReference: 인공 외곽선 경계가 없습니다";
+        if (side == null || saved.WorkingContextId != side.Id.Value ||
+            saved.WorkingContextRevision != side.Revision.Value ||
+            context.Boundary is not IArtificialExitBoundary2D boundary)
+            return false;
+        ExitBoundaryResolution result = boundary.EvaluateArtificial(saved);
+        if (!result.Succeeded || result.Point is not { } evaluated || !evaluated.ArtificialBinding.HasValue)
+        { failure = (result.Failure ?? ExitBoundaryFailureReason.GeometryFailure) +
+            ": 인공 외곽선 parameter 평가 실패"; return false; }
+        ArtificialEdgeBinding actualBinding = evaluated.ArtificialBinding.Value;
+        if (!SameArtificial(actualBinding, saved))
+        { failure = "StaleContext: 인공 외곽선 식별자가 일치하지 않습니다"; return false; }
+        Vec2 actual = evaluated.Point;
+        if (expected.HasValue && actual.DistanceTo(expected.Value) > ExitBoundaryConstraint.AcceptanceTolerance)
+        { failure = "GeometryFailure: 인공 외곽선 parameter의 2D 좌표 불일치"; return false; }
+        long id = side.Id.Value, revision = side.Revision.Value;
+        var direct = Bridge.MapWorkingPointOntoFaces(id, revision, context.FaceIds, actual.X, actual.Y);
+        double[] point = direct != null && direct.Status == WorkingQueryStatus.Hit ? direct.Point : null;
+        int faceId = direct?.FaceId ?? -1;
+        if (point == null || point.Length < 3)
+        {
+            var global = Bridge.QueryWorkingSurface(id, revision, actual.X, actual.Y);
+            if (global != null &&
+                (global.Status == WorkingQueryStatus.Hit || global.Status == WorkingQueryStatus.Tangent))
+            {
+                point = global.Point;
+                faceId = global.FaceId;
+            }
+        }
+        if (point == null || point.Length < 3)
+        { failure = "GeometryFailure: 인공 외곽선 점을 표면에 매핑하지 못했습니다"; return false; }
+        Vec3 mapped = new(point[0], point[1], point[2]);
+        if (!double.IsFinite(mapped.X) || !double.IsFinite(mapped.Y) || !double.IsFinite(mapped.Z) ||
+            side.Frame.Project(mapped).DistanceTo(actual) > ExitBoundaryConstraint.AcceptanceTolerance)
+        { failure = "GeometryFailure: 인공 외곽선 점의 2D/3D 좌표 불일치"; return false; }
+        sample = new SurfaceMappedSample(actual, mapped, faceId);
+        failure = null;
+        return true;
+    }
+
+    private static bool SameArtificial(ArtificialEdgeBinding a, ArtificialEdgeBinding b) =>
+        a.WorkingContextId == b.WorkingContextId &&
+        a.WorkingContextRevision == b.WorkingContextRevision &&
+        a.MinX == b.MinX && a.MinY == b.MinY && a.MaxX == b.MaxX && a.MaxY == b.MaxY &&
+        a.Side == b.Side &&
+        Math.Abs(a.FirstParameter - b.FirstParameter) <= ExitBoundaryConstraint.Tolerance &&
+        Math.Abs(a.LastParameter - b.LastParameter) <= ExitBoundaryConstraint.Tolerance &&
+        Math.Abs(a.Parameter - b.Parameter) <= ExitBoundaryConstraint.Tolerance;
 }

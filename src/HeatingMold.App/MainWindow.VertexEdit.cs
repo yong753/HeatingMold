@@ -377,7 +377,7 @@ public partial class MainWindow
         if (anchor)
         {
             CircuitExitPoint boundExit = isStart ? area.Pattern.StartExit : area.Pattern.EndExit;
-            if (!TryProjectExitDatum(side, context, boundExit?.Binding, datum, 5.0,
+            if (!TryProjectExitDatum(side, context, boundExit?.Binding, boundExit?.ArtificialBinding, datum, 5.0,
                     out ExitBoundaryPoint projected, out SurfaceMappedSample projectedSample, out failure))
             {
                 return false;
@@ -418,7 +418,8 @@ public partial class MainWindow
     /// </summary>
     private bool TryBuildVertexCandidate(Vec2 datum, out SerpentineResult candidate, out Vec2 applied,
         out string failure, out bool anchor, out bool isStart,
-        out Dictionary<int, List<SurfaceMappedSample>> mappedPieces, out ExitEdgeBinding? movedBinding)
+        out Dictionary<int, List<SurfaceMappedSample>> mappedPieces, out ExitEdgeBinding? movedBinding,
+        out ArtificialEdgeBinding? movedArtificialBinding)
     {
         candidate = null;
         applied = datum;
@@ -427,6 +428,7 @@ public partial class MainWindow
         isStart = false;
         mappedPieces = new Dictionary<int, List<SurfaceMappedSample>>();
         movedBinding = null;
+        movedArtificialBinding = null;
         var area = _activeArea;
         if (area?.Pattern == null || _vertexDragGroup < 0 || _vertexDragGroup >= _vertexGroups.Count)
         {
@@ -442,6 +444,7 @@ public partial class MainWindow
                     out _, out mappedPieces, out applied, out failure, out CircuitExitPoint moved))
                 return false;
             movedBinding = moved.Binding;
+            movedArtificialBinding = moved.ArtificialBinding;
             candidate = area.Pattern;
             return true;
         }
@@ -453,13 +456,14 @@ public partial class MainWindow
         if (anchor)
         {
             CircuitExitPoint boundExit = isStart ? area.Pattern.StartExit : area.Pattern.EndExit;
-            if (!TryProjectExitDatum(side, context, boundExit?.Binding, datum, 5.0,
+            if (!TryProjectExitDatum(side, context, boundExit?.Binding, boundExit?.ArtificialBinding, datum, 5.0,
                     out ExitBoundaryPoint projected, out SurfaceMappedSample projectedSample, out failure))
             {
                 return false;
             }
             applied = projected.Point;
             movedBinding = projected.Binding;
+            movedArtificialBinding = projected.ArtificialBinding;
             if (applied.DistanceTo(group.Datum) <= 1e-6)
             {
                 failure = "인출점 위치가 변경되지 않았습니다";
@@ -476,8 +480,8 @@ public partial class MainWindow
         {
             CircuitRoute route = CircuitRoute.FromResult(candidate);
             route = isStart
-                ? route with { StartExit = route.StartExit with { Binding = movedBinding } }
-                : route with { EndExit = route.EndExit with { Binding = movedBinding } };
+                ? route with { StartExit = route.StartExit with { Binding = movedBinding, ArtificialBinding = movedArtificialBinding } }
+                : route with { EndExit = route.EndExit with { Binding = movedBinding, ArtificialBinding = movedArtificialBinding } };
             candidate = route.ToResult();
         }
 
@@ -516,10 +520,11 @@ public partial class MainWindow
         CircuitRoute route = area.Circuits[circuitIndex];
         var context = CommittedRouteContext.Capture(area);
         CircuitExitPoint boundExit = key.Role == CircuitExitRole.Start ? route.StartExit : route.EndExit;
-        if (!TryProjectExitDatum(side, context, boundExit.Binding, datum, 5.0,
+        if (!TryProjectExitDatum(side, context, boundExit.Binding, boundExit.ArtificialBinding, datum, 5.0,
                 out ExitBoundaryPoint projected, out SurfaceMappedSample anchorSample, out failure)) return false;
         applied = projected.Point;
         movedExit = boundExit with { Point = applied, Binding = projected.Binding,
+            ArtificialBinding = projected.ArtificialBinding,
             BoundarySegmentIndex = projected.SegmentIndex, BoundaryParameter = projected.SegmentParameter };
         if (applied.DistanceTo(route.StartExit.Point) <= 1e-6 && key.Role == CircuitExitRole.Start ||
             applied.DistanceTo(route.EndExit.Point) <= 1e-6 && key.Role == CircuitExitRole.End)
@@ -547,7 +552,8 @@ public partial class MainWindow
         if (candidate.Pieces.Count == 1)
         {
             CircuitExitPoint other = key.Role == CircuitExitRole.Start ? end : start;
-            if (!TryEvaluateExitSample(side, context, other.Binding, other.Point, out var otherSample, out failure))
+            if (!TryEvaluateExitSample(side, context, other.Binding, other.ArtificialBinding,
+                    other.Point, out var otherSample, out failure))
                 return false;
             overrides[key.Role == CircuitExitRole.Start ? points.Count - 1 : 0] = otherSample;
         }
@@ -588,7 +594,8 @@ public partial class MainWindow
                 else
                 {
                     CircuitExitPoint exit = role == 0 ? area.Circuits[i].StartExit : area.Circuits[i].EndExit;
-                    if (!TryEvaluateExitSample(side, context, exit?.Binding, exit?.Point, out sample, out failure))
+                    if (!TryEvaluateExitSample(side, context, exit?.Binding, exit?.ArtificialBinding,
+                            exit?.Point, out sample, out failure))
                         return false;
                 }
                 adjusted ??= points.ToList();
@@ -653,7 +660,7 @@ public partial class MainWindow
         // 후보를 엄격 검증한다. 스테이징의 캐시는 전체 형상·binding·검증 정책이 같을 때만 재사용한다.
         if (!TryBuildVertexCandidate(datum, out SerpentineResult candidate, out Vec2 applied,
                 out string failure, out bool anchor, out bool isStart,
-                out _, out ExitEdgeBinding? movedBinding))
+                out _, out ExitEdgeBinding? movedBinding, out ArtificialEdgeBinding? movedArtificialBinding))
         {
             StatusText.Text = "이동할 수 없습니다 — " + failure;
             return;
@@ -666,7 +673,11 @@ public partial class MainWindow
             edited.CircuitExitOverrides.RemoveAll(o =>
                 o.PieceIndex == circuitKey.PieceIndex && o.Role == circuitKey.Role);
             edited.CircuitExitOverrides.Add(new CircuitExitOverride(
-                circuitKey.PieceIndex, circuitKey.Role, applied) { Binding = movedBinding });
+                circuitKey.PieceIndex, circuitKey.Role, applied)
+            {
+                Binding = movedBinding,
+                ArtificialBinding = movedArtificialBinding
+            });
         }
         else
         {
@@ -679,14 +690,22 @@ public partial class MainWindow
                 ExitBoundaryPoint? previous = isStart ? edited.SelectedStartExit : edited.SelectedEndExit;
                 var updatedExit = new ExitBoundaryPoint(applied,
                     previous?.SegmentIndex ?? -1,
-                    movedBinding?.Parameter ?? previous?.SegmentParameter ?? 0)
-                { Binding = movedBinding };
+                    (movedBinding?.Parameter ?? movedArtificialBinding?.Parameter) ?? previous?.SegmentParameter ?? 0)
+                {
+                    Binding = movedBinding,
+                    ArtificialBinding = movedArtificialBinding
+                };
                 if (isStart) edited.SelectedStartExit = updatedExit;
                 else edited.SelectedEndExit = updatedExit;
                 if (edited.SelectedAnchorCandidate != null)
-                    edited.SelectedAnchorCandidate = isStart
-                        ? edited.SelectedAnchorCandidate with { Start = applied, StartBinding = movedBinding }
-                        : edited.SelectedAnchorCandidate with { End = applied, EndBinding = movedBinding };
+                {
+                    if (movedBinding.HasValue)
+                        edited.SelectedAnchorCandidate = isStart
+                            ? edited.SelectedAnchorCandidate with { Start = applied, StartBinding = movedBinding }
+                            : edited.SelectedAnchorCandidate with { End = applied, EndBinding = movedBinding };
+                    else
+                        edited.SelectedAnchorCandidate = null;
+                }
             }
         }
         edited.RouteEdited = true;

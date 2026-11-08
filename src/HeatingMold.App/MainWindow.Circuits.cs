@@ -37,6 +37,12 @@ public partial class MainWindow
             return false;
         }
 
+        IExitBoundary2D boundary = CircuitBoundary(area);
+        if (boundary == null)
+        {
+            failure = "인출 경계가 없습니다 — 영역을 다시 확정하세요";
+            return false;
+        }
         CircuitRouteSetResult split;
         try
         {
@@ -50,13 +56,19 @@ public partial class MainWindow
             }
             foreach (CircuitExitOverride moved in area.CircuitExitOverrides)
             {
-                if (!moved.Binding.HasValue) continue; // Explicit non-CAD fixture compatibility below.
+                if (!moved.Binding.HasValue && !moved.ArtificialBinding.HasValue) continue;
+                double parameter = moved.Binding?.Parameter
+                    ?? moved.ArtificialBinding!.Value.Parameter;
                 existingExits[(moved.PieceIndex, moved.Role)] = new CircuitExitPoint(
-                    moved.Role, moved.Point, -1, moved.Binding.Value.Parameter) { Binding = moved.Binding };
+                    moved.Role, moved.Point, -1, parameter)
+                {
+                    Binding = moved.Binding,
+                    ArtificialBinding = moved.ArtificialBinding
+                };
             }
             split = CircuitRouteTopology.Split(
                 CircuitRoute.FromResult(area.Pattern), area.TurnEnabled, area.ExitChain,
-                boundary: area.ExitBoundary, existingExits: existingExits);
+                boundary: boundary, existingExits: existingExits);
         }
         catch (Exception ex)
         {
@@ -83,12 +95,12 @@ public partial class MainWindow
                 CircuitExitOverride endOverride = area.CircuitExitOverrides.FirstOrDefault(o =>
                     o.PieceIndex == lastIndex && o.Role == CircuitExitRole.End);
                 if (startOverride == null && endOverride == null) continue;
-                if (startOverride != null && !ValidateOverride(area, startOverride))
+                if (startOverride != null && !ValidateOverride(boundary, startOverride))
                 {
                     failure = "회로 " + (i + 1) + "의 시작 인출점이 인출 경계 위에 있지 않습니다";
                     return false;
                 }
-                if (endOverride != null && !ValidateOverride(area, endOverride))
+                if (endOverride != null && !ValidateOverride(boundary, endOverride))
                 {
                     failure = "회로 " + (i + 1) + "의 종료 인출점이 인출 경계 위에 있지 않습니다";
                     return false;
@@ -97,14 +109,24 @@ public partial class MainWindow
                     ? ToBoundary(routes[i].StartExit)
                     : new ExitBoundaryPoint(startOverride.Point,
                         routes[i].StartExit.BoundarySegmentIndex,
-                        startOverride.Binding?.Parameter ?? routes[i].StartExit.BoundaryParameter)
-                        { Binding = startOverride.Binding };
+                        startOverride.Binding?.Parameter
+                            ?? startOverride.ArtificialBinding?.Parameter
+                            ?? routes[i].StartExit.BoundaryParameter)
+                        {
+                            Binding = startOverride.Binding,
+                            ArtificialBinding = startOverride.ArtificialBinding
+                        };
                 ExitBoundaryPoint end = endOverride == null
                     ? ToBoundary(routes[i].EndExit)
                     : new ExitBoundaryPoint(endOverride.Point,
                         routes[i].EndExit.BoundarySegmentIndex,
-                        endOverride.Binding?.Parameter ?? routes[i].EndExit.BoundaryParameter)
-                        { Binding = endOverride.Binding };
+                        endOverride.Binding?.Parameter
+                            ?? endOverride.ArtificialBinding?.Parameter
+                            ?? routes[i].EndExit.BoundaryParameter)
+                        {
+                            Binding = endOverride.Binding,
+                            ArtificialBinding = endOverride.ArtificialBinding
+                        };
                 if (!CircuitRouteBuilder.TryTrimToExit(routes[i].Pieces, start, end,
                         routes[i].AngleDeg, routes[i].LaneCount, routes[i].NominalLaneCount,
                         out CircuitRoute rebuilt, out string trimFailure))
@@ -181,15 +203,33 @@ public partial class MainWindow
     }
 
     private static ExitBoundaryPoint ToBoundary(CircuitExitPoint exit) =>
-        new(exit.Point, exit.BoundarySegmentIndex, exit.BoundaryParameter) { Binding = exit.Binding };
+        new(exit.Point, exit.BoundarySegmentIndex, exit.BoundaryParameter)
+        {
+            Binding = exit.Binding,
+            ArtificialBinding = exit.ArtificialBinding
+        };
 
-    private static bool ValidateOverride(WorkingArea area, CircuitExitOverride moved)
+    /// <summary>
+    /// 선택 인출점 방식은 적용영역 전체 경계를, 인출면 방식은 그 면의 경계를 쓴다.
+    /// 커밋된 결과를 표시하는 동안에는 draft 경계로 재구성하지 않는다.
+    /// </summary>
+    private static IExitBoundary2D CircuitBoundary(WorkingArea area) =>
+        area.HasSelectedExits
+            ? area.CommittedMapping?.RegionBoundary ?? area.RegionExitBoundary
+            : area.CommittedMapping?.Boundary ?? area.ExitBoundary;
+
+    private static bool ValidateOverride(IExitBoundary2D boundary, CircuitExitOverride moved)
     {
-        if (area.ExitBoundary == null)
-            return !moved.Binding.HasValue && Serpentine.DistanceToChain(area.ExitChain, moved.Point) <= 0.05;
-        if (!moved.Binding.HasValue) return false;
-        ExitBoundaryResolution evaluated = area.ExitBoundary.Evaluate(moved.Binding.Value);
-        return evaluated.Succeeded && evaluated.Point.Value.Point.DistanceTo(moved.Point) <= ExitBoundaryConstraint.AcceptanceTolerance;
+        if (boundary == null)
+            return false;
+        if (moved.Binding.HasValue == moved.ArtificialBinding.HasValue) return false;
+        double parameter = moved.Binding?.Parameter ?? moved.ArtificialBinding!.Value.Parameter;
+        var point = new ExitBoundaryPoint(moved.Point, -1, parameter)
+        {
+            Binding = moved.Binding,
+            ArtificialBinding = moved.ArtificialBinding
+        };
+        return ExitBoundaryConstraint.EvaluateSaved(boundary, point).Succeeded;
     }
 
     /// <summary>분할 회로를 다시 연결하면 그 절단면의 수동 인출점 이동값은 더 이상 유효하지 않다.</summary>
@@ -230,8 +270,8 @@ public partial class MainWindow
         if (area?.Pattern == null) { reason = "발열 경로가 없습니다"; return false; }
         // The caller may be displaying a committed result while its boundary is a draft.
         // Do not reconstruct that result from draft inputs here.
-        IExitBoundary2D boundary = area.CommittedMapping?.Boundary ?? area.ExitBoundary;
-        if (boundary == null) { reason = "인출면의 원본 CAD 경계가 없습니다"; return false; }
+        IExitBoundary2D boundary = CircuitBoundary(area);
+        if (boundary == null) { reason = "인출 경계가 없습니다"; return false; }
         if (area.Circuits == null || area.Circuits.Count == 0)
         { reason = "회로 경로가 없습니다"; return false; }
         if (area.CircuitPieceIndices == null || area.CircuitPieceIndices.Count != area.Circuits.Count)
@@ -243,11 +283,11 @@ public partial class MainWindow
             { reason = "회로 " + (i + 1) + "의 인출점이 없습니다"; return false; }
             foreach (CircuitExitPoint exit in new[] { route.StartExit, route.EndExit })
             {
-                if (!exit.Binding.HasValue)
-                { reason = "회로 " + (i + 1) + "의 원본 edge/parameter가 없습니다"; return false; }
-                ExitBoundaryResolution evaluated = boundary.Evaluate(exit.Binding.Value);
-                if (!evaluated.Succeeded || evaluated.Point.Value.Point.DistanceTo(exit.Point) > ExitBoundaryConstraint.AcceptanceTolerance)
-                { reason = "회로 " + (i + 1) + "의 원본 경계가 유효하지 않습니다: " + evaluated.Failure; return false; }
+                if (exit.Binding.HasValue == exit.ArtificialBinding.HasValue)
+                { reason = "회로 " + (i + 1) + "의 인출 경계 식별자가 없습니다"; return false; }
+                ExitBoundaryResolution evaluated = ExitBoundaryConstraint.EvaluateSaved(boundary, ToBoundary(exit));
+                if (!evaluated.Succeeded)
+                { reason = "회로 " + (i + 1) + "의 인출 경계가 유효하지 않습니다: " + evaluated.Failure; return false; }
             }
             if (route.Pieces.Count != area.CircuitPieceIndices[i].Count)
             { reason = "회로 " + (i + 1) + "의 조각 수가 일치하지 않습니다"; return false; }

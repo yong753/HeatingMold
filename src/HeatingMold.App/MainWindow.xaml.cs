@@ -686,6 +686,13 @@ namespace HeatingMold.App
             var rect = (minX, minY, maxX, maxY);
             var candidate = ForkAreaRoute(area);
             candidate.Exclusions.Add(rect);
+            if (!TryRefreshEffectiveBoundary(candidate, out error,
+                    out bool clearedStart, out bool clearedEnd))
+            {
+                StatusText.Text = error;
+                return false;
+            }
+            string selectionNote = ExitSelectionResetNote(clearedStart, clearedEnd);
             PrepareExclusionRouteCandidate(candidate);
 
             // 1) 표시 메시 스테이징 — 실패하면 아무 상태도 바꾸지 않는다.
@@ -714,11 +721,12 @@ namespace HeatingMold.App
             // 경로가 무효화된 영역은 회로표/전기표에서도 즉시 빠져야 한다.
             UpdateCircuitTable();
             UpdateActionStates();
-            StatusText.Text = !highlightApplied
+            StatusText.Text = (!highlightApplied
                 ? "제외영역을 추가했지만 표시 갱신에 실패했습니다 — 확정된 제외영역/경로 상태는 유지합니다"
                 : area.HasExitFace && !area.HasExitAnchors && !string.IsNullOrEmpty(area.LastExitFailure)
                     ? area.LastExitFailure
-                    : string.Format("모델 뷰포트 제외영역 추가 — {0}개", area.Exclusions.Count);
+                    : string.Format("모델 뷰포트 제외영역 추가 — {0}개", area.Exclusions.Count))
+                + selectionNote;
             return true;
         }
 
@@ -741,6 +749,80 @@ namespace HeatingMold.App
             candidate.CommittedMapping = null;
             if (candidate.HasExitFace) RecomputeAnchorCandidates(candidate);
         }
+
+        /// <summary>
+        /// 제외 변경 후 마진 적용 전 유효 외곽선을 다시 만든다. 구멍/분리/무효 제외는
+        /// 명시적으로 거부하고, 유효한 기존 인출점만 유지한다.
+        /// </summary>
+        private bool TryRefreshEffectiveBoundary(WorkingArea candidate, out string error,
+            out bool clearedStart, out bool clearedEnd)
+        {
+            error = null;
+            clearedStart = false;
+            clearedEnd = false;
+
+            CadExitBoundary2D cad = candidate.RegionCadBoundary
+                ?? candidate.RegionExitBoundary as CadExitBoundary2D;
+            if (cad == null)
+            {
+                error = "적용영역 원본 CAD 경계가 없어 제외영역 외곽선을 다시 만들 수 없습니다";
+                return false;
+            }
+            candidate.RegionCadBoundary = cad;
+
+            bool exitBoundaryWasRegion = candidate.ExitFaceId < 0
+                || ReferenceEquals(candidate.ExitBoundary, candidate.RegionCadBoundary);
+            IExitBoundary2D boundary;
+            if (candidate.Exclusions.Count == 0)
+            {
+                boundary = cad;
+            }
+            else
+            {
+                if (candidate.Region.Count != 1)
+                {
+                    error = "제외영역은 단일 적용영역에서만 지원됩니다";
+                    return false;
+                }
+                if (!EffectiveRegionBoundary2D.TryCreate(cad, candidate.Region[0],
+                        candidate.Exclusions, out EffectiveRegionBoundary2D effective,
+                        out string failure))
+                {
+                    error = failure;
+                    return false;
+                }
+                boundary = effective;
+            }
+
+            bool hadStart = candidate.SelectedStartExit.HasValue;
+            bool hadEnd = candidate.SelectedEndExit.HasValue;
+            candidate.RegionExitBoundary = boundary;
+            if (exitBoundaryWasRegion) candidate.ExitBoundary = boundary;
+            candidate.SelectedStartExit = RefreshExitSelection(candidate.SelectedStartExit, boundary,
+                out clearedStart);
+            candidate.SelectedEndExit = RefreshExitSelection(candidate.SelectedEndExit, boundary,
+                out clearedEnd);
+            if (hadStart) candidate.StartAnchor = candidate.SelectedStartExit?.Point;
+            if (hadEnd) candidate.EndAnchor = candidate.SelectedEndExit?.Point;
+            return true;
+        }
+
+        private static ExitBoundaryPoint? RefreshExitSelection(ExitBoundaryPoint? point,
+            IExitBoundary2D boundary, out bool cleared)
+        {
+            cleared = false;
+            if (!point.HasValue) return null;
+            ExitBoundaryResolution evaluated = ExitBoundaryConstraint.EvaluateSaved(boundary, point.Value);
+            if (evaluated.Succeeded) return evaluated.Point;
+            cleared = true;
+            return null;
+        }
+
+        private static string ExitSelectionResetNote(bool clearedStart, bool clearedEnd) =>
+            clearedStart || clearedEnd
+                ? string.Format(" — 변경된 외곽선에서 유효하지 않게 된 인출점({0})을 다시 선택하세요",
+                    clearedStart && clearedEnd ? "시작·종료" : clearedStart ? "시작" : "종료")
+                : string.Empty;
 
         /// <summary>조각 순서대로 점을 이어 하나의 폴리라인으로 만든다 — 조각 경계의 중복 시작점은 건너뛴다.</summary>
         private static List<Vec2> FlattenPieces(IReadOnlyList<SerpentineRoutePiece> pieces)
@@ -879,6 +961,7 @@ namespace HeatingMold.App
             // source-order 표시 체인과 원본 edge 참조를 함께 보관해야 2D/3D/parameter가 일치한다.
             area.ExitBoundary = exitBoundary;
             area.RegionExitBoundary = exitBoundary;
+            area.RegionCadBoundary = exitBoundary;
             area.ExitChain = sourceChain2D;
             area.ExitChain3D = sourceChain3D;
             area.ExitEdgeRefs = sourceRefs.ToList();
@@ -1474,6 +1557,13 @@ namespace HeatingMold.App
             CancelPowerSetup();
             var candidate = ForkAreaRoute(area);
             candidate.Exclusions.Clear();
+            if (!TryRefreshEffectiveBoundary(candidate, out error,
+                    out bool clearedStart, out bool clearedEnd))
+            {
+                StatusText.Text = error;
+                return false;
+            }
+            string selectionNote = ExitSelectionResetNote(clearedStart, clearedEnd);
             PrepareExclusionRouteCandidate(candidate);
             // 제외가 0이면 스테이징할 클리핑 메시가 없다. 기존 채움 표시는 경로
             // 트랜잭션이 성공한 뒤에만 지우며, 실패 시에는 그대로 둔다.
@@ -1488,7 +1578,8 @@ namespace HeatingMold.App
             SyncExitFaceUi(area);
             UpdateCircuitTable();
             UpdateActionStates();
-            StatusText.Text = string.Format("{0} 영역의 제외 사각형을 모두 지웠습니다", area.Name);
+            StatusText.Text = string.Format("{0} 영역의 제외 사각형을 모두 지웠습니다", area.Name)
+                + selectionNote;
             return true;
         }
 

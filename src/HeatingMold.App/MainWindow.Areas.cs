@@ -152,6 +152,7 @@ public partial class MainWindow
         area.CommittedMapping,
         area.ExitBoundary,
         area.RegionExitBoundary,
+        area.RegionCadBoundary,
         area.SelectedStartExit,
         area.SelectedEndExit,
         area.SelectedAnchorCandidate,
@@ -189,6 +190,7 @@ public partial class MainWindow
         area.CommittedMapping = snapshot.CommittedMapping;
         area.ExitBoundary = snapshot.ExitBoundary;
         area.RegionExitBoundary = snapshot.RegionExitBoundary;
+        area.RegionCadBoundary = snapshot.RegionCadBoundary;
         area.SelectedStartExit = snapshot.SelectedStartExit;
         area.SelectedEndExit = snapshot.SelectedEndExit;
         area.SelectedAnchorCandidate = snapshot.SelectedAnchorCandidate;
@@ -484,10 +486,10 @@ public partial class MainWindow
             throw new InvalidOperationException("회로 인출점과 대상 경로 끝점이 일치하지 않습니다");
         SurfaceMappedSample? sample = BuildExitVertexOverride(side, context, exit);
         if (!sample.HasValue)
-            throw new InvalidOperationException("인출점을 원본 CAD edge 위에서 평가하지 못했습니다");
+            throw new InvalidOperationException("인출점을 인출 경계 위에서 평가하지 못했습니다");
         double datumError = (sample.Value.DatumPoint - piecePoint).Length;
         if (!double.IsFinite(datumError) || datumError > ExitBoundaryConstraint.AcceptanceTolerance)
-            throw new InvalidOperationException("원본 CAD 인출점의 작업평면 좌표와 경로 끝점이 일치하지 않습니다 (오차 "
+            throw new InvalidOperationException("인출 경계의 작업평면 좌표와 경로 끝점이 일치하지 않습니다 (오차 "
                 + datumError + "mm)");
         overrides ??= new Dictionary<int, SurfaceMappedSample>();
         overrides[pointIndex] = sample.Value;

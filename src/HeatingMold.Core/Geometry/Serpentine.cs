@@ -1549,12 +1549,7 @@ public static class Serpentine
         saved = point;
         failure = null;
         if (boundary == null) return true;
-        if (!point.Binding.HasValue)
-        {
-            failure = ExitBoundaryFailureReason.MissingReference;
-            return false;
-        }
-        ExitBoundaryResolution result = ExitBoundaryConstraint.EvaluateSaved(boundary, point.Binding, point.Point);
+        ExitBoundaryResolution result = ExitBoundaryConstraint.EvaluateSaved(boundary, point);
         if (!result.Succeeded)
         {
             failure = result.Failure;
@@ -1727,7 +1722,7 @@ public static class Serpentine
         }
         // 근접 스냅 반경은 호출자가 별도로 잡는 거리 기준(reach)을 따른다.
         // 최소 정밀도 공차를 그대로 쓰면 마진만큼 떨어진 레인 끝점이 무조건 Miss가 된다.
-        ExitBoundaryResolution projection = ExitBoundaryConstraint.RequireBinding(
+        ExitBoundaryResolution projection = ExitBoundaryConstraint.RequireProvenance(
             boundary.Project(point, projectionTolerance));
         if (!projection.Succeeded)
         {

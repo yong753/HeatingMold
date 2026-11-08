@@ -41,6 +41,7 @@ public partial class MainWindow
             ExitEdgeRefs = source.ExitEdgeRefs.Select(CadExitBoundary2D.CopyReference).ToList(),
             ExitBoundary = source.ExitBoundary,
             RegionExitBoundary = source.RegionExitBoundary,
+            RegionCadBoundary = source.RegionCadBoundary,
             SelectedStartExit = source.SelectedStartExit,
             SelectedEndExit = source.SelectedEndExit,
             RegionBoundary = source.RegionBoundary,
@@ -532,6 +533,7 @@ public partial class MainWindow
         target.ExitEdgeRefs = candidate.ExitEdgeRefs;
         target.ExitBoundary = candidate.ExitBoundary;
         target.RegionExitBoundary = candidate.RegionExitBoundary;
+        target.RegionCadBoundary = candidate.RegionCadBoundary;
         target.SelectedStartExit = candidate.SelectedStartExit;
         target.SelectedEndExit = candidate.SelectedEndExit;
         target.SelectedAnchorCandidate = candidate.SelectedAnchorCandidate;
@@ -601,6 +603,17 @@ public partial class MainWindow
             Number(b.FirstParameter); Number(b.LastParameter); Number(b.Parameter);
             key.Append(b.Reversed).Append(';');
         }
+        void Artificial(ArtificialEdgeBinding? binding)
+        {
+            if (!binding.HasValue) { key.Append("no-artificial;"); return; }
+            ArtificialEdgeBinding b = binding.Value;
+            key.Append(b.WorkingContextId).Append(',')
+                .Append(b.WorkingContextRevision).Append(',')
+                .Append(b.Side).Append(',');
+            Number(b.MinX); Number(b.MinY); Number(b.MaxX); Number(b.MaxY);
+            Number(b.FirstParameter); Number(b.LastParameter); Number(b.Parameter);
+            key.Append(';');
+        }
         void Exits(IReadOnlyList<CircuitExitPoint> exits)
         {
             key.Append(exits.Count).Append(':');
@@ -608,6 +621,7 @@ public partial class MainWindow
             {
                 key.Append(exit.Role).Append(',').Append(exit.BoundarySegmentIndex).Append(',');
                 Number(exit.BoundaryParameter); Point(exit.Point); Binding(exit.Binding);
+                Artificial(exit.ArtificialBinding);
             }
         }
         key.Append(_modelRevision).Append('|').Append(side.Id.Value).Append('|').Append(side.Revision.Value).Append('|');

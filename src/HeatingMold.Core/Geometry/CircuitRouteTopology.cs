@@ -66,7 +66,9 @@ public static class CircuitRouteTopology
             "One enabled state is required per turn connector.");
         // Retained CAD endpoints must still refer to the same model/context/parameter,
         // even when all connectors remain enabled. A failed query cannot drop provenance.
-        if (boundary != null || route.StartExit.Binding.HasValue || route.EndExit.Binding.HasValue)
+        if (boundary != null || route.StartExit.Binding.HasValue
+            || route.StartExit.ArtificialBinding.HasValue
+            || route.EndExit.Binding.HasValue || route.EndExit.ArtificialBinding.HasValue)
         {
             CircuitRouteSetResult constrained = Constrain(route, exitChain, boundary);
             if (!constrained.Succeeded) return constrained;
@@ -260,12 +262,12 @@ public static class CircuitRouteTopology
         failure = string.Empty;
         if (boundary != null)
         {
-            ExitBoundaryResolution evaluated = ExitBoundaryConstraint.EvaluateSaved(boundary, exit.Binding, exit.Point);
+            ExitBoundaryResolution evaluated = ExitBoundaryConstraint.EvaluateSaved(boundary, ToBoundary(exit));
             if (evaluated.Succeeded) return true;
             failure = evaluated.Failure.ToString()!;
             return false;
         }
-        if (exit.Binding.HasValue)
+        if (exit.Binding.HasValue || exit.ArtificialBinding.HasValue)
         {
             failure = ExitBoundaryFailureReason.MissingReference.ToString();
             return false;
@@ -332,10 +334,18 @@ public static class CircuitRouteTopology
     }
 
     private static CircuitExitPoint ToExit(CircuitExitRole role, ExitBoundaryPoint boundary) =>
-        new(role, boundary.Point, boundary.SegmentIndex, boundary.SegmentParameter) { Binding = boundary.Binding };
+        new(role, boundary.Point, boundary.SegmentIndex, boundary.SegmentParameter)
+        {
+            Binding = boundary.Binding,
+            ArtificialBinding = boundary.ArtificialBinding,
+        };
 
     private static ExitBoundaryPoint ToBoundary(CircuitExitPoint exit) =>
-        new(exit.Point, exit.BoundarySegmentIndex, exit.BoundaryParameter) { Binding = exit.Binding };
+        new(exit.Point, exit.BoundarySegmentIndex, exit.BoundaryParameter)
+        {
+            Binding = exit.Binding,
+            ArtificialBinding = exit.ArtificialBinding,
+        };
 
     private static int LaneCount(IReadOnlyList<SerpentineRoutePiece> pieces) =>
         pieces.Count(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun);

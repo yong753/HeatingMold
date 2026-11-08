@@ -12,6 +12,13 @@
 - Keep cursor snap distances separate from geometry validation tolerances. Missing references, stale contexts, degenerate projections, ambiguous solutions, tangent/overlapping generation intersections must be explicit failures; never hide them by increasing tolerance or falling back to a sampled boundary.
 - Preserve candidate identity/binding through conversions and UI selection. Equal 2D coordinates do not prove equal original edges or equal 3D positions.
 
+## 제외영역 허용 범위 (사용자 확정)
+
+- 작업영역 내부에 구멍을 만드는 제외영역, 적용영역을 둘 이상으로 분리하는 제외영역은 허용하지 않는다.
+- 제외 후에도 구멍 없는 단일 연결 영역이 유지되는 경우(외곽을 깎는 제외)만 허용한다.
+- 제외영역 추가/변경은 이 조건을 먼저 검증하고, 위반 시 기존 제외영역·경로·선택점을 보존한 채 명시적으로 거부한다.
+- 유효 외곽선은 마진 적용 전 `적용영역 − 제외영역`이다. 제외로 새로 생긴 직선 구간은 원본 CAD edge/parameter로 가장하지 않고 별도 artificial provenance로 보존하며, 3D 평가는 선택 면 표면 매핑을 사용한다.
+
 ## Transactions and preservation
 
 - Prepare immutable candidate circuits, IDs, lengths, mapping, fingerprints, endpoint arrays and connector states before committing.
@@ -40,3 +47,5 @@
 - Preserve the single `Pattern` route-piece + `TurnEnabled` + `Circuits`/`CircuitPieceIndices` structure, manual split/reconnect, original CAD endpoint binding, surface mapping, actual 3D length, and atomic commit policies.
 - Connector exclusion penetration is not a reason to reclassify a conductor as a dashed guide or to change its length semantics.
 - The legacy compatibility APIs `GenerateComponents`, `ComputeCandidatesComponents`, and `GenerateAnchoredComponents` still use the exact DP/candidate path. Their limits are not the product policy for the selected-exit generation path; do not copy those limits into new generation code.
+
+

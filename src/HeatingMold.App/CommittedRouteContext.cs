@@ -32,7 +32,13 @@ internal sealed class CommittedRouteContext
     public List<Vec2> CircuitStarts { get; init; } = new();
     public List<Vec2> CircuitEnds { get; init; } = new();
 
-    public static CommittedRouteContext Capture(WorkingArea area) => new()
+    public static CommittedRouteContext Capture(WorkingArea area) =>
+        Capture(area, area.HasSelectedExits ? area.RegionExitBoundary : area.ExitBoundary);
+
+    /// <summary>적용영역 전체 외곽(선택 인출점 방식)을 기준으로 캡처한다.</summary>
+    public static CommittedRouteContext CaptureRegion(WorkingArea area) => Capture(area, area.RegionExitBoundary);
+
+    private static CommittedRouteContext Capture(WorkingArea area, IExitBoundary2D boundary) => new()
     {
         FaceIds = area.FaceIdSet.OrderBy(id => id).ToArray(),
         ExitFaceId = area.ExitFaceId,
@@ -42,7 +48,7 @@ internal sealed class CommittedRouteContext
         StartAnchor = area.StartAnchor,
         EndAnchor = area.EndAnchor,
         ExitEdgeRefs = area.ExitEdgeRefs.Select(CadExitBoundary2D.CopyReference).ToList(),
-        Boundary = area.ExitBoundary,
+        Boundary = boundary,
         RegionBoundary = area.RegionExitBoundary,
         SelectedStartExit = area.SelectedStartExit,
         SelectedEndExit = area.SelectedEndExit,

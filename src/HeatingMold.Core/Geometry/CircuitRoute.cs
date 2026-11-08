@@ -12,6 +12,7 @@ public sealed record CircuitExitPoint(
     double BoundaryParameter)
 {
     public ExitEdgeBinding? Binding { get; init; }
+    public ArtificialEdgeBinding? ArtificialBinding { get; init; }
 }
 
 /// <summary>
@@ -165,9 +166,17 @@ public static class CircuitRouteBuilder
         route = new CircuitRoute(
             trimmed,
             new CircuitExitPoint(CircuitExitRole.Start, start.Point,
-                start.SegmentIndex, start.SegmentParameter) { Binding = start.Binding },
+                start.SegmentIndex, start.SegmentParameter)
+            {
+                Binding = start.Binding,
+                ArtificialBinding = start.ArtificialBinding,
+            },
             new CircuitExitPoint(CircuitExitRole.End, end.Point,
-                end.SegmentIndex, end.SegmentParameter) { Binding = end.Binding },
+                end.SegmentIndex, end.SegmentParameter)
+            {
+                Binding = end.Binding,
+                ArtificialBinding = end.ArtificialBinding,
+            },
             angleDeg,
             laneCount,
             nominalLaneCount);

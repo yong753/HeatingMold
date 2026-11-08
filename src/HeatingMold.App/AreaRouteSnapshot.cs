@@ -34,6 +34,7 @@ internal sealed record AreaRouteSnapshot(
     CommittedRouteContext CommittedMapping,
     IExitBoundary2D ExitBoundary,
     IExitBoundary2D RegionExitBoundary,
+    CadExitBoundary2D RegionCadBoundary,
     ExitBoundaryPoint? SelectedStartExit,
     ExitBoundaryPoint? SelectedEndExit,
     AnchoredCandidate SelectedAnchorCandidate,
