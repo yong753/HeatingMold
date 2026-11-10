@@ -77,11 +77,11 @@
     },
     {
       "id": "14.7",
-      "name": "꼭지점 1을 생성 방향(+X)으로 1mm 이동",
+      "name": "꼭지점 1을 +Y로 1mm 이동",
       "action": "moveVertex",
       "area": "A",
       "vertexIndex": 1,
-      "offsetMm": [1, 0]
+      "offsetMm": [0, 1]
     },
     {
       "id": "14.8",

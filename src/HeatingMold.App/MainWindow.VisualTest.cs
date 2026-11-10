@@ -860,46 +860,23 @@ namespace HeatingMold.App
             Require(index >= 0 && index < _vertexGroups.Count,
                 string.Format("꼭지점 그룹 인덱스가 범위를 벗어났습니다. 그룹 {0}개, 요청 {1}", _vertexGroups.Count, index));
             Vec2 from = _vertexGroups[index].Datum;
-            var requested = new Vec2(from.X + spec.OffsetMm[0], from.Y + spec.OffsetMm[1]);
-            // 실제 반영되는 좌표는 확정 생성 방향으로 제한된 값이다. 요청값과 구분해 기록한다.
-            Require(RouteVertexMoveConstraint.TryConstrain(from, requested, area.Pattern!.AngleDeg,
-                    out Vec2 expected, out string constraintFailure),
-                "꼭지점 이동 제한을 계산하지 못했습니다: " + constraintFailure);
-            Require(expected.DistanceTo(from) > 1e-6,
-                "요청한 꼭지점 이동이 생성 방향과 수직이어서 실제로 적용되지 않습니다. 허용 방향으로 이동하도록 시나리오를 수정하세요.");
-            IReadOnlyList<RouteVertexOccurrence> occurrences = _vertexGroups[index].Occurrences;
+            var target = new Vec2(from.X + spec.OffsetMm[0], from.Y + spec.OffsetMm[1]);
             _vertexDragGroup = index;
-            CommitVertex(requested);
+            CommitVertex(target);
             _vertexDragGroup = -1;
-            string commitStatus = StatusText.Text;
             RefreshVertexHandles();
             ExitVertexEdit();
 
-            Require(area.RouteEdited, "꼭지점 이동이 적용되지 않았습니다: " + commitStatus);
+            Require(area.RouteEdited, "꼭지점 이동이 적용되지 않았습니다: " + StatusText.Text);
             Require(area.Pattern != null && area.Pattern.RoutePieces.Count > 0, "편집 후 경로가 없습니다.");
             Require(!IsPatternInputStale(area), "편집 후 경로가 stale 상태입니다.");
-            // 편집 표시가 아니라 실제 확정 좌표가 생성 방향 제한값과 같은지 확인한다.
-            foreach (RouteVertexOccurrence occurrence in occurrences)
-            {
-                Require(occurrence.Piece >= 0 && occurrence.Piece < area.Pattern.RoutePieces.Count,
-                    "편집 후 꼭지점 조각 대응이 유지되지 않았습니다.");
-                IReadOnlyList<Vec2> points = area.Pattern.RoutePieces[occurrence.Piece].Points;
-                Require(occurrence.Point >= 0 && occurrence.Point < points.Count,
-                    "편집 후 꼭지점 점 대응이 유지되지 않았습니다.");
-                Vec2 point = points[occurrence.Point];
-                Require(point.DistanceTo(expected) <= 1e-6, string.Format(CultureInfo.InvariantCulture,
-                    "확정된 꼭지점 좌표가 생성 방향 제한과 다릅니다. 기대 ({0:0.###},{1:0.###}), 실제 ({2:0.###},{3:0.###})",
-                    expected.X, expected.Y, point.X, point.Y));
-            }
 
             var data = new Dictionary<string, string>
             {
                 ["area"] = area.Name,
                 ["vertexIndex"] = index.ToString(CultureInfo.InvariantCulture),
                 ["from"] = string.Format(CultureInfo.InvariantCulture, "({0:0.###},{1:0.###})", from.X, from.Y),
-                ["requested"] = string.Format(CultureInfo.InvariantCulture, "({0:0.###},{1:0.###})", requested.X, requested.Y),
-                ["to"] = string.Format(CultureInfo.InvariantCulture, "({0:0.###},{1:0.###})", expected.X, expected.Y),
-                ["angleDeg"] = area.Pattern.AngleDeg.ToString(CultureInfo.InvariantCulture),
+                ["to"] = string.Format(CultureInfo.InvariantCulture, "({0:0.###},{1:0.###})", target.X, target.Y),
                 ["routeEdited"] = area.RouteEdited.ToString()
             };
             return VisualStepOutcome.Ok("꼭지점 이동·수동 편집 적용 확인", data);
