@@ -156,6 +156,7 @@ public static class SerpentineVertexEdit
             RoutePieces = newPieces,
             StartExit = startExit,
             EndExit = endExit,
+            CandidateId = source.CandidateId,
         };
     }
 }

@@ -44,21 +44,33 @@ static class VertexEditChecks
         public bool RouteEdited { get => Get<bool>("RouteEdited"); set => Set("RouteEdited", value); }
     }
 
-    /// <summary>실제 우측 인출 체인(u=-10) 위에서 시작/종료하는 단일 사행 조각.
+    /// <summary>생성 방향(AngleDeg=0)과 평행한 발열열 두 개와 이를 잇는 커넥터 하나로 만든 사행 경로.
+    /// 두 발열열의 y 위치(-10/10)가 발열사 간격이며, 꼭지점 편집은 이 값을 바꾸지 않아야 한다.
     /// 시작/종료 인출점의 원본 binding은 호출자가 boundary에서 직접 얻어 지정한다.</summary>
     static SerpentineResult Pattern3(ExitEdgeBinding? startBinding, ExitEdgeBinding? endBinding)
     {
-        var path = new List<Vec2> { new(-10, -10), new(-60, 0), new(-10, 10) };
-        var segments = new List<SerpentineSegment>();
-        for (int i = 1; i < path.Count; i++) segments.Add(new SerpentineSegment(0, path[i - 1], path[i]));
+        var lane0 = new List<Vec2> { new(-10, -10), new(-60, -10) };
+        var connector = new List<Vec2> { new(-60, -10), new(-60, 10) };
+        var lane1 = new List<Vec2> { new(-60, 10), new(-10, 10) };
+        var path = new List<Vec2> { new(-10, -10), new(-60, -10), new(-60, 10), new(-10, 10) };
         return new SerpentineResult
         {
             Path = path,
-            Segments = segments,
-            LaneCount = 1,
+            Segments = new List<SerpentineSegment>
+            {
+                new(0, lane0[0], lane0[^1]),
+                new(1, lane1[0], lane1[^1]),
+            },
+            LaneCount = 2,
             AngleDeg = 0,
-            TotalLength = path.Zip(path.Skip(1), (a, b) => a.DistanceTo(b)).Sum(),
-            RoutePieces = new[] { new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, 0, path) },
+            TotalLength = lane0[0].DistanceTo(lane0[^1]) + connector[0].DistanceTo(connector[^1])
+                          + lane1[0].DistanceTo(lane1[^1]),
+            RoutePieces = new[]
+            {
+                new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, 0, lane0),
+                new SerpentineRoutePiece(SerpentineRoutePieceKind.TurnConnector, 0, connector),
+                new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun, 1, lane1),
+            },
             StartExit = new CircuitExitPoint(CircuitExitRole.Start, path[0], 0, 0) { Binding = startBinding },
             EndExit = new CircuitExitPoint(CircuitExitRole.End, path[^1], 0, 1) { Binding = endBinding },
         };
@@ -164,41 +176,51 @@ static class VertexEditChecks
         var marginBox = (TextBox)window.FindName("MarginBox");
         var spacingBox = (TextBox)window.FindName("SpacingBox");
         marginBox.Text = "5";
-        spacingBox.Text = "50";
+        spacingBox.Text = "20";
         areaType.GetProperty("MarginText")!.SetValue(area.Value, "5");
-        areaType.GetProperty("SpacingText")!.SetValue(area.Value, "50");
+        areaType.GetProperty("SpacingText")!.SetValue(area.Value, "20");
 
         var p0 = Pattern3(startRes.Point!.Value.Binding, endRes.Point!.Value.Binding);
         area.Pattern = p0;
-        area.NativePieceIds = new[] { 9001 };
-        area.RoutePieceLengths = new[] { 20.0 };
+        area.NativePieceIds = new[] { 9001, 9002, 9003 };
+        area.RoutePieceLengths = new[] { 50.0, 20.0, 50.0 };
         area.ProjectedPieces = new List<RoutePieceResult>();
         area.StartAnchor = new Vec2(-10, -10);
         area.EndAnchor = new Vec2(-10, 10);
         area.RouteEdited = false;
         areaType.GetProperty("AppliedInputs")!.SetValue(area.Value,
-            Invoke(window, "CaptureAppliedInputs", area.Value, 5.0, 50.0));
+            Invoke(window, "CaptureAppliedInputs", area.Value, 5.0, 20.0));
 
         Invoke(window, "ActivateArea", area.Value);
 
         // 시작/종료 꼭지점은 편집 모드에서 고정된다 — 전용 선택 버튼으로만 변경한다.
         Commit(window, area, 0, new Vec2(-10, -5));
         Check(ReferenceEquals(area.Pattern, p0), "vertex edit keeps the route start point fixed");
-        Commit(window, area, 2, new Vec2(-10, 5));
+        Commit(window, area, 3, new Vec2(-10, 5));
         Check(ReferenceEquals(area.Pattern, p0), "vertex edit keeps the route end point fixed");
         Check(!area.RouteEdited, "rejected endpoint edits do not mark the area as edited");
         Check(((TextBlock)window.FindName("StatusText")).Text.Contains("전용"),
             "rejected endpoint edits point to the dedicated start/end buttons");
 
+        // 생성 방향(AngleDeg=0)과 수직인 이동은 발열사 간격을 바꾸므로 적용되지 않는다.
+        Commit(window, area, 1, new Vec2(-60, -8));
+        Check(ReferenceEquals(area.Pattern, p0),
+            "perpendicular vertex drag keeps the original pattern");
+        Check(!area.RouteEdited, "perpendicular vertex drag does not mark the area as edited");
+        Check(((TextBlock)window.FindName("StatusText")).Text.Contains("간격"),
+            "perpendicular vertex drag reports that the heating spacing is locked");
+
         // 실패 단계: 인출점의 원본 binding을 제거한 불일치 상태에서 편집을 확정하면
         // 경계 검증이 명시 실패하고, 방금 준비한 편집을 포함해 커밋 전 상태로 되돌린다.
+        // 허용 방향 성분을 포함한 이동이라야 이 단계까지 실제로 도달한다.
         var unbound = Pattern3(null, null);
         area.Pattern = unbound;
-        Commit(window, area, 1, new Vec2(-60, 2));
+        Commit(window, area, 1, new Vec2(-62, -9));
         Check(ReferenceEquals(area.Pattern, unbound), "failed native rebuild restores the previous pattern");
-        Check(area.NativePieceIds.Length == 1 && area.NativePieceIds[0] == 9001,
+        Check(area.NativePieceIds.Length == 3 && area.NativePieceIds[0] == 9001 &&
+              area.NativePieceIds[2] == 9003,
             "failed native rebuild restores native piece ids");
-        Check(area.RoutePieceLengths.Length == 1 && Math.Abs(area.RoutePieceLengths[0] - 20) < 1e-6 &&
+        Check(area.RoutePieceLengths.Length == 3 && Math.Abs(area.RoutePieceLengths[1] - 20) < 1e-6 &&
               area.ProjectedPieces.Count == 0,
             "failed native rebuild restores lengths and projected geometry");
         Check(area.StartAnchor.HasValue && area.EndAnchor.HasValue &&
@@ -211,11 +233,18 @@ static class VertexEditChecks
 
         // 성공 단계: 원본 binding을 복원한 같은 편집은 실제로 확정된다.
         area.Pattern = p0;
-        Commit(window, area, 1, new Vec2(-60, 2));
+        Commit(window, area, 1, new Vec2(-62, -9));
         Check(!ReferenceEquals(area.Pattern, p0), "successful commit applies the edited pattern");
         Check(area.RouteEdited, "successful commit marks the area as manually edited");
-        Check(area.ProjectedPieces.Count == 1 &&
-              area.RoutePieceLengths.Length == 1 && area.RoutePieceLengths[0] > 0,
+        Check(area.Pattern!.RoutePieces[0].Points[1].DistanceTo(new Vec2(-62, -10)) < 1e-9 &&
+              area.Pattern.RoutePieces[1].Points[0].DistanceTo(new Vec2(-62, -10)) < 1e-9,
+            "committed vertex move applies only the along-lane component");
+        Check(Math.Abs(area.Pattern.RoutePieces[1].Points[1].Y - 10) < 1e-9 &&
+              Math.Abs(area.Pattern.RoutePieces[2].Points[0].Y - 10) < 1e-9 &&
+              Math.Abs(area.Pattern.RoutePieces[2].Points[1].Y - 10) < 1e-9,
+            "committed vertex move keeps the neighbouring lane pitch unchanged");
+        Check(area.ProjectedPieces.Count == 3 &&
+              area.RoutePieceLengths.Length == 3 && area.RoutePieceLengths.All(length => length > 0),
             "successful commit refreshes projected pieces and lengths");
 
         Cleanup(window, fixtureDir);

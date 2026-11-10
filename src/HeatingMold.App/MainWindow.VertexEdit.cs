@@ -31,6 +31,12 @@ public partial class MainWindow
     private const string RouteEndpointEditMessage =
         "시작점/종료점은 편집 모드에서 이동할 수 없습니다 — 전용 '시작점 선택'/'종료점 선택' 버튼으로 변경하세요";
 
+    /// <summary>이보다 작은 이동은 변경으로 보지 않는다. 제한 적용 후 좌표로 판정한다.</summary>
+    private const double VertexMoveEpsilon = 1e-6;
+
+    private const string VertexSpacingLockedMessage =
+        "발열사 간격 유지 — 생성 방향과 수직인 이동은 적용되지 않았습니다";
+
     /// <summary>시작/종료 인출점은 발열경로 편집에서 고정한다.
     /// 이 점들은 전용 '시작점 선택'/'종료점 선택' 버튼으로만 변경한다.</summary>
     private bool IsRouteEndpointGroup(int groupIndex)
@@ -96,7 +102,7 @@ public partial class MainWindow
         Viewport.VertexEditMode = true;
         RefreshVertexHandles();
         UpdateActionStates();
-        StatusText.Text = "발열경로 편집 — 중간 꼭지점을 드래그해 수정합니다. 시작점/종료점은 전용 버튼으로만 변경합니다 (Esc: 드래그 취소/편집 종료)";
+        StatusText.Text = "발열경로 편집 — 중간 꼭지점은 발열 진행 방향으로만 이동합니다(발열사 간격 유지). 시작점/종료점은 전용 버튼으로만 변경합니다 (Esc: 드래그 취소/편집 종료)";
     }
 
     private void RejectVertexEdit(string reason)
@@ -294,6 +300,20 @@ public partial class MainWindow
         Bridge.HighlightVertexHandle(-1);
     }
 
+    /// <summary>
+    /// 요청한 꼭지점 이동을 확정된 생성 방향으로 제한한다. 미리보기와 확정이 같은
+    /// 좌표를 쓰도록 모든 이동 경로가 이 함수를 거친다. 발열 진행 방향과 수직인
+    /// 변위는 제거되므로 발열사 간격은 생성 당시 값 그대로 유지된다.
+    /// </summary>
+    private static bool TryConstrainVertexMove(WorkingArea area, RouteVertexGroup group, Vec2 requested,
+        out Vec2 applied, out string failure)
+    {
+        applied = group.Datum;
+        if (area?.Pattern == null) { failure = "편집할 경로가 없습니다"; return false; }
+        return RouteVertexMoveConstraint.TryConstrain(group.Datum, requested, area.Pattern.AngleDeg,
+            out applied, out failure);
+    }
+
     private Vec2 CandidateDatum(Vec2 uv) => new(
         _vertexDragOriginDatum.X + (uv.X - _vertexDragPressUv.X),
         _vertexDragOriginDatum.Y + (uv.Y - _vertexDragPressUv.Y));
@@ -306,7 +326,27 @@ public partial class MainWindow
             StatusText.Text = RouteEndpointEditMessage;
             return;
         }
-        if (!TryBuildVertexPreview(datum, out var pieces, out var mappedPieces, out Vec2 applied,
+        if (_vertexDragGroup < 0 || _vertexDragGroup >= _vertexGroups.Count)
+        {
+            Bridge.ClearRoutePreview();
+            StatusText.Text = "이동할 수 없습니다 — 편집할 경로가 없습니다";
+            return;
+        }
+        RouteVertexGroup group = _vertexGroups[_vertexDragGroup];
+        if (!TryConstrainVertexMove(_activeArea, group, datum, out Vec2 target, out string moveFailure))
+        {
+            Bridge.ClearRoutePreview();
+            StatusText.Text = "이동 불가 — " + moveFailure;
+            return;
+        }
+        // 생성 방향과 수직인 이동만 요청되면 간격을 바꾸지 않기 위해 아무것도 적용하지 않는다.
+        if (target.DistanceTo(group.Datum) <= VertexMoveEpsilon)
+        {
+            Bridge.ClearRoutePreview();
+            StatusText.Text = VertexSpacingLockedMessage;
+            return;
+        }
+        if (!TryBuildVertexPreview(target, out var pieces, out var mappedPieces, out Vec2 applied,
                 out string failure, out bool anchor, out _))
         {
             Bridge.ClearRoutePreview();
@@ -365,6 +405,10 @@ public partial class MainWindow
                 return false;
             }
             anchorSample = projectedSample;
+        }
+        else if (!TryConstrainVertexMove(area, group, datum, out applied, out failure))
+        {
+            return false;
         }
 
         var edits = new List<(RouteVertexOccurrence, Vec2)>(group.Occurrences.Count);
@@ -434,6 +478,10 @@ public partial class MainWindow
                 return false;
             }
             anchorSample = projectedSample;
+        }
+        else if (!TryConstrainVertexMove(area, group, datum, out applied, out failure))
+        {
+            return false;
         }
 
         var edits = new List<(RouteVertexOccurrence, Vec2)>(group.Occurrences.Count);
@@ -553,6 +601,21 @@ public partial class MainWindow
             ExitVertexEdit();
             StatusText.Text = "입력 조건이 변경되어 편집을 적용하지 않았습니다 — 패턴을 다시 생성한 뒤 편집하세요";
             return;
+        }
+        // 생성 방향과 수직인 이동은 발열사 간격을 바꾸므로 후보를 만들지 않고 거부한다.
+        if (_vertexDragGroup >= 0 && _vertexDragGroup < _vertexGroups.Count)
+        {
+            RouteVertexGroup group = _vertexGroups[_vertexDragGroup];
+            if (!TryConstrainVertexMove(area, group, datum, out Vec2 target, out string moveFailure))
+            {
+                StatusText.Text = "이동할 수 없습니다 — " + moveFailure;
+                return;
+            }
+            if (target.DistanceTo(group.Datum) <= VertexMoveEpsilon)
+            {
+                StatusText.Text = VertexSpacingLockedMessage;
+                return;
+            }
         }
         // 후보를 엄격 검증한다. 스테이징의 캐시는 전체 형상·binding·검증 정책이 같을 때만 재사용한다.
         if (!TryBuildVertexCandidate(datum, out SerpentineResult candidate, out Vec2 applied,

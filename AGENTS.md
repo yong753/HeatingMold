@@ -77,6 +77,17 @@
 - Connector exclusion penetration is not a reason to reclassify a conductor as a dashed guide or to change its length semantics.
 - The legacy compatibility APIs `GenerateComponents`, `ComputeCandidatesComponents`, and `GenerateAnchoredComponents` still use the exact DP/candidate path. Their limits are not the product policy for the selected-exit generation path; do not copy those limits into new generation code.
 
+## Vertex edit movement limit (user-confirmed 2026-11-10, implemented)
+
+- Confirmed requirement: while editing a committed heating route by dragging an intermediate vertex, the configured heating-wire spacing must stay unchanged. For a vertical generation the width stays constant and the vertex moves up/down; for a horizontal generation the vertex moves left/right.
+- Implementation: `HeatingMold.Core.Geometry.RouteVertexMoveConstraint.TryConstrain` keeps only the component along the committed route's `SerpentineResult.AngleDeg` and removes the perpendicular component. Orthogonal (0/90/180/270) angles copy the locked coordinate directly instead of relying on `cos`/`sin` residuals. The spacing value is never re-snapped to a grid; preserving the original perpendicular coordinate is what preserves the pitch.
+- The app prepares every vertex move through `MainWindow.TryConstrainVertexMove`, which reads the committed `Pattern.AngleDeg` (not the direction combo, not camera/world XY). Both the lightweight preview and the strict commit path use it, and `CommitVertex` re-checks it so a direct caller cannot bypass the limit.
+- A drag whose constrained result differs from the original datum by `<= VertexMoveEpsilon` (1e-6) is a no-op: no candidate is built, no native commit or surface mapping runs, and `RouteEdited`, route geometry and lengths keep their previous values.
+- `SerpentineVertexEdit.ApplyVertexEdits` and `SerpentineVertexPreview.TryApplyAffected` stay generic coordinate editors; they are not restricted by pitch. Legacy callers may still edit arbitrary axes. `ApplyVertexEdits` now carries `CandidateId` over from the source result.
+- Verified 2026-11-10: Core unit tests (`RouteVertexMoveConstraintTests`, plus the existing binding/generic edit tests), WorkingSide regression 27 vertex-edit checks including the perpendicular no-op, real commit rollback and lane-pitch preservation, and visual scenarios `14-vertex-edit-discard` / `15-vertex-spacing-lock` (diagonal request clipped to the lane axis, committed coordinate compared with the constrained value).
+- Scope: this is 2D spacing on the confirmed working plane. It does not repair routes whose pitch was already distorted, and it does not add global minimum-distance or pitch validation.
+- Not covered by an app-level scenario: vertical (Frame Y) generation could not be exercised in the fixed exit-face visual fixture because that exit chain does not span the vertical serpentine's ends (exit candidate application fails). The vertical and inclined cases are covered by the Core constraint tests, and the app path is direction-agnostic.
+
 ## DXF export scope (user-confirmed)
 
 - Product DXF output is exactly **one plan view on the confirmed working plane**, plus the confirmed heating routes and the electrical specification table. The previous four orthographic views are not part of the product output.
