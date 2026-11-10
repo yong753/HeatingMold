@@ -31,13 +31,13 @@ if (-not (Test-Path $inc)) { throw "OCCT include not found: $inc" }
 
 $libs = @(
     'TKernel', 'TKMath', 'TKG2d', 'TKG3d', 'TKGeomBase', 'TKGeomAlgo',
-    'TKBRep', 'TKTopAlgo', 'TKBool', 'TKBO', 'TKShHealing', 'TKMesh',
+    'TKBRep', 'TKTopAlgo', 'TKBool', 'TKBO', 'TKShHealing', 'TKMesh', 'TKOffset',
     'TKDESTEP', 'TKXSBase'
 ) | ForEach-Object { "$_.lib" }
 
 $linkLibs = ($libs | ForEach-Object { $_ }) -join ' '
 
-foreach ($src in @('faceinspect.cpp', 'dupcheck.cpp', 'cleanuptest.cpp')) {
+foreach ($src in @('faceinspect.cpp', 'dupcheck.cpp', 'cleanuptest.cpp', 'thicken.cpp')) {
     $exe = [IO.Path]::GetFileNameWithoutExtension($src)
     $cmd = "call `"$vcvars`" >nul && cl /nologo /EHsc /O2 /MD /std:c++17 /utf-8 /Fe:$exe.exe $src /I `"$inc`" /link /SUBSYSTEM:CONSOLE /LIBPATH:`"$lib`" $linkLibs"
     Write-Host ">>> $src"

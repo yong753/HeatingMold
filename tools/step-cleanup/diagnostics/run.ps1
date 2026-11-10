@@ -7,7 +7,7 @@
     .\run.ps1 -Tool dupcheck -Args "..\..\..\resource\Mold_Solids.stp"
 #>
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('faceinspect', 'dupcheck', 'cleanuptest')][string]$Tool,
+    [Parameter(Mandatory = $true)][ValidateSet('faceinspect', 'dupcheck', 'cleanuptest', 'thicken')][string]$Tool,
     [string[]]$Args = @(),
     [string]$OcctRoot = ""
 )

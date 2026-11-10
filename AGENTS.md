@@ -39,6 +39,15 @@
 - Run focused tests per change and a review/correction/retest cycle for significant changes. Automated scenario completion is not recorded visual or manual-drag verification.
 - Never claim the user's failing CAD model is fixed unless that model was reproduced and tested; report unverified coverage explicitly.
 
+## Sample STEP model (verified 2026-11-10)
+
+- `resource\Mold_Solids.stp` removes the surface bodies from the product structure only: the deleted entity is the single `SHAPE_REPRESENTATION_RELATIONSHIP` (`#23`) that linked `MANIFOLD_SURFACE_SHAPE_REPRESENTATION` `#13`. The definitions of `SURFACE.135` (86 faces) and `SURFACE.142` (4 faces) remain in the file as unreferenced data, so external CAD that reads representations directly can still display them. The app follows the product structure and loads 30 solids / 574 faces.
+- `tools\step-transform\bake-axes.ps1` applies the load-time `supplemental geometry` axis rotation to every `CARTESIAN_POINT` and `DIRECTION` value (rotation about the STEP origin, no translation). Rotating the supplemental placement as well makes the app's load-time rotation identity (verified `max |R' − I| = 4e-17`, zero point-wise error), so a baked copy opened in CAD uses the same coordinates the app displays.
+- A CAD re-export of a baked copy normally drops the `supplemental geometry` representation; the app then falls back to principal inertia axes, so a reimported edited model needs the frame pinned again rather than assumed.
+- `resource\Mold_Solids_aligned_surface.stp` re-adds the deleted relationship (`#23`, 129 bytes) to the baked copy, so OCCT loads 30 solids + 2 surface shells (664 faces) while keeping the supplemental frame.
+- `tools\step-cleanup\diagnostics\thicken.cpp` thickens a free shell. On `SURFACE.135`, `BRepOffsetAPI_MakeThickSolid::MakeThickSolidByJoin` and `BRepOffset_MakeOffset` fail in every join/self-intersection/mode combination, and `PerformBySimple` only returns a shell; only `BRepOffsetAPI_MakeThickSolid::MakeThickSolidBySimple` produces a solid. `resource\Mold_Solids_surface135_thick3.stp` is that shell at 3 mm toward the mold solids: 1 solid / 206 faces, volume 4,306,377.6 mm³, area 2,869,973.6 mm² (3.01 mm). The side is chosen by sampling candidate faces against the mold solids: +normal 0.134 vs −normal 0.073 inside fraction.
+- The thickened body carries 18 degenerate zero-length edges (total 0.096 mm) inherited from the source patch, so a STEP round-trip reports one face `NotClosed`. They are not visible gaps; do not claim the body is watertight without re-checking these edges.
+
 ## Build configuration (verified)
 
 - `HeatingMold.Mvp.sln` declares exactly one solution configuration, `Release|x64`. Do not re-add Debug/Any CPU/x86 rows without verifying every project exposes them.
@@ -55,6 +64,7 @@
 - Project load verifies the JSON format/schema, the source STEP length and SHA-256, the import policy version, and the saved topology identity before restoring. It may ask the user to reselect the original STEP but never substitutes a different hash.
 - Load prepares an isolated native STEP candidate, remaps saved Face/Edge signatures to fresh runtime IDs, commits the candidate once, restores the exact saved working-plane frame, and rebuilds areas, boundaries, committed 3D route chains, lengths, endpoint provenance, electrical inputs, and active area.
 - Committed routes are staged with their saved support-face provenance and published with one native route commit. Missing support-face provenance is an explicit load failure; do not approximate it from nearest surfaces.
+- Load rebuilds the effective heating-area boundary from the saved exclusion rectangles (applied region minus exclusions, before generation margin). With no separate exit face (`ExitFaceId < 0`) the exit boundary uses that same effective outline; a saved exit-face boundary is kept separately. Saved selected, pattern, and circuit exit points are then evaluated against the restored boundary using their saved CAD/artificial provenance, and the committed route mapping is captured only afterwards. The route boundary follows the saved committed context's recorded mode (an explicit saved flag, with legacy inference from its selected exits), not whatever draft selections exist at load time. An unsupported exclusion or invalid saved endpoint is an explicit load failure; never silently clear the point or fall back to the pre-exclusion outline.
 - Failure before the native candidate commit preserves the current document. A failure after that commit cannot restore the previous native model; the load reports the failure and clears the incomplete restored document explicitly.
 - Do not persist native pointers, temporary stage IDs, AIS/presentation objects, caches, hover/preview state, or runtime-only FACE/Edge IDs as durable identity.
 
@@ -77,17 +87,6 @@
 - Connector exclusion penetration is not a reason to reclassify a conductor as a dashed guide or to change its length semantics.
 - The legacy compatibility APIs `GenerateComponents`, `ComputeCandidatesComponents`, and `GenerateAnchoredComponents` still use the exact DP/candidate path. Their limits are not the product policy for the selected-exit generation path; do not copy those limits into new generation code.
 
-## Vertex edit movement limit (user-confirmed 2026-11-10, implemented)
-
-- Confirmed requirement: while editing a committed heating route by dragging an intermediate vertex, the configured heating-wire spacing must stay unchanged. For a vertical generation the width stays constant and the vertex moves up/down; for a horizontal generation the vertex moves left/right.
-- Implementation: `HeatingMold.Core.Geometry.RouteVertexMoveConstraint.TryConstrain` keeps only the component along the committed route's `SerpentineResult.AngleDeg` and removes the perpendicular component. Orthogonal (0/90/180/270) angles copy the locked coordinate directly instead of relying on `cos`/`sin` residuals. The spacing value is never re-snapped to a grid; preserving the original perpendicular coordinate is what preserves the pitch.
-- The app prepares every vertex move through `MainWindow.TryConstrainVertexMove`, which reads the committed `Pattern.AngleDeg` (not the direction combo, not camera/world XY). Both the lightweight preview and the strict commit path use it, and `CommitVertex` re-checks it so a direct caller cannot bypass the limit.
-- A drag whose constrained result differs from the original datum by `<= VertexMoveEpsilon` (1e-6) is a no-op: no candidate is built, no native commit or surface mapping runs, and `RouteEdited`, route geometry and lengths keep their previous values.
-- `SerpentineVertexEdit.ApplyVertexEdits` and `SerpentineVertexPreview.TryApplyAffected` stay generic coordinate editors; they are not restricted by pitch. Legacy callers may still edit arbitrary axes. `ApplyVertexEdits` now carries `CandidateId` over from the source result.
-- Verified 2026-11-10: Core unit tests (`RouteVertexMoveConstraintTests`, plus the existing binding/generic edit tests), WorkingSide regression 27 vertex-edit checks including the perpendicular no-op, real commit rollback and lane-pitch preservation, and visual scenarios `14-vertex-edit-discard` / `15-vertex-spacing-lock` (diagonal request clipped to the lane axis, committed coordinate compared with the constrained value).
-- Scope: this is 2D spacing on the confirmed working plane. It does not repair routes whose pitch was already distorted, and it does not add global minimum-distance or pitch validation.
-- Not covered by an app-level scenario: vertical (Frame Y) generation could not be exercised in the fixed exit-face visual fixture because that exit chain does not span the vertical serpentine's ends (exit candidate application fails). The vertical and inclined cases are covered by the Core constraint tests, and the app path is direction-agnostic.
-
 ## DXF export scope (user-confirmed)
 
 - Product DXF output is exactly **one plan view on the confirmed working plane**, plus the confirmed heating routes and the electrical specification table. The previous four orthographic views are not part of the product output.
@@ -104,4 +103,5 @@
 - Build `src\OccBridge\OccBridge.vcxproj` with Visual Studio `MSBuild.exe`, not `dotnet build`; the C++ project requires the Visual C++ targets.
 - Run native/App tests with the OCCT `win64\vc14\bin` and bundled third-party DLL directories on `PATH`. `tests\WorkingSide.Regression\Run.ps1` sets this up and builds into isolated output, avoiding locks from a running app.
 - The WorkingSide regression harness invokes private UI methods by name with fixed parameter counts. Keep existing parameterless entry points when adding overloads that share precomputed state.
+- Hand-built regression routes must map their 2D endpoints to 3D through `Bridge.MapWorkingPointOntoFaces`; working-frame coordinates are not world model coordinates, and staging raw frame u/v as world points fails.
 
