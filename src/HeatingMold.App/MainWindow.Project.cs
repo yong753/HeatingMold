@@ -598,7 +598,11 @@ namespace HeatingMold.App
                 CircuitEnds = context.CircuitEnds == null
                     ? new List<ProjectVec2>() : context.CircuitEnds.Select(ToProjectVec2).ToList(),
                 BoundaryKind = context.Boundary?.GetType().Name,
-                RegionBoundaryKind = context.RegionBoundary?.GetType().Name
+                RegionBoundaryKind = context.RegionBoundary?.GetType().Name,
+                // 확정 경로가 실제로 사용한 경계를 저장한다. 다음 로드에서 현재 초안
+                // 선택점 상태로 모드를 다시 추론하면 save-load-save-load에서 뒤집힌다.
+                RegionMode = context.Boundary != null &&
+                    ReferenceEquals(context.Boundary, context.RegionBoundary)
             };
         }
 

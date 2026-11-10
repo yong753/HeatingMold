@@ -5,6 +5,7 @@ using System.Reflection;
 using HeatingMold.App;
 using HeatingMold.App.Persistence;
 using HeatingMold.Core.Geometry;
+using HeatingMold.Core.Model;
 using HeatingMold.OccBridge;
 
 /// <summary>
@@ -30,6 +31,9 @@ static class ProjectLoadChecks
     static object Invoke(object target, string name, params object[] args) =>
         target.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(target, args);
+
+    static object StaticInvoke(Type type, string name, params object[] args) =>
+        type.GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, args);
 
     static ProjectionFrame Frame(WorkingContext context) =>
         new(new Vec3(context.Frame[0], context.Frame[1], context.Frame[2]),
@@ -184,5 +188,305 @@ static class ProjectLoadChecks
             try { File.Delete(projectPath); } catch { }
         }
         Console.WriteLine($"{count} project load checks passed.");
+        RunExclusionOutlineCheck(window, fixtureDir);
+    }
+
+    /// <summary>
+    /// 제외영역이 적용된 영역을 실제 저장·로드 경로로 다시 열어, 표시용 외곽선과
+    /// 확정 경로 매핑이 제외 후 경계를 쓰는지 실제 STEP으로 확인한다.
+    /// 저장 파일은 JSON 왕복이 아니라 MainWindow.LoadProject를 직접 통과한다.
+    /// </summary>
+    static void RunExclusionOutlineCheck(MainWindow window, string fixtureDir)
+    {
+        string stepPath = Path.Combine(fixtureDir, "exitSides.stp");
+        Check(Bridge.LoadStep(stepPath), "exclusion project fixture loaded");
+        Check((bool)Invoke(window, "ApplyWorkingSide", new Vec3(0, 0, 1)),
+            "exclusion project +Z side confirmed");
+        object session = Field(window, "_workingSide");
+        var side = (WorkingSideDefinition)session.GetType().GetProperty("Confirmed")!.GetValue(session)!;
+        Check(side != null, "exclusion project has a confirmed working side");
+        if (side == null) return;
+        SetField(window, "_modelPath", stepPath);
+        SetField(window, "_modelFileName", Path.GetFileNameWithoutExtension(stepPath));
+        SetField(window, "_modelRevision", side.Revision.Value);
+        SetField(window, "_modelContentHash", ProjectJsonStore.TryComputeFileSha256(stepPath));
+
+        int topFace = -1;
+        for (int id = 0; ; ++id)
+        {
+            double[] probe = Bridge.GetFaceNormal(id);
+            if (probe == null) break;
+            if (probe[2] > 0.9 && Math.Abs(probe[5] - 20) < 1e-6) { topFace = id; break; }
+        }
+        Check(topFace >= 0, "exclusion project finds the box top face");
+        if (topFace < 0) return;
+
+        RegionBoundaryLoop[] loops = Bridge.GetSelectedRegionBoundary(
+            new[] { topFace }, GeometryTolerancePolicy.DistanceTolerance, out string regionFailure);
+        Check(loops != null && loops.Length == 1 && loops[0] != null && loops[0].Closed &&
+              loops[0].EdgeReferences != null && loops[0].EdgeReferences.Length > 0,
+            "exclusion project region boundary is available: " + (regionFailure ?? ""));
+        if (loops == null || loops.Length != 1) return;
+
+        Type areaType = typeof(MainWindow).Assembly.GetType("HeatingMold.App.WorkingArea")!;
+        object area = Activator.CreateInstance(areaType, nonPublic: true)!;
+        var ring = new List<Vec2>();
+        var chain = (List<Vec2>)areaType.GetProperty("ExitChain")!.GetValue(area)!;
+        var chain3D = (List<Vec3>)areaType.GetProperty("ExitChain3D")!.GetValue(area)!;
+        for (int k = 0; k + 2 < loops[0].Points.Length; k += 3)
+        {
+            var point = new Vec3(loops[0].Points[k], loops[0].Points[k + 1], loops[0].Points[k + 2]);
+            Vec2 projected = side.Frame.Project(point);
+            ring.Add(projected);
+            chain.Add(projected);
+            chain3D.Add(point);
+        }
+        if (RegionOps.SignedArea(ring) < 0) ring.Reverse();
+
+        double minX = ring.Min(p => p.X), maxX = ring.Max(p => p.X);
+        double minY = ring.Min(p => p.Y), maxY = ring.Max(p => p.Y);
+        double cutWidth = (maxX - minX) * 0.3;
+        double cutHeight = (maxY - minY) * 0.3;
+        var exclusion = (maxX - cutWidth, minY - 1.0, maxX + 1.0, minY + cutHeight);
+
+        areaType.GetProperty("Name")!.SetValue(area, "ExclusionProjectLoad");
+        areaType.GetProperty("AreaId")!.SetValue(area, 9901);
+        areaType.GetProperty("Frame")!.SetValue(area, side.Frame);
+        areaType.GetProperty("ExitFaceId")!.SetValue(area, -1);
+        areaType.GetProperty("ExitFaceRevision")!.SetValue(area, 0L);
+        areaType.GetProperty("Direction")!.SetValue(area, PatternDirection.FrameX);
+        ((HashSet<int>)areaType.GetProperty("FaceIdSet")!.GetValue(area)!).Add(topFace);
+        ((List<List<Vec2>>)areaType.GetProperty("Region")!.GetValue(area)!).Add(ring);
+        var exclusions = (List<(double MinX, double MinY, double MaxX, double MaxY)>)
+            areaType.GetProperty("Exclusions")!.GetValue(area)!;
+        exclusions.Add(exclusion);
+
+        var refs = (List<ExitEdgeReference>)areaType.GetProperty("ExitEdgeRefs")!.GetValue(area)!;
+        foreach (ExitEdgeReference reference in loops[0].EdgeReferences)
+            refs.Add(CadExitBoundary2D.CopyReference(reference));
+
+        var regionCad = new CadExitBoundary2D(side.Id.Value, side.Revision.Value, loops[0].EdgeReferences);
+        areaType.GetProperty("RegionCadBoundary")!.SetValue(area, regionCad);
+        areaType.GetProperty("RegionBoundary")!.SetValue(area, new ExactRegionContainment(
+            new CadRegionBoundary2D(side.Id.Value, side.Revision.Value, loops[0].EdgeReferences)));
+        Check(MainWindow.TryBuildRegionExitBoundary(regionCad, ring, exclusions,
+                out IExitBoundary2D builtBoundary, out string buildFailure),
+            "exclusion project builds the effective outline: " + buildFailure);
+        var effective = builtBoundary as EffectiveRegionBoundary2D;
+        Check(effective != null && effective.Segments.Count == 2,
+            "exclusion project exposes two artificial cut sides");
+        if (effective == null) return;
+        areaType.GetProperty("RegionExitBoundary")!.SetValue(area, effective);
+        areaType.GetProperty("ExitBoundary")!.SetValue(area, effective);
+
+        ExitBoundaryResolution startResolution = effective.Project(
+            new Vec2(maxX - cutWidth, minY + cutHeight * 0.5), 1.0);
+        ExitBoundaryResolution endResolution = effective.Project(
+            new Vec2((minX + maxX) * 0.5, maxY), 1.0);
+        Check(startResolution.Succeeded && endResolution.Succeeded &&
+              startResolution.Point!.Value.ArtificialBinding.HasValue &&
+              endResolution.Point!.Value.Binding.HasValue,
+            "exclusion project selects one artificial and one original CAD endpoint");
+        if (!startResolution.Succeeded || !endResolution.Succeeded) return;
+        ExitBoundaryPoint selectedStart = startResolution.Point!.Value;
+        ExitBoundaryPoint selectedEnd = endResolution.Point!.Value;
+        areaType.GetProperty("SelectedStartExit")!.SetValue(area, selectedStart);
+        areaType.GetProperty("SelectedEndExit")!.SetValue(area, selectedEnd);
+
+        var routePoints = new List<Vec2> { selectedStart.Point, selectedEnd.Point };
+        var pattern = new SerpentineResult
+        {
+            Path = routePoints,
+            Segments = new[] { new SerpentineSegment(0, routePoints[0], routePoints[1]) },
+            LaneCount = 1,
+            NominalLaneCount = 1,
+            AngleDeg = 0,
+            TotalLength = selectedStart.Point.DistanceTo(selectedEnd.Point),
+            RoutePieces = new[] { new SerpentineRoutePiece(
+                SerpentineRoutePieceKind.HeatingRun, 0, routePoints) },
+            StartExit = new CircuitExitPoint(CircuitExitRole.Start, selectedStart.Point,
+                selectedStart.SegmentIndex, selectedStart.SegmentParameter)
+            {
+                Binding = selectedStart.Binding,
+                ArtificialBinding = selectedStart.ArtificialBinding
+            },
+            EndExit = new CircuitExitPoint(CircuitExitRole.End, selectedEnd.Point,
+                selectedEnd.SegmentIndex, selectedEnd.SegmentParameter)
+            {
+                Binding = selectedEnd.Binding,
+                ArtificialBinding = selectedEnd.ArtificialBinding
+            }
+        };
+        areaType.GetProperty("Pattern")!.SetValue(area, pattern);
+        ((IList)areaType.GetProperty("Circuits")!.GetValue(area)!).Add(CircuitRoute.FromResult(pattern));
+        ((IList)areaType.GetProperty("CircuitPieceIndices")!.GetValue(area)!).Add(new List<int> { 0 });
+
+        // 프레임 원점이 월드 원점과 다를 수 있으므로 2D 좌표를 그대로 쓰지 않고
+        // 선택 면 위의 실제 3D 점으로 매핑한다.
+        var startHit = Bridge.MapWorkingPointOntoFaces(side.Id.Value, side.Revision.Value,
+            new[] { topFace }, selectedStart.Point.X, selectedStart.Point.Y);
+        var endHit = Bridge.MapWorkingPointOntoFaces(side.Id.Value, side.Revision.Value,
+            new[] { topFace }, selectedEnd.Point.X, selectedEnd.Point.Y);
+        Check(startHit != null && startHit.Status == WorkingQueryStatus.Hit && startHit.Point != null,
+            "exclusion project maps the artificial endpoint onto the face");
+        Check(endHit != null && endHit.Status == WorkingQueryStatus.Hit && endHit.Point != null,
+            "exclusion project maps the CAD endpoint onto the face");
+        if (startHit?.Point == null || endHit?.Point == null) return;
+
+        int stagedId = -9901;
+        RoutePieceResult staged = Bridge.StageSurfaceMappedRoutePieceWithFaces(
+            side.Id.Value, side.Revision.Value, stagedId, "HeatingRun",
+            new[]
+            {
+                startHit.Point[0], startHit.Point[1], startHit.Point[2],
+                endHit.Point[0], endHit.Point[1], endHit.Point[2]
+            },
+            new[] { topFace, topFace });
+        Check(staged != null, "exclusion project stages a committed route");
+        Check(Bridge.CommitWorkingRouteGeometryDelta(side.Id.Value, side.Revision.Value,
+                new[] { stagedId }.ToArray(), new[] { 9901 }.ToArray(), Array.Empty<int>(),
+                Array.Empty<int>(), Array.Empty<int>()),
+            "exclusion project commits the route before saving");
+        areaType.GetProperty("ProjectedPieces")!.SetValue(area, new List<RoutePieceResult> { staged });
+        areaType.GetProperty("NativePieceIds")!.SetValue(area, new[] { 9901 });
+        areaType.GetProperty("RoutePieceLengths")!.SetValue(area, new[] { staged.Length });
+        areaType.GetProperty("PatternDisplayed")!.SetValue(area, true);
+        areaType.GetProperty("RouteEdited")!.SetValue(area, true);
+        areaType.GetProperty("MarginText")!.SetValue(area, "5");
+        areaType.GetProperty("SpacingText")!.SetValue(area, "10");
+        areaType.GetProperty("AppliedInputs")!.SetValue(area, Invoke(window, "CaptureAppliedInputs", area, 5.0, 10.0));
+        areaType.GetProperty("CommittedMapping")!.SetValue(area,
+            CommittedRouteContext.Capture((WorkingArea)area));
+
+        ((IList)Field(window, "_areas")).Add(area);
+        SetField(window, "_activeArea", area);
+
+        var savedOutline = effective.Outline.Select(p => new Vec2(p.X, p.Y)).ToList();
+        var savedSegments = effective.Segments.Select(s =>
+            (s.Binding.MinX, s.Binding.MinY, s.Binding.MaxX, s.Binding.MaxY,
+             s.Binding.Side, s.Binding.FirstParameter, s.Binding.LastParameter)).ToList();
+        ExitEdgeBinding savedEndBinding = selectedEnd.Binding!.Value;
+        double savedLength = ((double[])areaType.GetProperty("RoutePieceLengths")!.GetValue(area)!).Sum();
+
+        string projectPath = Path.Combine(fixtureDir, "project-exclusion-load-check.json");
+        if (File.Exists(projectPath)) File.Delete(projectPath);
+        try
+        {
+            var document = (ProjectDocument)Invoke(window, "BuildProjectDocument", projectPath);
+            ProjectJsonStore.Save(document, projectPath);
+            SetField(window, "_projectPath", projectPath);
+            SetField(window, "_savedProjectFingerprint", ProjectJsonStore.ComputeFingerprint(document));
+            SetField(window, "_modelContentHash", document.Source.Sha256);
+
+            Check((bool)Invoke(window, "LoadProject", projectPath),
+                "exclusion project load reports success");
+
+            var restoredAreas = (IList)Field(window, "_areas");
+            Check(restoredAreas.Count == 1, "exclusion project restores one area");
+            object restored = restoredAreas[0]!;
+            var restoredEffective = areaType.GetProperty("RegionExitBoundary")!.GetValue(restored)
+                as EffectiveRegionBoundary2D;
+            Check(restoredEffective != null,
+                "exclusion project restores the effective boundary instead of the original outline");
+            if (restoredEffective == null) return;
+            Check(areaType.GetProperty("RegionCadBoundary")!.GetValue(restored) is CadExitBoundary2D,
+                "exclusion project keeps the original CAD boundary separately");
+            Check(ReferenceEquals(areaType.GetProperty("ExitBoundary")!.GetValue(restored), restoredEffective),
+                "region-mode exit boundary uses the exclusion-aware outline");
+
+            bool sameOutline = restoredEffective.Outline.Count == savedOutline.Count &&
+                savedOutline.All(saved => restoredEffective.Outline.Any(
+                    restoredPoint => restoredPoint.DistanceTo(saved) < 1e-6));
+            Check(sameOutline, "restored outline keeps the saved exclusion cut");
+            Check(restoredEffective.Outline.All(point =>
+                    !(point.X > maxX - cutWidth + 1e-6 && point.Y < minY + cutHeight - 1e-6)),
+                "restored outline no longer contains the removed corner");
+
+            bool sameSegments = restoredEffective.Segments.Count == savedSegments.Count &&
+                savedSegments.All(saved => restoredEffective.Segments.Any(segment =>
+                    Math.Abs(segment.Binding.MinX - saved.MinX) < 1e-9 &&
+                    Math.Abs(segment.Binding.MinY - saved.MinY) < 1e-9 &&
+                    Math.Abs(segment.Binding.MaxX - saved.MaxX) < 1e-9 &&
+                    Math.Abs(segment.Binding.MaxY - saved.MaxY) < 1e-9 &&
+                    segment.Binding.Side == saved.Side &&
+                    Math.Abs(segment.Binding.FirstParameter - saved.FirstParameter) < 1e-9 &&
+                    Math.Abs(segment.Binding.LastParameter - saved.LastParameter) < 1e-9));
+            Check(sameSegments, "restored artificial segments keep their identity intervals");
+
+            object restoredStartValue = areaType.GetProperty("SelectedStartExit")!.GetValue(restored)!;
+            object restoredEndValue = areaType.GetProperty("SelectedEndExit")!.GetValue(restored)!;
+            Check(restoredStartValue != null && restoredEndValue != null,
+                "exclusion project restores both selected exit points");
+            if (restoredStartValue == null || restoredEndValue == null) return;
+            var restoredStart = (ExitBoundaryPoint)restoredStartValue;
+            var restoredEnd = (ExitBoundaryPoint)restoredEndValue;
+            ArtificialEdgeBinding restoredStartBinding = restoredStart.ArtificialBinding!.Value;
+            ExitEdgeBinding restoredEndBinding = restoredEnd.Binding!.Value;
+            Check(Math.Abs(restoredStartBinding.MinX - selectedStart.ArtificialBinding!.Value.MinX) < 1e-9 &&
+                  Math.Abs(restoredStartBinding.MinY - selectedStart.ArtificialBinding!.Value.MinY) < 1e-9 &&
+                  Math.Abs(restoredStartBinding.MaxX - selectedStart.ArtificialBinding!.Value.MaxX) < 1e-9 &&
+                  Math.Abs(restoredStartBinding.MaxY - selectedStart.ArtificialBinding!.Value.MaxY) < 1e-9 &&
+                  restoredStartBinding.Side == selectedStart.ArtificialBinding!.Value.Side &&
+                  Math.Abs(restoredStartBinding.Parameter -
+                      selectedStart.ArtificialBinding!.Value.Parameter) < 1e-6 &&
+                  restoredStart.Point.DistanceTo(selectedStart.Point) < 1e-6,
+                "restored start point keeps the artificial exclusion provenance");
+            Check(restoredEndBinding.EdgeKey == savedEndBinding.EdgeKey &&
+                  Math.Abs(restoredEndBinding.Parameter - savedEndBinding.Parameter) < 1e-6 &&
+                  restoredEnd.Point.DistanceTo(selectedEnd.Point) < 1e-6,
+                "restored end point keeps the original CAD edge parameter");
+
+            var restoredPattern = (SerpentineResult)areaType.GetProperty("Pattern")!.GetValue(restored)!;
+            Check(restoredPattern != null && restoredPattern.StartExit != null &&
+                  restoredPattern.StartExit.ArtificialBinding.HasValue &&
+                  restoredPattern.RoutePieces.Count == pattern.RoutePieces.Count,
+                "exclusion project preserves the pattern and its artificial start provenance");
+            Check(((IList)areaType.GetProperty("Circuits")!.GetValue(restored)!).Count == 1,
+                "exclusion project preserves the single circuit");
+
+            object mapping = areaType.GetProperty("CommittedMapping")!.GetValue(restored)!;
+            Check(mapping != null && ReferenceEquals(
+                    mapping.GetType().GetProperty("RegionBoundary")!.GetValue(mapping), restoredEffective),
+                "committed route mapping captures the exclusion-aware boundary");
+            Check(mapping != null && ReferenceEquals(
+                    mapping.GetType().GetProperty("Boundary")!.GetValue(mapping), restoredEffective),
+                "committed route mapping keeps the selected-exit region boundary mode");
+
+            object restoredConfirmed = session.GetType().GetProperty("Confirmed")!.GetValue(session)!;
+            var restoredFrame = (ProjectionFrame)restoredConfirmed.GetType()
+                .GetProperty("Frame")!.GetValue(restoredConfirmed)!;
+            object idValue = restoredConfirmed.GetType().GetProperty("Id")!.GetValue(restoredConfirmed)!;
+            object revisionValue = restoredConfirmed.GetType().GetProperty("Revision")!.GetValue(restoredConfirmed)!;
+            long restoredContextId = (long)idValue.GetType().GetProperty("Value")!.GetValue(idValue)!;
+            long restoredRevision = (long)revisionValue.GetType().GetProperty("Value")!.GetValue(revisionValue)!;
+            var restoredIds = (int[])areaType.GetProperty("NativePieceIds")!.GetValue(restored)!;
+            CommittedRouteChain[] chains = Bridge.GetCommittedRouteChainsDetailed(
+                restoredContextId, restoredRevision, restoredIds);
+            Check(restoredIds.Length == 1 && chains != null && chains.Length == 1 &&
+                  chains[0].Points != null && chains[0].Points.Length == 6 &&
+                  chains[0].SupportFaceIds != null && chains[0].SupportFaceIds.Length == 2,
+                "exclusion project restores the committed 3D chain and support faces");
+            double restoredLength =
+                ((double[])areaType.GetProperty("RoutePieceLengths")!.GetValue(restored)!).Sum();
+            Check(Math.Abs(restoredLength - savedLength) < 1e-5,
+                "exclusion project keeps the committed route length");
+
+            var display = (List<Vec3>)StaticInvoke(typeof(MainWindow), "BuildEffectiveOutline3D",
+                restored, restoredEffective);
+            Check(display != null && display.Count >= 4,
+                "exclusion project produces a display outline");
+            bool cutCornerAbsent = display != null && display.All(point =>
+            {
+                Vec2 projected = restoredFrame.Project(point);
+                return !(projected.X > maxX - cutWidth + 0.1 &&
+                         projected.Y < minY + cutHeight - 0.1);
+            });
+            Check(cutCornerAbsent, "display outline does not draw the removed corner");
+        }
+        finally
+        {
+            try { File.Delete(projectPath); } catch { }
+        }
+        Console.WriteLine($"{count} project load exclusion checks passed.");
     }
 }

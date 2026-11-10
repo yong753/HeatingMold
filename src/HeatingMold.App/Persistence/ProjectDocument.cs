@@ -218,6 +218,8 @@ namespace HeatingMold.App.Persistence
         public List<ProjectVec2> CircuitEnds { get; set; } = new();
         public string BoundaryKind { get; set; }
         public string RegionBoundaryKind { get; set; }
+        /// <summary>확정 경로가 적용영역 선택 인출점 경계를 썼는지. 이전 파일에는 없을 수 있다.</summary>
+        public bool? RegionMode { get; set; }
     }
 
     public sealed class ProjectExitPoint

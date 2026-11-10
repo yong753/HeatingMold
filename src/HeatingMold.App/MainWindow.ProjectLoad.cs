@@ -421,8 +421,38 @@ public partial class MainWindow
         area.RegionCadBoundary = new CadExitBoundary2D(context.Id, context.Revision, regionReferences);
         area.RegionBoundary = new ExactRegionContainment(
             new CadRegionBoundary2D(context.Id, context.Revision, regionReferences));
-        area.RegionExitBoundary = area.RegionCadBoundary;
-        area.CommittedMapping = CommittedRouteContext.Capture(area);
+
+        // 저장된 제외영역에서 마진 적용 전 유효 외곽선을 다시 만든다. 저장된 구현 타입명은
+        // 복원 근거로 쓰지 않는다. 허용되지 않는 제외는 원본 외곽으로 대체하지 않고 실패시킨다.
+        IReadOnlyList<Vec2> regionLoop = area.Region.Count == 1 ? area.Region[0] : null;
+        if (!TryBuildRegionExitBoundary(area.RegionCadBoundary, regionLoop, area.Exclusions,
+                out IExitBoundary2D restoredRegionExitBoundary, out string boundaryFailure))
+        {
+            throw new InvalidOperationException(string.Format(
+                "작업영역 '{0}'의 제외영역 외곽선을 복원하지 못했습니다: {1}",
+                document.Name, boundaryFailure));
+        }
+        area.RegionExitBoundary = restoredRegionExitBoundary;
+        // 인출면을 따로 두지 않는 영역은 인출 경계도 적용영역 외곽이다.
+        // 저장된 ExitFaceId가 -1이면 영역 생성 규칙과 동일하게 유효 외곽선을 쓴다.
+        if (document.ExitFaceId < 0)
+            area.ExitBoundary = restoredRegionExitBoundary;
+
+        // 확정 경로의 매핑 방식은 저장된 CommittedMapping이 기록한 플래그를 따른다.
+        // 현재 초안 선택점은 확정 후 바뀌었을 수 있으므로 사용하지 않는다.
+        bool hasCommittedContext = document.CommittedMapping != null;
+        bool committedRegionMode = ResolveCommittedRegionMode(document.CommittedMapping);
+        IExitBoundary2D restoredRouteBoundary = ResolveRestoredRouteBoundary(area,
+            hasCommittedContext, committedRegionMode);
+
+        // 확정 경로 매핑을 캡처하기 전에 저장된 인출점 provenance를 복원된 경계에서
+        // 그대로 검증한다. 실패한 선택점을 지우고 성공 처리하지 않는다.
+        ValidateRestoredExitPoints(area, document.Name, restoredRouteBoundary);
+        area.CommittedMapping = hasCommittedContext
+            ? (committedRegionMode
+                ? CommittedRouteContext.CaptureRegion(area)
+                : CommittedRouteContext.CaptureExit(area))
+            : CommittedRouteContext.Capture(area);
         area.AppliedInputs = RestoreAppliedInputs(document.AppliedInputs, area);
 
         var route = new RestoredAreaRoute { Area = area };
@@ -438,6 +468,83 @@ public partial class MainWindow
             route.ProjectedPieces = area.ProjectedPieces.ToArray();
         }
         return route;
+    }
+
+    /// <summary>
+    /// 저장된 확정 매핑의 경계 모드를 판별한다. 새 파일은 저장된 플래그를 쓰고,
+    /// 플래그가 없는 이전 파일은 캡처 시점의 선택 인출점 유무로 추론한다.
+    /// </summary>
+    internal static bool ResolveCommittedRegionMode(ProjectCommittedContextDocument saved)
+    {
+        if (saved == null) return false;
+        return saved.RegionMode ??
+            (saved.SelectedStartExit != null && saved.SelectedEndExit != null);
+    }
+
+    /// <summary>
+    /// 저장된 확정 경로가 실제로 사용한 경계를 고른다. 저장된 CommittedMapping이 있으면
+    /// 그 확정 모드를 따르고, 없으면 기존 초안 상태 규칙을 유지한다.
+    /// </summary>
+    internal static IExitBoundary2D ResolveRestoredRouteBoundary(WorkingArea area,
+        bool hasCommittedContext, bool committedRegionMode)
+    {
+        if (hasCommittedContext)
+            return committedRegionMode ? area.RegionExitBoundary : area.ExitBoundary;
+        return area.HasSelectedExits ? area.RegionExitBoundary : area.ExitBoundary;
+    }
+
+    /// <summary>
+    /// 저장된 인출점 provenance를 복원된 경계에서 직접 평가한다. 가까운 다른 edge로
+    /// 재탐색하거나 유효하지 않은 선택점을 조용히 지우지 않고, 로드 실패로 보고한다.
+    /// </summary>
+    private static void ValidateRestoredExitPoints(WorkingArea area, string areaName,
+        IExitBoundary2D routeBoundary)
+    {
+        if (area.SelectedStartExit.HasValue)
+            ValidateRestoredExitPoint(area.RegionExitBoundary, area.SelectedStartExit.Value,
+                "작업영역 '" + areaName + "' 시작 인출점");
+        if (area.SelectedEndExit.HasValue)
+            ValidateRestoredExitPoint(area.RegionExitBoundary, area.SelectedEndExit.Value,
+                "작업영역 '" + areaName + "' 종료 인출점");
+
+        if (routeBoundary == null)
+        {
+            bool hasSavedExits = area.Pattern?.StartExit != null || area.Pattern?.EndExit != null ||
+                (area.Circuits != null && area.Circuits.Any(
+                    circuit => circuit.StartExit != null || circuit.EndExit != null));
+            if (hasSavedExits)
+                throw new InvalidOperationException("작업영역 '" + areaName +
+                    "'의 인출 경계가 없어 저장된 회로 인출점을 검증할 수 없습니다");
+            return;
+        }
+
+        if (area.Pattern?.StartExit != null)
+            ValidateRestoredExitPoint(routeBoundary, ToBoundary(area.Pattern.StartExit),
+                "작업영역 '" + areaName + "' 패턴 시작 인출점");
+        if (area.Pattern?.EndExit != null)
+            ValidateRestoredExitPoint(routeBoundary, ToBoundary(area.Pattern.EndExit),
+                "작업영역 '" + areaName + "' 패턴 종료 인출점");
+
+        if (area.Circuits == null) return;
+        for (int i = 0; i < area.Circuits.Count; i++)
+        {
+            CircuitRoute circuit = area.Circuits[i];
+            if (circuit?.StartExit != null)
+                ValidateRestoredExitPoint(routeBoundary, ToBoundary(circuit.StartExit),
+                    string.Format("작업영역 '{0}' 회로 {1} 시작 인출점", areaName, i + 1));
+            if (circuit?.EndExit != null)
+                ValidateRestoredExitPoint(routeBoundary, ToBoundary(circuit.EndExit),
+                    string.Format("작업영역 '{0}' 회로 {1} 종료 인출점", areaName, i + 1));
+        }
+    }
+
+    private static void ValidateRestoredExitPoint(IExitBoundary2D boundary,
+        ExitBoundaryPoint point, string label)
+    {
+        ExitBoundaryResolution evaluated = ExitBoundaryConstraint.EvaluateSaved(boundary, point);
+        if (evaluated.Succeeded) return;
+        throw new InvalidOperationException(label + "이(가) 복원된 경계에서 유효하지 않습니다 (" +
+            (evaluated.Failure?.ToString() ?? "Unknown") + ")");
     }
 
     private void StageRestoredChains(ProjectAreaDocument document, WorkingArea area, int[] faceMap,

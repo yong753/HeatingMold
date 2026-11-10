@@ -38,6 +38,9 @@ internal sealed class CommittedRouteContext
     /// <summary>적용영역 전체 외곽(선택 인출점 방식)을 기준으로 캡처한다.</summary>
     public static CommittedRouteContext CaptureRegion(WorkingArea area) => Capture(area, area.RegionExitBoundary);
 
+    /// <summary>별도 인출면/앵커 방식의 확정 경계를 기준으로 캡처한다.</summary>
+    public static CommittedRouteContext CaptureExit(WorkingArea area) => Capture(area, area.ExitBoundary);
+
     private static CommittedRouteContext Capture(WorkingArea area, IExitBoundary2D boundary) => new()
     {
         FaceIds = area.FaceIdSet.OrderBy(id => id).ToArray(),

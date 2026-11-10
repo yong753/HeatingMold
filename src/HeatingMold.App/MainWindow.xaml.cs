@@ -733,6 +733,43 @@ namespace HeatingMold.App
         }
 
         /// <summary>
+        /// 제외영역을 반영한 마진 적용 전 유효 외곽선을 계산만 한다. 선택점/앵커/회로/경로는
+        /// 건드리지 않으므로 편집과 로드가 같은 계산을 공유하되 후처리는 각자 수행한다.
+        /// 제외가 없으면 원본 CAD 경계를 그대로 돌려준다.
+        /// </summary>
+        internal static bool TryBuildRegionExitBoundary(CadExitBoundary2D cad,
+            IReadOnlyList<Vec2> region,
+            IReadOnlyList<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
+            out IExitBoundary2D boundary, out string error)
+        {
+            boundary = null;
+            error = null;
+            if (cad == null)
+            {
+                error = "적용영역 원본 CAD 경계가 없어 제외영역 외곽선을 다시 만들 수 없습니다";
+                return false;
+            }
+            if (exclusions == null || exclusions.Count == 0)
+            {
+                boundary = cad;
+                return true;
+            }
+            if (region == null || region.Count < 3)
+            {
+                error = "제외영역은 단일 적용영역에서만 지원됩니다";
+                return false;
+            }
+            if (!EffectiveRegionBoundary2D.TryCreate(cad, region, exclusions,
+                    out EffectiveRegionBoundary2D effective, out string failure))
+            {
+                error = failure;
+                return false;
+            }
+            boundary = effective;
+            return true;
+        }
+
+        /// <summary>
         /// 제외 변경 후 마진 적용 전 유효 외곽선을 다시 만든다. 구멍/분리/무효 제외는
         /// 명시적으로 거부하고, 유효한 기존 인출점만 유지한다.
         /// </summary>
@@ -754,27 +791,10 @@ namespace HeatingMold.App
 
             bool exitBoundaryWasRegion = candidate.ExitFaceId < 0
                 || ReferenceEquals(candidate.ExitBoundary, candidate.RegionCadBoundary);
-            IExitBoundary2D boundary;
-            if (candidate.Exclusions.Count == 0)
-            {
-                boundary = cad;
-            }
-            else
-            {
-                if (candidate.Region.Count != 1)
-                {
-                    error = "제외영역은 단일 적용영역에서만 지원됩니다";
-                    return false;
-                }
-                if (!EffectiveRegionBoundary2D.TryCreate(cad, candidate.Region[0],
-                        candidate.Exclusions, out EffectiveRegionBoundary2D effective,
-                        out string failure))
-                {
-                    error = failure;
-                    return false;
-                }
-                boundary = effective;
-            }
+            if (!TryBuildRegionExitBoundary(cad,
+                    candidate.Region.Count == 1 ? candidate.Region[0] : null,
+                    candidate.Exclusions, out IExitBoundary2D boundary, out error))
+                return false;
 
             bool hadStart = candidate.SelectedStartExit.HasValue;
             bool hadEnd = candidate.SelectedEndExit.HasValue;
