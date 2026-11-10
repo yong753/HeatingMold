@@ -30,3 +30,13 @@ Desktop.ini
 
 # WPF 임시 프로젝트(중단된 빌드 잔여물)
 *_wpftmp.csproj
+
+# FreeCAD 백업 파일
+*.FCBak
+
+# 진단 도구 빌드 산출물 (소스 .cpp/.ps1만 추적)
+tools/step-cleanup/diagnostics/*.exe
+tools/step-cleanup/diagnostics/*.obj
+tools/step-cleanup/diagnostics/*.exp
+tools/step-cleanup/diagnostics/*.lib
+tools/step-cleanup/diagnostics/dbg.txt
