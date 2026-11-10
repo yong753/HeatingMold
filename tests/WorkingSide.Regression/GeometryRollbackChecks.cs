@@ -225,6 +225,82 @@ static class GeometryRollbackChecks
         Bridge.ClearRoutePieces();
     }
 
+    /// <summary>경로가 표시된 영역을 삭제할 때 표시 갱신이 삭제 전 목록의 조각 ID를
+    /// 색상 대상으로 넘기지 않는지 확인한다. 커밋된 영역 하나를 남기고 다른 하나를 지운다.</summary>
+    static void AreaDeletionPresentationChecks(MainWindow window, Type areaType, WorkingSideDefinition side, int topFace)
+    {
+        Invoke(window, "ClearAllAreas", false);
+        Bridge.ClearRoutePieces();
+
+        const int keptId = 9811;
+        const int removedId = 9812;
+        var stagedKept = Bridge.StageSurfaceMappedRoutePieceWithFaces(side.Id.Value, side.Revision.Value, -9811,
+            "HeatingRun", new[] { -10.0, 0, 20, 10.0, 0, 20 }, new[] { topFace, topFace });
+        var stagedRemoved = Bridge.StageSurfaceMappedRoutePieceWithFaces(side.Id.Value, side.Revision.Value, -9812,
+            "HeatingRun", new[] { -10.0, 0, 20, 10.0, 0, 20 }, new[] { topFace, topFace });
+        Check(stagedKept != null && stagedRemoved != null, "delete check stages both committed routes");
+        if (stagedKept == null || stagedRemoved == null) return;
+        Check(Bridge.CommitWorkingRouteGeometryDelta(side.Id.Value, side.Revision.Value,
+                new[] { -9811, -9812 }, new[] { keptId, removedId }, Array.Empty<int>(),
+                Array.Empty<int>(), Array.Empty<int>()),
+            "delete check commits both routes");
+
+        object kept = NewArea(areaType, side, topFace, "DeleteKeep", 4601);
+        object removed = NewArea(areaType, side, topFace, "DeleteDrop", 4602);
+        var captureType = typeof(MainWindow).Assembly.GetType("HeatingMold.App.CommittedRouteContext")!;
+        var captureMethod = captureType.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            .Single(method => method.Name == "Capture" && method.GetParameters().Length == 1);
+        var seeded = new[] { (area: kept, id: keptId, staged: stagedKept), (area: removed, id: removedId, staged: stagedRemoved) };
+        foreach (var entry in seeded)
+        {
+            areaType.GetProperty("NativePieceIds")!.SetValue(entry.area, new[] { entry.id });
+            areaType.GetProperty("RoutePieceLengths")!.SetValue(entry.area, new[] { entry.staged.Length });
+            areaType.GetProperty("ProjectedPieces")!.SetValue(entry.area,
+                new List<RoutePieceResult> { entry.staged });
+            areaType.GetProperty("PatternDisplayed")!.SetValue(entry.area, true);
+            areaType.GetProperty("CommittedMapping")!.SetValue(entry.area,
+                captureMethod.Invoke(null, new[] { entry.area }));
+        }
+        var areas = (IList)Field<object>(window, "_areas");
+        areas.Add(kept);
+        areas.Add(removed);
+        Invoke(window, "ActivateArea", removed);
+        Invoke(window, "RefreshAreaList");
+
+        var reported = new List<string>();
+        Action<string, ErrorLevel> handler = (context, level) => reported.Add(level + " " + context);
+        ErrorReporter.Reported += handler;
+        try { Invoke(window, "DeleteSelectedArea_Click", null!, null!); }
+        finally { ErrorReporter.Reported -= handler; }
+
+        Check(reported.Count == 0, "deleting a generated area raises no presentation warning");
+        Check(!((IList)Field<object>(window, "_areas")).Contains(removed),
+            "deleting a generated area removes it from the list");
+        Check(Bridge.GetCommittedRouteChains(side.Id.Value, side.Revision.Value, new[] { keptId }) != null,
+            "remaining committed route survives the deletion");
+        Check(Bridge.SetRoutePieceColors(side.Id.Value, side.Revision.Value,
+                new[] { keptId }, new[] { 0.3, 0.4, 0.5 }, false),
+            "remaining route piece is still color-addressable");
+        Check(!Bridge.SetRoutePieceColors(side.Id.Value, side.Revision.Value,
+                new[] { removedId }, new[] { 0.3, 0.4, 0.5 }, false),
+            "deleted route piece is no longer color-addressable");
+
+        // 마지막 영역 삭제는 남은 색상 대상이 없으므로 표시 갱신이 더 실패할 이유가 없다.
+        reported.Clear();
+        ErrorReporter.Reported += handler;
+        try { Invoke(window, "DeleteSelectedArea_Click", null!, null!); }
+        finally { ErrorReporter.Reported -= handler; }
+        Check(reported.Count == 0,
+            "deleting the last generated area raises no presentation warning"
+            + (reported.Count == 0 ? "" : " — " + string.Join(" | ", reported)
+                + " / status: " + ((System.Windows.Controls.TextBlock)window.FindName("StatusText")).Text));
+        Check(((IList)Field<object>(window, "_areas")).Count == 0,
+            "deleting the last generated area empties the list");
+
+        Invoke(window, "ClearAllAreas", false);
+        Bridge.ClearRoutePieces();
+    }
+
     static void FaceIdentityChecks(string fixtureDir)
     {
         string path = Path.Combine(fixtureDir, "layers.stp");
@@ -366,6 +442,7 @@ static class GeometryRollbackChecks
         StageFailureChecks(window, areaType, side, topFace);
         ExactFrameChecks(side);
         SupportFaceProvenanceChecks(side, topFace);
+        AreaDeletionPresentationChecks(window, areaType, side, topFace);
         FaceIdentityChecks(fixtureDir);
         EdgeIdentityChecks(fixtureDir);
         Console.WriteLine($"{count} geometry rollback checks passed.");

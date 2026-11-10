@@ -26,6 +26,7 @@
 - Include boundary binding, geometry, context and validation policy in cache keys. A cache hit must not bypass changed endpoint constraints.
 - Separate native retain/replace/delete, including an empty final result. Do not bypass route transactions with a global overlay clear.
 - Before commit, any failure preserves existing paths, lengths, IDs, endpoint bindings, edits and other areas. After commit, publish prepared managed references before presentation updates; redraw failure is not geometry rollback.
+- Route presentation targets (piece-color IDs/RGB and endpoint markers) are prepared from the committing final area set before the single native commit and applied from that snapshot afterwards. Never re-read the mutable area list at that point: a deletion has already removed the dropped area's native piece IDs, so recoloring from the pre-delete list fails the native all-or-nothing check and raises a spurious warning. Validate that color targets are exactly retained ∪ final, with no duplicates and no staged/deleted IDs. A post-commit presentation failure keeps the committed geometry and must remain visible in the caller's completion status instead of being overwritten.
 - Actual circuit length/electrical calculations use the validated 3D route once. Dashed guides contribute no heating length.
 
 ## Scope and verification

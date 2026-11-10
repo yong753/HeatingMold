@@ -233,12 +233,19 @@ public partial class MainWindow
         UpdateCircuitTable();
         ClearFaceSelectionOnly();
         StatusText.Text = string.Format("{0} 작업영역을 삭제했습니다 — 남은 영역 {1}개", area.Name, _areas.Count);
+        if (_routePresentationWarning != null)
+        {
+            // 커밋 이후 표시 갱신 실패는 삭제를 되돌리지 않는다. 완료 문구가 경고를 덮지 않게 남긴다.
+            StatusText.Text += " — 표시 갱신 경고: " + _routePresentationWarning;
+            _routePresentationWarning = null;
+        }
         UpdateActionStates();
     }
 
     /// <summary>
     /// 확정된 모든 영역의 발열경로를 그 영역의 원색(선택 외곽선과 같은 무광 색)으로 맞춘다.
     /// 표시 전용이며 형상/길이/ID를 바꾸지 않는다. 하나라도 실패하면 아무 색도 바꾸지 않는다.
+    /// 경로 트랜잭션은 이 함수를 쓰지 않고 커밋에 참여한 영역 기준으로 준비한 대상을 넘긴다.
     /// </summary>
     private bool RefreshRouteColors()
     {
@@ -249,19 +256,32 @@ public partial class MainWindow
         foreach (WorkingArea area in _areas)
         {
             if (!area.PatternDisplayed || area.NativePieceIds.Length == 0) continue;
-            double r = area.Color.R / 255.0, g = area.Color.G / 255.0, b = area.Color.B / 255.0;
-            foreach (int pieceId in area.NativePieceIds)
-            {
-                if (pieceId < 0) return false;
-                ids.Add(pieceId);
-                rgb.Add(r); rgb.Add(g); rgb.Add(b);
-            }
+            if (!AppendRouteColors(area, ids, rgb)) return false;
         }
-        if (ids.Count == 0) return true;
+        return ApplyRouteColors(side, ids.ToArray(), rgb.ToArray());
+    }
+
+    /// <summary>영역 하나의 경로 조각 ID와 원색을 준비 목록에 추가한다. 음수 ID는 실패다.</summary>
+    private static bool AppendRouteColors(WorkingArea area, List<int> ids, List<double> rgb)
+    {
+        double r = area.Color.R / 255.0, g = area.Color.G / 255.0, b = area.Color.B / 255.0;
+        foreach (int pieceId in area.NativePieceIds)
+        {
+            if (pieceId < 0) return false;
+            ids.Add(pieceId);
+            rgb.Add(r); rgb.Add(g); rgb.Add(b);
+        }
+        return true;
+    }
+
+    /// <summary>한 번의 네이티브 호출로 경로 조각 색을 바꾼다. 부분 적용은 없다.</summary>
+    private static bool ApplyRouteColors(WorkingSideDefinition side, int[] pieceIds, double[] rgb)
+    {
+        if (pieceIds.Length == 0) return true;
+        if (side == null) return false;
         try
         {
-            return Bridge.SetRoutePieceColors(side.Id.Value, side.Revision.Value,
-                ids.ToArray(), rgb.ToArray(), false);
+            return Bridge.SetRoutePieceColors(side.Id.Value, side.Revision.Value, pieceIds, rgb, false);
         }
         catch (Exception)
         {

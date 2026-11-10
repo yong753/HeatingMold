@@ -17,6 +17,10 @@ public partial class MainWindow
 
     private Dictionary<ValidatedRouteSampleKey, SurfaceMappedSample[]> _validatedRouteSamples = new();
 
+    /// <summary>마지막 경로 트랜잭션의 표시 갱신 경고. 커밋 이후 실패는 형상을 되돌리지 않으므로
+    /// 호출자가 완료 문구에 경고를 보존할 수 있게 남긴다. 다음 트랜잭션 시작 시 지운다.</summary>
+    private string _routePresentationWarning;
+
     /// <summary>초안과 모든 가변 경로 목록을 분리한다. 확정 영역은 성공 시 참조 교체만 한다.</summary>
     private static WorkingArea ForkAreaRoute(WorkingArea source)
     {
@@ -154,6 +158,7 @@ public partial class MainWindow
     {
         activeLength = 0;
         activeCount = 0;
+        _routePresentationWarning = null;
         WorkingSideDefinition side = _workingSide?.Confirmed;
         if (side == null) return false;
 
@@ -165,6 +170,8 @@ public partial class MainWindow
         KeyValuePair<WorkingArea, WorkingArea>[] publications;
         Dictionary<ValidatedRouteSampleKey, SurfaceMappedSample[]> preparedSamples;
         double[] endpoints;
+        int[] colorIds;
+        double[] colorRgbValues;
         double preparedActiveLength = 0;
         int preparedActiveCount = 0;
 
@@ -218,6 +225,8 @@ public partial class MainWindow
 
             var retainedIds = new List<int>();
             var endpointValues = new List<double>();
+            var colorPieceIds = new List<int>();
+            var colorValues = new List<double>();
             foreach (WorkingArea area in areas)
             {
                 bool changed = candidates.TryGetValue(area, out WorkingArea candidate);
@@ -227,6 +236,12 @@ public partial class MainWindow
                 if (!changed) retainedIds.AddRange(committed.NativePieceIds);
                 PrepareCommittedRoutePresentation(committed, endpointValues,
                     out double length, out int count);
+                // 색상 대상도 커밋에 참여한 최종 영역에서 미리 고정한다. 삭제 이후에
+                // 화면 목록을 다시 읽으면 이미 제거된 조각 ID가 색상 대상으로 넘어간다.
+                if (committed.PatternDisplayed && committed.NativePieceIds.Length > 0 &&
+                    !AppendRouteColors(committed, colorPieceIds, colorValues))
+                    throw new InvalidOperationException(
+                        "영역 " + committed.Name + "의 확정 경로 ID가 유효하지 않습니다");
                 if (ReferenceEquals(area, _activeArea))
                 {
                     preparedActiveLength = length;
@@ -234,6 +249,8 @@ public partial class MainWindow
                 }
             }
             endpoints = endpointValues.ToArray();
+            colorIds = colorPieceIds.ToArray();
+            colorRgbValues = colorValues.ToArray();
             int[] stageArray = stagedRoutes.ToArray();
             int[] finalArray = finalIds.ToArray();
             int[] retainedArray = retainedIds.ToArray();
@@ -242,6 +259,11 @@ public partial class MainWindow
             if (finalSet.Count != finalArray.Length || retainedSet.Count != retainedArray.Length ||
                 finalSet.Overlaps(retainedSet) || !retainedSet.IsSubsetOf(oldIdSet))
                 throw new InvalidOperationException("경로 retain/replace ID 대응이 유효하지 않습니다");
+            // 색상 대상은 반드시 이번 커밋이 유지하거나 새로 만든 조각이어야 한다.
+            var colorSet = new HashSet<int>(colorIds);
+            if (colorSet.Count != colorIds.Length || colorRgbValues.Length != colorIds.Length * 3 ||
+                colorIds.Any(id => !retainedSet.Contains(id) && !finalSet.Contains(id)))
+                throw new InvalidOperationException("경로 색상 대상 ID 대응이 유효하지 않습니다");
             int[] deletedArray = oldIds.Where(id => !retainedSet.Contains(id) && !finalSet.Contains(id)).ToArray();
 
             // 빈 최종 결과도 동일한 context 소유 retain/replace/delete 트랜잭션을 거친다.
@@ -271,26 +293,22 @@ public partial class MainWindow
 
         // 색상/마커/Redraw 실패는 이미 적용한 형상과 정본을 되돌리는 이유가 아니다.
         Exception presentationFailure = null;
-        try
-        {
-            if (!RefreshRouteColors())
-                presentationFailure = new InvalidOperationException("발열경로 색상 갱신에 실패했습니다");
-        }
+        bool colorsApplied = false, markersApplied = false, redrawn = false;
+        try { colorsApplied = ApplyRouteColors(side, colorIds, colorRgbValues); }
         catch (Exception ex) { presentationFailure = ex; }
-        try
-        {
-            if (!Bridge.SetRouteEndpointsNoRedraw(endpoints))
-                presentationFailure = new InvalidOperationException("인출점 마커 갱신에 실패했습니다");
-        }
-        catch (Exception ex) { presentationFailure = ex; }
-        try
-        {
-            if (!Bridge.TryRedrawView())
-                presentationFailure ??= new InvalidOperationException("화면 다시 그리기에 실패했습니다");
-        }
+        if (!colorsApplied && presentationFailure == null)
+            presentationFailure = new InvalidOperationException("발열경로 색상 갱신에 실패했습니다");
+        try { markersApplied = Bridge.SetRouteEndpointsNoRedraw(endpoints); }
         catch (Exception ex) { presentationFailure ??= ex; }
+        if (!markersApplied && presentationFailure == null)
+            presentationFailure = new InvalidOperationException("인출점 마커 갱신에 실패했습니다");
+        try { redrawn = Bridge.TryRedrawView(); }
+        catch (Exception ex) { presentationFailure ??= ex; }
+        if (!redrawn && presentationFailure == null)
+            presentationFailure = new InvalidOperationException("화면 다시 그리기에 실패했습니다");
         if (presentationFailure != null)
         {
+            _routePresentationWarning = presentationFailure.Message;
             try
             {
                 if (StatusText != null)
