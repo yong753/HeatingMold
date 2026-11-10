@@ -958,6 +958,7 @@ bool StageSurfaceMappedRoutePieceNative(long long id, long long revision, int st
         TopoDS_Shape target;
         if (!BuildWorkingFaceTargetShape(normalized, target)) return WorkingStageFail("target-failure");
         std::vector<gp_Pnt> points;
+        points.reserve(xyz.size() / 3);
         for (size_t i = 0; i < xyz.size(); i += 3) {
             if (!std::isfinite(xyz[i]) || !std::isfinite(xyz[i + 1]) || !std::isfinite(xyz[i + 2]))
                 return WorkingStageFail("nonfinite-point");
@@ -995,7 +996,7 @@ bool StageSurfaceMappedRoutePieceNative(long long id, long long revision, int st
         std::vector<double> shownXyz;
         shownXyz.reserve(points.size() * 3);
         for (const gp_Pnt& p : points) { shownXyz.push_back(p.X()); shownXyz.push_back(p.Y()); shownXyz.push_back(p.Z()); }
-        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, connector, true, color, width, id, revision, shownXyz});
+        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, connector, true, color, width, id, revision, std::move(shownXyz)});
         if (!inserted.second) { g_ctx->Remove(ais, Standard_False); return WorkingStageFail("display-id-collision"); }
         try { if (!g_stagedWorkingRouteOwners.emplace(stageId, std::make_pair(id, revision)).second)
                 throw std::runtime_error("staged route owner collision"); }
@@ -1036,6 +1037,8 @@ bool StageSurfaceMappedRoutePieceWithFacesNative(long long id, long long revisio
     try {
         std::vector<gp_Pnt> points;
         std::vector<int> faces;
+        points.reserve(xyz.size() / 3);
+        faces.reserve(xyz.size() / 3);
         for (size_t i = 0; i < xyz.size(); i += 3) {
             if (!std::isfinite(xyz[i]) || !std::isfinite(xyz[i + 1]) || !std::isfinite(xyz[i + 2]))
                 return WorkingStageFail("nonfinite-point");
@@ -1087,7 +1090,7 @@ bool StageSurfaceMappedRoutePieceWithFacesNative(long long id, long long revisio
             shownXyz.push_back(p.X()); shownXyz.push_back(p.Y()); shownXyz.push_back(p.Z());
             shownFaces.push_back(faces[i]);
         }
-        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, turnKind, true, color, width, id, revision, shownXyz, shownFaces});
+        auto inserted = g_routePieces.emplace(stageId, RoutePieceOverlay{ais, turnKind, true, color, width, id, revision, std::move(shownXyz), std::move(shownFaces)});
         if (!inserted.second) { g_ctx->Remove(ais, Standard_False); return WorkingStageFail("display-id-collision"); }
         try { if (!g_stagedWorkingRouteOwners.emplace(stageId, std::make_pair(id, revision)).second)
                 throw std::runtime_error("staged route owner collision"); }
@@ -1179,9 +1182,13 @@ bool CommitWorkingGeometryDeltaNative(long long contextId, long long revision,
         for (int id : deleted) { removed.push_back(nextRoutes.at(id).ais); nextRoutes.erase(id); nextHovered.erase(id); }
         for (int id : replaced) { removed.push_back(nextRoutes.at(id).ais); nextRoutes.erase(id); nextHovered.erase(id); }
         for (size_t i = 0; i < stagedRoutes.size(); ++i) {
-            const RoutePieceOverlay candidate = nextRoutes.at(stagedRoutes[i]);
-            nextRoutes.erase(stagedRoutes[i]); nextHovered.erase(stagedRoutes[i]);
-            if (!nextRoutes.emplace(finalRoutes[i], candidate).second) return false;
+            // 준비용 map 안에서만 소유권을 이동한다. 정본 g_routePieces는 건드리지 않으며,
+            // 여기서 실패하면 준비 map 전체가 폐기되고 기존 커밋 상태는 그대로 남는다.
+            auto staged = nextRoutes.find(stagedRoutes[i]);
+            if (staged == nextRoutes.end()) return false;
+            RoutePieceOverlay candidate = std::move(staged->second);
+            nextRoutes.erase(staged); nextHovered.erase(stagedRoutes[i]);
+            if (!nextRoutes.emplace(finalRoutes[i], std::move(candidate)).second) return false;
         }
         // Anonymous legacy guides are a context-local complete set, not global overlays.
         // Empty staging with retained routes leaves existing guides intact; full deletion

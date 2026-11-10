@@ -462,12 +462,13 @@ public partial class MainWindow
         bool allowCachedSamples = true, bool exclusionMode = false,
         CommittedRouteContext mappingContext = null,
         IReadOnlyDictionary<int, SurfaceMappedSample> vertexOverrides = null,
-        Dictionary<ValidatedRouteSampleKey, SurfaceMappedSample[]> validatedSamples = null)
+        Dictionary<ValidatedRouteSampleKey, SurfaceMappedSample[]> validatedSamples = null,
+        ValidatedRouteSampleKeyPrefix sampleKeyPrefix = null)
     {
         mappingContext ??= CommittedRouteContext.Capture(area);
-        var hit = BuildSurfaceMapDelegate(area, side, context: mappingContext);
         ValidatedRouteSampleKey key = allowCachedSamples
-            ? BuildValidatedRouteSampleKey(area, side, piece, mappingContext, vertexOverrides)
+            ? (sampleKeyPrefix ?? BuildValidatedRouteSampleKeyPrefix(area, side, mappingContext))
+                .Build(piece, vertexOverrides)
             : null;
         SurfaceMappedSample[] cachedSamples = null;
         bool cached = key != null && validatedSamples != null &&
@@ -475,6 +476,7 @@ public partial class MainWindow
         IReadOnlyList<SurfaceMappedSample> samples = cachedSamples;
         if (!cached)
         {
+            var hit = BuildSurfaceMapDelegate(area, side, context: mappingContext);
             if (!SurfacePathMapper.TryMapRouteStrict(piece.Points, hit, vertexOverrides,
                     out List<SurfaceMappedSample> mapped, out string failure, gapSpacing: 0.1))
                 throw new InvalidOperationException(

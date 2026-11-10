@@ -331,6 +331,9 @@ public partial class MainWindow
 
         if (candidate.Pattern?.RoutePieces.Count > 0)
         {
+            // 이 후보의 모든 조각이 공유하는 검증 키 접두부를 한 번만 만든다.
+            ValidatedRouteSampleKeyPrefix sampleKeyPrefix =
+                BuildValidatedRouteSampleKeyPrefix(candidate, side, mapping);
             var stagedIndices = new bool[count];
             for (int c = 0; c < candidate.Circuits.Count; c++)
             {
@@ -355,7 +358,8 @@ public partial class MainWindow
                     finalIds.Add(candidate.NativePieceIds[index]);
                     RoutePieceResult shown = StageCurvedRoutePiece(candidate, side, piece, index, count,
                         stageId, exclusionMode: false, mappingContext: mapping,
-                        vertexOverrides: overrides, validatedSamples: samples);
+                        vertexOverrides: overrides, validatedSamples: samples,
+                        sampleKeyPrefix: sampleKeyPrefix);
                     ValidateProjectedRoutePiece(shown);
                     projected[index] = shown;
                     candidate.RoutePieceLengths[index] = shown.Length;
@@ -376,6 +380,8 @@ public partial class MainWindow
         else if (candidate.ExclusionPieces is { Count: > 0 })
         {
             // 호환 제외 경로도 기존 selected-face/global 매핑을 사용하되 엄격 검증을 통일한다.
+            ValidatedRouteSampleKeyPrefix sampleKeyPrefix =
+                BuildValidatedRouteSampleKeyPrefix(candidate, side, mapping);
             int index = 0;
             foreach (List<SerpentineRoutePiece> component in candidate.ExclusionPieces)
             {
@@ -388,7 +394,8 @@ public partial class MainWindow
                     stagedRoutes.Add(stageId);
                     finalIds.Add(candidate.NativePieceIds[index]);
                     RoutePieceResult shown = StageCurvedRoutePiece(candidate, side, piece, index, count,
-                        stageId, exclusionMode: true, mappingContext: mapping, validatedSamples: samples);
+                        stageId, exclusionMode: true, mappingContext: mapping, validatedSamples: samples,
+                        sampleKeyPrefix: sampleKeyPrefix);
                     ValidateProjectedRoutePiece(shown);
                     projected[index] = shown;
                     candidate.RoutePieceLengths[index] = HeatingPieceLength(piece, shown, exclusionMode: true);
@@ -574,9 +581,12 @@ public partial class MainWindow
             _boundary == null ? 0 : RuntimeHelpers.GetHashCode(_boundary));
     }
 
-    private ValidatedRouteSampleKey BuildValidatedRouteSampleKey(WorkingArea area, WorkingSideDefinition side,
-        SerpentineRoutePiece piece, CommittedRouteContext context,
-        IReadOnlyDictionary<int, SurfaceMappedSample> overrides)
+    /// <summary>
+    /// 같은 후보의 모든 조각이 공유하는 검증 키 접두부를 한 번만 만든다. 조각별 좌표와
+    /// endpoint override는 <see cref="ValidatedRouteSampleKeyPrefix.Build"/>에서 덧붙인다.
+    /// </summary>
+    private ValidatedRouteSampleKeyPrefix BuildValidatedRouteSampleKeyPrefix(WorkingArea area,
+        WorkingSideDefinition side, CommittedRouteContext context)
     {
         var key = new StringBuilder("strict-v2|gap=0.1|chord=0.05|max-probes=100000|support=0.1|datum=0.1|selected-global|")
             .Append(GeometryTolerancePolicy.Version).Append('|');
@@ -637,15 +647,40 @@ public partial class MainWindow
         }
         Exits(context.StartExits); Exits(context.EndExits);
         key.Append('|').Append(area.Pattern?.CandidateId?.Length ?? -1).Append(':').Append(area.Pattern?.CandidateId);
-        key.Append('|').Append(piece.Kind).Append(',').Append(piece.LaneIndex).Append(',').Append(piece.Points.Count).Append(':');
-        foreach (Vec2 point in piece.Points) Point(point);
-        key.Append('|').Append(overrides?.Count ?? 0).Append(':');
-        if (overrides != null)
-            foreach (var entry in overrides.OrderBy(pair => pair.Key))
-            {
-                key.Append(entry.Key).Append(',').Append(entry.Value.FaceId).Append(',');
-                Point(entry.Value.DatumPoint); Point3(entry.Value.Point);
-            }
-        return new ValidatedRouteSampleKey(key.ToString(), context.Boundary);
+        return new ValidatedRouteSampleKeyPrefix(key.ToString(), context.Boundary);
+    }
+
+    /// <summary>후보 공통 검증 키 접두부 + 조각별 형상/override 접미부.</summary>
+    private sealed class ValidatedRouteSampleKeyPrefix
+    {
+        private readonly string _prefix;
+        private readonly IExitBoundary2D _boundary;
+
+        internal ValidatedRouteSampleKeyPrefix(string prefix, IExitBoundary2D boundary)
+        {
+            _prefix = prefix;
+            _boundary = boundary;
+        }
+
+        internal ValidatedRouteSampleKey Build(SerpentineRoutePiece piece,
+            IReadOnlyDictionary<int, SurfaceMappedSample> overrides)
+        {
+            var key = new StringBuilder(_prefix);
+            void Number(double value) => key.Append(value.ToString("R", CultureInfo.InvariantCulture)).Append(',');
+            void Point(Vec2 point) { Number(point.X); Number(point.Y); }
+            void Point3(Vec3 point) { Number(point.X); Number(point.Y); Number(point.Z); }
+
+            key.Append('|').Append(piece.Kind).Append(',').Append(piece.LaneIndex).Append(',')
+                .Append(piece.Points.Count).Append(':');
+            foreach (Vec2 point in piece.Points) Point(point);
+            key.Append('|').Append(overrides?.Count ?? 0).Append(':');
+            if (overrides != null)
+                foreach (var entry in overrides.OrderBy(pair => pair.Key))
+                {
+                    key.Append(entry.Key).Append(',').Append(entry.Value.FaceId).Append(',');
+                    Point(entry.Value.DatumPoint); Point3(entry.Value.Point);
+                }
+            return new ValidatedRouteSampleKey(key.ToString(), _boundary);
+        }
     }
 }

@@ -87,3 +87,9 @@
 - The plan view draws the effective heating-area boundary on the `HEAT_AREA` layer: the applied region minus exclusions, with no generation margin. Each boundary uses its area's viewport color as a true-color entity; the layer color is only a neutral fallback. Multiple or degenerate rings, exclusions that leave a hole or split the area, and working-plane mismatches are explicit export failures.
 - Degenerate or missing projections, duplicate/missing circuit piece indices, and context/model-revision mismatches are explicit export failures that preserve the previous file state.
 
+## Verification environment (verified)
+
+- Build `src\OccBridge\OccBridge.vcxproj` with Visual Studio `MSBuild.exe`, not `dotnet build`; the C++ project requires the Visual C++ targets.
+- Run native/App tests with the OCCT `win64\vc14\bin` and bundled third-party DLL directories on `PATH`. `tests\WorkingSide.Regression\Run.ps1` sets this up and builds into isolated output, avoiding locks from a running app.
+- The WorkingSide regression harness invokes private UI methods by name with fixed parameter counts. Keep existing parameterless entry points when adding overloads that share precomputed state.
+

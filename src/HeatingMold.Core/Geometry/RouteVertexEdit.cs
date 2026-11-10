@@ -107,15 +107,20 @@ public static class SerpentineVertexEdit
         for (int i = 0; i < pieces.Count; i++)
             newPieces.Add(pieces[i] with { Points = points[i] });
 
-        var path = new List<Vec2>();
+        // 연결 끝점이 겹치면 첫 점 하나를 생략하므로 전체 점 수가 상한이다.
+        int pathCapacity = 0;
+        foreach (SerpentineRoutePiece piece in newPieces)
+            pathCapacity = Math.Min(int.MaxValue, pathCapacity + piece.Points.Count);
+        var path = new List<Vec2>(pathCapacity);
         foreach (SerpentineRoutePiece piece in newPieces)
         {
             if (piece.Points.Count == 0) continue;
-            if (path.Count == 0) path.AddRange(piece.Points);
-            else path.AddRange(piece.Points.Skip(path[^1] == piece.Points[0] ? 1 : 0));
+            if (path.Count == 0) { path.AddRange(piece.Points); continue; }
+            int first = path[^1] == piece.Points[0] ? 1 : 0;
+            for (int i = first; i < piece.Points.Count; i++) path.Add(piece.Points[i]);
         }
 
-        var segments = new List<SerpentineSegment>();
+        var segments = new List<SerpentineSegment>(newPieces.Count);
         foreach (SerpentineRoutePiece piece in newPieces)
         {
             if (piece.Kind != SerpentineRoutePieceKind.HeatingRun || piece.Points.Count < 2) continue;
@@ -167,8 +172,30 @@ public static class SerpentineVertexPreview
         out List<(Vec2 A, Vec2 B)> changedSegments,
         out string failure)
     {
+        return TryApplyAffectedCore(source, edits, collectChangedSegments: true,
+            out affectedPoints, out changedSegments, out failure);
+    }
+
+    /// <summary>변경 구간 목록이 필요 없는 미리보기 호출용. 좌표 복사와 공유점 검증은
+    /// 기존 오버로드와 동일하며, 사용하지 않는 선분 목록만 만들지 않는다.</summary>
+    public static bool TryApplyAffected(SerpentineResult source,
+        IReadOnlyList<(RouteVertexOccurrence At, Vec2 Value)> edits,
+        out Dictionary<int, IReadOnlyList<Vec2>> affectedPoints,
+        out string failure)
+    {
+        return TryApplyAffectedCore(source, edits, collectChangedSegments: false,
+            out affectedPoints, out _, out failure);
+    }
+
+    private static bool TryApplyAffectedCore(SerpentineResult source,
+        IReadOnlyList<(RouteVertexOccurrence At, Vec2 Value)> edits,
+        bool collectChangedSegments,
+        out Dictionary<int, IReadOnlyList<Vec2>> affectedPoints,
+        out List<(Vec2 A, Vec2 B)> changedSegments,
+        out string failure)
+    {
         affectedPoints = new Dictionary<int, IReadOnlyList<Vec2>>();
-        changedSegments = new List<(Vec2 A, Vec2 B)>();
+        changedSegments = collectChangedSegments ? new List<(Vec2 A, Vec2 B)>() : null!;
         failure = string.Empty;
         ArgumentNullException.ThrowIfNull(source);
         if (edits == null || edits.Count == 0)
@@ -237,12 +264,13 @@ public static class SerpentineVertexPreview
             }
         }
 
-        foreach ((RouteVertexOccurrence at, _) in edits)
-        {
-            IReadOnlyList<Vec2> points = copies[at.Piece];
-            if (at.Point > 0) changedSegments.Add((points[at.Point - 1], points[at.Point]));
-            if (at.Point + 1 < points.Count) changedSegments.Add((points[at.Point], points[at.Point + 1]));
-        }
+        if (collectChangedSegments)
+            foreach ((RouteVertexOccurrence at, _) in edits)
+            {
+                IReadOnlyList<Vec2> points = copies[at.Piece];
+                if (at.Point > 0) changedSegments.Add((points[at.Point - 1], points[at.Point]));
+                if (at.Point + 1 < points.Count) changedSegments.Add((points[at.Point], points[at.Point + 1]));
+            }
 
         foreach (KeyValuePair<int, List<Vec2>> entry in copies)
             affectedPoints[entry.Key] = entry.Value;

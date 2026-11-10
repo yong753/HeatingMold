@@ -74,8 +74,23 @@ public static class RegionOps
         IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
         double margin)
     {
+        return BuildGenerationRegion(outer, exclusions, margin, out _);
+    }
+
+    /// <summary>
+    /// <see cref="BuildGenerationRegion"/>와 같은 결과를 만들면서, 차감 전의 마진 적용
+    /// 패턴 영역도 함께 돌려준다. 생성 경로가 같은 외곽 오프셋을 다시 계산하지 않도록
+    /// 두 결과를 한 번의 오프셋 연산에서 만든다. 반환된 두 목록은 서로 독립적이다.
+    /// </summary>
+    internal static List<List<Vec2>> BuildGenerationRegion(
+        IReadOnlyList<Vec2> outer,
+        IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
+        double margin,
+        out List<List<Vec2>> patternRegion)
+    {
         ArgumentNullException.ThrowIfNull(outer);
         ArgumentNullException.ThrowIfNull(exclusions);
+        patternRegion = BuildPatternRegion(outer, null, margin);
         double grow = Math.Max(0.0, margin);
         var expanded = new List<(double MinX, double MinY, double MaxX, double MaxY)>();
         foreach (var r in exclusions)
@@ -83,7 +98,7 @@ public static class RegionOps
             if (!(r.MaxX > r.MinX && r.MaxY > r.MinY)) continue;
             expanded.Add((r.MinX - grow, r.MinY - grow, r.MaxX + grow, r.MaxY + grow));
         }
-        return SubtractRectangles(BuildPatternRegion(outer, null, margin), expanded);
+        return SubtractRectangles(patternRegion, expanded);
     }
 
     /// <summary>링의 부호 있는 면적 (CCW 양수).</summary>

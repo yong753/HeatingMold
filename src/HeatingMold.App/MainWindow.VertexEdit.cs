@@ -369,7 +369,7 @@ public partial class MainWindow
 
         var edits = new List<(RouteVertexOccurrence, Vec2)>(group.Occurrences.Count);
         foreach (RouteVertexOccurrence occurrence in group.Occurrences) edits.Add((occurrence, applied));
-        if (!SerpentineVertexPreview.TryApplyAffected(area.Pattern, edits, out pieces, out _, out failure))
+        if (!SerpentineVertexPreview.TryApplyAffected(area.Pattern, edits, out pieces, out failure))
             return false;
 
         var hit = BuildSurfaceMapDelegate(area, side, context: context);

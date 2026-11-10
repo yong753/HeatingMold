@@ -278,11 +278,15 @@ public partial class MainWindow
     /// 확정된 발열 경로의 회로별 전체 길이로 전기 사양표를 다시 계산한다.
     /// 인출점 사이의 경로 전체를 한 번만 합산한다.
     /// </summary>
-    private void RefreshElectricalTable()
+    private void RefreshElectricalTable() => RefreshElectricalTableCore(null);
+
+    private void RefreshElectricalTableCore(ReviewSnapshot sharedSnapshot)
     {
         if (!_electricalUiReady || ElectricalSpecGrid == null) return;
 
-        ReviewSnapshot snapshot = BuildReviewSnapshot();
+        // 같은 동기 갱신 안에서 이미 만든 검토 결과만 전달받는다. 이벤트 사이에는
+        // 캐시하지 않으므로 입력 변경/내보내기 재검증은 각자 새로 계산한다.
+        ReviewSnapshot snapshot = sharedSnapshot ?? BuildReviewSnapshot();
         if (snapshot.ElectricalError != null)
         {
             ElectricalSpecGrid.ItemsSource = null;

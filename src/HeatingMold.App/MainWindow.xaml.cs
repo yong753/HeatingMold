@@ -1332,7 +1332,7 @@ namespace HeatingMold.App
             CircuitLengthGrid.ItemsSource = rows.Count == 0 ? null : rows;
             if (ExpandedCircuitGrid != null)
                 ExpandedCircuitGrid.ItemsSource = rows.Count == 0 ? null : rows;
-            RefreshElectricalTable();
+            RefreshElectricalTableCore(snapshot);
         }
 
         // Group stable route-piece IDs by the canonical split circuits. Disabled

@@ -3896,7 +3896,7 @@ RoutePieceResult^ Bridge::DisplayWorkingRoutePiece(long long id,long long revisi
 {
     if (kind==nullptr || flat==nullptr) return nullptr;
     try {
-        std::vector<double> xyz; for each(double v in flat) xyz.push_back(v);
+        std::vector<double> xyz; xyz.reserve(static_cast<size_t>(flat->Length)); for each(double v in flat) xyz.push_back(v);
         double data[7]={};
         if (!DisplayWorkingRoutePieceNative(id,revision,pieceId,msclr::interop::marshal_as<std::string>(kind),xyz,data)) return nullptr;
         auto result=gcnew RoutePieceResult(); result->Length=data[0];
@@ -3948,14 +3948,14 @@ array<CommittedRouteChain^>^ Bridge::GetCommittedRouteChainsDetailed(long long i
 bool Bridge::StageWorkingPolyline(long long id,long long revision,int stageId,array<double>^ flat)
 {
     if (flat==nullptr) return false;
-    try { std::vector<double> xyz; for each(double v in flat) xyz.push_back(v); return StageWorkingPolylineNative(id,revision,stageId,xyz); }
+    try { std::vector<double> xyz; xyz.reserve(static_cast<size_t>(flat->Length)); for each(double v in flat) xyz.push_back(v); return StageWorkingPolylineNative(id,revision,stageId,xyz); }
     catch (...) { return false; }
 }
 RoutePieceResult^ Bridge::StageProjectedWorkingRoutePiece(long long id,long long revision,int stageId,String^ kind,
     array<double>^ flat,array<int>^ faceIds,double dx,double dy,double dz)
 {
     if(kind==nullptr||flat==nullptr||faceIds==nullptr) return nullptr;
-    try { std::vector<double> xyz;std::vector<int> faces;for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
+    try { std::vector<double> xyz;std::vector<int> faces;xyz.reserve(static_cast<size_t>(flat->Length));faces.reserve(static_cast<size_t>(faceIds->Length));for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
         double data[7]={};if(!StageProjectedWorkingRouteNative(id,revision,stageId,msclr::interop::marshal_as<std::string>(kind),xyz,faces,gp_Dir(dx,dy,dz),data))return nullptr;
         auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;
     } catch(...) { return nullptr; }
@@ -3964,7 +3964,7 @@ RoutePieceResult^ Bridge::StageSurfaceMappedRoutePiece(long long id,long long re
     array<double>^ flat,array<int>^ faceIds)
 {
     if(kind==nullptr||flat==nullptr||faceIds==nullptr) return nullptr;
-    try { std::vector<double> xyz;std::vector<int> faces;for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
+    try { std::vector<double> xyz;std::vector<int> faces;xyz.reserve(static_cast<size_t>(flat->Length));faces.reserve(static_cast<size_t>(faceIds->Length));for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
         double data[7]={};if(!StageSurfaceMappedRoutePieceNative(id,revision,stageId,msclr::interop::marshal_as<std::string>(kind),xyz,faces,data))return nullptr;
         auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;
     } catch(...) { return nullptr; }
@@ -3973,7 +3973,7 @@ RoutePieceResult^ Bridge::StageSurfaceMappedRoutePieceWithFaces(long long id,lon
     array<double>^ flat,array<int>^ supportFaceIds)
 {
     if(kind==nullptr||flat==nullptr||supportFaceIds==nullptr) return nullptr;
-    try { std::vector<double> xyz;std::vector<int> faces;for each(double v in flat)xyz.push_back(v);for each(int v in supportFaceIds)faces.push_back(v);
+    try { std::vector<double> xyz;std::vector<int> faces;xyz.reserve(static_cast<size_t>(flat->Length));faces.reserve(static_cast<size_t>(supportFaceIds->Length));for each(double v in flat)xyz.push_back(v);for each(int v in supportFaceIds)faces.push_back(v);
         double data[7]={};if(!StageSurfaceMappedRoutePieceWithFacesNative(id,revision,stageId,msclr::interop::marshal_as<std::string>(kind),xyz,faces,data))return nullptr;
         auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;
     } catch(...) { return nullptr; }
@@ -3985,7 +3985,7 @@ String^ Bridge::GetWorkingStageDiagnostic()
 RoutePieceResult^ Bridge::StageProjectedWorkingPolyline(long long id,long long revision,int stageId,String^ kind,array<double>^ flat,array<int>^ faceIds,double dx,double dy,double dz)
 {
     if(flat==nullptr||faceIds==nullptr)return nullptr;
-    try {std::vector<double> xyz;std::vector<int> faces;for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
+    try {std::vector<double> xyz;std::vector<int> faces;xyz.reserve(static_cast<size_t>(flat->Length));faces.reserve(static_cast<size_t>(faceIds->Length));for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
         double data[7]={};if(!StageProjectedWorkingPolylineNative(id,revision,stageId,msclr::interop::marshal_as<std::string>(kind),xyz,faces,gp_Dir(dx,dy,dz),data))return nullptr;
         auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;}catch(...){return nullptr;}
 }

@@ -705,14 +705,11 @@ public static class Serpentine
             {
                 lastLaneY = y;
                 bool ltr = (traversed % 2 == 0) == startLow;
-                List<(double X0, double X1)> ordered = ltr
-                    ? intervals.OrderBy(i => i.X0).ToList()
-                    : intervals.OrderByDescending(i => i.X1).ToList();
 
                 if (step == 0)
                 {
                     // 시작점이 속한 구간이 첫 레인의 첫 구간이어야 첫 발열선이 시작점에서 출발한다.
-                    (double firstX0, double firstX1) = ordered[0];
+                    (double firstX0, double firstX1) = intervals[0];
                     if (Math.Abs(firstX0 - chosenX0) > 1e-9 || Math.Abs(firstX1 - chosenX1) > 1e-9)
                     {
                         failure = AnchoredFailureReason.AnchorNotAtLaneEnd;
@@ -721,8 +718,11 @@ public static class Serpentine
                 }
 
                 bool firstOnLane = true;
-                foreach ((double x0, double x1) in ordered)
+                // 스캔라인 구간은 이미 X0 증가 순서이며 서로 겹치지 않는다. 오른쪽→왼쪽은
+                // 역순으로 읽으면 기존 X1 내림차순 정렬 결과와 같다.
+                for (int intervalIndex = 0; intervalIndex < intervals.Count; intervalIndex++)
                 {
+                    (double x0, double x1) = intervals[ltr ? intervalIndex : intervals.Count - 1 - intervalIndex];
                     Vec2 a = ltr ? new Vec2(x0, y) : new Vec2(x1, y);
                     Vec2 b = ltr ? new Vec2(x1, y) : new Vec2(x0, y);
                     if (step == 0 && firstOnLane)
@@ -810,13 +810,11 @@ public static class Serpentine
         }
 
         bool ltr = (laneIndex % 2 == 0) == startLow;
-        List<(double X0, double X1)> ordered = ltr
-            ? intervals.OrderBy(i => i.X0).ToList()
-            : intervals.OrderByDescending(i => i.X1).ToList();
 
         bool firstOnLane = true;
-        foreach ((double x0, double x1) in ordered)
+        for (int intervalIndex = 0; intervalIndex < intervals.Count; intervalIndex++)
         {
+            (double x0, double x1) = intervals[ltr ? intervalIndex : intervals.Count - 1 - intervalIndex];
             Vec2 a = ltr ? new Vec2(x0, y) : new Vec2(x1, y);
             Vec2 b = ltr ? new Vec2(x1, y) : new Vec2(x0, y);
 
@@ -1303,7 +1301,7 @@ public static class Serpentine
         List<(double MinX, double MinY, double MaxX, double MaxY)> rotatedExclusions =
             RotateExclusions(exclusionList, -rad);
         List<List<Vec2>> region = RegionOps.BuildGenerationRegion(
-            localOuter, rotatedExclusions, p.Margin);
+            localOuter, rotatedExclusions, p.Margin, out List<List<Vec2>> cadRegion);
         if (region.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
 
         Vec2 startLocal = savedStart.Point.Rotate(-rad);
@@ -1327,7 +1325,7 @@ public static class Serpentine
             // 제외영역을 피하고, 레인·분할 구간을 잇는 연결선은 제외영역을 관통할 수
             // 있으므로 모든 구간을 한 번씩 방문하는 전역 순서 탐색이 필요하지 않다.
             // 원래 CAD 경계(오목/홀) 때문에 갈린 구간만 기존 경계 추종 연결을 유지한다.
-            List<List<Vec2>> cadRegion = RegionOps.BuildPatternRegion(localOuter, null, p.Margin);
+            // cadRegion은 위의 영역 생성에서 같은 마진 오프셋 결과를 그대로 받는다.
             if (!TryBuildExcludedSequentialPieces(region, cadRegion, rotatedExclusions, p,
                     startLocal, endLocal, stepSign,
                     out List<SerpentineRoutePiece> pieces, out AnchoredFailureReason routeFailure))
@@ -1377,8 +1375,8 @@ public static class Serpentine
             if (stepSign > 0 ? y > limitY + 1e-9 : y < limitY - 1e-9) break;
             if (y < minY - 1e-9 || y > maxY + 1e-9) break;
             lanes.Add(new LaneScan(y,
-                ScanlineIntervals(region, y).ToList(),
-                ScanlineIntervals(cadRegion, y).ToList()));
+                ScanlineIntervals(region, y),
+                ScanlineIntervals(cadRegion, y)));
             double next = y + stepSign * p.Spacing;
             if (next == y) { failure = AnchoredFailureReason.NoLanes; return false; }
             y = next;
@@ -1447,13 +1445,12 @@ public static class Serpentine
         void EmitLane(LaneScan lane, bool laneLtr)
         {
             lastLaneY = lane.Y;
-            List<(double X0, double X1)> ordered = lane.Intervals.ToList();
-            if (laneLtr) ordered.Sort((a, b) => a.X0.CompareTo(b.X0));
-            else ordered.Sort((a, b) => b.X1.CompareTo(a.X1));
-
+            // 스캔라인 구간은 이미 X0 증가 순서이며 서로 겹치지 않는다. 왼쪽→오른쪽은
+            // 그대로, 오른쪽→왼쪽은 역순으로 읽으면 기존 정렬 결과와 같다.
             bool firstOnLane = true;
-            foreach ((double x0, double x1) in ordered)
+            for (int intervalIndex = 0; intervalIndex < lane.Intervals.Count; intervalIndex++)
             {
+                (double x0, double x1) = lane.Intervals[laneLtr ? intervalIndex : lane.Intervals.Count - 1 - intervalIndex];
                 Vec2 a = laneLtr ? new Vec2(x0, lane.Y) : new Vec2(x1, lane.Y);
                 Vec2 b = laneLtr ? new Vec2(x1, lane.Y) : new Vec2(x0, lane.Y);
                 if (firstOnLane) lastLaneEntry = a;
@@ -1517,8 +1514,8 @@ public static class Serpentine
             double extraY = lastLaneY + stepSign * p.Spacing;
             if (extraY == lastLaneY) { failure = AnchoredFailureReason.NoLanes; return false; }
             LaneScan extra = new(extraY,
-                ScanlineIntervals(region, extraY).ToList(),
-                ScanlineIntervals(cadRegion, extraY).ToList());
+                ScanlineIntervals(region, extraY),
+                ScanlineIntervals(cadRegion, extraY));
             if (extra.Intervals.Count == 0)
             {
                 failure = AnchoredFailureReason.RequiredExtraLaneOutsideRegion;
