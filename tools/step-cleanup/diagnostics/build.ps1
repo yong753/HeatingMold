@@ -37,7 +37,7 @@ $libs = @(
 
 $linkLibs = ($libs | ForEach-Object { $_ }) -join ' '
 
-foreach ($src in @('faceinspect.cpp', 'dupcheck.cpp', 'cleanuptest.cpp', 'thicken.cpp')) {
+foreach ($src in @('faceinspect.cpp', 'dupcheck.cpp', 'cleanuptest.cpp', 'thicken.cpp', 'meshprobe.cpp')) {
     $exe = [IO.Path]::GetFileNameWithoutExtension($src)
     $cmd = "call `"$vcvars`" >nul && cl /nologo /EHsc /O2 /MD /std:c++17 /utf-8 /Fe:$exe.exe $src /I `"$inc`" /link /SUBSYSTEM:CONSOLE /LIBPATH:`"$lib`" $linkLibs"
     Write-Host ">>> $src"
