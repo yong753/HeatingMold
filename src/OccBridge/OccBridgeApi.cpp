@@ -1353,20 +1353,75 @@ namespace
         boundaryWorkingEdges.reserve(boundaryInputs.size());
         for (const BoundaryEdgeInput& input : boundaryInputs)
             boundaryWorkingEdges.push_back(input.workingEdge);
+        const auto logOrderFailure = [&](const std::string& reason)
+        {
+            char path[MAX_PATH] = { 0 };
+            const DWORD length = ::GetEnvironmentVariableA("HEATINGMOLD_OCC_LOG", path, MAX_PATH);
+            if (length == 0 || length >= MAX_PATH) return;
+            std::ofstream log(path, std::ios::app);
+            if (!log) return;
+            log << "region-boundary: order-failure " << reason << "\n";
+            TopTools_IndexedMapOfShape vertexMap;
+            std::vector<std::vector<int>> incident;
+            for (int i = 0; i < static_cast<int>(boundaryWorkingEdges.size()); ++i)
+            {
+                TopoDS_Vertex first, last;
+                TopExp::Vertices(boundaryWorkingEdges[static_cast<size_t>(i)], first, last, Standard_True);
+                const auto add = [&](const TopoDS_Vertex& vertex, int slot)
+                {
+                    int index = vertexMap.FindIndex(vertex);
+                    if (index == 0)
+                    {
+                        vertexMap.Add(vertex);
+                        incident.emplace_back();
+                        index = vertexMap.Extent();
+                    }
+                    incident[static_cast<size_t>(index - 1)].push_back(i * 2 + slot);
+                };
+                if (!first.IsNull()) add(first, 0);
+                if (!last.IsNull()) add(last, 1);
+            }
+            for (int v = 1; v <= vertexMap.Extent(); ++v)
+            {
+                if (incident[static_cast<size_t>(v - 1)].size() == 2) continue;
+                const TopoDS_Vertex vertex = TopoDS::Vertex(vertexMap(v));
+                const gp_Pnt p = BRep_Tool::Pnt(vertex);
+                log << "region-boundary: vertex-incidence count="
+                    << incident[static_cast<size_t>(v - 1)].size()
+                    << " tol=" << BRep_Tool::Tolerance(vertex)
+                    << " p=(" << p.X() << "," << p.Y() << "," << p.Z() << ") edges=";
+                for (int code : incident[static_cast<size_t>(v - 1)])
+                    log << (code / 2) << ":" << (code % 2) << " ";
+                log << "\n";
+            }
+        };
+
         std::vector<HeatingMoldBoundaryNative::BoundaryComponent> components;
         int failedComponents = 0;
         std::string orderFailure;
         if (!HeatingMoldBoundaryNative::OrderBoundaryLoops(
                 boundaryWorkingEdges, components, failedComponents, orderFailure))
         {
+            logOrderFailure(orderFailure);
             diagnostic = "region-boundary: " + orderFailure;
             return false;
         }
         if (failedComponents > 0)
         {
+            logOrderFailure(orderFailure);
             diagnostic = "region-boundary: " + orderFailure;
             return false;
         }
+
+        const auto logBoundaryGap = [](const std::string& text)
+        {
+            char path[MAX_PATH] = { 0 };
+            const DWORD length = ::GetEnvironmentVariableA("HEATINGMOLD_OCC_LOG", path, MAX_PATH);
+            if (length == 0 || length >= MAX_PATH) return;
+            std::ofstream log(path, std::ios::app);
+            if (!log) return;
+            log << text << "\n";
+        };
 
         std::vector<NativeBoundaryLoop> prepared;
         for (const HeatingMoldBoundaryNative::BoundaryComponent& component : components)
@@ -1375,6 +1430,9 @@ namespace
             loop.closed = true;
             gp_Pnt firstPoint, previousPoint;
             bool hasPoint = false;
+            int stepIndex = 0;
+            const BoundaryEdgeInput* previousInput = nullptr;
+            const HeatingMoldBoundaryNative::BoundaryStep* previousStep = nullptr;
             for (const HeatingMoldBoundaryNative::BoundaryStep& step : component.steps)
             {
                 const BoundaryEdgeInput& input = boundaryInputs[static_cast<size_t>(step.inputIndex)];
@@ -1389,6 +1447,20 @@ namespace
                     diagnostic = "region-boundary: boundary sampling failed";
                     return false;
                 }
+                // 정점 identity로 연결된 두 Edge의 곡선 끝점은 해당 공유 정점의
+                // tolerance 안에서 어긋날 수 있다. 봉합 공차(0.01)는 서로 다른
+                // Edge를 합치는 기준이고, 이미 공유된 정점의 연속성 기준이 아니다.
+                double allowedGap = sewingTolerance;
+                if (previousInput != nullptr && previousStep != nullptr)
+                {
+                    TopoDS_Vertex prevFirst, prevLast, curFirst, curLast;
+                    TopExp::Vertices(previousInput->workingEdge, prevFirst, prevLast, Standard_True);
+                    TopExp::Vertices(input.workingEdge, curFirst, curLast, Standard_True);
+                    const TopoDS_Vertex& prevExit = previousStep->reverse ? prevFirst : prevLast;
+                    const TopoDS_Vertex& curEntry = step.reverse ? curLast : curFirst;
+                    if (!prevExit.IsNull() && !curEntry.IsNull() && prevExit.IsSame(curEntry))
+                        allowedGap = std::max(sewingTolerance, BRep_Tool::Tolerance(prevExit));
+                }
                 for (int k = 1; k <= sampler.NbPoints(); ++k)
                 {
                     const gp_Pnt p = sampler.Value(sampleReverse ? sampler.NbPoints() - k + 1 : k);
@@ -1397,10 +1469,63 @@ namespace
                         diagnostic = "region-boundary: non-finite boundary sample";
                         return false;
                     }
-                    if (k == 1 && hasPoint && previousPoint.Distance(p) > sewingTolerance)
+                    if (k == 1 && hasPoint)
                     {
-                        diagnostic = "region-boundary: boundary sample is discontinuous";
-                        return false;
+                        const double gap = previousPoint.Distance(p);
+                        if (gap > allowedGap)
+                        {
+                            if (previousInput != nullptr && previousStep != nullptr)
+                            {
+                                TopoDS_Vertex prevFirst, prevLast, curFirst, curLast;
+                                TopExp::Vertices(previousInput->workingEdge, prevFirst, prevLast, Standard_True);
+                                TopExp::Vertices(input.workingEdge, curFirst, curLast, Standard_True);
+                                const TopoDS_Vertex& prevExit = previousStep->reverse ? prevFirst : prevLast;
+                                const TopoDS_Vertex& curEntry = step.reverse ? curLast : curFirst;
+                                const bool shared = !prevExit.IsNull() && !curEntry.IsNull() &&
+                                    prevExit.IsSame(curEntry);
+                                double vertexDistance = -1.0;
+                                if (!prevExit.IsNull() && !curEntry.IsNull())
+                                    vertexDistance = BRep_Tool::Pnt(prevExit).Distance(BRep_Tool::Pnt(curEntry));
+                                std::ostringstream message;
+                                message << "region-boundary: gap step=" << stepIndex
+                                        << " prevEdge=" << previousStep->inputIndex
+                                        << " edge=" << step.inputIndex
+                                        << " dist=" << gap
+                                        << " allowed=" << allowedGap
+                                        << " sewing=" << sewingTolerance
+                                        << " sharedVertex=" << (shared ? 1 : 0)
+                                        << " vertexDist=" << vertexDistance
+                                        << " prevVertexTol="
+                                        << (prevExit.IsNull() ? -1.0 : BRep_Tool::Tolerance(prevExit))
+                                        << " curVertexTol="
+                                        << (curEntry.IsNull() ? -1.0 : BRep_Tool::Tolerance(curEntry))
+                                        << " prevEdgeTol=" << BRep_Tool::Tolerance(previousInput->workingEdge)
+                                        << " curEdgeTol=" << BRep_Tool::Tolerance(input.workingEdge)
+                                        << " prevDegenerated="
+                                        << (BRep_Tool::Degenerated(previousInput->workingEdge) ? 1 : 0)
+                                        << " curDegenerated="
+                                        << (BRep_Tool::Degenerated(input.workingEdge) ? 1 : 0)
+                                        << " prevLen=" << EdgeLengthNative(previousInput->workingEdge)
+                                        << " curLen=" << EdgeLengthNative(input.workingEdge)
+                                        << " prevP=(" << previousPoint.X() << "," << previousPoint.Y()
+                                        << "," << previousPoint.Z() << ")"
+                                        << " curP=(" << p.X() << "," << p.Y() << "," << p.Z() << ")";
+                                logBoundaryGap(message.str());
+                            }
+                            diagnostic = "region-boundary: boundary sample is discontinuous";
+                            return false;
+                        }
+                        if (gap > sewingTolerance)
+                        {
+                            std::ostringstream message;
+                            message << "region-boundary: gap within vertex tolerance step=" << stepIndex
+                                    << " prevEdge="
+                                    << (previousStep != nullptr ? previousStep->inputIndex : -1)
+                                    << " edge=" << step.inputIndex
+                                    << " dist=" << gap
+                                    << " allowed=" << allowedGap;
+                            logBoundaryGap(message.str());
+                        }
                     }
                     if (!hasPoint) { firstPoint = p; hasPoint = true; }
                     previousPoint = p;
@@ -1435,13 +1560,33 @@ namespace
                 ref.startIndex = referenceStart;
                 ref.endIndex = endPoint;
                 loop.edgeRefs.push_back(ref);
+                previousInput = &input;
+                previousStep = &step;
+                ++stepIndex;
             }
             if (loop.edgeRefs.empty())
             {
                 diagnostic = "region-boundary: boundary loop has no original references";
                 return false;
             }
-            if (!hasPoint || previousPoint.Distance(firstPoint) > sewingTolerance)
+            double closureGap = sewingTolerance;
+            if (!component.steps.empty())
+            {
+                const HeatingMoldBoundaryNative::BoundaryStep& firstStep = component.steps.front();
+                const HeatingMoldBoundaryNative::BoundaryStep& lastStep = component.steps.back();
+                TopoDS_Vertex lastFirst, lastLast, firstFirst, firstLast;
+                TopExp::Vertices(
+                    boundaryInputs[static_cast<size_t>(lastStep.inputIndex)].workingEdge,
+                    lastFirst, lastLast, Standard_True);
+                TopExp::Vertices(
+                    boundaryInputs[static_cast<size_t>(firstStep.inputIndex)].workingEdge,
+                    firstFirst, firstLast, Standard_True);
+                const TopoDS_Vertex& lastExit = lastStep.reverse ? lastFirst : lastLast;
+                const TopoDS_Vertex& firstEntry = firstStep.reverse ? firstLast : firstFirst;
+                if (!lastExit.IsNull() && !firstEntry.IsNull() && lastExit.IsSame(firstEntry))
+                    closureGap = std::max(sewingTolerance, BRep_Tool::Tolerance(lastExit));
+            }
+            if (!hasPoint || previousPoint.Distance(firstPoint) > closureGap)
             {
                 diagnostic = "region-boundary: boundary loop is not closed";
                 return false;
