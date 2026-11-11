@@ -13,11 +13,12 @@ namespace HeatingMold.App;
 /// <summary>
 /// 적용영역 자체를 여러 독립 영역으로 나눈다. 분할 결과는 영구적인 부모/자식 관계가 없는
 /// 일반 작업영역이며, 영역마다 회로 하나를 생성한다. 분할은 다음 순서를 지킨다.
-/// 1) 목표전력·허용치·마진/간격으로 필요한 영역 수를 계산한다.
+/// 1) 이 영역이 배분받은 발열 전력·허용치·마진/간격으로 필요한 영역 수를 계산한다.
 /// 2) 예상 배치 길이가 균등해지도록 절단선을 정하고 자식 영역을 준비한다.
 /// 3) 부모의 시작/종료 인출점이 있으면 그 측면을 따라 새 영역의 인출점을 자동으로 정한다.
 ///    (마음에 들지 않으면 기존 인출점 버튼으로 다시 선택할 수 있다.)
-/// 4) 생성 후 실측 3D 길이 비율로 총 목표전력을 다시 배분한다.
+/// 4) 분할 후 검토 계산이 확정된 전체 영역의 실측 3D 길이 비율로 공통 발열전력을 다시 배분한다.
+///    분할은 총 발열전력을 늘리지 않는다.
 /// </summary>
 public partial class MainWindow
 {
@@ -26,17 +27,6 @@ public partial class MainWindow
     /// 명시적으로 거부하기 위한 자원 상한이며, 초과하면 오류로 보고한다.
     /// </summary>
     private const int MaxSplitParts = 256;
-
-    private sealed class SplitFamily
-    {
-        public string Key { get; init; } = "";
-        public double TotalTargetPowerW { get; set; }
-        public string SourceAreaName { get; init; } = "";
-        public List<WorkingArea> Parts { get; } = new();
-    }
-
-    private readonly Dictionary<string, SplitFamily> _splitFamilies = new();
-    private bool _applyingSplitAllocation;
 
     private void SplitArea_Click(object sender, RoutedEventArgs e)
     {
@@ -69,14 +59,24 @@ public partial class MainWindow
             SetSplitStatus("적용영역이 단일 폐합 영역일 때만 분할할 수 있습니다.");
             return;
         }
+        // 분할 수는 '지금' 배분된 전력으로 계산해야 한다. 마진·간격이나 다른 영역의 경로가
+        // 바뀌었을 수 있으므로 클릭 시점에 배분을 다시 계산한다. 형상은 건드리지 않는다.
+        UpdateCircuitTable();
+        if (IsPatternInputStale(area))
+        {
+            SetSplitStatus("입력 조건이 변경되어 경로가 오래되었습니다 — 경로를 다시 생성한 뒤 분할하세요.");
+            return;
+        }
         if (area.RegionCadBoundary == null)
         {
             SetSplitStatus("적용영역의 원본 CAD 외곽 참조가 없어 분할할 수 없습니다 — 영역을 다시 확정하세요.");
             return;
         }
+        // 분할은 공통 발열전력의 총량을 늘리지 않는다. 이 영역이 배분받은 몫을 기준으로
+        // 필요 전압이 허용치를 넘지 않도록 나눌 수 있는 조각 수만 계산한다.
         if (area.TargetPowerW is not double totalPower || !(totalPower > 0))
         {
-            SetSplitStatus(area.TargetPowerError ?? "목표 발열전력을 먼저 입력해야 분할 수를 계산할 수 있습니다.");
+            SetSplitStatus("발열 전력이 배분되지 않아 분할 수를 계산할 수 없습니다 — 검토 탭에서 발열 전력과 경로를 확인하세요.");
             return;
         }
         if (!TryGetParams(out double margin, out double spacing, out string parameterError))
@@ -120,7 +120,7 @@ public partial class MainWindow
         if (plan.Parts > MaxSplitParts)
         {
             SetSplitStatus(string.Format(CultureInfo.CurrentCulture,
-                "필요한 분할 수가 너무 큽니다 — {0}개. 목표 발열전력과 허용 전압/전류/전력을 확인하세요.", plan.Parts));
+                "필요한 분할 수가 너무 큽니다 — {0}개. 이 영역에 배분된 발열 전력과 허용 전압/전류를 확인하세요.", plan.Parts));
             return;
         }
 
@@ -155,7 +155,7 @@ public partial class MainWindow
             return;
         }
 
-        if (!TryBuildSplitChildren(area, split, totalPower, out List<WorkingArea> children,
+        if (!TryBuildSplitChildren(area, split, out List<WorkingArea> children,
                 out string childFailure))
         {
             SetSplitStatus("분할 영역을 준비할 수 없습니다 — " + childFailure);
@@ -200,8 +200,6 @@ public partial class MainWindow
             return;
         }
 
-        DetachFromSplitFamily(area);
-
         if (area.AreaId > 0)
         {
             try { Bridge.ClearAreaHighlight(area.AreaId); }
@@ -210,21 +208,10 @@ public partial class MainWindow
 
         _areas.Clear();
         _areas.AddRange(finalAreas);
-        string familyKey = "split-" + area.Name + "-" + Guid.NewGuid().ToString("N");
+        // 분할된 영역은 부모와 같은 공통 발열전력을 길이 비율로 나누어 쓴다.
+        // 총량은 늘지 않으며, 배분은 검토 계산이 확정된 전체 영역을 대상으로 다시 수행한다.
         foreach (WorkingArea child in children)
-        {
             child.AreaId = ++_nextAreaId;
-            child.SplitFamilyKey = familyKey;
-        }
-
-        var family = new SplitFamily
-        {
-            Key = familyKey,
-            TotalTargetPowerW = totalPower,
-            SourceAreaName = area.Name,
-        };
-        family.Parts.AddRange(children);
-        _splitFamilies[family.Key] = family;
 
         ApplyAreaColors();
         ActivateArea(children[0]);
@@ -245,7 +232,7 @@ public partial class MainWindow
 
     /// <summary>분할 밴드마다 독립 영역과 그 artificial 절단선 provenance를 준비한다.</summary>
     private bool TryBuildSplitChildren(WorkingArea parent, AreaSplitResult split,
-        double totalTargetPowerW, out List<WorkingArea> children, out string failure)
+        out List<WorkingArea> children, out string failure)
     {
         children = new List<WorkingArea>();
         failure = string.Empty;
@@ -268,7 +255,6 @@ public partial class MainWindow
         var usedColors = new HashSet<System.Windows.Media.Color>(_areas.Select(existing => existing.Color));
         int parentColorIndex = Array.IndexOf(AreaColors, parent.Color);
         if (parentColorIndex < 0) parentColorIndex = 0;
-        double provisionalPower = totalTargetPowerW / split.Bands.Count;
 
         for (int i = 0; i < split.Bands.Count; i++)
         {
@@ -316,11 +302,9 @@ public partial class MainWindow
                 // 전체 절단선(A/B)을 저장한다. 잘라낸 구간을 저장하면 재열기에서 절단선 식별자가
                 // 달라져 그 위에 저장된 인출점을 복원할 수 없다.
                 SplitCutLines = cutLines.ToList(),
-                TargetPowerText = provisionalPower.ToString("0.###", CultureInfo.CurrentCulture),
             };
             child.FaceIdSet.UnionWith(parent.FaceIdSet);
             child.Region.Add(band.Outer.ToList());
-            ApplyTargetPowerText(child);
             children.Add(child);
         }
 
@@ -376,91 +360,6 @@ public partial class MainWindow
         return AreaColors[(parentColorIndex + usedColors.Count) % AreaColors.Length];
     }
 
-    /// <summary>
-    /// 분할 가족에서 영역을 떼어낸다. 남은 영역의 총 목표전력은 떼어낸 영역의 현재 배분만큼
-    /// 줄어들고, 이미 확정된 다른 영역의 목표전력은 다시 배분하지 않는다.
-    /// </summary>
-    private void DetachFromSplitFamily(WorkingArea area)
-    {
-        if (area == null || string.IsNullOrEmpty(area.SplitFamilyKey)) return;
-        string key = area.SplitFamilyKey;
-        area.SplitFamilyKey = "";
-        if (!_splitFamilies.TryGetValue(key, out SplitFamily family)) return;
-
-        family.Parts.Remove(area);
-        if (area.TargetPowerW is double allocated)
-            family.TotalTargetPowerW = Math.Max(0.0, family.TotalTargetPowerW - allocated);
-        if (family.Parts.Count == 0)
-            _splitFamilies.Remove(key);
-    }
-
-    /// <summary>
-    /// 분할 가족의 모든 영역에 회로가 준비되면 실측 3D 길이 비율로 총 목표전력을 다시 배분한다.
-    /// 배분 후에는 각 영역이 자기 목표전력을 소유하므로 다른 영역 편집이 값을 바꾸지 않는다.
-    /// </summary>
-    private void TryApplySplitFamilyAllocation()
-    {
-        if (_applyingSplitAllocation || _splitFamilies.Count == 0) return;
-        bool changed = false;
-        List<string> keys = _splitFamilies.Keys.ToList();
-        foreach (string key in keys)
-        {
-            if (!_splitFamilies.TryGetValue(key, out SplitFamily family)) continue;
-            if (family.Parts.Any(part => !_areas.Contains(part)))
-            {
-                _splitFamilies.Remove(key);
-                continue;
-            }
-            if (family.Parts.Any(part => !HasUsableLengths(part, out _) || part.Circuits.Count != 1))
-                continue;
-
-            var circuits = family.Parts
-                .Select(part => (part.Name + "-1",
-                    GetCircuitLengths(part).Sum(circuit => circuit.HeatingLengthMm)))
-                .ToList();
-            if (!TargetPowerAllocation.TryAllocate(circuits, family.TotalTargetPowerW,
-                    out IReadOnlyList<TargetPowerShare> shares, out string allocationError))
-            {
-                _splitFamilies.Remove(key);
-                foreach (WorkingArea part in family.Parts) part.SplitFamilyKey = "";
-                SetSplitStatus("분할 목표전력 배분 실패 — " + allocationError);
-                continue;
-            }
-
-            _applyingSplitAllocation = true;
-            try
-            {
-                // 가족을 먼저 제거한다. 배분 중 갱신되는 전기 표가 다시 배분을 호출하지 않게 한다.
-                _splitFamilies.Remove(key);
-                for (int i = 0; i < family.Parts.Count; i++)
-                {
-                    WorkingArea part = family.Parts[i];
-                    part.SplitFamilyKey = "";
-                    part.TargetPowerText = shares[i].TargetPowerW.ToString("0.###", CultureInfo.CurrentCulture);
-                    ApplyTargetPowerText(part);
-                }
-                if (_activeArea != null && family.Parts.Contains(_activeArea) && TargetPowerBox != null)
-                {
-                    _suppressPatternInputWriteBack = true;
-                    try { TargetPowerBox.Text = _activeArea.TargetPowerText; }
-                    finally { _suppressPatternInputWriteBack = false; }
-                }
-            }
-            finally
-            {
-                _applyingSplitAllocation = false;
-            }
-
-            changed = true;
-            SetSplitStatus(string.Format(CultureInfo.CurrentCulture,
-                "{0} 분할 영역의 실측 길이로 목표 발열전력을 배분했습니다 — 총 {1:F1} W.",
-                family.SourceAreaName, family.TotalTargetPowerW));
-        }
-
-        if (!changed) return;
-        RefreshElectricalTable();
-        UpdateExportScopeText();
-    }
     private void SetSplitStatus(string message)
     {
         if (SplitStatusText != null) SplitStatusText.Text = message ?? "";

@@ -392,14 +392,12 @@ internal sealed class VisualElectricalSpec
     public int PresetIndex { get; set; }
     /// <summary>회로별 허용 전압 [V]. 계산 입력이 아니라 판정 한도다.</summary>
     public double VoltageV { get; set; } = 220;
-    /// <summary>영역 하나의 목표 발열전력 [W]. 0이면 미입력 상태로 시나리오를 실행한다.</summary>
-    public double TargetPowerW { get; set; }
     public int ReviewScope { get; set; }
     public double DiameterMm { get; set; }
     public double ResistanceOhmPerMeter { get; set; }
-    /// <summary>허용 전류 [A]. 생략하면 제품 기본값을 쓴다.</summary>
+    /// <summary>회로별 허용 전류 [A]. 생략하면 제품 기본값을 쓴다.</summary>
     public double AllowedCurrentA { get; set; } = 16;
-    /// <summary>허용 전력 [kW]. 생략하면 제품 기본값을 쓴다.</summary>
+    /// <summary>전체가 나누어 쓰는 총 발열전력 [kW]. 생략하면 제품 기본값을 쓴다.</summary>
     public double AllowedPowerKw { get; set; } = 3.5;
     /// <summary>지정하면 모든 회로의 판정이 이 값과 일치해야 한다. 생략하면 판정 자체를 검사하지 않는다.</summary>
     public bool? ExpectedWithinLimits { get; set; }

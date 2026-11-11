@@ -57,11 +57,23 @@ public partial class MainWindow
             }
 
             // 모델을 교체하기 전에 전기 제원 호환성을 확정한다. 실패하면 현재 작업을 그대로 둔다.
-            if (!ProjectElectricalMigration.TryNormalize(document, out string electricalMigrationError))
+            if (!ProjectElectricalMigration.TryNormalize(
+                    document, out string electricalMigrationError, out string sharedPowerNotice))
             {
                 ReportProjectLoadFailure("저장된 전기 검토 설정을 복원할 수 없습니다",
                     new InvalidDataException(electricalMigrationError));
                 return false;
+            }
+
+            // 이전 정책 파일은 영역마다 목표 발열전력을 따로 저장했다. 총량이 달라 배분 결과가
+            // 바뀌는 경우에는 모델을 교체하기 전에 확인을 받는다.
+            if (sharedPowerNotice != null)
+            {
+                MessageBoxResult powerAnswer = MessageBox.Show(this,
+                    sharedPowerNotice + Environment.NewLine + Environment.NewLine + "이대로 열까요?",
+                    "발열 전력 정책 변경", MessageBoxButton.YesNo, MessageBoxImage.Warning,
+                    MessageBoxResult.Yes);
+                if (powerAnswer != MessageBoxResult.Yes) return false;
             }
 
             string sourcePath = ResolveProjectSourcePath(document, projectPath);
@@ -406,7 +418,6 @@ public partial class MainWindow
             Direction = ParseDirection(document.Direction),
             MarginText = document.MarginText ?? "5",
             SpacingText = document.SpacingText ?? "50",
-            TargetPowerText = document.TargetPowerText ?? "",
             ExitFaceId = mappedExitFace,
             ExitFaceRevision = mappedExitFace >= 0 ? context.Revision : 0,
             ExitChain = MapVec2(document.ExitChain),
@@ -431,7 +442,6 @@ public partial class MainWindow
         foreach (int faceId in mappedFaces) area.FaceIdSet.Add(faceId);
         foreach (List<ProjectVec2> loop in document.Region ?? new List<List<ProjectVec2>>())
             area.Region.Add(MapVec2(loop));
-        ApplyTargetPowerText(area);
 
         area.Circuits = RestoreCircuits(document.Circuits, document, mappedExitRefs, context,
             "작업영역 " + document.Name + " 회로");

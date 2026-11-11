@@ -655,7 +655,7 @@ namespace HeatingMold.App
                 CircuitLengthInfo circuit = snapshot.Circuits.FirstOrDefault(c => c.CircuitId == row.CircuitId);
                 Require(circuit != null, "전기표 회로 ID에 대응하는 회로가 없습니다: " + row.CircuitId);
                 Require(circuit.TargetPowerW.HasValue,
-                    "회로에 목표 발열전력이 배정되지 않았습니다: " + row.CircuitId);
+                    "회로에 배분된 발열전력이 없습니다: " + row.CircuitId);
                 ElectricalResult expected = ElectricalCalculator.ComputeFromTargetPower(
                     circuit.HeatingLengthMm, wire, circuit.TargetPowerW.Value);
                 Require(expected.IsValid, "회로 계산이 유효하지 않습니다: " + row.CircuitId);
@@ -1353,9 +1353,6 @@ namespace HeatingMold.App
             AllowedVoltageBox.Text = scenario.Electrical.VoltageV.ToString("0.###", CultureInfo.CurrentCulture);
             AllowedCurrentBox.Text = scenario.Electrical.AllowedCurrentA.ToString("0.###", CultureInfo.CurrentCulture);
             AllowedPowerBox.Text = scenario.Electrical.AllowedPowerKw.ToString("0.###", CultureInfo.CurrentCulture);
-            TargetPowerBox.Text = scenario.Electrical.TargetPowerW > 0
-                ? scenario.Electrical.TargetPowerW.ToString("0.###", CultureInfo.CurrentCulture)
-                : "";
 
             Require(TryReadElectricalLimits(out TargetPowerElectricalSettings settings, out string settingsError),
                 "전기 입력을 읽지 못했습니다: " + settingsError);
@@ -1375,7 +1372,7 @@ namespace HeatingMold.App
                 CircuitLengthInfo circuit = snapshot.Circuits.FirstOrDefault(c => c.CircuitId == row.CircuitId);
                 Require(circuit != null, "전기표 회로 ID에 대응하는 회로가 없습니다: " + row.CircuitId);
                 Require(circuit.TargetPowerW.HasValue,
-                    "회로에 목표 발열전력이 배정되지 않았습니다: " + row.CircuitId);
+                    "회로에 배분된 발열전력이 없습니다: " + row.CircuitId);
                 ElectricalResult expected = ElectricalCalculator.ComputeFromTargetPower(
                     circuit.HeatingLengthMm, wire, circuit.TargetPowerW.Value);
                 Require(expected.IsValid, "회로 계산이 유효하지 않습니다: " + row.CircuitId);

@@ -58,14 +58,15 @@ static class SidebarTabChecks
             "active-area selector and result state are available above every tab");
         object pathContent = ((TabItem)tabs.Items[1]).Content;
         object reviewContent = ((TabItem)tabs.Items[2]).Content;
-        object targetPowerBox = window.FindName("TargetPowerBox")!;
+        object sharedPowerBox = window.FindName("AllowedPowerBox")!;
         object splitAreaButton = window.FindName("SplitAreaButton")!;
-        Check(LogicalContains(reviewContent, targetPowerBox) &&
+        Check(LogicalContains(reviewContent, sharedPowerBox) &&
               LogicalContains(reviewContent, splitAreaButton),
-            "target power input and automatic split live on the review tab");
-        Check(!LogicalContains(pathContent, targetPowerBox) &&
+            "the shared heating power input and automatic split live on the review tab");
+        Check(window.FindName("TargetPowerBox") == null &&
+              !LogicalContains(pathContent, sharedPowerBox) &&
               !LogicalContains(pathContent, splitAreaButton),
-            "the path tab stays generation-only");
+            "the per-area target-power input is gone and the path tab stays generation-only");
         object electricalGrid = window.FindName("ElectricalSpecGrid")!;
         object reviewScope = window.FindName("ReviewScopeBox")!;
         object presetBox = window.FindName("WirePresetBox")!;

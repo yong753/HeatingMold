@@ -5,8 +5,9 @@ using HeatingMold.Core.Electrical;
 namespace HeatingMold.App;
 
 /// <summary>
-/// 목표 발열전력 방식의 검토 설정. 회로별 필요 전압을 계산하므로 공급 전압은 없다.
-/// 허용 전압·전류·전력은 회로별 판정 한도로만 쓴다.
+/// 발열 전력 배분 방식의 검토 설정. 회로별 필요 전압을 계산하므로 공급 전압은 없다.
+/// 허용 전압·전류는 회로별 판정 한도이고, 허용 전력은 확정된 영역 전체가 나누어 쓰는
+/// 총 발열전력(공통 한도)이다.
 /// </summary>
 internal sealed record TargetPowerElectricalSettings(
     HeatingWireSpec Wire,
@@ -29,12 +30,6 @@ internal static class ElectricalSettingsResolver
     public static string DefaultPowerLimitText =>
         (ElectricalLimits.DefaultPowerLimitW / 1000.0).ToString("0.###", CultureInfo.CurrentCulture);
 
-    /// <summary>새 작업 영역의 기본 목표 발열전력(W). 사용자 확정값 3.5 kW.</summary>
-    public const double DefaultTargetPowerW = 3_500.0;
-
-    public static string DefaultTargetPowerText =>
-        DefaultTargetPowerW.ToString("0.###", CultureInfo.CurrentCulture);
-
     public static bool TryGetWire(int presetIndex, out HeatingWireSpec wire)
     {
         switch (presetIndex)
@@ -52,8 +47,9 @@ internal static class ElectricalSettingsResolver
     }
 
     /// <summary>
-    /// 목표 발열전력 방식 입력을 해석한다. 전압 입력은 계산에 쓰지 않고
+    /// 목표 전력 배분 방식 입력을 해석한다. 전압 입력은 계산에 쓰지 않고
     /// 허용 전압 한도로만 쓰며, 필요 전압은 회로마다 실제 길이로 계산한다.
+    /// 전력은 회로별 한도가 아니라 전체가 나누어 쓰는 총 발열전력이다.
     /// </summary>
     public static bool TryResolveLimits(
         int presetIndex,
@@ -73,13 +69,13 @@ internal static class ElectricalSettingsResolver
             return false;
         if (!TryParse(allowedCurrentText, "허용 전류", allowZero: false, out double currentLimit, out error))
             return false;
-        if (!TryParse(allowedPowerText, "허용 전력", allowZero: false, out double powerLimitKw, out error))
+        if (!TryParse(allowedPowerText, "발열 전력", allowZero: false, out double powerLimitKw, out error))
             return false;
 
         double powerLimitW = powerLimitKw * 1000.0;
         if (!double.IsFinite(powerLimitW))
         {
-            error = "허용 전력이 너무 큽니다";
+            error = "발열 전력이 너무 큽니다";
             return false;
         }
 
@@ -94,10 +90,6 @@ internal static class ElectricalSettingsResolver
         error = null;
         return true;
     }
-
-    /// <summary>영역별 목표 발열전력 입력(W)을 해석한다. 0 이하는 판정을 조용히 통과시키므로 거부한다.</summary>
-    public static bool TryParseTargetPowerW(string text, out double powerW, out string error) =>
-        TryParse(text, "목표 발열전력", allowZero: false, out powerW, out error);
 
     private static bool TryParse(
         string text, string name, bool allowZero, out double value, out string error)

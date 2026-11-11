@@ -90,16 +90,16 @@ public class ElectricalSettingsResolverTests
     [InlineData("-1")]
     [InlineData("")]
     [InlineData("abc")]
-    public void InvalidAllowedPower_IsRejected(string powerText)
+    public void InvalidSharedPower_IsRejected(string powerText)
     {
         Assert.False(ElectricalSettingsResolver.TryResolveLimits(
             0, Text(220), Text(16), powerText, out _, out string error));
 
-        Assert.Contains("허용 전력", error);
+        Assert.Contains("발열 전력", error);
     }
 
     [Fact]
-    public void AllowedPower_IsConvertedFromKilowattsToWatts()
+    public void SharedPower_IsConvertedFromKilowattsToWatts()
     {
         Assert.True(ElectricalSettingsResolver.TryResolveLimits(
             0, Text(220), Text(32), Text(7.5), out TargetPowerElectricalSettings settings, out _));
@@ -109,47 +109,13 @@ public class ElectricalSettingsResolverTests
     }
 
     [Fact]
-    public void AllowedPowerOverflow_IsRejected()
+    public void SharedPowerOverflow_IsRejected()
     {
         string huge = double.MaxValue.ToString("R", CultureInfo.CurrentCulture);
 
         Assert.False(ElectricalSettingsResolver.TryResolveLimits(
             0, Text(220), Text(16), huge, out _, out string error));
 
-        Assert.Contains("허용 전력", error);
-    }
-
-    [Fact]
-    public void TargetPower_AcceptsPositiveValueInWatts()
-    {
-        Assert.True(ElectricalSettingsResolver.TryParseTargetPowerW(Text(1250), out double powerW, out string error));
-
-        Assert.True(string.IsNullOrEmpty(error));
-        Assert.Equal(1_250.0, powerW);
-    }
-
-    [Fact]
-    public void DefaultTargetPower_IsThreePointFiveKilowattsAndRoundTrips()
-    {
-        // 사용자 확정: 새 영역의 기본 목표 발열전력은 3.5 kW다.
-        Assert.Equal(3_500.0, ElectricalSettingsResolver.DefaultTargetPowerW);
-        Assert.True(ElectricalSettingsResolver.TryParseTargetPowerW(
-            ElectricalSettingsResolver.DefaultTargetPowerText, out double powerW, out string error));
-        Assert.True(string.IsNullOrEmpty(error));
-        Assert.Equal(3_500.0, powerW);
-    }
-
-    [Theory]
-    [InlineData("0")]
-    [InlineData("-5")]
-    [InlineData("")]
-    [InlineData("NaN")]
-    [InlineData("Infinity")]
-    [InlineData("abc")]
-    public void TargetPower_RejectsNonPositiveOrNonNumeric(string text)
-    {
-        Assert.False(ElectricalSettingsResolver.TryParseTargetPowerW(text, out _, out string error));
-
-        Assert.Contains("목표 발열전력", error);
+        Assert.Contains("발열 전력", error);
     }
 }

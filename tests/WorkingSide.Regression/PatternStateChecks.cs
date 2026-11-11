@@ -115,10 +115,7 @@ static class PatternStateChecks
         areaType.GetProperty("RegionBoundary")!.SetValue(value, new ExactRegionContainment(
             new MockExactRegionBoundary(new Vec2[] { new(-12, -8), new(12, -8), new(12, 8), new(-12, 8) })));
         areaType.GetProperty("ExitBoundary")!.SetValue(value, new MockReviewBoundary());
-        // 전기 검토 계산을 결정적으로 확인하려고 이 검사 전용 영역은 1000 W로 고정한다.
-        // 새 영역의 기본값(3.5 kW)은 아래에서 별도로 확인한다.
-        areaType.GetProperty("TargetPowerText")!.SetValue(value, "1000");
-        areaType.GetProperty("TargetPowerW")!.SetValue(value, 1000.0);
+        // 발열 전력은 영역별 입력이 아니라 검토 계산이 배분하는 파생값이므로 여기서 정하지 않는다.
         ((IList)Field<object>(window, "_areas")).Add(value);
         return value;
     }
@@ -229,46 +226,88 @@ static class PatternStateChecks
         Check(window.FindName("CircuitLengthGrid") == null,
             "the duplicated circuit-length table is removed from the review tab");
 
-        // 사용자 확정: 새 작업 영역의 기본 목표 발열전력은 3.5 kW다.
-        object fresh = Activator.CreateInstance(areaType, nonPublic: true)!;
-        Check((string)areaType.GetProperty("TargetPowerText")!.GetValue(fresh)! == "3500",
-            "new working areas start with the confirmed 3.5 kW target power");
-
-        // 목표전력 미입력은 '경로 없음'이 아니다. 회로·실측 길이는 남고 전기 값만 비운다.
-        areaType.GetProperty("TargetPowerText")!.SetValue(b, "");
-        areaType.GetProperty("TargetPowerW")!.SetValue(b, null);
-        areaType.GetProperty("TargetPowerError")!.SetValue(b, null);
-        Invoke(window, "UpdateCircuitTable");
-        Invoke(window, "UpdateExportScopeText");
+        // 사용자 확정: 발열 전력은 전체가 나누어 쓰는 하나의 입력이며, 회로별 배분은 실측 길이 비율이다.
+        Check(window.FindName("TargetPowerBox") == null,
+            "the per-area target-power input is removed from the review tab");
+        var powerBox = (TextBox)window.FindName("AllowedPowerBox");
         var summary = (TextBlock)window.FindName("ElectricalSummaryText");
         var specGrid = (DataGrid)window.FindName("ElectricalSpecGrid");
-        Check(specGrid.Items.Count == 3,
-            "missing target power keeps every circuit row in the specification table");
-        object? missingRow = null;
+        Check(powerBox.Text == "3.5",
+            "a new document starts with the confirmed 3.5 kW shared heating power");
+
+        // 20 mm 대 30 mm → 전체 3.5 kW를 2:3으로 나눠 1.4 kW / 2.1 kW.
+        Invoke(window, "UpdateCircuitTable");
+        double? powerA = null, powerB = null;
         foreach (object item in specGrid.Items)
         {
             string id = (string)item.GetType().GetProperty("CircuitId")!.GetValue(item)!;
-            if (id.StartsWith("PatternStateB-")) missingRow = item;
+            if (id.StartsWith("PatternStateA-")) powerA = (double?)item.GetType().GetProperty("TargetPowerW")!.GetValue(item);
+            if (id.StartsWith("PatternStateB-")) powerB = (double?)item.GetType().GetProperty("TargetPowerW")!.GetValue(item);
         }
-        Check(missingRow != null,
-            "an area without target power still gets an electrical specification row");
-        Check((string)missingRow!.GetType().GetProperty("Verdict")!.GetValue(missingRow)! == "—"
-            && (string)missingRow.GetType().GetProperty("Note")!.GetValue(missingRow)! == "목표 발열전력 미입력",
-            "missing target power shows a dash verdict and an explicit note");
-        Check(missingRow.GetType().GetProperty("TargetPowerW")!.GetValue(missingRow) == null
-            && missingRow.GetType().GetProperty("VoltageV")!.GetValue(missingRow) == null,
-            "missing target power leaves voltage and power blank instead of zero");
-        Check(summary.Text.Contains("목표전력 미입력 1") && !summary.Text.Contains("전체 OK"),
-            "the summary separates missing target power from calculation errors");
-        Check(exportScope.Text.Contains("목표전력 미입력"),
-            "missing target power blocks export with an explicit reason");
+        Check(powerA.HasValue && powerB.HasValue
+            && Math.Abs(powerA.Value - 1_400.0) < 0.001 && Math.Abs(powerB.Value - 2_100.0) < 0.001,
+            "the shared heating power is allocated by measured circuit length (1.4 kW / 2.1 kW)");
+        Check(summary.Text.Contains("배분 3.50 kW / 한도 3.50 kW"),
+            "the summary states the allocated total against the shared limit");
 
-        areaType.GetProperty("TargetPowerText")!.SetValue(b, "1000");
-        areaType.GetProperty("TargetPowerW")!.SetValue(b, 1000.0);
+        // 표시 범위를 현재 영역으로 좁혀도 배분은 전체 영역 기준이므로 값이 바뀌지 않는다.
+        scopeBox.SelectedIndex = 1;
+        Invoke(window, "UpdateCircuitTable");
+        double? currentOnlyPower = null;
+        foreach (object item in specGrid.Items)
+        {
+            string id = (string)item.GetType().GetProperty("CircuitId")!.GetValue(item)!;
+            if (id.StartsWith("PatternStateA-")) currentOnlyPower = (double?)item.GetType().GetProperty("TargetPowerW")!.GetValue(item);
+        }
+        Check(currentOnlyPower.HasValue && Math.Abs(currentOnlyPower.Value - 1_400.0) < 0.001,
+            "filtering the table to the current area does not re-allocate the shared power");
+        Check(summary.Text.Contains("전력은 전체 배분"),
+            "the current-area scope states that the allocation still covers every area");
+        scopeBox.SelectedIndex = 0;
+
+        // 준비되지 않은 영역은 배분 대상에서 빠지고, 남은 영역이 전체 발열 전력을 나눠 쓴다.
+        // 남은 회로가 허용치 안에 들어와도 경로 없는 영역이 있으면 '전체 OK'가 아니다.
+        powerBox.Text = "0.02";
+        object? savedPatternB = areaType.GetProperty("Pattern")!.GetValue(b);
+        areaType.GetProperty("Pattern")!.SetValue(b, null);
         Invoke(window, "UpdateCircuitTable");
         Invoke(window, "UpdateExportScopeText");
-        Check(!summary.Text.Contains("목표전력 미입력") && exportScope.Text.Contains("준비 2/2"),
-            "restoring the target power returns the area to the exportable review");
+        double? onlyPowerA = null;
+        foreach (object item in specGrid.Items)
+        {
+            string id = (string)item.GetType().GetProperty("CircuitId")!.GetValue(item)!;
+            if (id.StartsWith("PatternStateA-")) onlyPowerA = (double?)item.GetType().GetProperty("TargetPowerW")!.GetValue(item);
+        }
+        Check(specGrid.Items.Count == 2 && onlyPowerA.HasValue && Math.Abs(onlyPowerA.Value - 20.0) < 0.001,
+            "an area without a generated route is excluded from the shared allocation");
+        Check(!summary.Text.Contains("전체 OK") && summary.Text.Contains("준비 1/2")
+            && !exportScope.Text.Contains("준비 2/2"),
+            "an unready area blocks the whole OK verdict and the export");
+
+        // 잘못된 입력에서는 배분을 다시 계산할 수 없으므로 이전 배분값을 남기지 않는다.
+        int areaCountBefore = ((IList)Field<object>(window, "_areas")).Count;
+        powerBox.Text = "abc";
+        Invoke(window, "UpdateCircuitTable");
+        object? clearedA = areaType.GetProperty("TargetPowerW")!.GetValue(a);
+        object? clearedB = areaType.GetProperty("TargetPowerW")!.GetValue(b);
+        Check(clearedA == null && clearedB == null && summary.Text.Contains("전기 입력 오류"),
+            "an invalid shared power clears the previous allocation instead of keeping it");
+        powerBox.Text = "3.5";
+
+        // 전기 입력은 파생 계산만 바꾼다. 확정 경로의 길이·네이티브 조각 ID·인출점은 그대로여야 한다.
+        double[] lengthsA = (double[])areaType.GetProperty("RoutePieceLengths")!.GetValue(a)!;
+        int[] idsA = (int[])areaType.GetProperty("NativePieceIds")!.GetValue(a)!;
+        Check(lengthsA.Length == 1 && Math.Abs(lengthsA[0] - 20.0) < 1e-9
+            && idsA.Length == 1 && idsA[0] == -4501
+            && ((IList)Field<object>(window, "_areas")).Count == areaCountBefore,
+            "editing the shared power leaves committed lengths, native ids and the area list untouched");
+
+        areaType.GetProperty("Pattern")!.SetValue(b, savedPatternB);
+        Invoke(window, "UpdateCircuitTable");
+        Invoke(window, "UpdateExportScopeText");
+        Check(specGrid.Items.Count == 3 && summary.Text.Contains("배분 3.50 kW")
+            && exportScope.Text.Contains("준비 2/2"),
+            "restoring the route returns both areas to the shared allocation and exportable review");
 
         // (d)에서 위조한 음수 조각 ID는 네이티브에 존재하지 않으므로, 다음 삭제 검증의
         // oldIds에서 제거해 차등 커밋이 실제 존재하지 않는 ID 삭제를 시도하지 않게 한다.

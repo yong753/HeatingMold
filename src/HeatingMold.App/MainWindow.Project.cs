@@ -267,7 +267,6 @@ namespace HeatingMold.App
                 Direction = area.Direction.ToString(),
                 MarginText = area.MarginText,
                 SpacingText = area.SpacingText,
-                TargetPowerText = area.TargetPowerText,
                 ExitFaceId = area.ExitFaceId,
                 ExitFaceRevision = area.ExitFaceRevision,
                 ExitChain = area.ExitChain.Select(ToProjectVec2).ToList(),

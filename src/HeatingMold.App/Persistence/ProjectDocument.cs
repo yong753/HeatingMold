@@ -11,7 +11,7 @@ namespace HeatingMold.App.Persistence
     public sealed class ProjectDocument
     {
         public string Format { get; set; } = "HeatingMold.Project";
-        public int SchemaVersion { get; set; } = 4;
+        public int SchemaVersion { get; set; } = 5;
         public string AppVersion { get; set; }
         public string CreatedUtc { get; set; }
         public string SavedUtc { get; set; }
@@ -86,7 +86,10 @@ namespace HeatingMold.App.Persistence
         public string MarginText { get; set; }
         public string SpacingText { get; set; }
 
-        /// <summary>이 영역의 목표 발열전력 입력(W). 스키마 3부터 저장하며, 없으면 미입력 상태다.</summary>
+        /// <summary>
+        /// 스키마 4까지의 영역별 목표 발열전력 입력(W). 스키마 5부터는 저장하지 않는다.
+        /// 이전 파일을 읽을 때만 호환용으로 남기며, 불러오기 정규화가 값을 지운다.
+        /// </summary>
         public string TargetPowerText { get; set; }
 
         public int ExitFaceId { get; set; } = -1;
@@ -140,13 +143,17 @@ namespace HeatingMold.App.Persistence
         /// <summary>계산용 인가전압. 스키마 2 이하의 공용 전압 값이며, 스키마 3에서는 허용 전압과 같은 값을 유지한다.</summary>
         public string AppliedVoltageText { get; set; }
         /// <summary>
-        /// 회로별 허용 전압 한도 [V]. 스키마 3부터 저장한다. 목표 발열전력 방식에서는
+        /// 회로별 허용 전압 한도 [V]. 스키마 3부터 저장한다. 발열 전력 배분 방식에서는
         /// 이 값이 계산 입력이 아니라 판정 한도다.
         /// </summary>
         public string AllowedVoltageText { get; set; }
         /// <summary>허용 전류 [A]. 스키마 1 파일에는 없으며 기본값으로 복원한다.</summary>
         public string AllowedCurrentText { get; set; }
-        /// <summary>허용 전력 [kW]. 스키마 1 파일에는 없으며 기본값으로 복원한다.</summary>
+        /// <summary>
+        /// 발열 전력 [kW]. 확정된 모든 영역이 나누어 쓰는 총량이며 영역별 배분은 실측 길이 비율로 계산한다.
+        /// 스키마 1~4에서는 회로별 전력 한도로 저장된 값이며, 값을 합치거나 키우지 않고 그대로 총량으로 읽는다.
+        /// 스키마 1 파일에는 없으며 기본값으로 복원한다.
+        /// </summary>
         public string AllowedPowerText { get; set; }
     }
 

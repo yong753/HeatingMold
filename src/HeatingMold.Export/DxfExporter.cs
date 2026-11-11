@@ -298,7 +298,7 @@ public static class DxfExporter
     private static string ElectricalSupplyCaption(ElectricalSpecTable table)
     {
         if (table.IsTargetPowerMode)
-            return "목표 발열전력 길이비 배분 · 회로별 필요 전압 계산 · 허용 전압/전류/전력 판정";
+            return "입력 발열전력 길이비 배분 · 회로별 필요 전압 계산 · 회로별 전압/전류 및 합계 전력 판정";
         return table.Supply?.Describe() ?? "";
     }
 

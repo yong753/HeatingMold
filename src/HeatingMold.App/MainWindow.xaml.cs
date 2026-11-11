@@ -162,7 +162,7 @@ namespace HeatingMold.App
                 GenerateButton.IsEnabled = _activeArea != null && !vertexActive && patternInputValid && !_isBusy;
             if (SplitAreaButton != null)
                 SplitAreaButton.IsEnabled = _activeArea != null && !vertexActive && !_isBusy
-                    && patternInputValid && _activeArea.TargetPowerW is > 0;
+                    && patternInputValid && !activeStale && _activeArea.TargetPowerW is > 0;
             if (ExportButton != null) ExportButton.IsEnabled = !_isBusy;
             if (OpenButton != null) OpenButton.IsEnabled = !_isBusy;
             if (OpenExampleButton != null) OpenExampleButton.IsEnabled = !_isBusy;
@@ -528,6 +528,9 @@ namespace HeatingMold.App
                     if (Viewport != null && Viewport.VertexEditMode) ExitVertexEdit();
                 }
             }
+            // 마진/간격이 바뀌면 기존 경로가 stale이 되어 배분 대상에서 빠진다. 분할 버튼이
+            // 오래된 배분값으로 분할 수를 계산하지 않도록 파생 배분값을 즉시 다시 계산한다.
+            RefreshElectricalTable();
             UpdateActionStates();
         }
 
@@ -949,11 +952,8 @@ namespace HeatingMold.App
                 // 새 영역은 현재 화면에 입력된 배치 조건을 초안으로 이어받는다.
                 Direction = DirectionFromIndex(DirectionBox?.SelectedIndex ?? 0),
                 MarginText = MarginBox?.Text ?? "5",
-                SpacingText = SpacingBox?.Text ?? "50",
-                // 새 영역의 기본 목표 발열전력은 사용자 확정값 3.5 kW다.
-                TargetPowerText = ElectricalSettingsResolver.DefaultTargetPowerText
+                SpacingText = SpacingBox?.Text ?? "50"
             };
-            ApplyTargetPowerText(area);
             area.FaceIdSet.UnionWith(_selectedFaceIds);
             area.Region.Add(region[0]);
             area.RegionBoundary = regionBoundary;
@@ -1343,10 +1343,9 @@ namespace HeatingMold.App
             Math.Sqrt((a[0]-b[0])*(a[0]-b[0]) + (a[1]-b[1])*(a[1]-b[1]) + (a[2]-b[2])*(a[2]-b[2]));
         private void UpdateCircuitTable()
         {
-            // 분할 가족의 모든 영역에 회로가 준비되면 실측 길이로 목표전력을 먼저 재배분한다.
-            TryApplySplitFamilyAllocation();
             // 검토 탭의 전기 사양표와 뷰포트의 확대 보기가 같은 검토 스냅샷을 사용한다.
             // 회로 ID는 영역명-회로번호이며, 길이는 사양표의 길이 열이 보여 준다.
+            // 공통 발열전력 배분도 이 계산 안에서 갱신된다.
             RefreshElectricalTableCore(BuildReviewSnapshot());
         }
 

@@ -34,7 +34,6 @@ public partial class MainWindow
             Direction = source.Direction,
             MarginText = source.MarginText,
             SpacingText = source.SpacingText,
-            TargetPowerText = source.TargetPowerText,
             Exclusions = source.Exclusions.ToList(),
             ExitFaceId = source.ExitFaceId,
             ExitFaceRevision = source.ExitFaceRevision,
@@ -79,9 +78,7 @@ public partial class MainWindow
             AppliedInputs = source.AppliedInputs,
             CommittedMapping = CopyCommittedRouteContext(source.CommittedMapping),
             SplitCutLines = source.SplitCutLines.ToList(),
-            SplitFamilyKey = source.SplitFamilyKey,
-            TargetPowerW = source.TargetPowerW,
-            TargetPowerError = source.TargetPowerError
+            TargetPowerW = source.TargetPowerW
         };
         candidate.FaceIdSet.UnionWith(source.FaceIdSet);
         candidate.Region.AddRange(source.Region.Select(ring => ring.ToList()));

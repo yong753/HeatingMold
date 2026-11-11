@@ -110,14 +110,11 @@ public partial class MainWindow
         // 아직 화면에 남은 값을 새 영역 초안에 덮어쓰지 않게 한다.
         string marginText = area.MarginText ?? "";
         string spacingText = area.SpacingText ?? "";
-        string targetPowerText = area.TargetPowerText ?? "";
         _suppressPatternInputWriteBack = true;
         try
         {
             if (MarginBox != null && MarginBox.Text != marginText) MarginBox.Text = marginText;
             if (SpacingBox != null && SpacingBox.Text != spacingText) SpacingBox.Text = spacingText;
-            if (TargetPowerBox != null && TargetPowerBox.Text != targetPowerText)
-                TargetPowerBox.Text = targetPowerText;
         }
         finally
         {
@@ -229,7 +226,6 @@ public partial class MainWindow
         }
 
         if (area.AreaId > 0) Bridge.ClearAreaHighlight(area.AreaId);
-        DetachFromSplitFamily(area);
         _areas.Clear();
         _areas.AddRange(remaining);
         ApplyAreaColors();

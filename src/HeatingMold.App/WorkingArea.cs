@@ -31,17 +31,12 @@ internal sealed class WorkingArea
     /// <summary>영역별 간격 입력 문자열. 마지막 성공 생성 조건과는 별개의 UI 초안이다.</summary>
     public string SpacingText { get; set; } = "50";
 
-    /// <summary>이 영역의 목표 발열전력 입력 문자열(W). 사용자가 지우면 빈 문자열이 된다.</summary>
-    public string TargetPowerText { get; set; } = ElectricalSettingsResolver.DefaultTargetPowerText;
-
     /// <summary>
-    /// 이 영역의 목표 발열전력(W). 확정된 값이며 다른 영역과 독립이다.
-    /// 회로 판정은 이 값과 실제 길이로 계산한 필요 전압/전류로 수행한다.
+    /// 공통 발열전력 배분 결과(W). 사용자 입력이 아니라 검토 계산이 갱신하는 파생값이며,
+    /// 경로 길이가 확정되기 전에는 null이다. 총 발열전력은 검토 탭의 단일 전력 입력이고,
+    /// 이 값은 확정된 영역들의 실측 길이 비율로 나눈 몫이다.
     /// </summary>
     public double? TargetPowerW { get; set; }
-
-    /// <summary>목표 발열전력 입력이 올바르지 않을 때의 사유. null이면 형식 오류가 없다.</summary>
-    public string TargetPowerError { get; set; }
 
     /// <summary>인출면 CAD Face ID. -1이면 미지정.</summary>
     public int ExitFaceId { get; set; } = -1;
@@ -133,9 +128,6 @@ internal sealed class WorkingArea
     /// 절단선 자체가 이 영역의 경계 provenance이며 CAD edge나 제외 사각형 변으로 취급하지 않는다.
     /// </summary>
     public List<(Vec2 A, Vec2 B)> SplitCutLines { get; set; } = new();
-
-    /// <summary>같은 분할에서 나온 영역들을 묶는 세션 한정 키. 저장/복원에는 쓰지 않는다.</summary>
-    public string SplitFamilyKey { get; set; } = "";
 
     public bool HasSplitBoundary => SplitCutLines.Count > 0;
 

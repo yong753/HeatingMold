@@ -62,7 +62,6 @@ public partial class MainWindow
         ReviewAreaState.Stale => "재생성 필요",
         ReviewAreaState.Unverified => "근거 미확인",
         ReviewAreaState.InvalidLengths => "길이 불완전",
-        ReviewAreaState.MissingTargetPower => "목표전력 미입력",
         _ => "정상"
     };
 
@@ -99,8 +98,98 @@ public partial class MainWindow
         return true;
     }
 
+    /// <summary>영역 하나의 검토 상태를 판정한다. 표시 범위와 배분 대상이 같은 규칙을 쓴다.</summary>
+    private ReviewAreaEntry ClassifyArea(WorkingArea area)
+    {
+        if (area.Pattern == null)
+            return new ReviewAreaEntry(area, ReviewAreaState.Missing, "발열 경로 미생성");
+        if (area.AppliedInputs == null)
+            return new ReviewAreaEntry(area, ReviewAreaState.Unverified, "생성 조건 출처 확인 불가 — 재생성 필요");
+        if (IsPatternInputStale(area))
+            return new ReviewAreaEntry(area, ReviewAreaState.Stale, "입력 조건 변경 — 재생성 필요");
+        if (!HasUsableLengths(area, out string lengthReason))
+            return new ReviewAreaEntry(area, ReviewAreaState.InvalidLengths, lengthReason);
+        return new ReviewAreaEntry(area, ReviewAreaState.Ready, "정상");
+    }
+
+    /// <summary>
+    /// 배분값은 파생값이므로 배분을 계산할 수 없는 상태에서는 비운다. 이전 값을 남기면
+    /// 분할 버튼이 이미 유효하지 않은 전력으로 분할 수를 계산한다.
+    /// </summary>
+    private void ClearSharedPowerAllocation()
+    {
+        foreach (WorkingArea area in _areas)
+            if (area != null) area.TargetPowerW = null;
+    }
+
+    /// <summary>
+    /// 공통 발열전력을 확정된 전체 영역의 실측 3D 길이 비율로 배분하고 각 영역의 배분값을 갱신한다.
+    /// 검토 범위는 표시 범위일 뿐이므로 현재 영역만 볼 때도 그 영역에 전체 전력을 몰아주지 않는다.
+    /// 배분 대상이 아닌 영역은 배분값을 비우고, 확정된 길이가 없으면 조용히 넘기지 않는다.
+    /// </summary>
+    private bool TryAllocateSharedPower(
+        TargetPowerElectricalSettings settings,
+        out IReadOnlyDictionary<string, double> allocatedByCircuit,
+        out string error)
+    {
+        allocatedByCircuit = null;
+        error = null;
+        var request = new List<(string CircuitId, double LengthMm)>();
+        var owners = new List<(WorkingArea Area, string CircuitId)>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (WorkingArea area in _areas)
+        {
+            if (area == null) continue;
+            if (ClassifyArea(area).State != ReviewAreaState.Ready) continue;
+            string prefix = string.IsNullOrEmpty(area.Name) ? "A-" : area.Name + "-";
+            foreach (CircuitLengthInfo circuit in GetCircuitLengths(area, prefix))
+            {
+                if (!seen.Add(circuit.CircuitId))
+                {
+                    ClearSharedPowerAllocation();
+                    error = "회로 ID가 중복되어 발열 전력을 배분할 수 없습니다 — " + circuit.CircuitId;
+                    return false;
+                }
+                request.Add((circuit.CircuitId, circuit.HeatingLengthMm));
+                owners.Add((area, circuit.CircuitId));
+            }
+        }
+
+        if (request.Count == 0)
+        {
+            ClearSharedPowerAllocation();
+            return true;
+        }
+
+        if (!TargetPowerAllocation.TryAllocate(request, settings.Limits.PowerLimitW,
+                out IReadOnlyList<TargetPowerShare> shares, out string reason))
+        {
+            // 배분에 실패하면 이전 값은 지금 상태의 배분이 아니다. 분할이 재사용하지 않게 비운다.
+            ClearSharedPowerAllocation();
+            error = "공통 발열전력을 배분할 수 없습니다 — " + reason;
+            return false;
+        }
+
+        var byId = new Dictionary<string, double>(StringComparer.Ordinal);
+        var byArea = new Dictionary<WorkingArea, double>();
+        for (int i = 0; i < shares.Count; i++)
+        {
+            byId[shares[i].CircuitId] = shares[i].TargetPowerW;
+            byArea.TryGetValue(owners[i].Area, out double areaSum);
+            byArea[owners[i].Area] = areaSum + shares[i].TargetPowerW;
+        }
+        foreach (WorkingArea area in _areas)
+        {
+            if (area == null) continue;
+            area.TargetPowerW = byArea.TryGetValue(area, out double allocated) ? allocated : null;
+        }
+        allocatedByCircuit = byId;
+        return true;
+    }
+
     /// <summary>
     /// 검토 범위의 모든 영역을 먼저 분류한 뒤 준비된 영역만 합계에 넣는다.
+    /// 전력 배분은 표시 범위가 아니라 확정된 전체 영역을 대상으로 하고, 표만 표시 범위로 거른다.
     /// 표·요약·내보내기 안내가 이 한 스냅샷을 공유한다.
     /// </summary>
     private ReviewSnapshot BuildReviewSnapshot()
@@ -110,48 +199,46 @@ public partial class MainWindow
         foreach (WorkingArea area in requested)
         {
             if (area == null) continue;
-            if (area.Pattern == null)
-                entries.Add(new ReviewAreaEntry(area, ReviewAreaState.Missing, "발열 경로 미생성"));
-            else if (area.AppliedInputs == null)
-                entries.Add(new ReviewAreaEntry(area, ReviewAreaState.Unverified, "생성 조건 출처 확인 불가 — 재생성 필요"));
-            else if (IsPatternInputStale(area))
-                entries.Add(new ReviewAreaEntry(area, ReviewAreaState.Stale, "입력 조건 변경 — 재생성 필요"));
-            else if (!HasUsableLengths(area, out string lengthReason))
-                entries.Add(new ReviewAreaEntry(area, ReviewAreaState.InvalidLengths, lengthReason));
-            else if (area.TargetPowerError != null)
-                entries.Add(new ReviewAreaEntry(area, ReviewAreaState.MissingTargetPower, area.TargetPowerError));
-            else if (area.TargetPowerW == null)
-                entries.Add(new ReviewAreaEntry(area, ReviewAreaState.MissingTargetPower, "목표 발열전력 미입력"));
-            else
-                entries.Add(new ReviewAreaEntry(area, ReviewAreaState.Ready, "정상"));
+            entries.Add(ClassifyArea(area));
         }
 
         var readyAreas = entries
             .Where(e => e.State == ReviewAreaState.Ready)
             .Select(e => e.Area)
             .ToList();
-        // 목표전력 미입력 영역도 회로와 실측 길이는 확정된 사실이므로 표에 남긴다.
-        // 전기 계산만 비우고, 내보내기 가능 여부는 Ready 판정을 그대로 따른다.
-        var measurableAreas = entries
-            .Where(e => e.State == ReviewAreaState.Ready
-                || e.State == ReviewAreaState.MissingTargetPower)
-            .Select(e => e.Area)
-            .ToList();
-        var circuits = new List<CircuitLengthInfo>();
-        foreach (WorkingArea area in measurableAreas)
-        {
-            string prefix = string.IsNullOrEmpty(area.Name) ? "A-" : area.Name + "-";
-            circuits.AddRange(GetCircuitLengths(area, prefix));
-        }
 
         ElectricalSpecTable table = null;
         ElectricalLimits limits = null;
+        TargetPowerElectricalSettings settings = null;
+        IReadOnlyDictionary<string, double> allocated = null;
         string electricalError = null;
-        if (TryReadElectricalLimits(out TargetPowerElectricalSettings settings, out electricalError))
+        if (TryReadElectricalLimits(out settings, out electricalError))
         {
             limits = settings.Limits;
-            // 회로마다 그 영역에 확정된 목표 발열전력을 그대로 쓴다. 총합을 다시 나누지 않는다.
-            // 미입력(null)은 0 W 계산 오류가 아니라 '미입력' 행으로 넘긴다.
+            if (!TryAllocateSharedPower(settings, out allocated, out string allocationError))
+                electricalError = allocationError;
+        }
+        else
+        {
+            // 입력이 잘못되면 배분을 다시 할 수 없다. 이전 배분값을 남기면 분할 버튼이
+            // 이미 유효하지 않은 전력으로 분할 수를 계산하므로 파생값을 비운다.
+            ClearSharedPowerAllocation();
+        }
+
+        var circuits = new List<CircuitLengthInfo>();
+        foreach (WorkingArea area in readyAreas)
+        {
+            string prefix = string.IsNullOrEmpty(area.Name) ? "A-" : area.Name + "-";
+            foreach (CircuitLengthInfo circuit in GetCircuitLengths(area, prefix))
+            {
+                circuits.Add(allocated != null && allocated.TryGetValue(circuit.CircuitId, out double power)
+                    ? circuit with { TargetPowerW = power }
+                    : circuit);
+            }
+        }
+
+        if (settings != null && electricalError == null && circuits.Count > 0)
+        {
             var inputs = circuits
                 .Select(c => new TargetPowerCircuitInput(
                     c.CircuitId, c.HeatingLengthMm, c.TargetPowerW))
@@ -233,51 +320,8 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 영역별 목표 발열전력 입력을 초안으로 보존하고 즉시 해석한다. 목표전력은 경로 형상에
-    /// 영향을 주지 않으므로 재생성 필요 판정과 무관하고, 전기 표와 내보내기 가능 여부만 갱신한다.
-    /// </summary>
-    private void TargetPower_Changed(object sender, TextChangedEventArgs e)
-    {
-        if (_suppressPatternInputWriteBack) return;
-        WorkingArea area = _activeArea;
-        if (area == null) return;
-        area.TargetPowerText = TargetPowerBox?.Text ?? "";
-        ApplyTargetPowerText(area);
-        RefreshElectricalTable();
-        UpdateExportScopeText();
-        // 분할 버튼 활성 조건이 목표전력 유무에 의존한다.
-        UpdateActionStates();
-    }
-
-    /// <summary>
-    /// 목표전력 입력 문자열을 해석해 확정 값과 형식 오류를 분리해 보관한다.
-    /// 빈 입력은 오류가 아니라 '미입력' 상태이며, 값이 있으나 잘못된 경우만 오류로 남긴다.
-    /// </summary>
-    private static void ApplyTargetPowerText(WorkingArea area)
-    {
-        if (area == null) return;
-        string text = area.TargetPowerText ?? "";
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            area.TargetPowerW = null;
-            area.TargetPowerError = null;
-            return;
-        }
-        if (ElectricalSettingsResolver.TryParseTargetPowerW(text, out double powerW, out string error))
-        {
-            area.TargetPowerW = powerW;
-            area.TargetPowerError = null;
-        }
-        else
-        {
-            area.TargetPowerW = null;
-            area.TargetPowerError = error;
-        }
-    }
-
-    /// <summary>
     /// 전압 입력은 계산에 쓰지 않고 회로별 허용 전압 한도로만 해석한다.
-    /// 필요 전압은 회로마다 목표 발열전력과 실제 길이로 계산한다.
+    /// 전력 입력은 회로별 한도가 아니라 전체가 나누어 쓰는 총 발열전력이다.
     /// </summary>
     private bool TryReadElectricalLimits(out TargetPowerElectricalSettings settings, out string error)
     {
@@ -335,7 +379,7 @@ public partial class MainWindow
                 r.TargetPowerW,
                 r.LengthM,
                 r.ResistanceOhm,
-                // 목표전력 미입력은 0 V/0 A가 아니라 '계산 불가'다. 길이·저항은 확정값이므로 남긴다.
+                // 배분 전력이 없는 행은 0 V/0 A가 아니라 '계산 불가'다. 길이·저항은 확정값이므로 남긴다.
                 r.IsTargetPowerMissing ? null : r.VoltageV,
                 r.IsTargetPowerMissing ? null : r.CurrentA,
                 r.IsTargetPowerMissing ? null : r.PowerW,
@@ -348,7 +392,7 @@ public partial class MainWindow
         }
         SetElectricalRows(rows);
 
-        string scope = _reviewCurrentAreaOnly ? "현재 영역 기준 · " : "전체 영역 기준 · ";
+        string scope = _reviewCurrentAreaOnly ? "현재 영역 표시(전력은 전체 배분) · " : "전체 영역 기준 · ";
         string excluded = snapshot.ExcludedCount > 0
             ? string.Format(" · 준비되지 않은 영역 {0}개 제외", snapshot.ExcludedCount)
             : "";
@@ -360,35 +404,47 @@ public partial class MainWindow
             return;
         }
 
-        // 미입력과 계산 오류를 섞지 않는다. 둘 중 하나라도 있으면 '전체 OK'라고 말하지 않는다.
-        int missingCount = table.Rows.Count(r => r.IsTargetPowerMissing);
+        // 계산 오류는 OK/NG와 섞지 않는다. 하나라도 있으면 '전체 OK'라고 말하지 않는다.
         int invalidCount = table.Rows.Count(r => !r.IsValid && !r.IsTargetPowerMissing);
+        int readyCount = snapshot.Entries.Count(e => e.State == ReviewAreaState.Ready);
+        bool allReady = readyCount == snapshot.Entries.Count;
         string verdicts;
-        if (missingCount > 0 || invalidCount > 0)
+        if (invalidCount > 0)
         {
-            var details = new List<string>();
-            if (missingCount > 0)
-                details.Add(string.Format(CultureInfo.CurrentCulture, "목표전력 미입력 {0}", missingCount));
-            if (invalidCount > 0)
-                details.Add(string.Format(CultureInfo.CurrentCulture, "계산 오류 {0}", invalidCount));
             verdicts = string.Format(CultureInfo.CurrentCulture, " · OK {0} · NG {1} · {2}",
-                table.WithinLimitCount, table.OverLimitCount, string.Join(" · ", details));
+                table.WithinLimitCount, table.OverLimitCount,
+                string.Format(CultureInfo.CurrentCulture, "계산 오류 {0}", invalidCount));
         }
-        else if (table.HasOverLimitCircuits)
-            verdicts = string.Format(CultureInfo.CurrentCulture, " · OK {0} · NG {1}",
-                table.WithinLimitCount, table.OverLimitCount);
+        else if (table.HasOverLimitCircuits || table.IsSharedPowerOverLimit)
+        {
+            // 합계만 초과한 경우 회로별 NG 수는 0이므로, 판정 근거를 함께 적어 모순을 없앤다.
+            string sharedNote = table.IsSharedPowerOverLimit ? " · 합계 전력 초과" : "";
+            verdicts = string.Format(CultureInfo.CurrentCulture, " · OK {0} · NG {1}{2}",
+                table.WithinLimitCount, table.OverLimitCount, sharedNote);
+        }
+        else if (!allReady)
+        {
+            // 일부 영역에 경로가 없으면 표에 남은 회로의 판정만으로 '전체 OK'라고 말하지 않는다.
+            verdicts = string.Format(CultureInfo.CurrentCulture, " · 준비 {0}/{1}", readyCount,
+                snapshot.Entries.Count);
+        }
+        else if (_reviewCurrentAreaOnly)
+        {
+            // 현재 영역만 표시할 때는 다른 영역의 판정을 확인하지 않았으므로 '전체 OK'가 아니다.
+            verdicts = " · 표시 영역 OK";
+        }
         else
             verdicts = " · 전체 OK";
 
         string limitText = snapshot.Limits == null
             ? ""
-            : string.Format(CultureInfo.CurrentCulture, " · 허용 {0:0.###} A / {1:0.###} V / {2:0.###} kW",
-                snapshot.Limits.CurrentLimitA, snapshot.Limits.VoltageLimitV,
-                snapshot.Limits.PowerLimitW / 1000.0);
+            : string.Format(CultureInfo.CurrentCulture, " · 허용 {0:0.###} A / {1:0.###} V",
+                snapshot.Limits.CurrentLimitA, snapshot.Limits.VoltageLimitV);
 
         ElectricalSummaryText.Text = string.Format(CultureInfo.CurrentCulture,
-            "{0}총 {1}회로{2} · 목표 {3:F2} kW · 합계 {4:F2} A / {5:F1} W{6}{7}",
+            "{0}총 {1}회로{2} · 배분 {3:F2} kW / 한도 {4:F2} kW · 합계 {5:F2} A / {6:F1} W{7}{8}",
             scope, table.Rows.Count, verdicts, table.TotalTargetPowerW / 1000.0,
+            snapshot.Limits == null ? 0.0 : snapshot.Limits.PowerLimitW / 1000.0,
             table.TotalCurrentA, table.TotalPowerW, limitText, excluded);
     }
 
@@ -410,9 +466,10 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 현재 회로별 전체 발열 길이를 표시 순서대로 만든다. 인출점 사이의 경로 전체를
+    /// 선택한 영역의 회로별 전체 발열 길이를 표시 순서대로 만든다. 인출점 사이의 경로 전체를
     /// 한 번만 합산하며 별도의 인출부 길이는 두지 않는다. 선택 인출 경로의 마지막 연결선도
     /// 회로 조각으로 실제 길이를 가지므로 여기서 따로 걸러내지 않는다.
+    /// 배분 전력은 공통 전력 배분이 채우므로 여기서는 비워 둔다.
     /// </summary>
     private List<CircuitLengthInfo> GetCircuitLengths(WorkingArea area, string prefix = "")
     {
@@ -426,7 +483,7 @@ public partial class MainWindow
             double heating = 0;
             foreach (int index in area.CircuitPieceIndices[i])
                 heating += area.RoutePieceLengths.ElementAtOrDefault(index);
-            result.Add(new CircuitLengthInfo(prefix + (i + 1), heating, area.TargetPowerW));
+            result.Add(new CircuitLengthInfo(prefix + (i + 1), heating));
         }
         return result;
     }
