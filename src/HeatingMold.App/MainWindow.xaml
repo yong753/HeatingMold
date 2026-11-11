@@ -488,21 +488,6 @@
                                                          TextChanged="PatternInput_Changed"/>
                                             </StackPanel>
                                         </Grid>
-                                        <TextBlock Text="목표 발열전력 (W)" Style="{StaticResource FieldLabel}"
-                                                   Margin="0,8,0,0"/>
-                                        <TextBox x:Name="TargetPowerBox" Text="" Style="{StaticResource ValueBox}"
-                                                 AutomationProperties.Name="이 영역의 목표 발열전력 와트"
-                                                 TextChanged="TargetPower_Changed"/>
-                                        <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0"
-                                                   Text="이 영역에 필요한 총 발열전력입니다. 실제 회로 길이 비율로 회로에 배분되고, 필요 전압·전류는 배분 전력과 실제 저항으로 계산합니다."/>
-                                        <Button x:Name="SplitAreaButton" Content="한도 초과 시 영역 분할…"
-                                                Click="SplitArea_Click" Padding="8,4" Margin="0,10,0,0"
-                                                AutomationProperties.Name="적용영역을 여러 독립 영역으로 분할"/>
-                                        <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0"
-                                                   Text="가로 배치는 수평 절단선으로 위/아래, 세로 배치는 수직 절단선으로 좌/우를 나눕니다. 분할 후 각 영역에서 시작점과 종료점을 선택하세요."/>
-                                        <TextBlock x:Name="SplitStatusText" Style="{StaticResource Hint}"
-                                                   TextWrapping="Wrap" Margin="0,4,0,0"
-                                                   AutomationProperties.LiveSetting="Polite"/>
                                         <TextBlock x:Name="PatternInputErrorText" Foreground="#B42318"
                                                    FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
                                                    AutomationProperties.LiveSetting="Polite"
@@ -556,6 +541,13 @@
                                             <ComboBoxItem Content="전체 영역"/>
                                             <ComboBoxItem Content="현재 영역"/>
                                         </ComboBox>
+                                        <TextBlock Text="목표 발열전력 (W)" Style="{StaticResource FieldLabel}"
+                                                   FontWeight="SemiBold" Margin="0,4,0,0"/>
+                                        <TextBox x:Name="TargetPowerBox" Text="" Style="{StaticResource ValueBox}"
+                                                 AutomationProperties.Name="이 영역의 목표 발열전력 와트"
+                                                 TextChanged="TargetPower_Changed"/>
+                                        <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,8"
+                                                   Text="활성 작업 영역에 필요한 총 발열전력입니다. 그 영역의 실제 회로 길이 비율로 배분되고, 필요 전압·전류는 배분 전력과 실제 저항으로 계산합니다. 비워 두면 회로와 길이는 그대로 표시되고 전기 값만 계산하지 않습니다."/>
                                         <TextBlock Text="회로별 길이 (mm)" Style="{StaticResource FieldLabel}"
                                                    FontWeight="SemiBold"/>
                                         <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,4"
@@ -654,6 +646,16 @@
                                         </DataGrid>
                                         <TextBlock Style="{StaticResource Hint}"
                                                    Text="L은 각 회로의 인출점 사이 실제 도체 전체 길이이며 외부 리드 저항은 반영하지 않습니다. P_i = P·L_i/ΣL, R_i = rL_i, V_i = √(P_i·R_i), I_i = √(P_i/R_i). 판정은 회로별 필요 전압·전류·전력이 허용치 이하인지 비교합니다."/>
+                                        <Separator Margin="0,12,0,8"/>
+                                        <TextBlock Text="자동 분할" Style="{StaticResource SectionTitle}"/>
+                                        <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0"
+                                                   Text="현재 영역의 목표 발열전력과 허용 한도로 필요한 분할 수를 계산합니다. 가로 배치는 수평 절단선으로 위/아래, 세로 배치는 수직 절단선으로 좌/우를 나눕니다. 분할 후 각 영역에서 시작점과 종료점을 선택하고 경로를 생성하세요."/>
+                                        <Button x:Name="SplitAreaButton" Content="한도 초과 시 자동 분할…"
+                                                Click="SplitArea_Click" Padding="8,4" Margin="0,8,0,0"
+                                                AutomationProperties.Name="적용영역을 여러 독립 영역으로 분할"/>
+                                        <TextBlock x:Name="SplitStatusText" Style="{StaticResource Hint}"
+                                                   TextWrapping="Wrap" Margin="0,4,0,0"
+                                                   AutomationProperties.LiveSetting="Polite"/>
                                     </StackPanel>
                                 </Border>
                             </ScrollViewer>

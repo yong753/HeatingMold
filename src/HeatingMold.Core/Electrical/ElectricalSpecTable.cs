@@ -3,8 +3,11 @@ namespace HeatingMold.Core.Electrical;
 /// <summary>사양표 한 줄의 입력. CircuitId는 회로 구분자를 그대로 표시용 ID로 쓴다(예: A-1).</summary>
 public sealed record ElectricalCircuitInput(string CircuitId, double LengthMm);
 
-/// <summary>목표전력 방식 사양표 한 줄의 입력. TargetPowerW는 이 회로에 배분된 목표 발열전력이다.</summary>
-public sealed record TargetPowerCircuitInput(string CircuitId, double LengthMm, double TargetPowerW);
+/// <summary>
+/// 목표전력 방식 사양표 한 줄의 입력. TargetPowerW는 이 회로에 배분된 목표 발열전력이며,
+/// null이면 아직 입력되지 않은 상태다(0 W 계산 오류와 구분한다).
+/// </summary>
+public sealed record TargetPowerCircuitInput(string CircuitId, double LengthMm, double? TargetPowerW);
 
 /// <summary>사양표 계산 방식. 전압 열의 의미가 다르므로 표와 내보내기가 구분해 표기한다.</summary>
 public enum ElectricalCalculationMode
@@ -29,7 +32,10 @@ public sealed class ElectricalSpecRow
     public double PowerW { get; init; }
 
     /// <summary>이 회로에 배분된 목표 발열전력. 인가전압 방식에서는 계산된 전력과 같다.</summary>
-    public double TargetPowerW { get; init; }
+    public double? TargetPowerW { get; init; }
+
+    /// <summary>목표 발열전력이 아직 입력되지 않은 행. 계산 오류(0 W 등)와 구분한다.</summary>
+    public bool IsTargetPowerMissing { get; init; }
 
     /// <summary>입력이 유효하지 않을 때의 계산 오류 사유. 정상 계산된 행에서는 빈 문자열.</summary>
     public string Message { get; init; } = "";
@@ -140,13 +146,39 @@ public static class ElectricalSpecTableBuilder
         double requestedTarget = 0;
         foreach (TargetPowerCircuitInput input in inputs ?? Enumerable.Empty<TargetPowerCircuitInput>())
         {
+            if (input.TargetPowerW is not double targetPowerW)
+            {
+                // 미입력은 계산 오류가 아니다. 길이·저항은 그대로 보여 주고 전압/전류/전력만 비운다.
+                double? knownLength = double.IsFinite(input.LengthMm) && input.LengthMm > 0
+                    ? input.LengthMm / 1000.0
+                    : null;
+                double? knownResistance = knownLength is double length
+                    ? wire.ResistanceOhmPerMeter * length
+                    : null;
+                if (knownResistance is double resistance
+                    && (!double.IsFinite(resistance) || resistance <= 0))
+                {
+                    knownResistance = null;
+                }
+                rows.Add(new ElectricalSpecRow
+                {
+                    CircuitId = input.CircuitId,
+                    LengthM = knownLength ?? 0.0,
+                    ResistanceOhm = knownResistance ?? 0.0,
+                    TargetPowerW = null,
+                    IsTargetPowerMissing = true,
+                    Message = "목표 발열전력 미입력"
+                });
+                continue;
+            }
+
             ElectricalResult result = ElectricalCalculator.ComputeFromTargetPower(
-                input.LengthMm, wire, input.TargetPowerW);
+                input.LengthMm, wire, targetPowerW);
             CircuitAssessment? assessment = result.IsValid && limits != null
                 ? CircuitAssessment.Assess(result.CurrentA, result.VoltageV, result.PowerW, limits)
                 : null;
-            if (double.IsFinite(input.TargetPowerW) && input.TargetPowerW > 0)
-                requestedTarget += input.TargetPowerW;
+            if (double.IsFinite(targetPowerW) && targetPowerW > 0)
+                requestedTarget += targetPowerW;
             rows.Add(new ElectricalSpecRow
             {
                 CircuitId = input.CircuitId,
@@ -155,7 +187,7 @@ public static class ElectricalSpecTableBuilder
                 VoltageV = result.VoltageV,
                 CurrentA = result.CurrentA,
                 PowerW = result.PowerW,
-                TargetPowerW = input.TargetPowerW,
+                TargetPowerW = targetPowerW,
                 Message = result.Message,
                 Assessment = assessment
             });

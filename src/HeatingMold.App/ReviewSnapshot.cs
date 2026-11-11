@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using HeatingMold.Core.Electrical;
 
 namespace HeatingMold.App;
@@ -37,5 +38,8 @@ internal sealed class ReviewSnapshot
 
     public int RequestedCount => RequestedAreas.Count;
     public int ReadyCount => ReadyAreas.Count;
-    public int ExcludedCount => RequestedCount - ReadyCount;
+    /// <summary>검토 표에 표시되지 않아 합계에서 빠진 영역 수. 목표전력 미입력은 길이 표에 남으므로 제외가 아니다.</summary>
+    public int ExcludedCount => Entries
+        .Where(e => e.State != ReviewAreaState.Ready && e.State != ReviewAreaState.MissingTargetPower)
+        .Count();
 }

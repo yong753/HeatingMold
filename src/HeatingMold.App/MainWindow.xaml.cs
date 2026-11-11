@@ -958,8 +958,11 @@ namespace HeatingMold.App
                 // 새 영역은 현재 화면에 입력된 배치 조건을 초안으로 이어받는다.
                 Direction = DirectionFromIndex(DirectionBox?.SelectedIndex ?? 0),
                 MarginText = MarginBox?.Text ?? "5",
-                SpacingText = SpacingBox?.Text ?? "50"
+                SpacingText = SpacingBox?.Text ?? "50",
+                // 새 영역의 기본 목표 발열전력은 사용자 확정값 3.5 kW다.
+                TargetPowerText = ElectricalSettingsResolver.DefaultTargetPowerText
             };
+            ApplyTargetPowerText(area);
             area.FaceIdSet.UnionWith(_selectedFaceIds);
             area.Region.Add(region[0]);
             area.RegionBoundary = regionBoundary;
@@ -1358,7 +1361,9 @@ namespace HeatingMold.App
             foreach (ReviewAreaEntry entry in snapshot.Entries)
             {
                 bool reference = entry.State is ReviewAreaState.Stale or ReviewAreaState.Unverified;
-                if (entry.State != ReviewAreaState.Ready && !reference) continue;
+                // 목표전력 미입력은 경로/길이가 확정된 상태다. 전기 계산만 비우고 길이는 표시한다.
+                bool measurable = entry.State is ReviewAreaState.Ready or ReviewAreaState.MissingTargetPower;
+                if (!measurable && !reference) continue;
                 if (reference && !HasUsableLengths(entry.Area, out _)) continue;
                 string prefix = string.IsNullOrEmpty(entry.Area.Name) ? "A-" : entry.Area.Name + "-";
                 rows.AddRange(GetCircuitLengths(entry.Area, prefix)

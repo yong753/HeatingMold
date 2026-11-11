@@ -29,6 +29,12 @@ internal static class ElectricalSettingsResolver
     public static string DefaultPowerLimitText =>
         (ElectricalLimits.DefaultPowerLimitW / 1000.0).ToString("0.###", CultureInfo.CurrentCulture);
 
+    /// <summary>새 작업 영역의 기본 목표 발열전력(W). 사용자 확정값 3.5 kW.</summary>
+    public const double DefaultTargetPowerW = 3_500.0;
+
+    public static string DefaultTargetPowerText =>
+        DefaultTargetPowerW.ToString("0.###", CultureInfo.CurrentCulture);
+
     public static bool TryGetWire(int presetIndex, out HeatingWireSpec wire)
     {
         switch (presetIndex)

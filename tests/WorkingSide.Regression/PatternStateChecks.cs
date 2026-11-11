@@ -115,7 +115,8 @@ static class PatternStateChecks
         areaType.GetProperty("RegionBoundary")!.SetValue(value, new ExactRegionContainment(
             new MockExactRegionBoundary(new Vec2[] { new(-12, -8), new(12, -8), new(12, 8), new(-12, 8) })));
         areaType.GetProperty("ExitBoundary")!.SetValue(value, new MockReviewBoundary());
-        // 전기 검토는 영역별 목표 발열전력이 있어야 회로를 표에 넣는다.
+        // 전기 검토 계산을 결정적으로 확인하려고 이 검사 전용 영역은 1000 W로 고정한다.
+        // 새 영역의 기본값(3.5 kW)은 아래에서 별도로 확인한다.
         areaType.GetProperty("TargetPowerText")!.SetValue(value, "1000");
         areaType.GetProperty("TargetPowerW")!.SetValue(value, 1000.0);
         ((IList)Field<object>(window, "_areas")).Add(value);
@@ -221,6 +222,47 @@ static class PatternStateChecks
         Check(exportScope.Text.Contains("다른 영역은 포함되지 않습니다"),
             "current-area export warns that other areas are excluded");
         scopeBox.SelectedIndex = 0;
+
+        // 사용자 확정: 새 작업 영역의 기본 목표 발열전력은 3.5 kW다.
+        object fresh = Activator.CreateInstance(areaType, nonPublic: true)!;
+        Check((string)areaType.GetProperty("TargetPowerText")!.GetValue(fresh)! == "3500",
+            "new working areas start with the confirmed 3.5 kW target power");
+
+        // 목표전력 미입력은 '경로 없음'이 아니다. 회로·실측 길이는 남고 전기 값만 비운다.
+        areaType.GetProperty("TargetPowerText")!.SetValue(b, "");
+        areaType.GetProperty("TargetPowerW")!.SetValue(b, null);
+        areaType.GetProperty("TargetPowerError")!.SetValue(b, null);
+        Invoke(window, "UpdateCircuitTable");
+        Invoke(window, "UpdateExportScopeText");
+        var summary = (TextBlock)window.FindName("ElectricalSummaryText");
+        var specGrid = (DataGrid)window.FindName("ElectricalSpecGrid");
+        Check(circuitGrid.Items.Count == 2,
+            "missing target power keeps every circuit in the length table");
+        object? missingRow = null;
+        foreach (object item in specGrid.Items)
+        {
+            string id = (string)item.GetType().GetProperty("CircuitId")!.GetValue(item)!;
+            if (id.StartsWith("PatternStateB-")) missingRow = item;
+        }
+        Check(missingRow != null,
+            "an area without target power still gets an electrical specification row");
+        Check((string)missingRow!.GetType().GetProperty("Verdict")!.GetValue(missingRow)! == "—"
+            && (string)missingRow.GetType().GetProperty("Note")!.GetValue(missingRow)! == "목표 발열전력 미입력",
+            "missing target power shows a dash verdict and an explicit note");
+        Check(missingRow.GetType().GetProperty("TargetPowerW")!.GetValue(missingRow) == null
+            && missingRow.GetType().GetProperty("VoltageV")!.GetValue(missingRow) == null,
+            "missing target power leaves voltage and power blank instead of zero");
+        Check(summary.Text.Contains("목표전력 미입력 1") && !summary.Text.Contains("전체 OK"),
+            "the summary separates missing target power from calculation errors");
+        Check(exportScope.Text.Contains("목표전력 미입력"),
+            "missing target power blocks export with an explicit reason");
+
+        areaType.GetProperty("TargetPowerText")!.SetValue(b, "1000");
+        areaType.GetProperty("TargetPowerW")!.SetValue(b, 1000.0);
+        Invoke(window, "UpdateCircuitTable");
+        Invoke(window, "UpdateExportScopeText");
+        Check(!summary.Text.Contains("목표전력 미입력") && exportScope.Text.Contains("준비 2/2"),
+            "restoring the target power returns the area to the exportable review");
 
         // (d)에서 위조한 음수 조각 ID는 네이티브에 존재하지 않으므로, 다음 삭제 검증의
         // oldIds에서 제거해 차등 커밋이 실제 존재하지 않는 ID 삭제를 시도하지 않게 한다.

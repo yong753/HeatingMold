@@ -31,8 +31,8 @@ internal sealed class WorkingArea
     /// <summary>영역별 간격 입력 문자열. 마지막 성공 생성 조건과는 별개의 UI 초안이다.</summary>
     public string SpacingText { get; set; } = "50";
 
-    /// <summary>이 영역의 목표 발열전력 입력 문자열(W). 빈 문자열이면 미입력이다.</summary>
-    public string TargetPowerText { get; set; } = "";
+    /// <summary>이 영역의 목표 발열전력 입력 문자열(W). 사용자가 지우면 빈 문자열이 된다.</summary>
+    public string TargetPowerText { get; set; } = ElectricalSettingsResolver.DefaultTargetPowerText;
 
     /// <summary>
     /// 이 영역의 목표 발열전력(W). 확정된 값이며 다른 영역과 독립이다.

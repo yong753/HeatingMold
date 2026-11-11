@@ -23,6 +23,14 @@ static class SidebarTabChecks
         target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(target, value);
     static object Invoke(object target, string name, params object[] args) =>
         target.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(target, args);
+    static bool LogicalContains(object root, object target)
+    {
+        if (ReferenceEquals(root, target)) return true;
+        if (root is not DependencyObject node) return false;
+        foreach (object child in LogicalTreeHelper.GetChildren(node))
+            if (LogicalContains(child, target)) return true;
+        return false;
+    }
 
     public static void Run(MainWindow window)
     {
@@ -48,6 +56,16 @@ static class SidebarTabChecks
         Check(window.FindName("ActiveAreaSelectorBox") is ComboBox &&
               window.FindName("ActiveAreaStateText") is TextBlock,
             "active-area selector and result state are available above every tab");
+        object pathContent = ((TabItem)tabs.Items[1]).Content;
+        object reviewContent = ((TabItem)tabs.Items[2]).Content;
+        object targetPowerBox = window.FindName("TargetPowerBox")!;
+        object splitAreaButton = window.FindName("SplitAreaButton")!;
+        Check(LogicalContains(reviewContent, targetPowerBox) &&
+              LogicalContains(reviewContent, splitAreaButton),
+            "target power input and automatic split live on the review tab");
+        Check(!LogicalContains(pathContent, targetPowerBox) &&
+              !LogicalContains(pathContent, splitAreaButton),
+            "the path tab stays generation-only");
         Check(excludeBox.IsChecked != true && !excludeBox.IsEnabled && !clearExclusions.IsEnabled,
             "exclude controls start disabled in the viewport toolbar");
         Check(viewport.FaceSelectionEnabled && window.FindName("RegionPreviewPanel") == null,

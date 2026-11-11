@@ -131,8 +131,15 @@ public partial class MainWindow
             .Where(e => e.State == ReviewAreaState.Ready)
             .Select(e => e.Area)
             .ToList();
+        // 목표전력 미입력 영역도 회로와 실측 길이는 확정된 사실이므로 표에 남긴다.
+        // 전기 계산만 비우고, 내보내기 가능 여부는 Ready 판정을 그대로 따른다.
+        var measurableAreas = entries
+            .Where(e => e.State == ReviewAreaState.Ready
+                || e.State == ReviewAreaState.MissingTargetPower)
+            .Select(e => e.Area)
+            .ToList();
         var circuits = new List<CircuitLengthInfo>();
-        foreach (WorkingArea area in readyAreas)
+        foreach (WorkingArea area in measurableAreas)
         {
             string prefix = string.IsNullOrEmpty(area.Name) ? "A-" : area.Name + "-";
             circuits.AddRange(GetCircuitLengths(area, prefix));
@@ -145,9 +152,10 @@ public partial class MainWindow
         {
             limits = settings.Limits;
             // 회로마다 그 영역에 확정된 목표 발열전력을 그대로 쓴다. 총합을 다시 나누지 않는다.
+            // 미입력(null)은 0 W 계산 오류가 아니라 '미입력' 행으로 넘긴다.
             var inputs = circuits
                 .Select(c => new TargetPowerCircuitInput(
-                    c.CircuitId, c.HeatingLengthMm, c.TargetPowerW.GetValueOrDefault()))
+                    c.CircuitId, c.HeatingLengthMm, c.TargetPowerW))
                 .ToList();
             table = ElectricalSpecTableBuilder.BuildFromTargetPower(inputs, settings.Wire, settings.Limits);
         }
@@ -247,6 +255,8 @@ public partial class MainWindow
         ApplyTargetPowerText(area);
         RefreshElectricalTable();
         UpdateExportScopeText();
+        // 분할 버튼 활성 조건이 목표전력 유무에 의존한다.
+        UpdateActionStates();
     }
 
     /// <summary>
@@ -331,7 +341,14 @@ public partial class MainWindow
         var rows = table == null
             ? new List<ElectricalSpecUiRow>()
             : table.Rows.Select(r => new ElectricalSpecUiRow(
-                r.CircuitId, r.TargetPowerW, r.LengthM, r.ResistanceOhm, r.VoltageV, r.CurrentA, r.PowerW,
+                r.CircuitId,
+                r.TargetPowerW,
+                r.LengthM,
+                r.ResistanceOhm,
+                // 목표전력 미입력은 0 V/0 A가 아니라 '계산 불가'다. 길이·저항은 확정값이므로 남긴다.
+                r.IsTargetPowerMissing ? null : r.VoltageV,
+                r.IsTargetPowerMissing ? null : r.CurrentA,
+                r.IsTargetPowerMissing ? null : r.PowerW,
                 ElectricalVerdictText(r), r.Note, false)).ToList();
         if (rows.Count > 0)
         {
@@ -353,12 +370,20 @@ public partial class MainWindow
             return;
         }
 
-        // 계산 오류가 하나라도 있으면 '전체 OK'라고 말하지 않는다.
-        int invalidCount = table.Rows.Count(r => !r.IsValid);
+        // 미입력과 계산 오류를 섞지 않는다. 둘 중 하나라도 있으면 '전체 OK'라고 말하지 않는다.
+        int missingCount = table.Rows.Count(r => r.IsTargetPowerMissing);
+        int invalidCount = table.Rows.Count(r => !r.IsValid && !r.IsTargetPowerMissing);
         string verdicts;
-        if (invalidCount > 0)
-            verdicts = string.Format(CultureInfo.CurrentCulture, " · OK {0} · NG {1} · 계산 오류 {2}",
-                table.WithinLimitCount, table.OverLimitCount, invalidCount);
+        if (missingCount > 0 || invalidCount > 0)
+        {
+            var details = new List<string>();
+            if (missingCount > 0)
+                details.Add(string.Format(CultureInfo.CurrentCulture, "목표전력 미입력 {0}", missingCount));
+            if (invalidCount > 0)
+                details.Add(string.Format(CultureInfo.CurrentCulture, "계산 오류 {0}", invalidCount));
+            verdicts = string.Format(CultureInfo.CurrentCulture, " · OK {0} · NG {1} · {2}",
+                table.WithinLimitCount, table.OverLimitCount, string.Join(" · ", details));
+        }
         else if (table.HasOverLimitCircuits)
             verdicts = string.Format(CultureInfo.CurrentCulture, " · OK {0} · NG {1}",
                 table.WithinLimitCount, table.OverLimitCount);
@@ -377,9 +402,10 @@ public partial class MainWindow
             table.TotalCurrentA, table.TotalPowerW, limitText, excluded);
     }
 
-    /// <summary>표의 판정 열. 계산 오류는 OK/NG가 아니므로 '—'로 구분한다.</summary>
+    /// <summary>표의 판정 열. 미입력과 계산 오류는 OK/NG가 아니므로 '—'로 구분한다.</summary>
     private static string ElectricalVerdictText(ElectricalSpecRow row)
     {
+        if (row.IsTargetPowerMissing) return "—";
         if (!row.IsValid) return "—";
         if (row.Assessment == null) return "";
         return row.Assessment.IsWithinLimits ? "OK" : "NG";

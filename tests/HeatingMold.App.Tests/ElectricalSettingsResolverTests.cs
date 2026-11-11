@@ -128,6 +128,17 @@ public class ElectricalSettingsResolverTests
         Assert.Equal(1_250.0, powerW);
     }
 
+    [Fact]
+    public void DefaultTargetPower_IsThreePointFiveKilowattsAndRoundTrips()
+    {
+        // 사용자 확정: 새 영역의 기본 목표 발열전력은 3.5 kW다.
+        Assert.Equal(3_500.0, ElectricalSettingsResolver.DefaultTargetPowerW);
+        Assert.True(ElectricalSettingsResolver.TryParseTargetPowerW(
+            ElectricalSettingsResolver.DefaultTargetPowerText, out double powerW, out string error));
+        Assert.True(string.IsNullOrEmpty(error));
+        Assert.Equal(3_500.0, powerW);
+    }
+
     [Theory]
     [InlineData("0")]
     [InlineData("-5")]

@@ -109,6 +109,47 @@ public class TargetPowerElectricalTests
     }
 
     [Fact]
+    public void BuildFromTargetPower_MissingTarget_KeepsRowWithoutComputing()
+    {
+        var inputs = new[] { new TargetPowerCircuitInput("A-1", 2_500, null) };
+
+        ElectricalSpecTable table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            inputs, HeatingWireSpec.Case1, Limits);
+
+        ElectricalSpecRow row = table.Rows[0];
+        Assert.True(row.IsTargetPowerMissing);
+        Assert.False(row.IsValid);
+        Assert.Null(row.TargetPowerW);
+        Assert.Null(row.Assessment);
+        Assert.Equal(2.5, row.LengthM, 9);
+        // 저항은 목표전력과 무관하게 rL로 확정된다.
+        Assert.Equal(10.0, row.ResistanceOhm, 9);
+        Assert.Contains("미입력", row.Message);
+        Assert.Equal(0, table.TotalTargetPowerW);
+        Assert.Equal(0, table.TotalPowerW);
+        Assert.Equal(0, table.OverLimitCount);
+    }
+
+    [Fact]
+    public void BuildFromTargetPower_MixedMissingAndReady_KeepsBothRows()
+    {
+        var inputs = new[]
+        {
+            new TargetPowerCircuitInput("A-1", 2_500, 4_840.0),
+            new TargetPowerCircuitInput("B-1", 2_500, null)
+        };
+
+        ElectricalSpecTable table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            inputs, HeatingWireSpec.Case1, Limits);
+
+        Assert.Equal(2, table.Rows.Count);
+        Assert.True(table.Rows[0].IsValid);
+        Assert.True(table.Rows[1].IsTargetPowerMissing);
+        Assert.Equal(4_840.0, table.TotalTargetPowerW, 6);
+        Assert.Equal(4_840.0, table.TotalPowerW, 6);
+    }
+
+    [Fact]
     public void TryAllocate_EqualLengths_SplitsTotalPowerEvenly()
     {
         var circuits = new (string, double)[] { ("A", 5_000), ("B", 5_000), ("C", 5_000) };
