@@ -1214,12 +1214,32 @@ namespace
 
         // Count edge uses by topological identity after sewing. Internal edges
         // used by two selected working faces disappear from the union boundary.
+        int degenerateWorkingEdges = 0;
+        int degenerateOriginalEdges = 0;
+        const auto logDegenerateBoundaryEdges = [](int workingCount, int originalCount)
+        {
+            char path[MAX_PATH] = { 0 };
+            const DWORD length = ::GetEnvironmentVariableA("HEATINGMOLD_OCC_LOG", path, MAX_PATH);
+            if (length == 0 || length >= MAX_PATH) return;
+            std::ofstream log(path, std::ios::app);
+            if (!log) return;
+            log << "region-boundary: skipped degenerate edges working=" << workingCount
+                << " original=" << originalCount << "\n";
+        };
+
         TopTools_IndexedMapOfShape edgeMap;
         std::vector<int> uses;
         for (const TopoDS_Face& face : workingFaces)
             for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next())
             {
                 const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+                if (BRep_Tool::Degenerated(edge))
+                {
+                    // A pole or apex collapsed to a point is not a real exterior
+                    // boundary and has no source interval to match.
+                    ++degenerateWorkingEdges;
+                    continue;
+                }
                 int index = edgeMap.FindIndex(edge);
                 if (index == 0)
                 {
@@ -1257,6 +1277,11 @@ namespace
             for (TopExp_Explorer ex(g_faces[faceId], TopAbs_EDGE); ex.More(); ex.Next())
             {
                 const TopoDS_Edge originalEdge = TopoDS::Edge(ex.Current());
+                if (BRep_Tool::Degenerated(originalEdge))
+                {
+                    ++degenerateOriginalEdges;
+                    continue;
+                }
                 int index = originalEdgeMap.FindIndex(originalEdge);
                 if (index == 0)
                 {
@@ -1267,6 +1292,8 @@ namespace
                 ++originalEdgeUses[index - 1];
             }
         }
+        if (degenerateWorkingEdges > 0 || degenerateOriginalEdges > 0)
+            logDegenerateBoundaryEdges(degenerateWorkingEdges, degenerateOriginalEdges);
         std::vector<TopoDS_Edge> originalBoundaryEdges;
         for (int i = 1; i <= originalEdgeMap.Extent(); ++i)
             if (originalEdgeUses[i - 1] == 1)
