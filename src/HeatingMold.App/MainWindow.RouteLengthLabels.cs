@@ -23,7 +23,14 @@ public partial class MainWindow
     /// 확정 3D 체인과 확정 3D 길이만 사용하며 경로를 재생성·재매핑하지 않는다.
     /// 라벨은 표시 전용이므로 실패해도 경로 형상은 되돌리지 않는다.
     /// </summary>
-    private bool TryReplaceRouteLengthLabels(WorkingSideDefinition side, out string failure)
+    private bool TryReplaceRouteLengthLabels(WorkingSideDefinition side, out string failure) =>
+        // 현재 목록을 다시 읽는 호출자(불러오기 등)용. 경로 커밋 안에서는 확정에 사용한
+        // 최종 영역 집합을 넘겨야 한다. 삭제가 끝난 뒤 화면 목록에는 이미 제거된 영역이
+        // 남아 있어 그 영역의 확정 경로를 읽을 수 없기 때문이다.
+        TryReplaceRouteLengthLabels(side, _areas, out failure);
+
+    private bool TryReplaceRouteLengthLabels(WorkingSideDefinition side,
+        IReadOnlyList<WorkingArea> areas, out string failure)
     {
         failure = null;
         if (side == null || side.Id.Value <= 0)
@@ -32,10 +39,16 @@ public partial class MainWindow
             return false;
         }
 
+        if (areas == null)
+        {
+            failure = "길이 라벨을 만들 영역 목록이 없습니다.";
+            return false;
+        }
+
         var sources = new List<RouteLengthLabelSource>();
         var areaColors = new Dictionary<string, (byte R, byte G, byte B)>(StringComparer.Ordinal);
 
-        foreach (WorkingArea area in _areas)
+        foreach (WorkingArea area in areas)
         {
             if (area == null || !area.PatternDisplayed) continue;
             SerpentineResult pattern = area.Pattern;

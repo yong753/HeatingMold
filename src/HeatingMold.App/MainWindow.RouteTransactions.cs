@@ -307,11 +307,11 @@ public partial class MainWindow
         catch (Exception ex) { presentationFailure ??= ex; }
         if (!markersApplied && presentationFailure == null)
             presentationFailure = new InvalidOperationException("인출점 마커 갱신에 실패했습니다");
-        // 길이 라벨은 커밋된 네이티브 체인에서 다시 만든다. 실패하면 잘못된 숫자가
-        // 남지 않도록 라벨만 지우고, 이미 적용한 경로 형상은 그대로 유지한다.
+        // 길이 라벨은 커밋된 네이티브 체인에서 다시 만든다. 대상은 이번 커밋에 참여한 최종
+        // 영역 집합으로 고정한다. 화면 목록(_areas)은 아직 교체 전이라 삭제된 영역을 담고 있다.
         try
         {
-            if (!TryReplaceRouteLengthLabels(side, out string labelFailure))
+            if (!TryReplaceRouteLengthLabels(side, areas, out string labelFailure))
             {
                 presentationFailure ??= new InvalidOperationException(labelFailure);
                 try { Bridge.ClearRouteLengthLabels(); } catch (Exception) { }
