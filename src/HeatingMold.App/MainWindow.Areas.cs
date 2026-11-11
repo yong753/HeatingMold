@@ -18,7 +18,6 @@ public partial class MainWindow
         CancelExitFacePick();
         if (Viewport != null)
             Viewport.PowerLocationMode = false;
-        if (CircuitLengthGrid != null) CircuitLengthGrid.ItemsSource = null;
     }
 
     private void RefreshAreaList()
@@ -91,6 +90,8 @@ public partial class MainWindow
             if (area.Pattern != null)
                 UpdateCircuitTable();
         }
+        // 경로가 없는 영역으로 전환해도 이전 영역의 사양 행이 남지 않게 같은 경로로 다시 계산한다.
+        if (area?.Pattern == null) RefreshElectricalTable();
 
         UpdateActiveAreaHighlight();
         SyncExitFaceUi(area);

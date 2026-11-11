@@ -33,7 +33,6 @@ public partial class MainWindow
         // XAML의 표시 문자열은 culture에 따라 파싱되지 않을 수 있으므로 초기값을 다시 쓴다.
         if (WirePresetBox != null && WirePresetBox.SelectedIndex < 0)
             WirePresetBox.SelectedIndex = ElectricalSettingsResolver.Case1PresetIndex;
-        ApplyFixedWireText(WirePresetBox?.SelectedIndex ?? ElectricalSettingsResolver.Case1PresetIndex);
         if (AllowedVoltageBox != null)
             AllowedVoltageBox.Text = ElectricalSettingsResolver.DefaultAllowedVoltageText;
         if (AllowedCurrentBox != null)
@@ -196,8 +195,6 @@ public partial class MainWindow
         string scope = _reviewCurrentAreaOnly
             ? string.Format("현재 영역({0}) — 다른 영역은 포함되지 않습니다", _activeArea?.Name ?? "없음")
             : scopeLabel;
-        if (CircuitLengthGrid != null)
-            AutomationProperties.SetName(CircuitLengthGrid, scopeLabel + " 회로별 길이");
         if (ElectricalSpecGrid != null)
             AutomationProperties.SetName(ElectricalSpecGrid, scopeLabel + " 전기 사양");
         if (ExportIncludeText != null)
@@ -214,26 +211,19 @@ public partial class MainWindow
     private void WirePreset_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (!_electricalUiReady || _suppressElectricalInput) return;
-        ApplyFixedWireText(WirePresetBox.SelectedIndex);
         RefreshElectricalTable();
     }
 
-    /// <summary>선택한 Case의 고정 직경·단위저항을 읽기 전용 표시에 채운다.</summary>
-    private void ApplyFixedWireText(int presetIndex)
+    /// <summary>
+    /// 선택한 Case의 고정 직경·단위 저항을 프로젝트 저장용 문자열로 만든다.
+    /// 화면에는 프리셋 이름에 이미 표시되므로 별도 입력 상자를 두지 않는다.
+    /// </summary>
+    private (string Diameter, string Resistance) GetFixedWireText()
     {
-        if (!ElectricalSettingsResolver.TryGetWire(presetIndex, out HeatingWireSpec wire)) return;
-        _suppressElectricalInput = true;
-        try
-        {
-            if (WireDiameterBox != null)
-                WireDiameterBox.Text = wire.DiameterMm.ToString("0.###", CultureInfo.CurrentCulture);
-            if (WireResistanceBox != null)
-                WireResistanceBox.Text = wire.ResistanceOhmPerMeter.ToString("0.###", CultureInfo.CurrentCulture);
-        }
-        finally
-        {
-            _suppressElectricalInput = false;
-        }
+        if (!ElectricalSettingsResolver.TryGetWire(WirePresetBox?.SelectedIndex ?? -1, out HeatingWireSpec wire))
+            return ("", "");
+        return (wire.DiameterMm.ToString("0.###", CultureInfo.CurrentCulture),
+                wire.ResistanceOhmPerMeter.ToString("0.###", CultureInfo.CurrentCulture));
     }
 
     private void ElectricalInput_Changed(object sender, TextChangedEventArgs e)
@@ -332,7 +322,7 @@ public partial class MainWindow
         ReviewSnapshot snapshot = sharedSnapshot ?? BuildReviewSnapshot();
         if (snapshot.ElectricalError != null)
         {
-            ElectricalSpecGrid.ItemsSource = null;
+            SetElectricalRows(null);
             ElectricalSummaryText.Text = "전기 입력 오류 — " + snapshot.ElectricalError;
             return;
         }
@@ -356,7 +346,7 @@ public partial class MainWindow
                 "합계", table.TotalTargetPowerW, null, null, null, table.TotalCurrentA, table.TotalPowerW,
                 "", "", true));
         }
-        ElectricalSpecGrid.ItemsSource = rows;
+        SetElectricalRows(rows);
 
         string scope = _reviewCurrentAreaOnly ? "현재 영역 기준 · " : "전체 영역 기준 · ";
         string excluded = snapshot.ExcludedCount > 0
@@ -400,6 +390,14 @@ public partial class MainWindow
             "{0}총 {1}회로{2} · 목표 {3:F2} kW · 합계 {4:F2} A / {5:F1} W{6}{7}",
             scope, table.Rows.Count, verdicts, table.TotalTargetPowerW / 1000.0,
             table.TotalCurrentA, table.TotalPowerW, limitText, excluded);
+    }
+
+    /// <summary>검토 탭의 사양표와 뷰포트의 확대 보기가 같은 행 집합을 보여 준다.</summary>
+    private void SetElectricalRows(IReadOnlyList<ElectricalSpecUiRow> rows)
+    {
+        System.Collections.IEnumerable source = rows == null || rows.Count == 0 ? null : (System.Collections.IEnumerable)rows;
+        if (ElectricalSpecGrid != null) ElectricalSpecGrid.ItemsSource = source;
+        if (ExpandedElectricalGrid != null) ExpandedElectricalGrid.ItemsSource = source;
     }
 
     /// <summary>표의 판정 열. 미입력과 계산 오류는 OK/NG가 아니므로 '—'로 구분한다.</summary>

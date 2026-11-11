@@ -66,6 +66,20 @@ static class SidebarTabChecks
         Check(!LogicalContains(pathContent, targetPowerBox) &&
               !LogicalContains(pathContent, splitAreaButton),
             "the path tab stays generation-only");
+        object electricalGrid = window.FindName("ElectricalSpecGrid")!;
+        object reviewScope = window.FindName("ReviewScopeBox")!;
+        object presetBox = window.FindName("WirePresetBox")!;
+        Check(LogicalContains(reviewContent, electricalGrid) &&
+              LogicalContains(reviewContent, reviewScope) &&
+              LogicalContains(reviewContent, presetBox),
+            "the review tab is one unified electrical specification section");
+        Check(window.FindName("CircuitLengthGrid") == null &&
+              window.FindName("WireDiameterBox") == null &&
+              window.FindName("WireResistanceBox") == null,
+            "the duplicated length table and fixed wire readout boxes are removed");
+        Check(window.FindName("ExpandedElectricalGrid") is DataGrid &&
+              window.FindName("ExpandedCircuitGrid") == null,
+            "the viewport expander shows the electrical table instead of a duplicate length table");
         Check(excludeBox.IsChecked != true && !excludeBox.IsEnabled && !clearExclusions.IsEnabled,
             "exclude controls start disabled in the viewport toolbar");
         Check(viewport.FaceSelectionEnabled && window.FindName("RegionPreviewPanel") == null,

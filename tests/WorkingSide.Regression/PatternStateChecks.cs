@@ -199,7 +199,7 @@ static class PatternStateChecks
         areaType.GetProperty("RouteEdited")!.SetValue(a, false);
         Invoke(window, "UpdateActionStates");
 
-        // 검토 범위는 회로 길이 표·전기 표·내보내기 안내가 같은 목록을 쓰는지 확인한다.
+        // 검토 범위는 전기 사양표·확대 보기·내보내기 안내가 같은 목록을 쓰는지 확인한다.
         areaType.GetProperty("Pattern")!.SetValue(b, Pattern(new Vec2(-10, 0), new Vec2(10, 0)));
         RefreshCircuits(b);
         areaType.GetProperty("AppliedInputs")!.SetValue(b, Invoke(window, "CaptureAppliedInputs", b, 5.0, 50.0));
@@ -208,20 +208,26 @@ static class PatternStateChecks
         areaType.GetProperty("NativePieceIds")!.SetValue(b, new[] { -4502 });
         areaType.GetProperty("RoutePieceLengths")!.SetValue(b, new[] { 30.0 });
         var scopeBox = (ComboBox)window.FindName("ReviewScopeBox");
-        var circuitGrid = (DataGrid)window.FindName("CircuitLengthGrid");
+        var electricalGrid = (DataGrid)window.FindName("ElectricalSpecGrid");
+        var expandedGrid = (DataGrid)window.FindName("ExpandedElectricalGrid");
         var exportScope = (TextBlock)window.FindName("ExportScopeText");
         Invoke(window, "RefreshElectricalTable");
         Invoke(window, "UpdateCircuitTable");
-        Check(scopeBox.SelectedIndex == 0 && circuitGrid.Items.Count == 2,
-            "all-area review scope lists circuits from every generated area");
+        Check(scopeBox.SelectedIndex == 0 && electricalGrid.Items.Count == 3
+            && expandedGrid.Items.Count == 3,
+            "all-area review scope lists every circuit plus the total row in one table");
         Check(exportScope.Text.Contains("전체 영역"),
             "all-area export scope is stated explicitly");
         scopeBox.SelectedIndex = 1;
-        Check(circuitGrid.Items.Count == 1 && exportScope.Text.Contains("PatternStateA"),
-            "current-area review scope filters the circuit table and export notice");
+        Check(electricalGrid.Items.Count == 2 && exportScope.Text.Contains("PatternStateA"),
+            "current-area review scope filters the specification table and export notice");
         Check(exportScope.Text.Contains("다른 영역은 포함되지 않습니다"),
             "current-area export warns that other areas are excluded");
         scopeBox.SelectedIndex = 0;
+
+        // 회로 길이는 별도 표가 아니라 사양표의 길이 열이 보여 준다.
+        Check(window.FindName("CircuitLengthGrid") == null,
+            "the duplicated circuit-length table is removed from the review tab");
 
         // 사용자 확정: 새 작업 영역의 기본 목표 발열전력은 3.5 kW다.
         object fresh = Activator.CreateInstance(areaType, nonPublic: true)!;
@@ -236,8 +242,8 @@ static class PatternStateChecks
         Invoke(window, "UpdateExportScopeText");
         var summary = (TextBlock)window.FindName("ElectricalSummaryText");
         var specGrid = (DataGrid)window.FindName("ElectricalSpecGrid");
-        Check(circuitGrid.Items.Count == 2,
-            "missing target power keeps every circuit in the length table");
+        Check(specGrid.Items.Count == 3,
+            "missing target power keeps every circuit row in the specification table");
         object? missingRow = null;
         foreach (object item in specGrid.Items)
         {

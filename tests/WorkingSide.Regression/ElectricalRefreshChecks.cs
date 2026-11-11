@@ -56,17 +56,15 @@ static class ElectricalRefreshChecks
         ((IList)Field<object>(window, "_areas")).Add(area);
         Invoke(window, "ActivateArea", area);
 
-        var circuitGrid = (DataGrid)window.FindName("CircuitLengthGrid");
         var electricalGrid = (DataGrid)window.FindName("ElectricalSpecGrid");
-        circuitGrid.ItemsSource = new[] { "stale circuit" };
         electricalGrid.ItemsSource = new[] { "stale electrical" };
 
         Invoke(window, "ClearExclusions_Click", null!, null!);
 
         Check(areaType.GetProperty("Pattern")!.GetValue(area) != null,
             "a rejected exclusion clear preserves the generated pattern");
-        Check(circuitGrid.Items.Count == 1 && electricalGrid.Items.Count == 1,
-            "a rejected exclusion clear preserves both length and electrical tables");
+        Check(electricalGrid.Items.Count == 1,
+            "a rejected exclusion clear preserves the electrical specification table");
 
         Invoke(window, "ClearAllAreas", false);
         Console.WriteLine($"{count} electrical refresh checks passed.");

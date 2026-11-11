@@ -54,7 +54,6 @@ namespace HeatingMold.App
             Color.FromRgb(0xFF, 0x00, 0xFF), // G 자홍
             Color.FromRgb(0xFF, 0xFF, 0x00), // H 노랑
         };
-        private sealed class CircuitLengthRow { public string Circuit { get; set; } public double HeatingLength { get; set; } public double TotalLength => HeatingLength; }
         private sealed record PendingLead(int CircuitIndex, bool IsStart, Vec3 Start);
         private List<PendingLead> _pendingLeads = new();
         private double[] _leadLengths = Array.Empty<double>();
@@ -1344,31 +1343,11 @@ namespace HeatingMold.App
             Math.Sqrt((a[0]-b[0])*(a[0]-b[0]) + (a[1]-b[1])*(a[1]-b[1]) + (a[2]-b[2])*(a[2]-b[2]));
         private void UpdateCircuitTable()
         {
-            if (CircuitLengthGrid == null) return;
             // 분할 가족의 모든 영역에 회로가 준비되면 실측 길이로 목표전력을 먼저 재배분한다.
             TryApplySplitFamilyAllocation();
-            // 전기 사양표·내보내기와 같은 검토 스냅샷을 사용한다. 회로 ID는 영역명-회로번호로 구분한다.
-            ReviewSnapshot snapshot = BuildReviewSnapshot();
-            var rows = new List<CircuitLengthRow>();
-            foreach (ReviewAreaEntry entry in snapshot.Entries)
-            {
-                bool reference = entry.State is ReviewAreaState.Stale or ReviewAreaState.Unverified;
-                // 목표전력 미입력은 경로/길이가 확정된 상태다. 전기 계산만 비우고 길이는 표시한다.
-                bool measurable = entry.State is ReviewAreaState.Ready or ReviewAreaState.MissingTargetPower;
-                if (!measurable && !reference) continue;
-                if (reference && !HasUsableLengths(entry.Area, out _)) continue;
-                string prefix = string.IsNullOrEmpty(entry.Area.Name) ? "A-" : entry.Area.Name + "-";
-                rows.AddRange(GetCircuitLengths(entry.Area, prefix)
-                    .Select(x => new CircuitLengthRow
-                    {
-                        Circuit = (reference ? "[참고] " : "") + x.CircuitId,
-                        HeatingLength = x.HeatingLengthMm
-                    }));
-            }
-            CircuitLengthGrid.ItemsSource = rows.Count == 0 ? null : rows;
-            if (ExpandedCircuitGrid != null)
-                ExpandedCircuitGrid.ItemsSource = rows.Count == 0 ? null : rows;
-            RefreshElectricalTableCore(snapshot);
+            // 검토 탭의 전기 사양표와 뷰포트의 확대 보기가 같은 검토 스냅샷을 사용한다.
+            // 회로 ID는 영역명-회로번호이며, 길이는 사양표의 길이 열이 보여 준다.
+            RefreshElectricalTableCore(BuildReviewSnapshot());
         }
 
         // Group stable route-piece IDs by the canonical split circuits. Disabled

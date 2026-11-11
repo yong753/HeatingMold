@@ -1027,8 +1027,8 @@ public partial class MainWindow
                     WirePresetBox.SelectedIndex = electrical.WirePresetIndex == ElectricalSettingsResolver.Case2PresetIndex
                         ? ElectricalSettingsResolver.Case2PresetIndex
                         : ElectricalSettingsResolver.Case1PresetIndex;
-                if (WireDiameterBox != null) WireDiameterBox.Text = electrical.WireDiameterText ?? "";
-                if (WireResistanceBox != null) WireResistanceBox.Text = electrical.WireResistanceText ?? "";
+                // 저장된 직경·단위 저항은 위 프리셋과의 일치 검증(ProjectElectricalMigration)에서만 쓰고,
+                // 화면에는 프리셋 이름으로 표시하므로 별도 입력 상자에 다시 채우지 않는다.
                 if (AllowedVoltageBox != null)
                     AllowedVoltageBox.Text = electrical.AllowedVoltageText
                         ?? electrical.AppliedVoltageText ?? "";

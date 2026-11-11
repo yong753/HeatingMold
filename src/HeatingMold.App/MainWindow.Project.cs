@@ -415,11 +415,13 @@ namespace HeatingMold.App
 
         private ProjectElectricalDocument CaptureElectricalInputs()
         {
+            // 직경·단위 저항은 화면 입력이 아니라 선택한 Case의 고정값이다.
+            var (diameterText, resistanceText) = GetFixedWireText();
             return new ProjectElectricalDocument
             {
                 WirePresetIndex = WirePresetBox?.SelectedIndex ?? -1,
-                WireDiameterText = WireDiameterBox?.Text ?? "",
-                WireResistanceText = WireResistanceBox?.Text ?? "",
+                WireDiameterText = diameterText,
+                WireResistanceText = resistanceText,
                 AllowedVoltageText = AllowedVoltageBox?.Text ?? "",
                 // 스키마 2 이하 호환용. 스키마 3에서는 허용 전압과 같은 값을 유지한다.
                 AppliedVoltageText = AllowedVoltageBox?.Text ?? "",
