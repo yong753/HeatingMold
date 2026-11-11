@@ -287,8 +287,19 @@ public partial class MainWindow
         if (ExportIncludeText != null)
             ExportIncludeText.Text = string.Format(
                 "포함: 확정 작업평면 기준 금형 평면도·숨은선, {0} 발열경로·전기 사양표.", scopeLabel);
+        if (StepExportScopeText != null)
+        {
+            int routed = snapshot.Entries.Count(entry => entry.State == ReviewAreaState.Ready);
+            string wireText = ElectricalSettingsResolver.TryGetWire(
+                WirePresetBox?.SelectedIndex ?? -1, out HeatingWireSpec wire)
+                ? "Ø" + wire.DiameterMm.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + " mm"
+                : "규격 미선택";
+            StepExportScopeText.Text = "STEP 범위: " + scopeLabel + " · 발열경로 "
+                + routed.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + "개 영역 · 발열사 " + wireText;
+        }
         string baseText = string.Format(
-            "내보내기 범위: {0} · 준비 {1}/{2}개 — 확정 작업평면 기준 평면도와 발열경로·전기 사양표를 저장합니다. 다른 방향 투상·3D STEP·프로젝트 JSON은 포함되지 않습니다.",
+            "내보내기 범위: {0} · 준비 {1}/{2}개 — 확정 작업평면 기준 평면도와 발열경로·전기 사양표를 저장합니다. 이 DXF에는 다른 방향 투상·3D STEP·프로젝트 JSON이 포함되지 않습니다.",
             scope, snapshot.ReadyCount, snapshot.RequestedCount);
         ExportScopeText.Text = snapshot.CanExport
             ? baseText
@@ -299,6 +310,8 @@ public partial class MainWindow
     {
         if (!_electricalUiReady || _suppressElectricalInput) return;
         RefreshElectricalTable();
+        // STEP 범위 문구가 선택한 Case의 직경을 표시하므로 함께 갱신한다.
+        UpdateExportScopeText();
     }
 
     /// <summary>

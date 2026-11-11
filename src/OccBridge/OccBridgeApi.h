@@ -116,6 +116,31 @@ public:
     property array<int>^ SupportFaceIds;
 };
 
+/// <summary>
+/// STEP 내보내기용 확정 회로 하나. Points는 확정된 순서의 3D 점 체인(flat xyz)이며,
+/// 네이티브는 이 좌표를 재생성/재매핑/평면 투영 없이 그대로 사용한다.
+/// </summary>
+public ref class StepExportCircuit
+{
+public:
+    StepExportCircuit(System::String^ name, System::String^ areaName,
+        int colorR, int colorG, int colorB, array<double>^ points)
+    {
+        Name = name;
+        AreaName = areaName;
+        ColorR = colorR;
+        ColorG = colorG;
+        ColorB = colorB;
+        Points = points;
+    }
+    property System::String^ Name;
+    property System::String^ AreaName;
+    property int ColorR;
+    property int ColorG;
+    property int ColorB;
+    property array<double>^ Points;
+};
+
 /// <summary>격리된 STEP 복원 후보의 Face/Edge 토폴로지 지문.</summary>
 public ref class ProjectRestoreCandidateInfo
 {
@@ -200,6 +225,15 @@ public:
     /// 지지 Face 정보가 없는 기존 조각은 빈 배열이며, 하나라도 불일치하면 null.</summary>
     static array<CommittedRouteChain^>^ GetCommittedRouteChainsDetailed(long long id, long long revision,
         array<int>^ pieceIds);
+    /// <summary>
+    /// 현재 로드된 3D 모델과 확정 발열경로/발열사를 하나의 STEP 파일로 쓴다.
+    /// 회로 좌표는 확정 체인을 그대로 쓰고, 모델 좌표계/mm 단위를 유지한다.
+    /// 파일은 targetPath에 직접 쓰며, 성공 시 별도 리더로 다시 읽어 파트 수와 경계를 검증한다.
+    /// 실패는 ASCII 토큰(no-model, invalid-diameter, ...)으로 돌려주고 managed가 사용자 메시지로 옮긴다.
+    /// </summary>
+    static bool ExportStepWithRoutes(System::String^ targetPath, System::String^ modelName,
+        double wireDiameterMm, array<StepExportCircuit^>^ circuits,
+        [System::Runtime::InteropServices::Out] System::String^% failureReason);
     static bool StageWorkingPolyline(long long id, long long revision, int stageId, array<double>^ xyzFlat);
     static RoutePieceResult^ StageProjectedWorkingRoutePiece(long long id, long long revision, int stageId,
         System::String^ kind, array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);

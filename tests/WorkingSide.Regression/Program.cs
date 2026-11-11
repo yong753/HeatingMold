@@ -727,6 +727,36 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
                     Check(againLoops!=null && againLoops.Length==1,
                         $"exit-candidate lookup leaves the 80-face region intact ({againLoops?.Length??0}) {againFailure}");
                 }
+                // STEP 내보내기: 모델과 발열사 솔리드를 하나의 파일로 쓰고, 별도 리더로
+                // 다시 읽어 파트 수와 경계를 검증한다. 경로는 배치와 무관한 형상 검증용이다.
+                string stepPath=Path.Combine(Path.GetTempPath(),
+                    "heatingmold_step_export_"+Guid.NewGuid().ToString("N")+".step");
+                try
+                {
+                    var straightWire=new StepExportCircuit("테스트 A 발열경로","테스트 A",255,0,0,
+                        new double[]{0,0,0, 50,0,0, 50,30,0, 0,30,0});
+                    var turnedWire=new StepExportCircuit("테스트 B 발열경로","테스트 B",0,128,255,
+                        new double[]{0,0,10, 40,0,10, 40,25,10});
+                    bool exported=Bridge.ExportStepWithRoutes(stepPath,"Mold_Cover_Trim",0.30,
+                        new[]{straightWire,turnedWire},out string stepFailure);
+                    Check(exported,"STEP export writes model plus two wire parts ("+stepFailure+")");
+                    Check(File.Exists(stepPath)&&new FileInfo(stepPath).Length>0,
+                        "STEP export file is non-empty");
+                    bool rejectedDiameter=Bridge.ExportStepWithRoutes(stepPath,"Mold_Cover_Trim",0.0,
+                        new[]{straightWire},out string diameterFailure);
+                    Check(!rejectedDiameter&&diameterFailure=="invalid-diameter",
+                        "STEP export rejects a non-positive wire diameter ("+diameterFailure+")");
+                    var degenerate=new StepExportCircuit("퇴화 경로","테스트 C",0,0,0,
+                        new double[]{1,2,3, 1,2,3});
+                    bool rejectedWire=Bridge.ExportStepWithRoutes(stepPath,"Mold_Cover_Trim",0.30,
+                        new[]{degenerate},out string wireFailure);
+                    Check(!rejectedWire&&wireFailure!=null&&wireFailure.StartsWith("wire-build:"),
+                        "STEP export rejects a degenerate wire path ("+wireFailure+")");
+                }
+                finally
+                {
+                    try { if(File.Exists(stepPath)) File.Delete(stepPath); } catch { }
+                }
                 Bridge.ReleaseWorkingContext(exampleContext.Id);
             }
         }

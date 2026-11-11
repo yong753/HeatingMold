@@ -649,9 +649,23 @@
                                         <TextBlock x:Name="ExportIncludeText" Style="{StaticResource Hint}" Margin="0,8,0,0"
                                                    Text="포함: 작업평면 기준 금형 평면도·숨은선, 검토 범위의 확정 발열경로·전기 사양표."/>
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="미포함: 다른 방향 투상도, 3D STEP, 프로젝트 JSON."/>
+                                                   Text="이 DXF에는 다른 방향 투상도, 3D STEP, 프로젝트 JSON이 포함되지 않습니다."/>
                                         <TextBlock Style="{StaticResource Hint}"
                                                    Text="프로젝트 저장은 상단 저장 버튼을 사용하세요. DXF 내보내기는 프로젝트 저장이 아닙니다."/>
+                                        <Separator Margin="0,14,0,10"/>
+                                        <TextBlock Text="3D STEP 내보내기" Style="{StaticResource SectionTitle}"/>
+                                        <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0"
+                                                   Text="현재 3D 모델과 확정 발열경로·발열사를 하나의 STEP 파일로 저장합니다. 모델 좌표와 mm 단위를 그대로 사용합니다."/>
+                                        <TextBlock x:Name="StepExportScopeText" Style="{StaticResource Hint}"
+                                                   Margin="0,6,0,0" Text="STEP 범위: 전체 영역"/>
+                                        <Button x:Name="StepExportButton" Content="STEP 내보내기…"
+                                                Click="StepExport_Click"
+                                                AutomationProperties.Name="3D 모델과 발열경로 STEP 내보내기"
+                                                Style="{StaticResource PrimaryButton}" Margin="0,10,0,0"/>
+                                        <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,0"
+                                                   Text="포함: 로드된 3D 모델 전체, 검토 범위의 확정 발열경로 중심선, 선택한 규격 직경의 발열사 솔리드."/>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="미포함: 길이 라벨, 전기 사양표, 발열영역 외곽선, 프로젝트 JSON. STEP 내보내기는 프로젝트 저장이 아닙니다."/>
                                     </StackPanel>
                                 </Border>
                             </ScrollViewer>

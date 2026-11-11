@@ -74,6 +74,23 @@
 #include <StepGeom_Direction.hxx>
 #include <TCollection_HAsciiString.hxx>
 
+// STEP 내보내기 (3D 모델 + 발열사 + 발열경로) — TKPrim/TKBool/TKXCAF
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeSphere.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
+#include <TopTools_ListIteratorOfListOfShape.hxx>
+#include <XCAFApp_Application.hxx>
+#include <XCAFDoc_DocumentTool.hxx>
+#include <XCAFDoc_ShapeTool.hxx>
+#include <XCAFDoc_ColorTool.hxx>
+#include <TDataStd_Name.hxx>
+#include <TCollection_ExtendedString.hxx>
+#include <TDocStd_Document.hxx>
+#include <STEPCAFControl_Writer.hxx>
+#include <cmath>
+#include <cstdio>
+
 // 뷰어 (S1 항목 1·6) — WNT_Window/Aspect_DisplayConnection=TKService, OpenGl_GraphicDriver=TKOpenGl, V3d_*/AIS_*=TKV3d
 #include <Aspect_DisplayConnection.hxx>
 #include <OpenGl_GraphicDriver.hxx>
@@ -3833,6 +3850,7 @@ namespace
 
 #include "ExitEdgeQueriesNative.inc"
 #include "ProjectRestoreNative.inc"
+#include "StepExportNative.inc"
 }
 #pragma managed(pop)
 
@@ -4000,6 +4018,51 @@ array<CommittedRouteChain^>^ Bridge::GetCommittedRouteChainsDetailed(long long i
         }
         return result;
     } catch (...) { return nullptr; }
+}
+bool Bridge::ExportStepWithRoutes(String^ targetPath, String^ modelName, double wireDiameterMm,
+    array<StepExportCircuit^>^ circuits,
+    [System::Runtime::InteropServices::Out] String^% failureReason)
+{
+    failureReason = nullptr;
+    if (String::IsNullOrWhiteSpace(targetPath)) { failureReason = "invalid-path"; return false; }
+    if (circuits == nullptr || circuits->Length == 0) { failureReason = "no-circuits"; return false; }
+    try
+    {
+        std::vector<NativeStepExportCircuit> nativeCircuits;
+        nativeCircuits.reserve(static_cast<size_t>(circuits->Length));
+        for each (StepExportCircuit^ circuit in circuits)
+        {
+            if (circuit == nullptr || circuit->Points == nullptr || circuit->Points->Length == 0)
+            {
+                failureReason = "invalid-points";
+                return false;
+            }
+            NativeStepExportCircuit native;
+            native.name = msclr::interop::marshal_as<std::wstring>(
+                circuit->Name == nullptr ? String::Empty : circuit->Name);
+            native.areaName = msclr::interop::marshal_as<std::wstring>(
+                circuit->AreaName == nullptr ? String::Empty : circuit->AreaName);
+            native.r = circuit->ColorR;
+            native.g = circuit->ColorG;
+            native.b = circuit->ColorB;
+            native.points.reserve(static_cast<size_t>(circuit->Points->Length));
+            for each (double value in circuit->Points) native.points.push_back(value);
+            nativeCircuits.push_back(native);
+        }
+
+        std::string failure;
+        const std::wstring name = modelName == nullptr
+            ? std::wstring(L"model")
+            : msclr::interop::marshal_as<std::wstring>(modelName);
+        if (!ExportStepWithRoutesNative(msclr::interop::marshal_as<std::string>(targetPath),
+                name, wireDiameterMm, nativeCircuits, failure))
+        {
+            failureReason = gcnew String(failure.c_str());
+            return false;
+        }
+        return true;
+    }
+    catch (...) { failureReason = "exception"; return false; }
 }
 bool Bridge::StageWorkingPolyline(long long id,long long revision,int stageId,array<double>^ flat)
 {

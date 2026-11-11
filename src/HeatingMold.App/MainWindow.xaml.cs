@@ -164,6 +164,7 @@ namespace HeatingMold.App
                 SplitAreaButton.IsEnabled = _activeArea != null && !vertexActive && !_isBusy
                     && patternInputValid && !activeStale && _activeArea.TargetPowerW is > 0;
             if (ExportButton != null) ExportButton.IsEnabled = !_isBusy;
+            if (StepExportButton != null) StepExportButton.IsEnabled = !_isBusy;
             if (OpenButton != null) OpenButton.IsEnabled = !_isBusy;
             if (OpenExampleButton != null) OpenExampleButton.IsEnabled = !_isBusy;
             if (PatternInputErrorText != null)
