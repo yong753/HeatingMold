@@ -249,20 +249,6 @@
                     <Button x:Name="OpenExampleButton" Content="예제 열기" Click="OpenExample_Click"
                             AutomationProperties.Name="예제 모델 열기"
                             Style="{StaticResource FlatButton}" Margin="0,0,8,0"/>
-                    <Button x:Name="StandardViewButton" Content="표준 뷰 ▾" Click="StandardViewMenu_Click"
-                            AutomationProperties.Name="표준 뷰 선택"
-                            Style="{StaticResource FlatButton}">
-                        <Button.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem Header="정면 (−Z)" Tag="Front" Click="StandardView_Click"/>
-                                <MenuItem Header="후면 (+Z)" Tag="Back" Click="StandardView_Click"/>
-                                <MenuItem Header="위쪽 (−Y)" Tag="Top" Click="StandardView_Click"/>
-                                <MenuItem Header="아래쪽 (+Y)" Tag="Bottom" Click="StandardView_Click"/>
-                                <MenuItem Header="좌측 (−X)" Tag="Left" Click="StandardView_Click"/>
-                                <MenuItem Header="우측 (+X)" Tag="Right" Click="StandardView_Click"/>
-                            </ContextMenu>
-                        </Button.ContextMenu>
-                    </Button>
                 </StackPanel>
             </Grid>
         </Border>
@@ -282,7 +268,7 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" MinWidth="480"/>
                 <ColumnDefinition Width="5"/>
-                <ColumnDefinition Width="340" MinWidth="300" MaxWidth="420"/>
+                <ColumnDefinition Width="510" MinWidth="300" MaxWidth="630"/>
             </Grid.ColumnDefinitions>
 
             <Grid Grid.Column="0">

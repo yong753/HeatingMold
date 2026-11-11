@@ -227,14 +227,6 @@ namespace HeatingMold.App
 
         private void ConfirmArea_Click(object sender, RoutedEventArgs e) => ConfirmWorkingArea();
 
-        private void StandardViewMenu_Click(object sender, RoutedEventArgs e)
-        {
-            if (!(sender is Button button) || button.ContextMenu == null) return;
-            button.ContextMenu.PlacementTarget = button;
-            button.ContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
-            button.ContextMenu.IsOpen = true;
-        }
-
         // 뷰포트 HWND에 포커스가 없는 경우(WPF 쪽 포커스)를 위한 Enter 확정 경로.
         private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
         {
@@ -1689,40 +1681,6 @@ namespace HeatingMold.App
                 return;
             }
             base.OnClosing(e);
-        }
-
-        private void StandardView_Click(object sender, RoutedEventArgs e)
-        {
-            if (Viewport != null && Viewport.VertexEditMode)
-            {
-                StatusText.Text = "발열경로 편집 중에는 뷰를 바꿀 수 없습니다 — 편집을 종료한 뒤 다시 시도하세요";
-                return;
-            }
-            Viewport.CancelPowerLeadPreview();
-            string view = (sender as FrameworkElement)?.Tag as string;
-            int axis, sign, upAxis;
-            switch (view)
-            {
-                case "Front": axis = 2; sign = -1; upAxis = 1; break;
-                case "Back": axis = 2; sign = 1; upAxis = 1; break;
-                case "Top": axis = 1; sign = -1; upAxis = 2; break;
-                case "Bottom": axis = 1; sign = 1; upAxis = 2; break;
-                case "Left": axis = 0; sign = -1; upAxis = 1; break;
-                case "Right": axis = 0; sign = 1; upAxis = 1; break;
-                default: return;
-            }
-
-            double[] direction = Bridge.GetAutoAxis(axis);
-            double[] up = Bridge.GetAutoAxis(upAxis);
-            if (direction == null || direction.Length < 3 || up == null || up.Length < 3)
-            {
-                StatusText.Text = "표준 뷰 축 계산 실패";
-                return;
-            }
-
-            Bridge.SetViewFrame(sign * direction[0], sign * direction[1], sign * direction[2],
-                up[0], up[1], up[2]);
-            StatusText.Text = "표준 뷰 — " + view;
         }
 
         private void Open_Click(object sender, RoutedEventArgs e)
