@@ -1,5 +1,8 @@
 // =====================================================================
-// Face-ID 선택 캐시 — 사각형 선택에서 "화면에 실제로 보이는 면"만 고른다.
+// Face-ID 선택 캐시 — 진단용 화면 가시 면 조회.
+//
+// 제품 사각형 선택은 QueryRectangleFaceIdsNative()의 OCCT 선택 판정을 쓴다.
+// 이 파일의 픽셀 이미지 경로는 DebugProbeFaceIdRegion 등 진단에만 남긴다.
 //
 // 배경(OCCT 기본 동작):
 //   AIS_InteractiveContext::SelectRectangle()은 selection frustum과
@@ -383,6 +386,61 @@
         return true;
     }
 
+    /// <summary>사각형과 일부라도 교차하는 모델 FACE를 OCCT 선택 판정으로 모은다.
+    /// 화면에 가려진 면도 후보에 포함된다(제품 사각형 선택 정책).
+    /// 저수준 Pick은 context의 선택 적용을 하지 않으므로, 반환 owner를 원본 모델의
+    /// FACE로 직접 제한한 뒤 기존 적용 경로가 Replace한다.
+    /// false = 선택 판정 실패. true + 빈 out은 유효한 빈 선택이다.</summary>
+    bool QueryRectangleFaceIdsNative(int x0, int y0, int x1, int y1, std::vector<int>& out)
+    {
+        out.clear();
+        if (g_ctx.IsNull() || g_view.IsNull() || g_aisShape.IsNull()) return false;
+
+        Standard_Integer viewWidth = 0, viewHeight = 0;
+        g_view->Window()->Size(viewWidth, viewHeight);
+        if (viewWidth <= 0 || viewHeight <= 0) return false;
+
+        int minX = std::min(x0, x1), maxX = std::max(x0, x1);
+        int minY = std::min(y0, y1), maxY = std::max(y0, y1);
+        minX = std::max(0, minX);
+        minY = std::max(0, minY);
+        maxX = std::min(viewWidth - 1, maxX);
+        maxY = std::min(viewHeight - 1, maxY);
+        if (minX > maxX || minY > maxY) return true;   // 뷰포트 밖 = 유효한 빈 선택
+
+        const Handle(StdSelect_ViewerSelector3d) selector = g_ctx->MainSelector();
+        if (selector.IsNull()) return false;
+
+        // Win32 클라이언트 좌표(top-down)를 OCCT 기본 사각형 선택과 같은 좌표계로 넘긴다.
+        // 일부만 포함된 sensitive도 후보에 넣어 경계에 걸친 면을 빠뜨리지 않는다.
+        selector->AllowOverlapDetection(Standard_True);
+        try
+        {
+            selector->Pick(minX, minY, maxX, maxY, g_view);
+        }
+        catch (const Standard_Failure&)
+        {
+            selector->ClearPicked();
+            return false;   // 선택 판정 실패 — 기존 선택을 건드리지 않는다
+        }
+
+        std::set<int> unique;
+        for (Standard_Integer i = 1; i <= selector->NbPicked(); ++i)
+        {
+            const Handle(StdSelect_BRepOwner) brep =
+                Handle(StdSelect_BRepOwner)::DownCast(selector->Picked(i));
+            if (brep.IsNull() || !brep->HasShape()) continue;
+            // 발열 경로/마커 등 다른 선택 객체는 제외하고 원본 모델 면만 남긴다.
+            if (brep->Selectable().get() != g_aisShape.get()) continue;
+            if (!g_faceMap.Contains(brep->Shape())) continue;
+            const int faceId = g_faceMap.FindIndex(brep->Shape()) - 1;
+            if (faceId >= 0) unique.insert(faceId);
+        }
+        selector->ClearPicked();
+        out.assign(unique.begin(), unique.end());
+        return true;
+    }
+
     /// <summary>프리뷰 세션 동안 owner handle을 재사용한다. Begin의 Redisplay 이후
     /// 첫 적용에서 구축하고, 선택 변경(Select)만으로는 재계산되지 않는다.</summary>
     bool EnsureRectOwnerMapNative()
@@ -393,29 +451,22 @@
         return g_rectOwnerMapValid;
     }
 
-    /// <summary>선택 owner 배열을 Replace로 적용한다.
-    /// 모든 요청 face의 owner를 먼저 확보한 뒤에만 선택을 바꾼다(부분 적용 금지).
-    /// 반환값이 Failed면 기존 선택은 그대로다.</summary>
-    FaceApplyStatusNative ApplySelectedFaceIdsNative(const std::vector<int>& faceIds, std::vector<int>& applied)
+    /// <summary>owner map에서 요청 face ID를 Replace로 적용하고 실제 선택과 대조한다.
+    /// 요청 owner가 하나라도 없으면 선택을 바꾸지 않고 false(부분 적용 금지).</summary>
+    bool ApplyFaceIdsFromOwnerMapNative(
+        const std::vector<int>& faceIds,
+        const std::map<int, Handle(SelectMgr_EntityOwner)>& owners,
+        std::vector<int>& applied)
     {
         applied.clear();
-        if (g_ctx.IsNull()) return FaceApply_Failed;
-        if (g_rectHasApplied && faceIds == g_rectLastRequestedFaceIds)
-        {
-            applied = g_rectLastAppliedFaceIds;
-            return FaceApply_Unchanged;
-        }
-
-        if (!EnsureRectOwnerMapNative() && !faceIds.empty())
-            return FaceApply_Failed;   // 매핑 실패 시 기존 선택을 건드리지 않는다
+        if (g_ctx.IsNull()) return false;
 
         std::vector<Handle(SelectMgr_EntityOwner)> list;
         list.reserve(faceIds.size());
         for (int faceId : faceIds)
         {
-            const auto it = g_rectOwnerMap.find(faceId);
-            if (it == g_rectOwnerMap.end())
-                return FaceApply_Failed;   // 일부만 적용하지 않는다
+            const auto it = owners.find(faceId);
+            if (it == owners.end()) return false;
             list.push_back(it->second);
         }
 
@@ -434,7 +485,36 @@
         const std::set<int> actual = CollectSelectedFaceIdsNative();
         applied.assign(actual.begin(), actual.end());
         const std::set<int> requested(faceIds.begin(), faceIds.end());
-        if (actual != requested) return FaceApply_Failed;   // 실제 선택과 불일치 = 실패
+        return actual == requested;
+    }
+
+    /// <summary>선택 owner 배열을 Replace로 적용한다.
+    /// 모든 요청 face의 owner를 먼저 확보한 뒤에만 선택을 바꾼다(부분 적용 금지).
+    /// 적용 결과가 요청과 다르면 이전 선택으로 복구를 시도한 뒤 Failed를 반환한다.</summary>
+    FaceApplyStatusNative ApplySelectedFaceIdsNative(const std::vector<int>& faceIds, std::vector<int>& applied)
+    {
+        applied.clear();
+        if (g_ctx.IsNull()) return FaceApply_Failed;
+        if (g_rectHasApplied && faceIds == g_rectLastRequestedFaceIds)
+        {
+            applied = g_rectLastAppliedFaceIds;
+            return FaceApply_Unchanged;
+        }
+
+        if (!EnsureRectOwnerMapNative() && !faceIds.empty())
+            return FaceApply_Failed;   // 매핑 실패 시 기존 선택을 건드리지 않는다
+
+        const std::set<int> beforeSet = CollectSelectedFaceIdsNative();
+        const std::vector<int> before(beforeSet.begin(), beforeSet.end());
+        if (!ApplyFaceIdsFromOwnerMapNative(faceIds, g_rectOwnerMap, applied))
+        {
+            // Replace는 이미 적용됐을 수 있으므로, 확인된 이전 face 집합으로 되돌린다.
+            std::vector<int> restored;
+            if (before.empty()) g_ctx->ClearSelected(Standard_False);
+            else ApplyFaceIdsFromOwnerMapNative(before, g_rectOwnerMap, restored);
+            applied.clear();
+            return FaceApply_Failed;
+        }
 
         g_rectLastRequestedFaceIds = faceIds;
         g_rectLastAppliedFaceIds = applied;
@@ -548,7 +628,7 @@
         if (g_ctx.IsNull() || g_view.IsNull()) return;
         BeginRectanglePreviewNative();
         std::vector<int> visible;
-        if (!QueryVisibleFaceIdsNative(x0, y0, x1, y1, visible)) return;   // 이전 프리뷰 유지
+        if (!QueryRectangleFaceIdsNative(x0, y0, x1, y1, visible)) return;   // 이전 프리뷰 유지
         std::vector<int> applied;
         const FaceApplyStatusNative status = ApplySelectedFaceIdsNative(visible, applied);
         if (status == FaceApply_Applied)
@@ -564,32 +644,40 @@
         if (!g_rectPreviewActive) return;
         if (cancel)
         {
-            if (EnsureRectOwnerMapNative())
+            if (g_rectBaselineFaceIds.empty())
             {
-                std::vector<Handle(SelectMgr_EntityOwner)> list;
-                list.reserve(g_rectBaselineFaceIds.size());
-                for (int faceId : g_rectBaselineFaceIds)
+                g_ctx->ClearSelected(Standard_False);
+            }
+            else
+            {
+                // 기준 owner를 전부 확보한 뒤 한 번에 복구한다. 일부만 복원하지 않는다.
+                std::vector<int> restored;
+                bool restoredAll = false;
+                for (int attempt = 0; attempt < 2 && !restoredAll; ++attempt)
                 {
-                    const auto it = g_rectOwnerMap.find(faceId);
-                    if (it != g_rectOwnerMap.end()) list.push_back(it->second);
+                    if (attempt > 0)
+                    {
+                        g_rectOwnerMap.clear();
+                        g_rectOwnerMapValid = false;
+                    }
+                    if (!EnsureRectOwnerMapNative()) continue;
+
+                    bool complete = true;
+                    for (int faceId : g_rectBaselineFaceIds)
+                        if (g_rectOwnerMap.find(faceId) == g_rectOwnerMap.end())
+                        {
+                            complete = false;
+                            break;
+                        }
+                    if (!complete) continue;
+                    restoredAll = ApplyFaceIdsFromOwnerMapNative(
+                        g_rectBaselineFaceIds, g_rectOwnerMap, restored);
                 }
-                if (list.empty())
+                if (!restoredAll)
                 {
+                    // 복구할 수 없는 상태에서 이전 프리뷰 선택을 남기지 않는다.
                     g_ctx->ClearSelected(Standard_False);
                 }
-                else
-                {
-                    NCollection_Array1<Handle(SelectMgr_EntityOwner)> array(
-                        1, static_cast<Standard_Integer>(list.size()));
-                    for (size_t i = 0; i < list.size(); ++i)
-                        array[static_cast<Standard_Integer>(i) + 1] = list[i];
-                    g_ctx->Select(array, AIS_SelectionScheme_Replace);
-                }
-            }
-            else if (!g_rectBaselineFaceIds.empty())
-            {
-                // owner를 복원할 수 없으면 프리뷰 선택을 남기지 않는다.
-                g_ctx->ClearSelected(Standard_False);
             }
         }
         SetPreviewHighlightVisibleNative(false);

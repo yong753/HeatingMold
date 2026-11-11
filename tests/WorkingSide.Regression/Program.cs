@@ -298,10 +298,32 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
         Bridge.ClearHover();
         var coincidentRectangle=Bridge.SelectFacesInRectangle(
             coincidentCenter[0]-4,coincidentCenter[1]-4,coincidentCenter[0]+4,coincidentCenter[1]+4);
-        // 화면에 실제로 보이는 면만 남기므로, 같은 픽셀에 겹친 두 장은 한 장만 살아남는다.
-        Check(coincidentRectangle!=null && coincidentRectangle.Length==1 &&
-              (coincidentRectangle[0]==frontFace || coincidentRectangle[0]==backFace),
-            "rectangle pick keeps only the rasterized visible face of coincident sheets");
+        // 면 집합 선택은 가시성과 무관하게 사각형과 교차하는 모든 모델 면을 포함한다.
+        Check(coincidentRectangle!=null && coincidentRectangle.Length==2 &&
+              coincidentRectangle.Contains(frontFace) && coincidentRectangle.Contains(backFace),
+            "rectangle pick includes both coincident faces regardless of occlusion");
+        var coincidentReverse=Bridge.SelectFacesInRectangle(
+            coincidentCenter[0]+4,coincidentCenter[1]+4,coincidentCenter[0]-4,coincidentCenter[1]-4);
+        Check(coincidentReverse!=null && coincidentReverse.Length==2 &&
+              coincidentReverse.Contains(frontFace) && coincidentReverse.Contains(backFace),
+            "reverse drag selects the same face set");
+        var coincidentAll=Bridge.SelectFacesInRectangle(0,0,899,699);
+        Check(coincidentAll!=null && coincidentAll.Length==2 &&
+              coincidentAll.Contains(frontFace) && coincidentAll.Contains(backFace),
+            "whole-view rectangle includes every model face");
+        var coincidentEdge=Bridge.WorldToScreen(30,0,0);
+        Check(coincidentEdge!=null,"coincident sheet edge projects to screen");
+        var edgeRectangle=Bridge.SelectFacesInRectangle(
+            coincidentEdge[0]-5,coincidentCenter[1]-4,coincidentEdge[0]+5,coincidentCenter[1]+4);
+        Check(edgeRectangle!=null && edgeRectangle.Length==2 &&
+              edgeRectangle.Contains(frontFace) && edgeRectangle.Contains(backFace),
+            "rectangle crossing the face edge still includes the partially covered face");
+        Bridge.ClearFaceSelection();
+        var emptyRectangle=Bridge.SelectFacesInRectangle(1,1,2,2);
+        var afterEmpty=Bridge.GetSelectedFaceIds();
+        Check(emptyRectangle!=null && emptyRectangle.Length==0 &&
+              afterEmpty!=null && afterEmpty.Length==0,
+            "empty rectangle replaces the selection with an empty set");
         Bridge.SetViewFrame(0,0,-1,0,1,0);
         var flippedCenter=Bridge.WorldToScreen(0,0,0);
         Check(flippedCenter!=null && Bridge.SelectFace(flippedCenter[0],flippedCenter[1],false)==backFace,
@@ -319,8 +341,8 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
             "occluded click never falls through to the surface behind the nearest hit");
         var stackedRectangle=Bridge.SelectFacesInRectangle(
             stackedCenter[0]-8,stackedCenter[1]-8,stackedCenter[0]+8,stackedCenter[1]+8);
-        Check(stackedRectangle!=null && stackedRectangle.Contains(nearFace) && !stackedRectangle.Contains(farFace),
-            "rectangle pick excludes the face hidden behind the near sheet");
+        Check(stackedRectangle!=null && stackedRectangle.Contains(nearFace) && stackedRectangle.Contains(farFace),
+            "rectangle pick includes the face hidden behind the near sheet");
         // 프리뷰: 드래그 중에는 하이라이트만 바뀌고, 취소하면 시작 시점 선택으로 돌아온다.
         Bridge.ClearFaceSelection();
         Bridge.SelectFace(stackedCenter[0],stackedCenter[1],false);
@@ -333,20 +355,31 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
         Check(beforePreview!=null && beforePreview.Length==1 && beforePreview[0]==nearFace,
             "preview baseline captures the current face selection");
         Check(duringPreview!=null && duringPreview.Length==1 && duringPreview[0]==farFace,
-            "preview highlights only the visible face inside the drag rectangle");
+            "preview highlights the face inside the drag rectangle");
         Check(afterCancel!=null && afterCancel.Length==1 && afterCancel[0]==nearFace,
             "cancel restores the selection captured at drag start");
-        // 캐시 재사용: 카메라가 그대로면 사각형을 다시 질의해도 이미지를 다시 만들지 않는다.
-        long buildsBeforeRepeat=Bridge.GetFaceIdBuildCount();
+        var confirmedFar=Bridge.SelectFacesInRectangle(
+            stackedOuter[0]-8,stackedOuter[1]-8,stackedOuter[0]+8,stackedOuter[1]+8);
+        Check(confirmedFar!=null && confirmedFar.Length==1 && confirmedFar[0]==farFace,
+            "release confirms the same face set as the drag preview");
+        // 프리뷰도 확정과 같은 질의를 쓰므로 가려진 면을 함께 하이라이트한다.
+        Bridge.ClearFaceSelection();
+        Bridge.BeginFaceRectanglePreview();
+        Bridge.PreviewFacesInRectangle(
+            stackedCenter[0]-8,stackedCenter[1]-8,stackedCenter[0]+8,stackedCenter[1]+8);
+        var hiddenPreview=Bridge.GetSelectedFaceIds();
+        Bridge.CancelFaceRectanglePreview();
+        Check(hiddenPreview!=null && hiddenPreview.Length==2 &&
+              hiddenPreview.Contains(nearFace) && hiddenPreview.Contains(farFace),
+            "preview highlights the hidden face as well as the visible one");
+        // 픽셀 이미지 비의존: 사각형 선택은 face-ID 렌더를 만들지 않는다.
+        long buildsBeforeRectangle=Bridge.GetFaceIdBuildCount();
         Bridge.SelectFacesInRectangle(stackedOuter[0]-8,stackedOuter[1]-8,stackedOuter[0]+8,stackedOuter[1]+8);
-        long buildsAfterRepeat=Bridge.GetFaceIdBuildCount();
         Bridge.SetViewFrame(0,0,-1,0,1,0);
         Bridge.SelectFacesInRectangle(stackedOuter[0]-8,stackedOuter[1]-8,stackedOuter[0]+8,stackedOuter[1]+8);
-        long buildsAfterCamera=Bridge.GetFaceIdBuildCount();
-        Check(buildsAfterRepeat==buildsBeforeRepeat,
-            "rectangle query reuses the face-id image while the camera is unchanged");
-        Check(buildsAfterCamera==buildsAfterRepeat+1,
-            "camera change rebuilds the face-id image exactly once");
+        long buildsAfterRectangle=Bridge.GetFaceIdBuildCount();
+        Check(buildsAfterRectangle==buildsBeforeRectangle,
+            "rectangle selection does not build face-id images");
         Check(Bridge.LoadStep(Path.Combine(args[0],"exitSides.stp")),"load exit-side fixture (box plus detached sheet)");
         int boxTop=-1,boxBottom=-1,boxPlusX=-1,boxMinusX=-1,boxPlusY=-1,boxMinusY=-1,nakedSheet=-1;
         for (int id=0;;++id)
@@ -645,6 +678,58 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
         Check(!Bridge.LoadStep(Path.Combine(args[0],"absent.stp")),"failed model load");
         Check(Bridge.QueryWorkingSurface(afterStageReload.Id,afterStageReload.Revision,0,0).Status==WorkingQueryStatus.StaleContext,"failed reload also invalidates context");
         Check(Bridge.CreateWorkingContext(0,0,1,1,0,0)==null,"no context available without model");
+        // 기본 예제: 사각형 선택이 화면 배율/창 크기와 무관하게 모든 모델 면을 반환하는지 확인한다.
+        var examplePath=Path.GetFullPath(Path.Combine(args[0],"../../resource/Mold_Cover_Trim.step"));
+        Check(File.Exists(examplePath),"default example STEP exists");
+        if (File.Exists(examplePath))
+        {
+            Check(Bridge.LoadStep(examplePath),"load default example model");
+            Bridge.SetViewFrame(1,0,0,0,1,0);
+            int modelFaceCount=0;
+            for (int id=0;;++id) { if (Bridge.GetFaceNormal(id)==null) break; ++modelFaceCount; }
+            var wholeView=Bridge.SelectFacesInRectangle(0,0,899,699);
+            Check(modelFaceCount==80,"default example exposes 80 faces");
+            Check(wholeView!=null && wholeView.Length==modelFaceCount,
+                $"whole-view rectangle selects every face ({wholeView?.Length}/{modelFaceCount})");
+            // 작업면 생성은 형상을 다시 mesh/Redisplay하므로 선택 구조도 갱신돼야 한다.
+            var exampleContext=Bridge.CreateWorkingContext(1,0,0,0,1,0);
+            Check(exampleContext!=null,"default example creates a working context");
+            if (exampleContext!=null)
+            {
+                var afterRemesh=Bridge.SelectFacesInRectangle(0,0,899,699);
+                Check(afterRemesh!=null && afterRemesh.Length==modelFaceCount,
+                    $"remesh keeps rectangle selection complete ({afterRemesh?.Length}/{modelFaceCount})");
+                // 전체 80면 확정: 원본 위상이 완결이면 재봉합 없이 닫힌 단일 루프와
+                // 원본 edge 참조를 반환해야 한다. 임시 병합은 원본에 없는
+                // 다중 공유 Edge를 만들어 이 모델을 비다양체로 오판했다.
+                var allFaces=new int[modelFaceCount];
+                for(int i=0;i<modelFaceCount;++i) allFaces[i]=i;
+                RegionBoundaryLoop[] regionLoops=null;
+                string regionFailure=null;
+                try { regionLoops=Bridge.GetSelectedRegionBoundary(allFaces,0.05,out regionFailure); }
+                catch(Exception ex) { regionFailure=ex.GetType().FullName+" | "+ex.Message+" | "+ex.StackTrace; }
+                Check(regionLoops!=null && regionLoops.Length==1,
+                    $"default example 80-face region yields one loop ({regionLoops?.Length??0}) {regionFailure}");
+                if(regionLoops!=null && regionLoops.Length==1)
+                {
+                    Check(regionLoops[0].Closed,"default example 80-face region loop is closed");
+                    Check(regionLoops[0].Points!=null && regionLoops[0].Points.Length>=9,
+                        "default example 80-face region has a non-degenerate boundary");
+                    Check(regionLoops[0].EdgeReferences!=null && regionLoops[0].EdgeReferences.Length>0,
+                        "default example 80-face region retains original edge references");
+                    // 인출면 후보는 인출점 선택의 필수 조건이 아니다. 전체 선택에는
+                    // 비선택 인접면이 없으므로 후보가 비는 것이 정상이다.
+                    var noExitSides=Bridge.GetBoundaryExitSides(allFaces,0.05,1,0,0);
+                    Check(noExitSides==null || noExitSides.Length==0,
+                        "full-model selection has no separate exit-face candidate");
+                    // 후보 조회가 영역 경계 결과를 바꾸지 않는다(참조 스테이징 격리).
+                    var againLoops=Bridge.GetSelectedRegionBoundary(allFaces,0.05,out string againFailure);
+                    Check(againLoops!=null && againLoops.Length==1,
+                        $"exit-candidate lookup leaves the 80-face region intact ({againLoops?.Length??0}) {againFailure}");
+                }
+                Bridge.ReleaseWorkingContext(exampleContext.Id);
+            }
+        }
         ProjectLoadChecks.Run(window,args[0]);
         window.Close();
         Console.WriteLine($"{count} working-side checks passed.");

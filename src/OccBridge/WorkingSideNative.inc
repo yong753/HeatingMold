@@ -715,10 +715,24 @@ bool BuildProjectedWorkingWire(long long id,long long revision,const std::vector
             source.Add(gp_Pnt(xyz[i],xyz[i+1],xyz[i+2]));
         }
         if(!source.IsDone()) return WorkingStageFail("source-polygon");
-        BRepBuilderAPI_Sewing sewing(0.01,Standard_True,Standard_True,Standard_True,Standard_True);
         std::set<int> unique;
-        for(int face:faceIds) { if(face<0||face>=static_cast<int>(g_faces.size())) return WorkingStageFail("face-index "+std::to_string(face)); if(unique.insert(face).second) sewing.Add(g_faces[face]); }
-        sewing.Perform(); TopoDS_Shape target=sewing.SewedShape(); if(target.IsNull()) return WorkingStageFail("target-null");
+        for(int face:faceIds) { if(face<0||face>=static_cast<int>(g_faces.size())) return WorkingStageFail("face-index "+std::to_string(face)); unique.insert(face); }
+        // 원본 선택면을 투영 대상으로 그대로 쓴다. 재봉합은 이미 공유된 내부
+        // Edge를 병합해 원본에 없는 다중 공유를 만들 수 있고, 점→표면 매핑이
+        // 쓰는 원본 Face identity와도 어긋난다. 원본 위상이 불완전할 때만 잇는다.
+        TopoDS_Shape target;
+        std::vector<TopoDS_Face> targetFaces;
+        std::string originalTopologyReason;
+        if(!BuildOriginalSelectedRegionShape(unique,target,targetFaces,originalTopologyReason))
+        {
+            BRepBuilderAPI_Sewing sewing(0.01,Standard_True,Standard_False,Standard_True,Standard_True);
+            for(int face:unique) sewing.Add(g_faces[face]);
+            sewing.Perform(); target=sewing.SewedShape();
+            if(target.IsNull()) return WorkingStageFail("target-null");
+            size_t sewnFaces=0;
+            for(TopExp_Explorer ex(target,TopAbs_FACE);ex.More();ex.Next()) ++sewnFaces;
+            if(sewnFaces!=unique.size()) return WorkingStageFail("target-face-loss");
+        }
         // 선택면 밖 경로는 아래 BRepProj·와이어 연결·끝점 검사에서 걸러진다.
         // 여기서는 소스 폴리라인이 최소 1개 에지를 갖는지만 확인한다.
         size_t sourceEdges=0;

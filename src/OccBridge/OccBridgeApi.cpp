@@ -136,6 +136,7 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <SelectMgr_EntityOwner.hxx>
 #include <StdSelect_BRepOwner.hxx>
+#include <StdSelect_ViewerSelector3d.hxx>
 
 #include <chrono>
 #include <algorithm>
@@ -1163,6 +1164,117 @@ namespace
         int relatedFace = -1; // 영역: 소유 Face, 인출 후보: 반대편 인접 Face
     };
 
+    /// <summary>
+    /// 선택 면의 원본 위상만으로 통합 경계를 분류할 수 있는지 판정한다.
+    /// 원본에서 모든 비퇴화 Edge가 1~2개 선택 면에만 쓰이고, 선택 면들이
+    /// Edge 공유로 하나의 연결 성분이면 재봉합이 필요 없다.
+    /// 이미 공유된 원본 내부 Edge를 다시 Sewing하면 작은 내부 Edge 주변이
+    /// 병합되어 한 Edge를 여러 면이 공유하는 비다양체가 만들어질 수 있는데,
+    /// 그것은 원본 결함이 아니라 임시 병합의 부작용이다.
+    /// </summary>
+    bool BuildOriginalSelectedRegionShape(const std::set<int>& selected,
+                                          TopoDS_Shape& shape,
+                                          std::vector<TopoDS_Face>& faces,
+                                          std::string& reason)
+    {
+        faces.clear();
+        reason.clear();
+        if (selected.empty()) { reason = "empty selection"; return false; }
+        BRep_Builder builder;
+        TopoDS_Compound compound;
+        builder.MakeCompound(compound);
+        for (int faceId : selected)
+        {
+            if (faceId < 0 || faceId >= static_cast<int>(g_faces.size()))
+            {
+                reason = "face id out of range";
+                return false;
+            }
+            builder.Add(compound, g_faces[faceId]);
+        }
+        for (TopExp_Explorer ex(compound, TopAbs_FACE); ex.More(); ex.Next())
+            faces.push_back(TopoDS::Face(ex.Current()));
+        if (faces.size() != selected.size()) { reason = "selected face count changed"; return false; }
+        const int faceCount = static_cast<int>(faces.size());
+
+        TopTools_IndexedMapOfShape edgeMap;
+        std::vector<std::vector<int>> owners; // edgeMap index-1 -> 이 Edge를 쓰는 face slot
+        int exterior = 0;
+        for (int faceIndex = 0; faceIndex < faceCount; ++faceIndex)
+        {
+            for (TopExp_Explorer ex(faces[static_cast<size_t>(faceIndex)], TopAbs_EDGE); ex.More(); ex.Next())
+            {
+                const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+                if (BRep_Tool::Degenerated(edge)) continue;
+                int index = edgeMap.FindIndex(edge);
+                if (index == 0)
+                {
+                    edgeMap.Add(edge);
+                    owners.emplace_back();
+                    index = edgeMap.Extent();
+                }
+                owners[static_cast<size_t>(index - 1)].push_back(faceIndex);
+            }
+        }
+        if (edgeMap.Extent() == 0) { reason = "no original edge"; return false; }
+
+        std::vector<int> parent(static_cast<size_t>(faceCount));
+        for (int i = 0; i < faceCount; ++i) parent[static_cast<size_t>(i)] = i;
+        const auto rootOf = [&parent](int node)
+        {
+            while (parent[static_cast<size_t>(node)] != node)
+                node = parent[static_cast<size_t>(node)];
+            return node;
+        };
+        for (const std::vector<int>& list : owners)
+        {
+            if (list.size() > 2)
+            {
+                reason = "original edge shared by more than two selected faces";
+                return false;
+            }
+            if (list.size() == 1) { ++exterior; continue; }
+            if (list[0] == list[1]) continue; // 같은 면의 seam은 두 면을 잇지 않는다
+            const int left = rootOf(list[0]);
+            const int right = rootOf(list[1]);
+            if (left != right) parent[static_cast<size_t>(left)] = right;
+        }
+        if (exterior == 0) { reason = "original topology has no exterior edge"; return false; }
+        const int root = rootOf(0);
+        for (int i = 1; i < faceCount; ++i)
+            if (rootOf(i) != root)
+            {
+                reason = "selected faces are disconnected in original topology";
+                return false;
+            }
+        shape = compound;
+        return true;
+    }
+
+    /// <summary>
+    /// 병합하지 않은 경우 경계 Edge는 원본 Edge 그 자체다. history를 비워 두면
+    /// 기하 검색이 모든 원본을 후보로 삼아 아주 짧은 슬리버 Edge에서 모호성이
+    /// 생긴다. 동일 Edge 하나만 후보로 고정하고, 대체 Edge로 넘어가지 않는다.
+    /// </summary>
+    std::vector<std::vector<int>> IdentitySourceHistory(
+        const std::vector<TopoDS_Edge>& boundaries, const std::vector<TopoDS_Edge>& originals,
+        const TopTools_IndexedMapOfShape& boundariesMap)
+    {
+        std::vector<std::vector<int>> inverse(static_cast<size_t>(boundariesMap.Extent()));
+        for (const TopoDS_Edge& boundary : boundaries)
+        {
+            const int index = boundariesMap.FindIndex(boundary) - 1;
+            if (index < 0) continue;
+            for (int k = 0; k < static_cast<int>(originals.size()); ++k)
+                if (originals[static_cast<size_t>(k)].IsSame(boundary))
+                {
+                    inverse[static_cast<size_t>(index)].push_back(k);
+                    break;
+                }
+        }
+        return inverse;
+    }
+
     bool ExtractSelectedRegionBoundary(const std::vector<int>& faceIds, double deflection,
                                        std::vector<NativeBoundaryLoop>& loops,
                                        ExitEdgeStoreSnapshot& staged, std::string& diagnostic)
@@ -1186,30 +1298,38 @@ namespace
         }
         BeginExitEdgeStaging(staged);
 
-        // Sew only a temporary working copy: STEP/source topology is untouched.
-        // This reconciles geometrically coincident but separately represented
-        // edges before classifying the union boundary.
-        // STEP's stored vertex/edge tolerances in Mold.stp reach ~0.1 mm and
-        // are too permissive for seam matching. Use a separate bounded 0.01 mm
-        // geometric sewing tolerance; larger gaps are deliberately not joined.
+        // 원본 위상이 이미 완결된 영역이면 병합하지 않는다. 병합은 원본에 없는
+        // 다중 공유 Edge를 만들 수 있고, 그 결과는 원본 결함이 아니다.
+        // 병합이 필요할 때는 비다양체 허용을 끄고, 이미 두 면이 공유하는 원본
+        // 내부 Edge를 병합 후보에서 제외한 뒤 선택 면 보존을 검증한다.
+        // 0.01 mm는 새로 연결하는 이음의 판단 거리이며, 원본 CAD 정점 공차를
+        // 깎는 값이 아니다. 더 큰 간극은 의도적으로 연결하지 않는다.
         const double sewingTolerance = 0.01;
-        BRepBuilderAPI_Sewing sewing(sewingTolerance, Standard_True, Standard_True, Standard_True, Standard_True);
-        for (int faceId : selected) sewing.Add(g_faces[faceId]);
-        sewing.Perform();
-        const TopoDS_Shape workingShape = sewing.SewedShape();
-        if (workingShape.IsNull())
-        {
-            diagnostic = "region-boundary: temporary sewing produced no shape";
-            return false;
-        }
-
+        TopoDS_Shape workingShape;
         std::vector<TopoDS_Face> workingFaces;
-        for (TopExp_Explorer ex(workingShape, TopAbs_FACE); ex.More(); ex.Next())
-            workingFaces.push_back(TopoDS::Face(ex.Current()));
-        if (workingFaces.empty())
+        BRepBuilderAPI_Sewing sewing(sewingTolerance, Standard_True, Standard_False, Standard_True, Standard_True);
+        bool sewed = false;
+        std::string originalTopologyReason;
+        if (!BuildOriginalSelectedRegionShape(selected, workingShape, workingFaces, originalTopologyReason))
         {
-            diagnostic = "region-boundary: temporary sewing produced no faces";
-            return false;
+            for (int faceId : selected) sewing.Add(g_faces[faceId]);
+            sewing.Perform();
+            workingShape = sewing.SewedShape();
+            if (workingShape.IsNull())
+            {
+                diagnostic = "region-boundary: temporary sewing produced no shape";
+                return false;
+            }
+            workingFaces.clear();
+            for (TopExp_Explorer ex(workingShape, TopAbs_FACE); ex.More(); ex.Next())
+                workingFaces.push_back(TopoDS::Face(ex.Current()));
+            if (workingFaces.size() != selected.size())
+            {
+                // 병합이 선택 면을 삭제/대체하면 원본 위상 보존 실패다.
+                diagnostic = "region-boundary: temporary sewing changed the selected face set";
+                return false;
+            }
+            sewed = true;
         }
 
         // Count edge uses by topological identity after sewing. Internal edges
@@ -1254,7 +1374,9 @@ namespace
         for (int count : uses)
             if (count > 2)
             {
-                diagnostic = "region-boundary: selected faces are non-manifold";
+                diagnostic = sewed
+                    ? "region-boundary: temporary seam join produced a non-manifold edge"
+                    : "region-boundary: selected faces are non-manifold";
                 return false;
             }
         for (int i = 1; i <= edgeMap.Extent(); ++i)
@@ -1303,7 +1425,13 @@ namespace
             diagnostic = "region-boundary: no original boundary edges";
             return false;
         }
-        const auto inverse = HeatingMoldExitNative::SewingSourceInverse(sewing, originalBoundaryEdges, edgeMap);
+        // 병합하지 않았으면 원본 Edge가 곧 작업 Edge이므로 history가 필요 없다.
+        // 이때 FindUniqueSourceInterval은 동일 Edge fast path로 정확한 원본 구간을 준다.
+        std::vector<std::vector<int>> inverse;
+        if (sewed)
+            inverse = HeatingMoldExitNative::SewingSourceInverse(sewing, originalBoundaryEdges, edgeMap);
+        else
+            inverse = IdentitySourceHistory(boundaryEdges, originalBoundaryEdges, edgeMap);
         std::vector<HeatingMoldExitNative::SourceInterval> sourceMatches(static_cast<size_t>(edgeMap.Extent()));
         std::vector<bool> sourceValid(static_cast<size_t>(edgeMap.Extent()), false);
         std::vector<bool> sourceAmbiguous(static_cast<size_t>(edgeMap.Extent()), false);
@@ -1322,7 +1450,10 @@ namespace
             if (!sourceValid[index])
             {
                 diagnostic = "region-boundary: " + std::string(ambiguous ? "ambiguous" : "missing") +
-                    "-source len=" + std::to_string(EdgeLengthNative(boundaryEdge));
+                    "-source len=" + std::to_string(EdgeLengthNative(boundaryEdge)) +
+                    " join=" + (sewed ? "seam" : "original") +
+                    " candidates=" + std::to_string(inverse[index].size()) +
+                    " origin=" + originalTopologyReason;
                 return false;
             }
         }
@@ -1929,16 +2060,25 @@ namespace
             std::string faceList;
             for (int faceId : selected) { faceList += std::to_string(faceId); faceList += ','; }
             g_exitSideDiagnostic += "faces=" + faceList + "\n";
-            BRepBuilderAPI_Sewing sewing(sewingTolerance, Standard_True, Standard_True, Standard_True, Standard_True);
-            for (int faceId : selected) sewing.Add(g_faces[faceId]);
-            sewing.Perform();
-            const TopoDS_Shape workingShape = sewing.SewedShape();
-            if (workingShape.IsNull()) return false;
-
+            // 영역 경계와 동일한 원본 우선 정책을 쓴다. 원본 위상이 완결이면
+            // 병합하지 않으므로 같은 비다양체 오판이 발생하지 않는다.
+            TopoDS_Shape workingShape;
             std::vector<TopoDS_Face> workingFaces;
-            for (TopExp_Explorer ex(workingShape, TopAbs_FACE); ex.More(); ex.Next())
-                workingFaces.push_back(TopoDS::Face(ex.Current()));
-            if (workingFaces.empty()) return false;
+            BRepBuilderAPI_Sewing sewing(sewingTolerance, Standard_True, Standard_False, Standard_True, Standard_True);
+            bool sewed = false;
+            std::string originalTopologyReason;
+            if (!BuildOriginalSelectedRegionShape(selected, workingShape, workingFaces, originalTopologyReason))
+            {
+                for (int faceId : selected) sewing.Add(g_faces[faceId]);
+                sewing.Perform();
+                workingShape = sewing.SewedShape();
+                if (workingShape.IsNull()) return false;
+                workingFaces.clear();
+                for (TopExp_Explorer ex(workingShape, TopAbs_FACE); ex.More(); ex.Next())
+                    workingFaces.push_back(TopoDS::Face(ex.Current()));
+                if (workingFaces.size() != selected.size()) return false;
+                sewed = true;
+            }
 
             TopTools_IndexedMapOfShape edgeMap;
             std::vector<int> uses;
@@ -1946,6 +2086,8 @@ namespace
                 for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next())
                 {
                     const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+                    // 영역 경계와 같은 퇴화 Edge 분류를 쓴다.
+                    if (BRep_Tool::Degenerated(edge)) continue;
                     int index = edgeMap.FindIndex(edge);
                     if (index == 0)
                     {
@@ -1957,7 +2099,14 @@ namespace
                 }
 
             std::vector<int> boundaryIndices; // edgeMap의 1-based 인덱스
-            for (int count : uses) if (count > 2) return false; // 비다양체 선택 거부
+            for (int count : uses)
+                if (count > 2) // 비다양체 선택 거부
+                {
+                    g_exitSideDiagnostic += sewed
+                        ? "reject(non-manifold-after-seam-join)\n"
+                        : "reject(non-manifold)\n";
+                    return false;
+                }
             for (int i = 1; i <= edgeMap.Extent(); ++i)
                 if (uses[i - 1] == 1) boundaryIndices.push_back(i);
             if (boundaryIndices.empty()) return false;
@@ -1973,6 +2122,8 @@ namespace
                 for (TopExp_Explorer ex(g_faces[faceId], TopAbs_EDGE); ex.More(); ex.Next())
                 {
                     const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+                    // 퇴화 Edge는 원본 외곽 후보가 아니며 source 구간도 없다.
+                    if (BRep_Tool::Degenerated(edge)) continue;
                     int index = originalEdgeMap.FindIndex(edge);
                     if (index == 0)
                     {
@@ -1990,7 +2141,11 @@ namespace
 
             // 각 경계 Edge 반대편의 원본 면 (-1 = 나체 Edge). 봉합선(use==2)이 인덱스를
             // 밀지 않도록 edgeMap 인덱스로 직접 보관한다.
-            const auto inverse = HeatingMoldExitNative::SewingSourceInverse(sewing, originalBoundaryEdges, edgeMap);
+            std::vector<std::vector<int>> inverse;
+            if (sewed)
+                inverse = HeatingMoldExitNative::SewingSourceInverse(sewing, originalBoundaryEdges, edgeMap);
+            else
+                inverse = IdentitySourceHistory(boundaryEdges, originalBoundaryEdges, edgeMap);
             std::vector<HeatingMoldExitNative::SourceInterval> sourceMatches(static_cast<size_t>(edgeMap.Extent()));
             std::vector<bool> sourceValid(static_cast<size_t>(edgeMap.Extent()), false);
             std::vector<int> adjacent(edgeMap.Extent(), -1);
@@ -2037,7 +2192,14 @@ namespace
                 g_exitSideDiagnostic += "reject(" + orderFailure + ")\n";
                 return false;
             }
-            if (failedComponents > 0) g_exitSideDiagnostic += orderFailure;
+            if (failedComponents > 0)
+            {
+                // 일부 경계만 후보로 게시하면 인출 후보와 실제 영역 경계가
+                // 서로 다른 결과가 된다. 계산 실패는 부분 성공으로 숨기지 않는다.
+                g_exitSideDiagnostic += orderFailure;
+                sides.clear();
+                return false;
+            }
 
             for (const HeatingMoldBoundaryNative::BoundaryComponent& component : components)
             {
@@ -2173,7 +2335,13 @@ namespace
                     runs.swap(joined);
                 }
                 for (auto& run : runs) {
-                    if (!ExitReferenceCoverage(run)) { g_exitSideDiagnostic += "reject(incomplete-original-reference-coverage)\n"; continue; }
+                    if (!ExitReferenceCoverage(run))
+                    {
+                        // 원본 참조가 끊긴 후보를 나머지 후보와 섞어 게시하지 않는다.
+                        g_exitSideDiagnostic += "reject(incomplete-original-reference-coverage)\n";
+                        sides.clear();
+                        return false;
+                    }
                     sides.push_back(std::move(run));
                 }
             }
@@ -3667,6 +3835,7 @@ namespace
 
     // 사각형 선택 가시성/프리뷰 (FaceIdSelectionNative.inc 에서 정의, 아래에서 include)
     bool QueryVisibleFaceIdsNative(int x0, int y0, int x1, int y1, std::vector<int>& out);
+    bool QueryRectangleFaceIdsNative(int x0, int y0, int x1, int y1, std::vector<int>& out);
     void BeginRectanglePreviewNative();
     void PreviewFacesRectangleNative(int x0, int y0, int x1, int y1);
     void EndRectanglePreviewNative(bool cancel);
@@ -3681,31 +3850,23 @@ namespace
     // 진단 전용: 지정 영역을 8배로 다시 렌더해 디코드되는 face id를 반환한다.
     std::vector<int> ProbeFaceIdRegionNative(int x0, int y0, int x1, int y1);
 
-    /// <summary>사각형 영역을 선택 전용 face-ID 이미지로 판정해 화면에 보이는 면만 적용한다.
-    /// 마우스를 놓은 시점에는 기본 해상도에서 픽셀을 얻지 못한 얇은 면을 국소 고해상도로
-    /// 한 번 더 확인한다(전체 모델 깊이 유지 → 완전히 가려진 면은 여전히 제외).
-    /// false면 캐시/렌더/적용 실패이며 기존 선택을 그대로 둔다. true + 빈 result는 유효한 빈 선택이다.</summary>
+    /// <summary>사각형과 일부라도 교차하는 모델 FACE를 선택한다. 화면에서 가려진 면도
+    /// OCCT 선택 판정에 포함된다(제품 정책). false면 선택 판정/적용 실패이며 기존 선택을
+    /// 그대로 둔다. true + 빈 result는 유효한 빈 선택이다.</summary>
     bool SelectFacesRectangleNative(int x0, int y0, int x1, int y1, std::vector<int>& result)
     {
         result.clear();
         if (g_ctx.IsNull() || g_view.IsNull() || g_aisShape.IsNull()) return false;
 
-        std::vector<int> visible;
+        std::vector<int> ids;
         BeginRectanglePreviewNative();   // 활성 세션이 없으면 기준 선택을 보관한다
-        if (!QueryVisibleFaceIdsNative(x0, y0, x1, y1, visible))
+        if (!QueryRectangleFaceIdsNative(x0, y0, x1, y1, ids))
         {
             EndRectanglePreviewNative(true);
             return false;
         }
 
-        std::set<int> supplemental;
-        RefineRectangleSelectionNative(x0, y0, x1, y1, visible, supplemental);
-
-        std::set<int> merged(visible.begin(), visible.end());
-        merged.insert(supplemental.begin(), supplemental.end());
-        const std::vector<int> finalIds(merged.begin(), merged.end());
-
-        if (ApplySelectedFaceIdsNative(finalIds, result) == FaceApply_Failed)
+        if (ApplySelectedFaceIdsNative(ids, result) == FaceApply_Failed)
         {
             EndRectanglePreviewNative(true);   // 드래그 시작 전 선택으로 복구
             result.clear();

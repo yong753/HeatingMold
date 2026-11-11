@@ -16,6 +16,16 @@
 - Keep cursor snap distances separate from geometry validation tolerances. Missing references, stale contexts, degenerate projections, ambiguous solutions, tangent/overlapping generation intersections must be explicit failures; never hide them by increasing tolerance or falling back to a sampled boundary.
 - Preserve candidate identity/binding through conversions and UI selection. Equal 2D coordinates do not prove equal original edges or equal 3D positions.
 
+## Rectangle face selection (user-confirmed 2026-11-11)
+
+- The earlier visible-pixel-only rule existed for solid models. The current product model is a face set, so rectangle selection uses OCCT's own selection judgement instead of face-ID raster visibility.
+- Product policy: select **every model FACE that intersects the rectangle**, including faces hidden behind nearer geometry. Always replace the previous selection. Do not branch on solid/face-set shape type and do not add a pixel-based fallback.
+- Restrict the result to FACE owners of the original model display object. Route pieces, markers and other selectable objects remain selectable by their own paths but must not leak into the rectangle face result.
+- Drag preview and mouse-release confirmation must use the same rectangle query. An empty rectangle is a valid empty selection; a query or apply failure preserves the drag-start selection.
+- The low-level selector overlap flag plus `Pick` is the product query. The face-ID image path and its 8x refinement remain diagnostic only; never call them from the product rectangle path.
+- Verified 2026-11-11: `tests\WorkingSide.Regression` passes 167 checks, including both coincident faces, the face hidden behind a near sheet, edge-crossing rectangles, reverse drags, empty rectangles, hidden-face preview, no face-ID builds, and the default example selecting 80/80 faces before and after working-context remesh. App tests 121 and Core tests 185 pass.
+- Not yet verified manually: real Shift-drag in the app, zoom/pan/window-resize variation, Escape/capture-loss cancel, and rectangle selection while routes/markers are displayed. The original 43/49 counts were not reproduced; neither count is an expected value.
+
 ## 제외영역 허용 범위 (사용자 확정)
 
 - 작업영역 내부에 구멍을 만드는 제외영역, 적용영역을 둘 이상으로 분리하는 제외영역은 허용하지 않는다.
@@ -67,6 +77,28 @@
 - Pending measurements for this example (do not guess): the face set that yields a single closed region on the open shell, the start/end exit points, and the expected circuit piece/turn counts for the scenario.
 - Thickening test (2026-11-11, `tools\step-cleanup\diagnostics\thicken.exe`): a 3 mm offset makes one solid / 212 faces / 2,880,990 mm³ in memory, but the STEP re-read is BRepCheck **INVALID** with 19 free edges and vertex/edge tolerance 6.000 mm. A 1 mm offset re-reads valid (212 faces, 960,222 mm³) but still has 18 free edges (0.053 mm total, one 17-edge open chain and a degenerate point). Both written variants are the outward offset, which covers the original +X face with a new offset surface; the inward variant completes in memory but the tool writes only the first candidate. Do not call this model a closed solid until a STEP round-trip passes with zero free edges and normal tolerances. Known trouble spots: the non-planar 60-edge rim and the pinch near raw coordinates (-4341.6, -591.9, 965.4); `ShapeAnalysis_Shell` reports `oriented=no` on the source shell.
 - A thickened solid also changes the app's import alignment from surface principal axes to volume principal axes, so its loaded frame, origin and face IDs must be re-measured rather than inherited from the open shell.
+
+## Region boundary topology policy (user-confirmed 2026-11-11)
+
+- **User requirement: exit-face candidates are not a precondition for exit-point selection.** Picking the start/end exit point must work from the effective region outline alone; never gate it on `GetBoundaryExitSides` returning candidates. A full-model selection legitimately has no non-selected adjacent face, so an empty candidate list is normal, not an error.
+- Verified root cause of `region-boundary: selected faces are non-manifold` on the 80-face default example: the original topology is complete (261 non-degenerate edges; 52 used once, 209 used twice, none above two). Adding all 80 faces to `BRepBuilderAPI_Sewing(0.01, true, true, true, true)` merges original edges into one edge shared by four distinct faces 34/46/62/70 (3D length 0.0449975 mm). The app rejected its own temporary copy, not the model.
+- Implemented policy: `BuildOriginalSelectedRegionShape` decides from the original faces alone. If every non-degenerate edge is used by one or two selected faces and those faces form one edge-connected component with at least one exterior edge, the original faces are used as-is and **no sewing runs**. Otherwise a bounded repair runs with non-manifold mode **off** (already-shared internal edges are never merge candidates) and the selected face count must survive unchanged.
+- With no sewing, boundary edges are the original edges, so the source history is pinned to the identical original edge (`IdentitySourceHistory`). An empty history makes the 0.1 mm geometry search ambiguous on the 6e-6 mm sliver rim edge (`ambiguous-source len=0.000006`). Do not fix that by loosening the match tolerance or adding a length threshold.
+- `ExtractBoundaryExitSides` uses the same preparation and the same degenerate-edge skip, and now fails the whole query instead of publishing a partial component/coverage result.
+- `BuildProjectedWorkingWire` uses the original selected-face compound as the projection target when the original topology is complete, and only falls back to bounded sewing otherwise.
+- Verified 2026-11-11: `tests\WorkingSide.Regression` 173 checks pass, including new checks that the 80-face selection yields one closed loop with original edge references, that the full-model selection has no exit-face candidate, and that the candidate lookup leaves the region unchanged. App tests 121 and Core tests 185 pass.
+- Not yet verified: real app mouse picking, saving and reopening an 80-face area, and project files whose saved boundary intervals came from a previously merged subrange.
+
+## Electrical review limits and verdicts (user-confirmed 2026-11-11)
+
+- **User requirement:** allowed current, voltage and power are editable. Wire diameter and resistance per metre are fixed by the selected case (Case 1: SUS 316L Ø0.30 mm / 4 Ω/m; Case 2: Ø0.15 mm / 8 Ω/m); direct wire input is not part of the product UI. Initial limits are 16 A, 220 V, 3.5 kW. A circuit is OK only when all three values are at or below their limits; any exceeded item makes it NG.
+- **User correction:** the customer supplies the applied voltage and the allowed voltage as the same value, so one voltage input feeds both the calculation and the voltage limit. With a normal calculation the voltage check is therefore always within limit; the effective per-circuit checks are current and power.
+- Implemented: `ElectricalLimits` (Core) holds the three limits; `CircuitAssessment` compares each circuit's unrounded calculated values (`<=` is accepted) and reports every exceeded item; `ElectricalSpecTable` keeps NG rows `IsValid` (calculation errors stay separate in `Message`) so NG circuits remain in rows, totals, the UI and DXF. `ElectricalSettingsResolver` reads the UI text, rejects presets other than 0/1 and non-finite/non-positive limits, and uses the voltage input for both `PowerSupplySpec` and `ElectricalLimits.VoltageLimitV`.
+- The review table has a `판정` column (`OK`/`NG`; calculation errors show `—`) and the summary counts OK/NG; a scope containing a calculation error never reports '전체 OK'.
+- Project schema is now version 2 and stores `allowedCurrentText`/`allowedPowerText` (kW) in addition to the existing electrical fields. Version 1 and 2 files load; new saves write version 2. `ProjectElectricalMigration` fills missing limit fields with the confirmed defaults **before** the native model is replaced, converts legacy direct-input projects only when their stored diameter/resistance exactly match Case 1 or Case 2, and explicitly rejects other legacy direct-input specs.
+- A missing limit field means it was not stored (schema 1), not zero. A cleared text field saved by the user stays empty and shows an input error; it is not silently replaced. A missing/empty `electrical` section is materialized with the fixed Case 1 spec and default limits so the reloaded document and a freshly captured document produce the same fingerprint.
+- Verified 2026-11-11: Core tests 195 pass and App tests 154 pass in an isolated repository copy (the running app locks `src\HeatingMold.App\bin`), and `tests\WorkingSide.Regression` passes 173 working-side + 19 project load + 50 exclusion + 3 electrical refresh checks. Not verified: real mouse interaction with the new limit inputs and opening a pre-change project file in the running app.
+- DXF output keeps the existing numeric electrical columns; adding verdict or limit columns is a separate approved change.
 
 ## Build configuration (verified)
 

@@ -418,7 +418,7 @@ public:
     static bool SetCameraState(array<double>^ eye, array<double>^ center, array<double>^ up, double scale);
     /// <summary>진단 전용: 지정 기본 픽셀 영역을 8배로 다시 렌더해 디코드되는 face id를 반환한다.</summary>
     static array<int>^ DebugProbeFaceIdRegion(int x0, int y0, int x1, int y1);
-    /// <summary>진단 전용: 마지막 사각형 질의에서 기본 해상도 이미지가 돌려준 face id.</summary>
+    /// <summary>진단 전용: 마지막 픽셀 보충 질의의 기본 해상도 face id(제품 사각형 선택은 사용하지 않음).</summary>
     static array<int>^ DebugGetLastRectangleBaseFaceIds();
     /// <summary>진단 전용: 다음 보충 렌더 이미지를 지정 경로에 저장한다(빈 문자열이면 해제).</summary>
     static void DebugSetFaceRefineDumpPath(System::String^ path);
@@ -450,14 +450,14 @@ public:
     static void SetViewFrame(double dx, double dy, double dz, double ux, double uy, double uz);
     /// <summary>로드된 형상에서 자동 추정한 주축(0=X, 1=Y, 2=Z)</summary>
     static array<double>^ GetAutoAxis(int axis);
-    /// <summary>사각형 안에서 화면에 보이는 면만 선택한다. 실패(캐시/렌더) 시 null,
-    /// 성공 시 빈 배열일 수 있다(유효한 빈 선택).</summary>
+    /// <summary>사각형과 일부라도 교차하는 모든 모델 면을 선택한다(화면에 가려진 면 포함).
+    /// 실패(선택 판정/적용) 시 null, 성공 시 빈 배열일 수 있다(유효한 빈 선택).</summary>
     static array<int>^ SelectFacesInRectangle(int x0, int y0, int x1, int y1);
     static void SetSelectionRectangle(int x0, int y0, int x1, int y1);
     static void ClearSelectionRectangle();
     /// <summary>사각형 선택 프리뷰 세션 시작(기준 선택 보관). 이미 활성이면 무시.</summary>
     static void BeginFaceRectanglePreview();
-    /// <summary>드래그 중 가시 면만 골라 하이라이트한다(실제 확정은 SelectFacesInRectangle).</summary>
+    /// <summary>드래그 중 사각형과 교차하는 모델 면을 골라 하이라이트한다(실제 확정은 SelectFacesInRectangle).</summary>
     static void PreviewFacesInRectangle(int x0, int y0, int x1, int y1);
     /// <summary>프리뷰 취소 — 드래그 시작 시점의 선택으로 되돌린다.</summary>
     static void CancelFaceRectanglePreview();
