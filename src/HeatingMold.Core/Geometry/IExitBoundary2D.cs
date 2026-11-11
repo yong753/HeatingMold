@@ -32,6 +32,23 @@ public readonly record struct ArtificialEdgeBinding(
     double Parameter);
 
 /// <summary>
+/// Immutable provenance for a point on a cut line created by splitting one working area
+/// into independent areas. A cut line is not a CAD edge and not an exclusion rectangle
+/// side: the working context plus this line's own endpoints and parameter are the whole
+/// identity. Parameter runs from (AX,AY)=0 to (BX,BY)=1.
+/// </summary>
+public readonly record struct SplitLineBinding(
+    long WorkingContextId,
+    long WorkingContextRevision,
+    double AX,
+    double AY,
+    double BX,
+    double BY,
+    double FirstParameter,
+    double LastParameter,
+    double Parameter);
+
+/// <summary>
 /// Plane-only queries for the non-CAD portion of an effective region boundary.
 /// Implementations must reject stale/missing rectangles, sides or intervals.
 /// </summary>
@@ -43,6 +60,20 @@ public interface IArtificialExitBoundary2D
 
     /// <summary>Evaluate a previously resolved artificial parameter without a new search.</summary>
     ExitBoundaryResolution EvaluateArtificial(ArtificialEdgeBinding binding);
+}
+
+/// <summary>
+/// Plane-only queries for split-created straight boundaries. Implementations must reject
+/// stale contexts, unknown lines and out-of-interval parameters.
+/// </summary>
+public interface IArtificialSplitBoundary2D
+{
+    /// <summary>Move only on the saved cut line and its saved valid interval.</summary>
+    ExitBoundaryResolution ProjectSplitLine(
+        SplitLineBinding binding, Vec2 point, double tolerance);
+
+    /// <summary>Evaluate a previously resolved cut-line parameter without a new search.</summary>
+    ExitBoundaryResolution EvaluateSplitLine(SplitLineBinding binding);
 }
 
 /// <summary>

@@ -13,6 +13,7 @@ public sealed record CircuitExitPoint(
 {
     public ExitEdgeBinding? Binding { get; init; }
     public ArtificialEdgeBinding? ArtificialBinding { get; init; }
+    public SplitLineBinding? SplitBinding { get; init; }
 }
 
 /// <summary>
@@ -171,12 +172,14 @@ public static class CircuitRouteBuilder
             {
                 Binding = start.Binding,
                 ArtificialBinding = start.ArtificialBinding,
+                SplitBinding = start.SplitBinding,
             },
             new CircuitExitPoint(CircuitExitRole.End, end.Point,
                 end.SegmentIndex, end.SegmentParameter)
             {
                 Binding = end.Binding,
                 ArtificialBinding = end.ArtificialBinding,
+                SplitBinding = end.SplitBinding,
             },
             angleDeg,
             laneCount,

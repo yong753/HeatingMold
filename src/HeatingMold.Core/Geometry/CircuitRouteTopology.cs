@@ -55,7 +55,7 @@ public static class CircuitRouteTopology
             failure = evaluated.Failure.ToString()!;
             return false;
         }
-        if (exit.Binding.HasValue || exit.ArtificialBinding.HasValue)
+        if (exit.Binding.HasValue || exit.ArtificialBinding.HasValue || exit.SplitBinding.HasValue)
         {
             failure = ExitBoundaryFailureReason.MissingReference.ToString();
             return false;
@@ -74,5 +74,6 @@ public static class CircuitRouteTopology
         {
             Binding = exit.Binding,
             ArtificialBinding = exit.ArtificialBinding,
+            SplitBinding = exit.SplitBinding,
         };
 }

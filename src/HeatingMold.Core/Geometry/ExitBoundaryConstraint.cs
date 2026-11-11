@@ -22,6 +22,9 @@ public readonly record struct ExitBoundaryPoint(Vec2 Point, int SegmentIndex, do
 
     /// <summary>Exclusion-created straight-boundary provenance. Never set together with Binding.</summary>
     public ArtificialEdgeBinding? ArtificialBinding { get; init; }
+
+    /// <summary>Split-created cut-line provenance. Only one provenance kind may be set.</summary>
+    public SplitLineBinding? SplitBinding { get; init; }
 }
 
 public sealed record ExitBoundaryResolution(ExitBoundaryPoint? Point, ExitBoundaryFailureReason? Failure)
@@ -196,10 +199,12 @@ public static class ExitBoundaryConstraint
         ExitBoundaryPoint point = resolution.Point.Value;
         bool cad = point.Binding.HasValue;
         bool artificial = point.ArtificialBinding.HasValue;
-        if (cad == artificial)
+        bool split = point.SplitBinding.HasValue;
+        int kinds = (cad ? 1 : 0) + (artificial ? 1 : 0) + (split ? 1 : 0);
+        if (kinds != 1)
             return ExitBoundaryResolution.Fail(
-                cad ? ExitBoundaryFailureReason.GeometryFailure
-                    : ExitBoundaryFailureReason.MissingReference);
+                kinds == 0 ? ExitBoundaryFailureReason.MissingReference
+                    : ExitBoundaryFailureReason.GeometryFailure);
         if (cad)
         {
             ExitEdgeBinding binding = point.Binding!.Value;
@@ -207,7 +212,7 @@ public static class ExitBoundaryConstraint
                 || !double.IsFinite(binding.Parameter))
                 return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.GeometryFailure);
         }
-        else
+        else if (artificial)
         {
             ArtificialEdgeBinding binding = point.ArtificialBinding!.Value;
             if (!double.IsFinite(binding.MinX) || !double.IsFinite(binding.MinY)
@@ -216,10 +221,19 @@ public static class ExitBoundaryConstraint
                 || !double.IsFinite(binding.Parameter))
                 return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.GeometryFailure);
         }
+        else
+        {
+            SplitLineBinding binding = point.SplitBinding!.Value;
+            if (!double.IsFinite(binding.AX) || !double.IsFinite(binding.AY)
+                || !double.IsFinite(binding.BX) || !double.IsFinite(binding.BY)
+                || !double.IsFinite(binding.FirstParameter) || !double.IsFinite(binding.LastParameter)
+                || !double.IsFinite(binding.Parameter))
+                return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.GeometryFailure);
+        }
         return resolution;
     }
 
-    /// <summary>Validate a saved point (CAD or exclusion-created) without a new search.</summary>
+    /// <summary>Validate a saved point (CAD, exclusion-created or split-created) without a new search.</summary>
     public static ExitBoundaryResolution EvaluateSaved(
         IExitBoundary2D boundary, ExitBoundaryPoint point)
     {
@@ -227,27 +241,46 @@ public static class ExitBoundaryConstraint
             return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.InvalidInput);
         bool cad = point.Binding.HasValue;
         bool artificial = point.ArtificialBinding.HasValue;
-        if (cad == artificial)
+        bool split = point.SplitBinding.HasValue;
+        int kinds = (cad ? 1 : 0) + (artificial ? 1 : 0) + (split ? 1 : 0);
+        if (kinds != 1)
             return ExitBoundaryResolution.Fail(
-                cad ? ExitBoundaryFailureReason.GeometryFailure
-                    : ExitBoundaryFailureReason.MissingReference);
+                kinds == 0 ? ExitBoundaryFailureReason.MissingReference
+                    : ExitBoundaryFailureReason.GeometryFailure);
 
         if (cad)
             return EvaluateSaved(boundary, point.Binding, point.Point);
 
-        if (boundary is not IArtificialExitBoundary2D artificialBoundary)
+        if (artificial)
+        {
+            if (boundary is not IArtificialExitBoundary2D artificialBoundary)
+                return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.MissingReference);
+
+            ArtificialEdgeBinding binding = point.ArtificialBinding!.Value;
+            ExitBoundaryResolution result =
+                RequireProvenance(artificialBoundary.EvaluateArtificial(binding));
+            if (!result.Succeeded) return result;
+            ExitBoundaryPoint evaluated = result.Point!.Value;
+            if (evaluated.Binding.HasValue
+                || evaluated.ArtificialBinding != binding
+                || evaluated.Point.DistanceTo(point.Point) > AcceptanceTolerance)
+                return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.GeometryFailure);
+            return result;
+        }
+
+        if (boundary is not IArtificialSplitBoundary2D splitBoundary)
             return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.MissingReference);
 
-        ArtificialEdgeBinding binding = point.ArtificialBinding!.Value;
-        ExitBoundaryResolution result =
-            RequireProvenance(artificialBoundary.EvaluateArtificial(binding));
-        if (!result.Succeeded) return result;
-        ExitBoundaryPoint evaluated = result.Point!.Value;
-        if (evaluated.Binding.HasValue
-            || evaluated.ArtificialBinding != binding
-            || evaluated.Point.DistanceTo(point.Point) > AcceptanceTolerance)
+        SplitLineBinding splitBinding = point.SplitBinding!.Value;
+        ExitBoundaryResolution splitResult =
+            RequireProvenance(splitBoundary.EvaluateSplitLine(splitBinding));
+        if (!splitResult.Succeeded) return splitResult;
+        ExitBoundaryPoint splitEvaluated = splitResult.Point!.Value;
+        if (splitEvaluated.Binding.HasValue || splitEvaluated.ArtificialBinding.HasValue
+            || splitEvaluated.SplitBinding != splitBinding
+            || splitEvaluated.Point.DistanceTo(point.Point) > AcceptanceTolerance)
             return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.GeometryFailure);
-        return result;
+        return splitResult;
     }
 
     private static bool Adjacent(int a, int b, int segmentCount, bool closed)
