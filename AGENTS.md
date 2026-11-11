@@ -1,5 +1,9 @@
 # HeatingMold project instructions
 
+## 응답 언어 (사용자 확정)
+
+- 사용자에게 제공하는 설명, 구현계획, 작업 결과는 한국어로 작성한다.
+
 ## Coordinate and geometry contract
 
 - Design decisions (generation, editing, splitting, boundary/exclusion tests, pitch and margin) use the **confirmed working plane's 2D coordinates**. Camera coordinates and surface UV are not design coordinates.
@@ -47,6 +51,17 @@
 - `resource\Mold_Solids_aligned_surface.stp` re-adds the deleted relationship (`#23`, 129 bytes) to the baked copy, so OCCT loads 30 solids + 2 surface shells (664 faces) while keeping the supplemental frame.
 - `tools\step-cleanup\diagnostics\thicken.cpp` thickens a free shell. On `SURFACE.135`, `BRepOffsetAPI_MakeThickSolid::MakeThickSolidByJoin` and `BRepOffset_MakeOffset` fail in every join/self-intersection/mode combination, and `PerformBySimple` only returns a shell; only `BRepOffsetAPI_MakeThickSolid::MakeThickSolidBySimple` produces a solid. `resource\Mold_Solids_surface135_thick3.stp` is that shell at 3 mm toward the mold solids: 1 solid / 206 faces, volume 4,306,377.6 mm³, area 2,869,973.6 mm² (3.01 mm). The side is chosen by sampling candidate faces against the mold solids: +normal 0.134 vs −normal 0.073 inside fraction.
 - The thickened body carries 18 degenerate zero-length edges (total 0.096 mm) inherited from the source patch, so a STEP round-trip reports one face `NotClosed`. They are not visible gaps; do not claim the body is watertight without re-checking these edges.
+
+## Default example model `Mold_Cover_Trim.step` (user-confirmed 2026-11-11)
+
+- The user designated `resource\Mold_Cover_Trim.step` as the default example model. The file on disk is `.step`, not `.stp`. SHA-256 `8CB03405817606D1917FEF55B46A60011FFB5E93075EECDEF5A8651D4359FCED`.
+- Verified structure: one open shell, 80 faces, 0 solids, area 958,841.060 mm², BRepCheck valid, one free-boundary loop of 60 edges. It is the Mold part of `Mold_Item_trim100.step` (identical bbox, area and face count); the trim used the item's YZ outline offset by 100 mm with square corners, so the X extents are unchanged.
+- **User-confirmed: the heating face is +X.** The example's working normal is (+1,0,0), not the currently hardcoded +Z. The file has no `supplemental geometry`, so the app aligns it by principal axes; in that loaded frame the broad faces face ±X, and a +Z working plane projects them nearly edge-on.
+- Current implementation (not yet changed): `LoadFile` always applies the working normal (0,0,1) and no per-model example preset exists. The existing in-plane X rule already picks (0,1,0) for a ±X normal, which gives plane Y = (0,0,1) (screen up = +Z); no axis override is needed.
+- The native working origin is the projected bbox center, positioned 1 % (minimum 1 mm) in front of the model along the normal; model coordinates are never translated. Record the actual expected origin after the first instrumented load instead of assuming it.
+- Pending measurements for this example (do not guess): the face set that yields a single closed region on the open shell, the start/end exit points, and the expected circuit piece/turn counts for the scenario.
+- Thickening test (2026-11-11, `tools\step-cleanup\diagnostics\thicken.exe`): a 3 mm offset makes one solid / 212 faces / 2,880,990 mm³ in memory, but the STEP re-read is BRepCheck **INVALID** with 19 free edges and vertex/edge tolerance 6.000 mm. A 1 mm offset re-reads valid (212 faces, 960,222 mm³) but still has 18 free edges (0.053 mm total, one 17-edge open chain and a degenerate point). Both written variants are the outward offset, which covers the original +X face with a new offset surface; the inward variant completes in memory but the tool writes only the first candidate. Do not call this model a closed solid until a STEP round-trip passes with zero free edges and normal tolerances. Known trouble spots: the non-planar 60-edge rim and the pinch near raw coordinates (-4341.6, -591.9, 965.4); `ShapeAnalysis_Shell` reports `oriented=no` on the source shell.
+- A thickened solid also changes the app's import alignment from surface principal axes to volume principal axes, so its loaded frame, origin and face IDs must be re-measured rather than inherited from the open shell.
 
 ## Build configuration (verified)
 
@@ -105,3 +120,14 @@
 - The WorkingSide regression harness invokes private UI methods by name with fixed parameter counts. Keep existing parameterless entry points when adding overloads that share precomputed state.
 - Hand-built regression routes must map their 2D endpoints to 3D through `Bridge.MapWorkingPointOntoFaces`; working-frame coordinates are not world model coordinates, and staging raw frame u/v as world points fails.
 
+## STEP trim tool `tools\step-trim` (verified 2026-11-11)
+
+- Independent console tool (`step-trim.cpp` + `build.ps1` + `run.ps1` + `Test.ps1`); it does not reference or modify the app, the solution, or `src\OccBridge`. The source STEP is read-only; output defaults to a separate file.
+- `--mode inspect` reports structure, names, colors, assembly paths, tolerances, free boundaries and axis-aligned projection surplus without writing anything. `--mode trim` requires explicit `--origin`/`--normal`; it never guesses the working plane. The 100 mm margin is planar distance on that plane only.
+- Verified on `resource\Mold_Item.step` (Mold = open shell 87 faces, Item = closed solid 85 faces): projected outline area 392,451.928 mm², one wire; 100 mm offset area 713,959.155 mm²; squared-corner boundary 722,473.233 mm² with boundary distance 99.999997–141.421356 mm (141.421 = 100·√2 at right-angle corners); trimmed Mold 80 faces / 958,841.060 mm² (removed 470,155.479); contact area before = after = 48,442.074 mm²; BRepCheck valid, one connected component, one shell. Output `resource\Mold_Item_trim100.step` written 2026-11-11; the source hash is unchanged.
+- **Corners are square, not arcs (user-confirmed 2026-11-11).** `BRepOffsetAPI_MakeOffset` only produces corner arcs, so after the offset each corner arc is replaced by the intersection of the two adjacent straight lines and the boundary is rebuilt. Only corners whose both neighbours are lines are squared; others are reported with the reason and keep the arc. On this model 4 of 6 candidates were squared; the two skipped ones are the narrow groove near local (256.8, -431) whose neighbours are line/circle and circle/circle. Never silently keep a corner arc when the user asked for square corners.
+- `HLRBRep_HLRToShape::CompoundOfEdges(type, visible, In3d=false)` returns 2D edges without usable 3D curves and crashed the plane splitter; `In3d=true` returns the original 3D curves (measured 211 mm off the working plane), so project them with `BRepProj_Projection` before use. Only the `OutLine` type plus planar silhouette edges (adjacent-face normal sign test) may be used as splitter tools; feeding all sharp/smooth/sewn/outline curves corrupts the arrangement (unsplit original face plus overlapping cells).
+- `BRepOffsetAPI_MakeOffset` with `SetApprox(false)` fails on this outline in every join/distance combination; only `SetApprox(true)` + `GeomAbs_Arc` on a face input succeeds. Measured deviation is 99.999997–100.000003 mm over 297 samples, so always re-measure and report the deviation instead of assuming exactness.
+- STEP round trip of this file changes the Item by about 11.58 mm³ volume and −0.42 mm² area, so the tool compares the written Item against a baseline round trip of the unmodified document, not against the in-memory value.
+- `BRepAlgoAPI_Common` may re-approximate original faces: 78 of 80 Mold faces reuse the original surfaces; the two rebuilt Extrusion faces stay within 0.021040 / 0.016298 mm of the original Mold.
+- Unconfirmed by the user: whether 100 mm is planar distance or distance along the surface, and which working plane is authoritative. The committed example run uses origin `(-4183.68, -843.20, 1396)`, normal `(1,0,0)`, X axis `(0,1,0)` chosen only because the YZ projection is the only axis with more than 100 mm surplus in all four directions.
