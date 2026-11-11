@@ -560,14 +560,13 @@
                                         <Separator Margin="0,12,0,8"/>
                                         <TextBlock Text="전기 사양" Style="{StaticResource SectionTitle}"/>
                                         <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0"
-                                                   Text="전선·전압 조건은 모든 작업 영역에 공통 적용됩니다. 아래 표와 DXF 사양표는 위에서 선택한 검토 범위를 따릅니다."/>
+                                                   Text="전선·전압·허용치는 모든 작업 영역에 공통 적용됩니다. 직경·단위 저항은 선택한 Case의 고정값이며, 전압은 계산과 허용 판정에 같은 값을 씁니다."/>
                                         <TextBlock Text="발열사 프리셋" Style="{StaticResource FieldLabel}" Margin="0,8,0,3"/>
                                         <ComboBox x:Name="WirePresetBox" Height="28" SelectedIndex="0"
                                                   AutomationProperties.Name="발열사 프리셋"
                                                   SelectionChanged="WirePreset_Changed">
                                             <ComboBoxItem Content="Case 1 — SUS 316L, Ø0.3 mm, 4 Ω/m"/>
                                             <ComboBoxItem Content="Case 2 — SUS 316L, Ø0.15 mm, 8 Ω/m"/>
-                                            <ComboBoxItem Content="직접 입력"/>
                                         </ComboBox>
                                         <Grid Margin="0,8,0,0">
                                             <Grid.ColumnDefinitions>
@@ -578,20 +577,31 @@
                                             <Grid.RowDefinitions>
                                                 <RowDefinition Height="Auto"/>
                                                 <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
                                             </Grid.RowDefinitions>
                                             <StackPanel Grid.Row="0" Grid.Column="0">
                                                 <TextBlock Text="직경 (mm)" Style="{StaticResource FieldLabel}"/>
                                                 <TextBox x:Name="WireDiameterBox" Text="0.3" Style="{StaticResource ValueBox}"
-                                                         TextChanged="ElectricalInput_Changed"/>
+                                                         IsReadOnly="True" Background="#F3F4F6"/>
                                             </StackPanel>
                                             <StackPanel Grid.Row="0" Grid.Column="2">
                                                 <TextBlock Text="단위 저항 (Ω/m)" Style="{StaticResource FieldLabel}"/>
                                                 <TextBox x:Name="WireResistanceBox" Text="4" Style="{StaticResource ValueBox}"
-                                                         TextChanged="ElectricalInput_Changed"/>
+                                                         IsReadOnly="True" Background="#F3F4F6"/>
                                             </StackPanel>
                                             <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,8,0,0">
-                                                <TextBlock Text="인가전압 (V)" Style="{StaticResource FieldLabel}"/>
+                                                <TextBlock Text="전압 (V) — 인가·허용" Style="{StaticResource FieldLabel}"/>
                                                 <TextBox x:Name="AppliedVoltageBox" Text="220" Style="{StaticResource ValueBox}"
+                                                         TextChanged="ElectricalInput_Changed"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,8,0,0">
+                                                <TextBlock Text="허용 전류 (A)" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox x:Name="AllowedCurrentBox" Text="16" Style="{StaticResource ValueBox}"
+                                                         TextChanged="ElectricalInput_Changed"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="2" Grid.Column="0" Margin="0,8,0,0">
+                                                <TextBlock Text="허용 전력 (kW)" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox x:Name="AllowedPowerBox" Text="3.5" Style="{StaticResource ValueBox}"
                                                          TextChanged="ElectricalInput_Changed"/>
                                             </StackPanel>
                                         </Grid>
@@ -622,11 +632,12 @@
                                                 <DataGridTextColumn Header="전압 V" Binding="{Binding VoltageV, StringFormat=F1}" Width="*" MinWidth="38"/>
                                                 <DataGridTextColumn Header="전류 A" Binding="{Binding CurrentA, StringFormat=F2}" Width="*" MinWidth="42"/>
                                                 <DataGridTextColumn Header="전력 W" Binding="{Binding PowerW, StringFormat=F1}" Width="*" MinWidth="44"/>
+                                                <DataGridTextColumn Header="판정" Binding="{Binding Verdict}" Width="*" MinWidth="34"/>
                                                 <DataGridTextColumn Header="비고" Binding="{Binding Note}" Width="*" MinWidth="60"/>
                                             </DataGrid.Columns>
                                         </DataGrid>
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="L은 각 회로의 인출점 사이 경로 전체 길이이며 외부 리드 저항은 반영하지 않습니다. P = V²/(rL), R = rL, I = V/R."/>
+                                                   Text="L은 각 회로의 인출점 사이 경로 전체 길이이며 외부 리드 저항은 반영하지 않습니다. P = V²/(rL), R = rL, I = V/R. 판정은 회로별 계산값이 허용 전류·전압·전력 이하인지 비교합니다."/>
                                     </StackPanel>
                                 </Border>
                             </ScrollViewer>

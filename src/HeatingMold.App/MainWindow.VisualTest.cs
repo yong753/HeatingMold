@@ -1343,13 +1343,12 @@ namespace HeatingMold.App
             SidebarTabs.SelectedIndex = ReviewTabIndex;
 
             ReviewScopeBox.SelectedIndex = scenario.Electrical.ReviewScope;
+            Require(scenario.Electrical.PresetIndex != 2,
+                "직접 입력 발열사 프리셋은 더 이상 지원하지 않습니다. Case 1 또는 Case 2를 사용하세요.");
             WirePresetBox.SelectedIndex = scenario.Electrical.PresetIndex;
-            if (scenario.Electrical.PresetIndex == 2)
-            {
-                WireDiameterBox.Text = scenario.Electrical.DiameterMm.ToString("0.###", CultureInfo.CurrentCulture);
-                WireResistanceBox.Text = scenario.Electrical.ResistanceOhmPerMeter.ToString("0.###", CultureInfo.CurrentCulture);
-            }
             AppliedVoltageBox.Text = scenario.Electrical.VoltageV.ToString("0.###", CultureInfo.CurrentCulture);
+            AllowedCurrentBox.Text = scenario.Electrical.AllowedCurrentA.ToString("0.###", CultureInfo.CurrentCulture);
+            AllowedPowerBox.Text = scenario.Electrical.AllowedPowerKw.ToString("0.###", CultureInfo.CurrentCulture);
 
             Require(TryReadElectricalSettings(out HeatingWireSpec wire, out PowerSupplySpec supply, out string settingsError),
                 "전기 입력을 읽지 못했습니다: " + settingsError);
@@ -1373,6 +1372,12 @@ namespace HeatingMold.App
                 Require(Math.Abs(row.ResistanceOhm - expected.ResistanceOhm) < 1e-6, "저항이 계산값과 다릅니다: " + row.CircuitId);
                 Require(Math.Abs(row.CurrentA - expected.CurrentA) < 1e-6, "전류가 계산값과 다릅니다: " + row.CircuitId);
                 Require(Math.Abs(row.PowerW - expected.PowerW) < 1e-3, "전력이 계산값과 다릅니다: " + row.CircuitId);
+                Require(row.Assessment != null, "회로 허용치 판정이 없습니다: " + row.CircuitId);
+                if (scenario.Electrical.ExpectedWithinLimits is bool expectWithin)
+                    Require(row.Assessment.IsWithinLimits == expectWithin,
+                        string.Format(CultureInfo.InvariantCulture,
+                            "회로 판정이 시나리오 기대와 다릅니다: {0} (기대 {1}, 사유 {2})",
+                            row.CircuitId, expectWithin ? "OK" : "NG", row.Assessment.Note));
             }
 
             var data = new Dictionary<string, string>
@@ -1382,7 +1387,11 @@ namespace HeatingMold.App
                 ["totalPowerW"] = snapshot.Table.TotalPowerW.ToString("0.###", CultureInfo.InvariantCulture),
                 ["wireDiameterMm"] = wire.DiameterMm.ToString("0.###", CultureInfo.InvariantCulture),
                 ["wireResistanceOhmPerM"] = wire.ResistanceOhmPerMeter.ToString("0.###", CultureInfo.InvariantCulture),
-                ["voltageV"] = supply.VoltageV.ToString("0.###", CultureInfo.InvariantCulture)
+                ["voltageV"] = supply.VoltageV.ToString("0.###", CultureInfo.InvariantCulture),
+                ["allowedCurrentA"] = snapshot.Limits.CurrentLimitA.ToString("0.###", CultureInfo.InvariantCulture),
+                ["allowedPowerW"] = snapshot.Limits.PowerLimitW.ToString("0.###", CultureInfo.InvariantCulture),
+                ["okCircuits"] = snapshot.Table.WithinLimitCount.ToString(CultureInfo.InvariantCulture),
+                ["ngCircuits"] = snapshot.Table.OverLimitCount.ToString(CultureInfo.InvariantCulture)
             };
             return VisualStepOutcome.Ok("전기 사양표·계산 일치 확인", data);
         }

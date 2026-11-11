@@ -14,7 +14,12 @@ namespace HeatingMold.App.Persistence
     public static class ProjectJsonStore
     {
         public const string FileExtension = ".json";
-        private const int SchemaVersion = 1;
+        public const int CurrentSchemaVersion = 2;
+        private const int MinSupportedSchemaVersion = 1;
+
+        /// <summary>이 앱이 읽을 수 있는 스키마 버전인지. 쓰기는 항상 CurrentSchemaVersion을 쓴다.</summary>
+        public static bool IsSupportedSchemaVersion(int version) =>
+            version >= MinSupportedSchemaVersion && version <= CurrentSchemaVersion;
 
         private static readonly JsonSerializerOptions Options = new()
         {
@@ -30,7 +35,7 @@ namespace HeatingMold.App.Persistence
         public static byte[] Serialize(ProjectDocument document)
         {
             if (document == null) throw new ArgumentNullException(nameof(document));
-            if (document.SchemaVersion != SchemaVersion)
+            if (!IsSupportedSchemaVersion(document.SchemaVersion))
                 throw new InvalidOperationException("지원하지 않는 프로젝트 스키마 버전입니다: " + document.SchemaVersion);
             try
             {
@@ -60,7 +65,7 @@ namespace HeatingMold.App.Persistence
                     throw new InvalidDataException("프로젝트 JSON이 비어 있습니다.");
                 if (!string.Equals(document.Format, "HeatingMold.Project", StringComparison.Ordinal))
                     throw new InvalidDataException("HeatingMold 프로젝트 파일이 아닙니다.");
-                if (document.SchemaVersion != SchemaVersion)
+                if (!IsSupportedSchemaVersion(document.SchemaVersion))
                     throw new InvalidDataException("지원하지 않는 프로젝트 스키마 버전입니다: " + document.SchemaVersion);
                 return document;
             }

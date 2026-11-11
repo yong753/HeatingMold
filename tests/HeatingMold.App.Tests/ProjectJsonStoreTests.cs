@@ -56,7 +56,7 @@ namespace HeatingMold.App.Tests
                 using JsonDocument json = JsonDocument.Parse(File.ReadAllBytes(path));
                 JsonElement root = json.RootElement;
                 Assert.Equal("HeatingMold.Project", root.GetProperty("format").GetString());
-                Assert.Equal(1, root.GetProperty("schemaVersion").GetInt32());
+                Assert.Equal(2, root.GetProperty("schemaVersion").GetInt32());
                 Assert.Equal(1, root.GetProperty("areas").GetArrayLength());
                 Assert.Equal("A", root.GetProperty("areas")[0].GetProperty("name").GetString());
             }
@@ -84,6 +84,34 @@ namespace HeatingMold.App.Tests
                 Assert.Equal(ProjectJsonStore.ComputeFingerprint(document),
                     ProjectJsonStore.ComputeFingerprint(loaded));
                 Assert.Equal("A", loaded.Areas[0].Name);
+            }
+            finally
+            {
+                try { Directory.Delete(directory, recursive: true); } catch { }
+            }
+        }
+
+        [Fact]
+        public void LoadAcceptsSchema1DocumentWithoutLimitFields()
+        {
+            string directory = Path.Combine(Path.GetTempPath(), "HeatingMold.ProjectTests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                string path = Path.Combine(directory, "legacy.json");
+                ProjectDocument document = CreateDocument();
+                document.SchemaVersion = 1;
+                document.Electrical.AllowedCurrentText = null;
+                document.Electrical.AllowedPowerText = null;
+                File.WriteAllBytes(path, ProjectJsonStore.Serialize(document));
+
+                using JsonDocument json = JsonDocument.Parse(File.ReadAllBytes(path));
+                Assert.False(json.RootElement.GetProperty("electrical")
+                    .TryGetProperty("allowedCurrentText", out _));
+
+                ProjectDocument loaded = ProjectJsonStore.Load(path);
+                Assert.Equal(1, loaded.SchemaVersion);
+                Assert.Null(loaded.Electrical.AllowedCurrentText);
             }
             finally
             {
@@ -120,7 +148,7 @@ namespace HeatingMold.App.Tests
             {
                 string futurePath = Path.Combine(directory, "future.json");
                 File.WriteAllText(futurePath,
-                    "{\"format\":\"HeatingMold.Project\",\"schemaVersion\":2}");
+                    "{\"format\":\"HeatingMold.Project\",\"schemaVersion\":3}");
                 Assert.Throws<InvalidDataException>(() => ProjectJsonStore.Load(futurePath));
 
                 string malformedPath = Path.Combine(directory, "malformed.json");
@@ -275,9 +303,11 @@ namespace HeatingMold.App.Tests
                 Electrical = new ProjectElectricalDocument
                 {
                     WirePresetIndex = 0,
-                    WireDiameterText = "1.0",
-                    WireResistanceText = "0.1",
-                    AppliedVoltageText = "220"
+                    WireDiameterText = "0.3",
+                    WireResistanceText = "4",
+                    AppliedVoltageText = "220",
+                    AllowedCurrentText = "16",
+                    AllowedPowerText = "3.5"
                 },
                 Review = new ProjectReviewDocument { CurrentAreaOnly = false }
             };

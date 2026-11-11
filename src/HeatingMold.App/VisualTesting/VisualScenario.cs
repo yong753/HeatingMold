@@ -110,6 +110,10 @@ internal sealed class VisualScenario
                 || !double.IsFinite(Electrical.ResistanceOhmPerMeter)
                 || !(Electrical.ResistanceOhmPerMeter > 0)))
             throw new ArgumentException("presetIndex=2일 때 diameterMm/resistanceOhmPerMeter가 필요합니다.");
+        if (!double.IsFinite(Electrical.AllowedCurrentA) || !(Electrical.AllowedCurrentA > 0))
+            throw new ArgumentException("electrical.allowedCurrentA는 0보다 큰 숫자여야 합니다.");
+        if (!double.IsFinite(Electrical.AllowedPowerKw) || !(Electrical.AllowedPowerKw > 0))
+            throw new ArgumentException("electrical.allowedPowerKw는 0보다 큰 숫자여야 합니다.");
     }
 
     private void ValidateActions()
@@ -390,6 +394,12 @@ internal sealed class VisualElectricalSpec
     public int ReviewScope { get; set; }
     public double DiameterMm { get; set; }
     public double ResistanceOhmPerMeter { get; set; }
+    /// <summary>허용 전류 [A]. 생략하면 제품 기본값을 쓴다.</summary>
+    public double AllowedCurrentA { get; set; } = 16;
+    /// <summary>허용 전력 [kW]. 생략하면 제품 기본값을 쓴다.</summary>
+    public double AllowedPowerKw { get; set; } = 3.5;
+    /// <summary>지정하면 모든 회로의 판정이 이 값과 일치해야 한다. 생략하면 판정 자체를 검사하지 않는다.</summary>
+    public bool? ExpectedWithinLimits { get; set; }
 }
 
 internal sealed class VisualExpectSpec

@@ -3,7 +3,7 @@ namespace HeatingMold.Core.Electrical;
 /// <summary>
 /// PDF 계산식 P = V²/(rL)과 정의 R = rL, 옴의 법칙 I = V/R로 회로 하나를 계산한다.
 /// L은 mm로 받아 m로 변환한다. r은 상온 일정값이고 외부 리드/접속부 저항은 반영하지 않는다.
-/// 허용 전류·전력 대비 판정은 하지 않고 계산값만 돌려준다.
+/// 허용치 판정은 <see cref="CircuitAssessment"/>가 계산 성공 여부와 별도로 수행한다.
 /// </summary>
 public static class ElectricalCalculator
 {
@@ -25,6 +25,8 @@ public static class ElectricalCalculator
 
         double current = supply.VoltageV / resistance;
         double power = supply.VoltageV * current;
+        if (!double.IsFinite(current) || !double.IsFinite(power))
+            return ElectricalResult.Invalid("계산된 전류/전력이 유효한 범위를 벗어났습니다");
 
         return new ElectricalResult
         {

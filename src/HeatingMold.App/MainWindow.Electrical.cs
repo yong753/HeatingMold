@@ -23,11 +23,23 @@ public partial class MainWindow
         double? VoltageV,
         double? CurrentA,
         double? PowerW,
+        string Verdict,
         string Note,
         bool IsTotal);
 
     private void InitializeElectricalUi()
     {
+        // XAML의 표시 문자열은 culture에 따라 파싱되지 않을 수 있으므로 초기값을 다시 쓴다.
+        if (WirePresetBox != null && WirePresetBox.SelectedIndex < 0)
+            WirePresetBox.SelectedIndex = ElectricalSettingsResolver.Case1PresetIndex;
+        ApplyFixedWireText(WirePresetBox?.SelectedIndex ?? ElectricalSettingsResolver.Case1PresetIndex);
+        if (AppliedVoltageBox != null)
+            AppliedVoltageBox.Text = ElectricalSettingsResolver.DefaultVoltageText;
+        if (AllowedCurrentBox != null)
+            AllowedCurrentBox.Text = ElectricalSettingsResolver.DefaultCurrentLimitText;
+        if (AllowedPowerBox != null)
+            AllowedPowerBox.Text = ElectricalSettingsResolver.DefaultPowerLimitText;
+
         _electricalUiReady = true;
         RefreshElectricalTable();
         UpdateExportScopeText();
@@ -122,13 +134,16 @@ public partial class MainWindow
 
         ElectricalSpecTable table = null;
         PowerSupplySpec supply = null;
+        ElectricalLimits limits = null;
         string electricalError = null;
-        if (TryReadElectricalSettings(out HeatingWireSpec wire, out supply, out electricalError))
+        if (TryReadElectricalSettings(out ElectricalSettings settings, out electricalError))
         {
+            supply = settings.Supply;
+            limits = settings.Limits;
             var inputs = circuits
                 .Select(c => new ElectricalCircuitInput(c.CircuitId, c.HeatingLengthMm))
                 .ToList();
-            table = ElectricalSpecTableBuilder.Build(inputs, wire, supply);
+            table = ElectricalSpecTableBuilder.Build(inputs, settings.Wire, settings.Supply, settings.Limits);
         }
 
         string blockReason = null;
@@ -153,6 +168,7 @@ public partial class MainWindow
             Circuits = circuits,
             Table = table,
             Supply = supply,
+            Limits = limits,
             ElectricalError = electricalError,
             CanExport = blockReason == null,
             BlockReason = blockReason
@@ -185,35 +201,31 @@ public partial class MainWindow
     private void WirePreset_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (!_electricalUiReady || _suppressElectricalInput) return;
-        switch (WirePresetBox.SelectedIndex)
-        {
-            case 0: ApplyWireSpec(HeatingWireSpec.Case1); break;
-            case 1: ApplyWireSpec(HeatingWireSpec.Case2); break;
-        }
+        ApplyFixedWireText(WirePresetBox.SelectedIndex);
+        RefreshElectricalTable();
     }
 
-    private void ApplyWireSpec(HeatingWireSpec spec)
+    /// <summary>선택한 Case의 고정 직경·단위저항을 읽기 전용 표시에 채운다.</summary>
+    private void ApplyFixedWireText(int presetIndex)
     {
+        if (!ElectricalSettingsResolver.TryGetWire(presetIndex, out HeatingWireSpec wire)) return;
         _suppressElectricalInput = true;
-        WireDiameterBox.Text = spec.DiameterMm.ToString("0.###", CultureInfo.CurrentCulture);
-        WireResistanceBox.Text = spec.ResistanceOhmPerMeter.ToString("0.###", CultureInfo.CurrentCulture);
-        _suppressElectricalInput = false;
-        RefreshElectricalTable();
+        try
+        {
+            if (WireDiameterBox != null)
+                WireDiameterBox.Text = wire.DiameterMm.ToString("0.###", CultureInfo.CurrentCulture);
+            if (WireResistanceBox != null)
+                WireResistanceBox.Text = wire.ResistanceOhmPerMeter.ToString("0.###", CultureInfo.CurrentCulture);
+        }
+        finally
+        {
+            _suppressElectricalInput = false;
+        }
     }
 
     private void ElectricalInput_Changed(object sender, TextChangedEventArgs e)
     {
         if (!_electricalUiReady || _suppressElectricalInput) return;
-
-        // 직경/저항을 직접 고치면 프리셋 선택을 "직접 입력"으로 되돌린다.
-        if ((ReferenceEquals(sender, WireDiameterBox) || ReferenceEquals(sender, WireResistanceBox))
-            && WirePresetBox.SelectedIndex != 2)
-        {
-            _suppressElectricalInput = true;
-            WirePresetBox.SelectedIndex = 2;
-            _suppressElectricalInput = false;
-        }
-
         RefreshElectricalTable();
     }
 
@@ -221,38 +233,21 @@ public partial class MainWindow
     {
         wire = null;
         supply = null;
-        if (!TryReadPositive(WireDiameterBox.Text, "발열사 직경", out double diameter, out error)) return false;
-        if (!TryReadPositive(WireResistanceBox.Text, "단위 길이당 저항", out double resistance, out error)) return false;
-        if (!TryReadNonNegative(AppliedVoltageBox.Text, "인가전압", out double voltage, out error)) return false;
-
-        wire = new HeatingWireSpec { DiameterMm = diameter, ResistanceOhmPerMeter = resistance };
-        supply = new PowerSupplySpec { VoltageV = voltage };
-        error = null;
+        if (!TryReadElectricalSettings(out ElectricalSettings settings, out error)) return false;
+        wire = settings.Wire;
+        supply = settings.Supply;
         return true;
     }
 
-    private static bool TryReadPositive(string text, string name, out double value, out string error)
+    /// <summary>같은 전압 입력을 계산용 인가전압과 허용전압에 함께 쓴다.</summary>
+    private bool TryReadElectricalSettings(out ElectricalSettings settings, out string error)
     {
-        error = "";
-        if (!double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out value)
-            || !double.IsFinite(value) || value <= 0)
-        {
-            error = name + "은(는) 0보다 큰 숫자여야 합니다";
-            return false;
-        }
-        return true;
-    }
-
-    private static bool TryReadNonNegative(string text, string name, out double value, out string error)
-    {
-        error = "";
-        if (!double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out value)
-            || !double.IsFinite(value) || value < 0)
-        {
-            error = name + "은(는) 0 이상의 숫자여야 합니다";
-            return false;
-        }
-        return true;
+        return ElectricalSettingsResolver.TryResolve(
+            WirePresetBox?.SelectedIndex ?? -1,
+            AppliedVoltageBox?.Text ?? "",
+            AllowedCurrentBox?.Text ?? "",
+            AllowedPowerBox?.Text ?? "",
+            out settings, out error);
     }
 
     /// <summary>
@@ -299,11 +294,11 @@ public partial class MainWindow
             ? new List<ElectricalSpecUiRow>()
             : table.Rows.Select(r => new ElectricalSpecUiRow(
                 r.CircuitId, r.LengthM, r.ResistanceOhm, r.VoltageV, r.CurrentA, r.PowerW,
-                r.Message, false)).ToList();
+                ElectricalVerdictText(r), r.Note, false)).ToList();
         if (rows.Count > 0)
         {
             rows.Add(new ElectricalSpecUiRow(
-                "합계", null, null, null, table.TotalCurrentA, table.TotalPowerW, "", true));
+                "합계", null, null, null, table.TotalCurrentA, table.TotalPowerW, "", "", true));
         }
         ElectricalSpecGrid.ItemsSource = rows;
 
@@ -319,10 +314,36 @@ public partial class MainWindow
             return;
         }
 
+        // 계산 오류가 하나라도 있으면 '전체 OK'라고 말하지 않는다.
+        int invalidCount = table.Rows.Count(r => !r.IsValid);
+        string verdicts;
+        if (invalidCount > 0)
+            verdicts = string.Format(CultureInfo.CurrentCulture, " · OK {0} · NG {1} · 계산 오류 {2}",
+                table.WithinLimitCount, table.OverLimitCount, invalidCount);
+        else if (table.HasOverLimitCircuits)
+            verdicts = string.Format(CultureInfo.CurrentCulture, " · OK {0} · NG {1}",
+                table.WithinLimitCount, table.OverLimitCount);
+        else
+            verdicts = " · 전체 OK";
+
+        string limitText = snapshot.Limits == null
+            ? ""
+            : string.Format(CultureInfo.CurrentCulture, " · 허용 {0:0.###} A / {1:0.###} V / {2:0.###} kW",
+                snapshot.Limits.CurrentLimitA, snapshot.Limits.VoltageLimitV,
+                snapshot.Limits.PowerLimitW / 1000.0);
+
         ElectricalSummaryText.Text = string.Format(CultureInfo.CurrentCulture,
-            "{0}총 {1}회로 · 합계 {2:F2} A / {3:F1} W (인가전압 {4:F0} V){5}",
-            scope, table.Rows.Count, table.TotalCurrentA, table.TotalPowerW,
-            snapshot.Supply.VoltageV, excluded);
+            "{0}총 {1}회로{2} · 합계 {3:F2} A / {4:F1} W{5}{6}",
+            scope, table.Rows.Count, verdicts, table.TotalCurrentA, table.TotalPowerW,
+            limitText, excluded);
+    }
+
+    /// <summary>표의 판정 열. 계산 오류는 OK/NG가 아니므로 '—'로 구분한다.</summary>
+    private static string ElectricalVerdictText(ElectricalSpecRow row)
+    {
+        if (!row.IsValid) return "—";
+        if (row.Assessment == null) return "";
+        return row.Assessment.IsWithinLimits ? "OK" : "NG";
     }
 
     /// <summary>

@@ -29,6 +29,8 @@ internal sealed class ReviewSnapshot
     public IReadOnlyList<CircuitLengthInfo> Circuits { get; init; } = new List<CircuitLengthInfo>();
     public ElectricalSpecTable Table { get; init; }
     public PowerSupplySpec Supply { get; init; }
+    /// <summary>회로별 판정에 쓴 허용치. 전기 입력 오류면 null.</summary>
+    public ElectricalLimits Limits { get; init; }
     public string ElectricalError { get; init; }
     public bool CanExport { get; init; }
     public string BlockReason { get; init; }

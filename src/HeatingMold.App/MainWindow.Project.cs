@@ -412,7 +412,9 @@ namespace HeatingMold.App
                 WirePresetIndex = WirePresetBox?.SelectedIndex ?? -1,
                 WireDiameterText = WireDiameterBox?.Text ?? "",
                 WireResistanceText = WireResistanceBox?.Text ?? "",
-                AppliedVoltageText = AppliedVoltageBox?.Text ?? ""
+                AppliedVoltageText = AppliedVoltageBox?.Text ?? "",
+                AllowedCurrentText = AllowedCurrentBox?.Text ?? "",
+                AllowedPowerText = AllowedPowerBox?.Text ?? ""
             };
         }
 

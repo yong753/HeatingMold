@@ -11,7 +11,7 @@ namespace HeatingMold.App.Persistence
     public sealed class ProjectDocument
     {
         public string Format { get; set; } = "HeatingMold.Project";
-        public int SchemaVersion { get; set; } = 1;
+        public int SchemaVersion { get; set; } = 2;
         public string AppVersion { get; set; }
         public string CreatedUtc { get; set; }
         public string SavedUtc { get; set; }
@@ -128,7 +128,12 @@ namespace HeatingMold.App.Persistence
         public int WirePresetIndex { get; set; }
         public string WireDiameterText { get; set; }
         public string WireResistanceText { get; set; }
+        /// <summary>계산용 인가전압. 허용전압과 같은 값을 쓴다.</summary>
         public string AppliedVoltageText { get; set; }
+        /// <summary>허용 전류 [A]. 스키마 1 파일에는 없으며 기본값으로 복원한다.</summary>
+        public string AllowedCurrentText { get; set; }
+        /// <summary>허용 전력 [kW]. 스키마 1 파일에는 없으며 기본값으로 복원한다.</summary>
+        public string AllowedPowerText { get; set; }
     }
 
     public sealed class ProjectReviewDocument

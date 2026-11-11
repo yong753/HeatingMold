@@ -68,6 +68,37 @@ namespace HeatingMold.App.Tests
         }
 
         [Fact]
+        public void Load_AcceptsAllowedLimitsAndExpectedVerdict()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string scenarioPath = WriteScenario(temp, model, sha256: VisualScenario.ComputeSha256(model),
+                electrical: "\"presetIndex\": 0, \"voltageV\": 220, \"reviewScope\": 0, "
+                    + "\"allowedCurrentA\": 12, \"allowedPowerKw\": 2.5, \"expectedWithinLimits\": true");
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(error);
+            Assert.Equal(12.0, scenario.Electrical.AllowedCurrentA);
+            Assert.Equal(2.5, scenario.Electrical.AllowedPowerKw);
+            Assert.True(scenario.Electrical.ExpectedWithinLimits);
+        }
+
+        [Fact]
+        public void Load_RejectsNonPositiveAllowedCurrent()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string scenarioPath = WriteScenario(temp, model, sha256: VisualScenario.ComputeSha256(model),
+                electrical: "\"presetIndex\": 0, \"voltageV\": 220, \"reviewScope\": 0, \"allowedCurrentA\": 0");
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(scenario);
+            Assert.Contains("allowedCurrentA", error);
+        }
+
+        [Fact]
         public void Load_RejectsRemovedLegacySplitStep()
         {
             using var temp = new TempDirectory();

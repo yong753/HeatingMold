@@ -56,6 +56,14 @@ public partial class MainWindow
                 return false;
             }
 
+            // 모델을 교체하기 전에 전기 제원 호환성을 확정한다. 실패하면 현재 작업을 그대로 둔다.
+            if (!ProjectElectricalMigration.TryNormalize(document, out string electricalMigrationError))
+            {
+                ReportProjectLoadFailure("저장된 전기 검토 설정을 복원할 수 없습니다",
+                    new InvalidDataException(electricalMigrationError));
+                return false;
+            }
+
             string sourcePath = ResolveProjectSourcePath(document, projectPath);
             if (string.IsNullOrWhiteSpace(sourcePath)) return false;
 
@@ -972,11 +980,14 @@ public partial class MainWindow
             try
             {
                 if (WirePresetBox != null)
-                    WirePresetBox.SelectedIndex = electrical.WirePresetIndex >= 0 && electrical.WirePresetIndex <= 2
-                        ? electrical.WirePresetIndex : 0;
+                    WirePresetBox.SelectedIndex = electrical.WirePresetIndex == ElectricalSettingsResolver.Case2PresetIndex
+                        ? ElectricalSettingsResolver.Case2PresetIndex
+                        : ElectricalSettingsResolver.Case1PresetIndex;
                 if (WireDiameterBox != null) WireDiameterBox.Text = electrical.WireDiameterText ?? "";
                 if (WireResistanceBox != null) WireResistanceBox.Text = electrical.WireResistanceText ?? "";
                 if (AppliedVoltageBox != null) AppliedVoltageBox.Text = electrical.AppliedVoltageText ?? "";
+                if (AllowedCurrentBox != null) AllowedCurrentBox.Text = electrical.AllowedCurrentText ?? "";
+                if (AllowedPowerBox != null) AllowedPowerBox.Text = electrical.AllowedPowerText ?? "";
             }
             finally
             {
