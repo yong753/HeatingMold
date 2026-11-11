@@ -267,6 +267,7 @@ namespace HeatingMold.App
                 Direction = area.Direction.ToString(),
                 MarginText = area.MarginText,
                 SpacingText = area.SpacingText,
+                TargetPowerText = area.TargetPowerText,
                 ExitFaceId = area.ExitFaceId,
                 ExitFaceRevision = area.ExitFaceRevision,
                 ExitChain = area.ExitChain.Select(ToProjectVec2).ToList(),
@@ -284,6 +285,13 @@ namespace HeatingMold.App
                 ExitBoundaryKind = area.ExitBoundary?.GetType().Name,
                 RegionExitBoundaryKind = area.RegionExitBoundary?.GetType().Name,
                 RegionCadBoundaryKind = area.RegionCadBoundary?.GetType().Name,
+                SplitCutLines = area.SplitCutLines.Select(cut => new ProjectSplitCutLine
+                {
+                    AX = cut.A.X,
+                    AY = cut.A.Y,
+                    BX = cut.B.X,
+                    BY = cut.B.Y
+                }).ToList(),
                 Circuits = area.Circuits.Select(ToProjectCircuit).ToList(),
                 CircuitPieceIndices = area.CircuitPieceIndices.Select(indices => indices.ToArray()).ToList(),
                 Pattern = area.Pattern == null ? null : ToProjectPattern(area.Pattern),
@@ -412,7 +420,9 @@ namespace HeatingMold.App
                 WirePresetIndex = WirePresetBox?.SelectedIndex ?? -1,
                 WireDiameterText = WireDiameterBox?.Text ?? "",
                 WireResistanceText = WireResistanceBox?.Text ?? "",
-                AppliedVoltageText = AppliedVoltageBox?.Text ?? "",
+                AllowedVoltageText = AllowedVoltageBox?.Text ?? "",
+                // 스키마 2 이하 호환용. 스키마 3에서는 허용 전압과 같은 값을 유지한다.
+                AppliedVoltageText = AllowedVoltageBox?.Text ?? "",
                 AllowedCurrentText = AllowedCurrentBox?.Text ?? "",
                 AllowedPowerText = AllowedPowerBox?.Text ?? ""
             };
@@ -488,7 +498,9 @@ namespace HeatingMold.App
                 BoundaryParameter = exit.BoundaryParameter,
                 Binding = exit.Binding.HasValue ? ToProjectExitEdgeBinding(exit.Binding.Value) : null,
                 ArtificialBinding = exit.ArtificialBinding.HasValue
-                    ? ToProjectArtificialEdgeBinding(exit.ArtificialBinding.Value) : null
+                    ? ToProjectArtificialEdgeBinding(exit.ArtificialBinding.Value) : null,
+                SplitBinding = exit.SplitBinding.HasValue
+                    ? ToProjectSplitLineBinding(exit.SplitBinding.Value) : null
             };
         }
 
@@ -501,7 +513,25 @@ namespace HeatingMold.App
                 SegmentParameter = exit.SegmentParameter,
                 Binding = exit.Binding.HasValue ? ToProjectExitEdgeBinding(exit.Binding.Value) : null,
                 ArtificialBinding = exit.ArtificialBinding.HasValue
-                    ? ToProjectArtificialEdgeBinding(exit.ArtificialBinding.Value) : null
+                    ? ToProjectArtificialEdgeBinding(exit.ArtificialBinding.Value) : null,
+                SplitBinding = exit.SplitBinding.HasValue
+                    ? ToProjectSplitLineBinding(exit.SplitBinding.Value) : null
+            };
+        }
+
+        private static ProjectSplitLineBinding ToProjectSplitLineBinding(SplitLineBinding binding)
+        {
+            return new ProjectSplitLineBinding
+            {
+                WorkingContextId = binding.WorkingContextId,
+                WorkingContextRevision = binding.WorkingContextRevision,
+                AX = binding.AX,
+                AY = binding.AY,
+                BX = binding.BX,
+                BY = binding.BY,
+                FirstParameter = binding.FirstParameter,
+                LastParameter = binding.LastParameter,
+                Parameter = binding.Parameter
             };
         }
 

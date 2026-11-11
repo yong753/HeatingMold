@@ -18,6 +18,7 @@ public partial class MainWindow
     /// <summary>사양표 UI 표시용 행. 합계 행은 전류/전력만 채우고 IsTotal이 true다.</summary>
     private sealed record ElectricalSpecUiRow(
         string CircuitId,
+        double? TargetPowerW,
         double? LengthM,
         double? ResistanceOhm,
         double? VoltageV,
@@ -33,8 +34,8 @@ public partial class MainWindow
         if (WirePresetBox != null && WirePresetBox.SelectedIndex < 0)
             WirePresetBox.SelectedIndex = ElectricalSettingsResolver.Case1PresetIndex;
         ApplyFixedWireText(WirePresetBox?.SelectedIndex ?? ElectricalSettingsResolver.Case1PresetIndex);
-        if (AppliedVoltageBox != null)
-            AppliedVoltageBox.Text = ElectricalSettingsResolver.DefaultVoltageText;
+        if (AllowedVoltageBox != null)
+            AllowedVoltageBox.Text = ElectricalSettingsResolver.DefaultAllowedVoltageText;
         if (AllowedCurrentBox != null)
             AllowedCurrentBox.Text = ElectricalSettingsResolver.DefaultCurrentLimitText;
         if (AllowedPowerBox != null)
@@ -62,6 +63,7 @@ public partial class MainWindow
         ReviewAreaState.Stale => "재생성 필요",
         ReviewAreaState.Unverified => "근거 미확인",
         ReviewAreaState.InvalidLengths => "길이 불완전",
+        ReviewAreaState.MissingTargetPower => "목표전력 미입력",
         _ => "정상"
     };
 
@@ -117,6 +119,10 @@ public partial class MainWindow
                 entries.Add(new ReviewAreaEntry(area, ReviewAreaState.Stale, "입력 조건 변경 — 재생성 필요"));
             else if (!HasUsableLengths(area, out string lengthReason))
                 entries.Add(new ReviewAreaEntry(area, ReviewAreaState.InvalidLengths, lengthReason));
+            else if (area.TargetPowerError != null)
+                entries.Add(new ReviewAreaEntry(area, ReviewAreaState.MissingTargetPower, area.TargetPowerError));
+            else if (area.TargetPowerW == null)
+                entries.Add(new ReviewAreaEntry(area, ReviewAreaState.MissingTargetPower, "목표 발열전력 미입력"));
             else
                 entries.Add(new ReviewAreaEntry(area, ReviewAreaState.Ready, "정상"));
         }
@@ -133,17 +139,17 @@ public partial class MainWindow
         }
 
         ElectricalSpecTable table = null;
-        PowerSupplySpec supply = null;
         ElectricalLimits limits = null;
         string electricalError = null;
-        if (TryReadElectricalSettings(out ElectricalSettings settings, out electricalError))
+        if (TryReadElectricalLimits(out TargetPowerElectricalSettings settings, out electricalError))
         {
-            supply = settings.Supply;
             limits = settings.Limits;
+            // 회로마다 그 영역에 확정된 목표 발열전력을 그대로 쓴다. 총합을 다시 나누지 않는다.
             var inputs = circuits
-                .Select(c => new ElectricalCircuitInput(c.CircuitId, c.HeatingLengthMm))
+                .Select(c => new TargetPowerCircuitInput(
+                    c.CircuitId, c.HeatingLengthMm, c.TargetPowerW.GetValueOrDefault()))
                 .ToList();
-            table = ElectricalSpecTableBuilder.Build(inputs, settings.Wire, settings.Supply, settings.Limits);
+            table = ElectricalSpecTableBuilder.BuildFromTargetPower(inputs, settings.Wire, settings.Limits);
         }
 
         string blockReason = null;
@@ -167,7 +173,6 @@ public partial class MainWindow
             ReadyAreas = readyAreas,
             Circuits = circuits,
             Table = table,
-            Supply = supply,
             Limits = limits,
             ElectricalError = electricalError,
             CanExport = blockReason == null,
@@ -229,22 +234,56 @@ public partial class MainWindow
         RefreshElectricalTable();
     }
 
-    private bool TryReadElectricalSettings(out HeatingWireSpec wire, out PowerSupplySpec supply, out string error)
+    /// <summary>
+    /// 영역별 목표 발열전력 입력을 초안으로 보존하고 즉시 해석한다. 목표전력은 경로 형상에
+    /// 영향을 주지 않으므로 재생성 필요 판정과 무관하고, 전기 표와 내보내기 가능 여부만 갱신한다.
+    /// </summary>
+    private void TargetPower_Changed(object sender, TextChangedEventArgs e)
     {
-        wire = null;
-        supply = null;
-        if (!TryReadElectricalSettings(out ElectricalSettings settings, out error)) return false;
-        wire = settings.Wire;
-        supply = settings.Supply;
-        return true;
+        if (_suppressPatternInputWriteBack) return;
+        WorkingArea area = _activeArea;
+        if (area == null) return;
+        area.TargetPowerText = TargetPowerBox?.Text ?? "";
+        ApplyTargetPowerText(area);
+        RefreshElectricalTable();
+        UpdateExportScopeText();
     }
 
-    /// <summary>같은 전압 입력을 계산용 인가전압과 허용전압에 함께 쓴다.</summary>
-    private bool TryReadElectricalSettings(out ElectricalSettings settings, out string error)
+    /// <summary>
+    /// 목표전력 입력 문자열을 해석해 확정 값과 형식 오류를 분리해 보관한다.
+    /// 빈 입력은 오류가 아니라 '미입력' 상태이며, 값이 있으나 잘못된 경우만 오류로 남긴다.
+    /// </summary>
+    private static void ApplyTargetPowerText(WorkingArea area)
     {
-        return ElectricalSettingsResolver.TryResolve(
+        if (area == null) return;
+        string text = area.TargetPowerText ?? "";
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            area.TargetPowerW = null;
+            area.TargetPowerError = null;
+            return;
+        }
+        if (ElectricalSettingsResolver.TryParseTargetPowerW(text, out double powerW, out string error))
+        {
+            area.TargetPowerW = powerW;
+            area.TargetPowerError = null;
+        }
+        else
+        {
+            area.TargetPowerW = null;
+            area.TargetPowerError = error;
+        }
+    }
+
+    /// <summary>
+    /// 전압 입력은 계산에 쓰지 않고 회로별 허용 전압 한도로만 해석한다.
+    /// 필요 전압은 회로마다 목표 발열전력과 실제 길이로 계산한다.
+    /// </summary>
+    private bool TryReadElectricalLimits(out TargetPowerElectricalSettings settings, out string error)
+    {
+        return ElectricalSettingsResolver.TryResolveLimits(
             WirePresetBox?.SelectedIndex ?? -1,
-            AppliedVoltageBox?.Text ?? "",
+            AllowedVoltageBox?.Text ?? "",
             AllowedCurrentBox?.Text ?? "",
             AllowedPowerBox?.Text ?? "",
             out settings, out error);
@@ -254,11 +293,10 @@ public partial class MainWindow
     /// 현재 입력값과 선택된 검토 범위의 확정된 발열 경로로 전기 사양을 계산한다.
     /// UI 표시와 DXF 출력이 같은 계산 경로를 사용하도록 캐시 없이 매번 계산한다.
     /// </summary>
-    private bool TryBuildCurrentElectricalTable(out ElectricalSpecTable table, out PowerSupplySpec supply, out string error)
+    private bool TryBuildCurrentElectricalTable(out ElectricalSpecTable table, out string error)
     {
         ReviewSnapshot snapshot = BuildReviewSnapshot();
         table = snapshot.Table;
-        supply = snapshot.Supply;
         error = snapshot.ElectricalError;
         if (error != null) return false;
         if (table == null)
@@ -293,12 +331,13 @@ public partial class MainWindow
         var rows = table == null
             ? new List<ElectricalSpecUiRow>()
             : table.Rows.Select(r => new ElectricalSpecUiRow(
-                r.CircuitId, r.LengthM, r.ResistanceOhm, r.VoltageV, r.CurrentA, r.PowerW,
+                r.CircuitId, r.TargetPowerW, r.LengthM, r.ResistanceOhm, r.VoltageV, r.CurrentA, r.PowerW,
                 ElectricalVerdictText(r), r.Note, false)).ToList();
         if (rows.Count > 0)
         {
             rows.Add(new ElectricalSpecUiRow(
-                "합계", null, null, null, table.TotalCurrentA, table.TotalPowerW, "", "", true));
+                "합계", table.TotalTargetPowerW, null, null, null, table.TotalCurrentA, table.TotalPowerW,
+                "", "", true));
         }
         ElectricalSpecGrid.ItemsSource = rows;
 
@@ -333,9 +372,9 @@ public partial class MainWindow
                 snapshot.Limits.PowerLimitW / 1000.0);
 
         ElectricalSummaryText.Text = string.Format(CultureInfo.CurrentCulture,
-            "{0}총 {1}회로{2} · 합계 {3:F2} A / {4:F1} W{5}{6}",
-            scope, table.Rows.Count, verdicts, table.TotalCurrentA, table.TotalPowerW,
-            limitText, excluded);
+            "{0}총 {1}회로{2} · 목표 {3:F2} kW · 합계 {4:F2} A / {5:F1} W{6}{7}",
+            scope, table.Rows.Count, verdicts, table.TotalTargetPowerW / 1000.0,
+            table.TotalCurrentA, table.TotalPowerW, limitText, excluded);
     }
 
     /// <summary>표의 판정 열. 계산 오류는 OK/NG가 아니므로 '—'로 구분한다.</summary>
@@ -363,7 +402,7 @@ public partial class MainWindow
             double heating = 0;
             foreach (int index in area.CircuitPieceIndices[i])
                 heating += area.RoutePieceLengths.ElementAtOrDefault(index);
-            result.Add(new CircuitLengthInfo(prefix + (i + 1), heating));
+            result.Add(new CircuitLengthInfo(prefix + (i + 1), heating, area.TargetPowerW));
         }
         return result;
     }

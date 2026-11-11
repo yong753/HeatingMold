@@ -10,12 +10,13 @@ internal enum ReviewAreaState
     Missing,
     Stale,
     Unverified,
-    InvalidLengths
+    InvalidLengths,
+    MissingTargetPower
 }
 
 internal sealed record ReviewAreaEntry(WorkingArea Area, ReviewAreaState State, string Reason);
 
-internal sealed record CircuitLengthInfo(string CircuitId, double HeatingLengthMm);
+internal sealed record CircuitLengthInfo(string CircuitId, double HeatingLengthMm, double? TargetPowerW = null);
 
 /// <summary>
 /// 회로 표·전기 사양표·내보내기 안내가 같은 판단을 쓰도록 만든 한 번의 검토 결과.
@@ -28,7 +29,6 @@ internal sealed class ReviewSnapshot
     public IReadOnlyList<WorkingArea> ReadyAreas { get; init; } = new List<WorkingArea>();
     public IReadOnlyList<CircuitLengthInfo> Circuits { get; init; } = new List<CircuitLengthInfo>();
     public ElectricalSpecTable Table { get; init; }
-    public PowerSupplySpec Supply { get; init; }
     /// <summary>회로별 판정에 쓴 허용치. 전기 입력 오류면 null.</summary>
     public ElectricalLimits Limits { get; init; }
     public string ElectricalError { get; init; }

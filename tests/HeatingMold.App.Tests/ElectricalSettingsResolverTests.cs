@@ -13,13 +13,12 @@ public class ElectricalSettingsResolverTests
     [Fact]
     public void Case1_UsesFixedWireAndConfirmedDefaults()
     {
-        Assert.True(ElectricalSettingsResolver.TryResolve(
-            0, Text(220), Text(16), Text(3.5), out ElectricalSettings settings, out string error));
+        Assert.True(ElectricalSettingsResolver.TryResolveLimits(
+            0, Text(220), Text(16), Text(3.5), out TargetPowerElectricalSettings settings, out string error));
 
         Assert.Null(error);
         Assert.Equal(0.30, settings.Wire.DiameterMm);
         Assert.Equal(4.0, settings.Wire.ResistanceOhmPerMeter);
-        Assert.Equal(220.0, settings.Supply.VoltageV);
         Assert.Equal(16.0, settings.Limits.CurrentLimitA);
         Assert.Equal(220.0, settings.Limits.VoltageLimitV);
         Assert.Equal(3_500.0, settings.Limits.PowerLimitW);
@@ -28,8 +27,8 @@ public class ElectricalSettingsResolverTests
     [Fact]
     public void Case2_UsesFixedWire()
     {
-        Assert.True(ElectricalSettingsResolver.TryResolve(
-            1, Text(220), Text(16), Text(3.5), out ElectricalSettings settings, out string error));
+        Assert.True(ElectricalSettingsResolver.TryResolveLimits(
+            1, Text(220), Text(16), Text(3.5), out TargetPowerElectricalSettings settings, out string error));
 
         Assert.Null(error);
         Assert.Equal(0.15, settings.Wire.DiameterMm);
@@ -42,8 +41,8 @@ public class ElectricalSettingsResolverTests
     [InlineData(3)]
     public void DirectInputPreset_IsRejected(int presetIndex)
     {
-        Assert.False(ElectricalSettingsResolver.TryResolve(
-            presetIndex, Text(220), Text(16), Text(3.5), out ElectricalSettings settings, out string error));
+        Assert.False(ElectricalSettingsResolver.TryResolveLimits(
+            presetIndex, Text(220), Text(16), Text(3.5), out TargetPowerElectricalSettings settings, out string error));
 
         Assert.Null(settings);
         Assert.Contains("Case 1", error);
@@ -51,35 +50,25 @@ public class ElectricalSettingsResolverTests
     }
 
     [Fact]
-    public void Voltage_IsSharedBySupplyAndLimit()
+    public void Voltage_IsAnAllowedLimitOnly()
     {
-        Assert.True(ElectricalSettingsResolver.TryResolve(
-            0, Text(230), Text(16), Text(3.5), out ElectricalSettings settings, out _));
+        Assert.True(ElectricalSettingsResolver.TryResolveLimits(
+            0, Text(230), Text(16), Text(3.5), out TargetPowerElectricalSettings settings, out _));
 
-        Assert.Equal(230.0, settings.Supply.VoltageV);
         Assert.Equal(230.0, settings.Limits.VoltageLimitV);
     }
 
-    [Fact]
-    public void ZeroVoltage_IsAcceptedConsistently()
-    {
-        Assert.True(ElectricalSettingsResolver.TryResolve(
-            0, Text(0), Text(16), Text(3.5), out ElectricalSettings settings, out _));
-
-        Assert.Equal(0.0, settings.Supply.VoltageV);
-        Assert.Equal(0.0, settings.Limits.VoltageLimitV);
-    }
-
     [Theory]
+    [InlineData("0")]
     [InlineData("-1")]
     [InlineData("")]
     [InlineData("abc")]
-    public void InvalidVoltage_IsRejected(string voltageText)
+    public void InvalidAllowedVoltage_IsRejected(string voltageText)
     {
-        Assert.False(ElectricalSettingsResolver.TryResolve(
+        Assert.False(ElectricalSettingsResolver.TryResolveLimits(
             0, voltageText, Text(16), Text(3.5), out _, out string error));
 
-        Assert.Contains("전압", error);
+        Assert.Contains("허용 전압", error);
     }
 
     [Theory]
@@ -90,7 +79,7 @@ public class ElectricalSettingsResolverTests
     [InlineData("Infinity")]
     public void InvalidAllowedCurrent_IsRejected(string currentText)
     {
-        Assert.False(ElectricalSettingsResolver.TryResolve(
+        Assert.False(ElectricalSettingsResolver.TryResolveLimits(
             0, Text(220), currentText, Text(3.5), out _, out string error));
 
         Assert.Contains("허용 전류", error);
@@ -103,7 +92,7 @@ public class ElectricalSettingsResolverTests
     [InlineData("abc")]
     public void InvalidAllowedPower_IsRejected(string powerText)
     {
-        Assert.False(ElectricalSettingsResolver.TryResolve(
+        Assert.False(ElectricalSettingsResolver.TryResolveLimits(
             0, Text(220), Text(16), powerText, out _, out string error));
 
         Assert.Contains("허용 전력", error);
@@ -112,8 +101,8 @@ public class ElectricalSettingsResolverTests
     [Fact]
     public void AllowedPower_IsConvertedFromKilowattsToWatts()
     {
-        Assert.True(ElectricalSettingsResolver.TryResolve(
-            0, Text(220), Text(32), Text(7.5), out ElectricalSettings settings, out _));
+        Assert.True(ElectricalSettingsResolver.TryResolveLimits(
+            0, Text(220), Text(32), Text(7.5), out TargetPowerElectricalSettings settings, out _));
 
         Assert.Equal(32.0, settings.Limits.CurrentLimitA);
         Assert.Equal(7_500.0, settings.Limits.PowerLimitW);
@@ -124,9 +113,32 @@ public class ElectricalSettingsResolverTests
     {
         string huge = double.MaxValue.ToString("R", CultureInfo.CurrentCulture);
 
-        Assert.False(ElectricalSettingsResolver.TryResolve(
+        Assert.False(ElectricalSettingsResolver.TryResolveLimits(
             0, Text(220), Text(16), huge, out _, out string error));
 
         Assert.Contains("허용 전력", error);
+    }
+
+    [Fact]
+    public void TargetPower_AcceptsPositiveValueInWatts()
+    {
+        Assert.True(ElectricalSettingsResolver.TryParseTargetPowerW(Text(1250), out double powerW, out string error));
+
+        Assert.True(string.IsNullOrEmpty(error));
+        Assert.Equal(1_250.0, powerW);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-5")]
+    [InlineData("")]
+    [InlineData("NaN")]
+    [InlineData("Infinity")]
+    [InlineData("abc")]
+    public void TargetPower_RejectsNonPositiveOrNonNumeric(string text)
+    {
+        Assert.False(ElectricalSettingsResolver.TryParseTargetPowerW(text, out _, out string error));
+
+        Assert.Contains("목표 발열전력", error);
     }
 }

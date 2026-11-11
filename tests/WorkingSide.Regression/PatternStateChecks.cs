@@ -115,6 +115,9 @@ static class PatternStateChecks
         areaType.GetProperty("RegionBoundary")!.SetValue(value, new ExactRegionContainment(
             new MockExactRegionBoundary(new Vec2[] { new(-12, -8), new(12, -8), new(12, 8), new(-12, 8) })));
         areaType.GetProperty("ExitBoundary")!.SetValue(value, new MockReviewBoundary());
+        // 전기 검토는 영역별 목표 발열전력이 있어야 회로를 표에 넣는다.
+        areaType.GetProperty("TargetPowerText")!.SetValue(value, "1000");
+        areaType.GetProperty("TargetPowerW")!.SetValue(value, 1000.0);
         ((IList)Field<object>(window, "_areas")).Add(value);
         return value;
     }

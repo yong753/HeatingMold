@@ -4,10 +4,12 @@ using HeatingMold.Core.Electrical;
 
 namespace HeatingMold.App;
 
-/// <summary>화면 입력에서 결정한 전기 검토 설정. 전압은 계산과 허용 판정에 함께 쓴다.</summary>
-internal sealed record ElectricalSettings(
+/// <summary>
+/// 목표 발열전력 방식의 검토 설정. 회로별 필요 전압을 계산하므로 공급 전압은 없다.
+/// 허용 전압·전류·전력은 회로별 판정 한도로만 쓴다.
+/// </summary>
+internal sealed record TargetPowerElectricalSettings(
     HeatingWireSpec Wire,
-    PowerSupplySpec Supply,
     ElectricalLimits Limits);
 
 /// <summary>
@@ -21,6 +23,7 @@ internal static class ElectricalSettingsResolver
 
     public static string DefaultVoltageText =>
         220.0.ToString("0.###", CultureInfo.CurrentCulture);
+    public static string DefaultAllowedVoltageText => DefaultVoltageText;
     public static string DefaultCurrentLimitText =>
         ElectricalLimits.DefaultCurrentLimitA.ToString("0.###", CultureInfo.CurrentCulture);
     public static string DefaultPowerLimitText =>
@@ -42,12 +45,16 @@ internal static class ElectricalSettingsResolver
         }
     }
 
-    public static bool TryResolve(
+    /// <summary>
+    /// 목표 발열전력 방식 입력을 해석한다. 전압 입력은 계산에 쓰지 않고
+    /// 허용 전압 한도로만 쓰며, 필요 전압은 회로마다 실제 길이로 계산한다.
+    /// </summary>
+    public static bool TryResolveLimits(
         int presetIndex,
-        string voltageText,
+        string allowedVoltageText,
         string allowedCurrentText,
         string allowedPowerText,
-        out ElectricalSettings settings,
+        out TargetPowerElectricalSettings settings,
         out string error)
     {
         settings = null;
@@ -56,7 +63,8 @@ internal static class ElectricalSettingsResolver
             error = "발열사 규격은 Case 1 또는 Case 2 중 하나를 선택해야 합니다";
             return false;
         }
-        if (!TryParse(voltageText, "전압", allowZero: true, out double voltage, out error)) return false;
+        if (!TryParse(allowedVoltageText, "허용 전압", allowZero: false, out double voltageLimit, out error))
+            return false;
         if (!TryParse(allowedCurrentText, "허용 전류", allowZero: false, out double currentLimit, out error))
             return false;
         if (!TryParse(allowedPowerText, "허용 전력", allowZero: false, out double powerLimitKw, out error))
@@ -69,18 +77,21 @@ internal static class ElectricalSettingsResolver
             return false;
         }
 
-        settings = new ElectricalSettings(
+        settings = new TargetPowerElectricalSettings(
             wire,
-            new PowerSupplySpec { VoltageV = voltage },
             new ElectricalLimits
             {
                 CurrentLimitA = currentLimit,
-                VoltageLimitV = voltage,
+                VoltageLimitV = voltageLimit,
                 PowerLimitW = powerLimitW
             });
         error = null;
         return true;
     }
+
+    /// <summary>영역별 목표 발열전력 입력(W)을 해석한다. 0 이하는 판정을 조용히 통과시키므로 거부한다.</summary>
+    public static bool TryParseTargetPowerW(string text, out double powerW, out string error) =>
+        TryParse(text, "목표 발열전력", allowZero: false, out powerW, out error);
 
     private static bool TryParse(
         string text, string name, bool allowZero, out double value, out string error)

@@ -389,6 +389,7 @@ public partial class MainWindow
             Direction = ParseDirection(document.Direction),
             MarginText = document.MarginText ?? "5",
             SpacingText = document.SpacingText ?? "50",
+            TargetPowerText = document.TargetPowerText ?? "",
             ExitFaceId = mappedExitFace,
             ExitFaceRevision = mappedExitFace >= 0 ? context.Revision : 0,
             ExitChain = MapVec2(document.ExitChain),
@@ -413,6 +414,7 @@ public partial class MainWindow
         foreach (int faceId in mappedFaces) area.FaceIdSet.Add(faceId);
         foreach (List<ProjectVec2> loop in document.Region ?? new List<List<ProjectVec2>>())
             area.Region.Add(MapVec2(loop));
+        ApplyTargetPowerText(area);
 
         area.Circuits = RestoreCircuits(document.Circuits, document, mappedExitRefs, context,
             "작업영역 " + document.Name + " 회로");
@@ -433,18 +435,43 @@ public partial class MainWindow
         // 저장된 제외영역에서 마진 적용 전 유효 외곽선을 다시 만든다. 저장된 구현 타입명은
         // 복원 근거로 쓰지 않는다. 허용되지 않는 제외는 원본 외곽으로 대체하지 않고 실패시킨다.
         IReadOnlyList<Vec2> regionLoop = area.Region.Count == 1 ? area.Region[0] : null;
-        if (!TryBuildRegionExitBoundary(area.RegionCadBoundary, regionLoop, area.Exclusions,
-                out IExitBoundary2D restoredRegionExitBoundary, out string boundaryFailure))
+        List<ProjectSplitCutLine> savedCutLines = document.SplitCutLines ?? new List<ProjectSplitCutLine>();
+        if (savedCutLines.Count > 0)
         {
-            throw new InvalidOperationException(string.Format(
-                "작업영역 '{0}'의 제외영역 외곽선을 복원하지 못했습니다: {1}",
-                document.Name, boundaryFailure));
+            // 분할 영역: CAD 외곽과 artificial 절단선이 섞인 경계를 저장된 절단선에서 재구성한다.
+            if (regionLoop == null)
+                throw new InvalidOperationException(string.Format(
+                    "작업영역 '{0}'은 분할 영역이지만 단일 폐합 영역이 아닙니다.", document.Name));
+            var cutLines = new List<(Vec2 A, Vec2 B)>();
+            foreach (ProjectSplitCutLine cut in savedCutLines)
+                cutLines.Add((new Vec2(cut.AX, cut.AY), new Vec2(cut.BX, cut.BY)));
+            if (!SplitRegionBoundary2D.TryCreate(area.RegionCadBoundary, regionLoop, regionLoop,
+                    area.Exclusions, cutLines, out SplitRegionBoundary2D splitBoundary,
+                    out string splitFailure))
+            {
+                throw new InvalidOperationException(string.Format(
+                    "작업영역 '{0}'의 분할 경계를 복원하지 못했습니다: {1}", document.Name, splitFailure));
+            }
+            area.SplitCutLines = cutLines;
+            area.RegionExitBoundary = splitBoundary;
+            area.RegionBoundary = new ExactRegionContainment(splitBoundary.CreateContainment());
+            if (document.ExitFaceId < 0) area.ExitBoundary = splitBoundary;
         }
-        area.RegionExitBoundary = restoredRegionExitBoundary;
-        // 인출면을 따로 두지 않는 영역은 인출 경계도 적용영역 외곽이다.
-        // 저장된 ExitFaceId가 -1이면 영역 생성 규칙과 동일하게 유효 외곽선을 쓴다.
-        if (document.ExitFaceId < 0)
-            area.ExitBoundary = restoredRegionExitBoundary;
+        else
+        {
+            if (!TryBuildRegionExitBoundary(area.RegionCadBoundary, regionLoop, area.Exclusions,
+                    out IExitBoundary2D restoredRegionExitBoundary, out string boundaryFailure))
+            {
+                throw new InvalidOperationException(string.Format(
+                    "작업영역 '{0}'의 제외영역 외곽선을 복원하지 못했습니다: {1}",
+                    document.Name, boundaryFailure));
+            }
+            area.RegionExitBoundary = restoredRegionExitBoundary;
+            // 인출면을 따로 두지 않는 영역은 인출 경계도 적용영역 외곽이다.
+            // 저장된 ExitFaceId가 -1이면 영역 생성 규칙과 동일하게 유효 외곽선을 쓴다.
+            if (document.ExitFaceId < 0)
+                area.ExitBoundary = restoredRegionExitBoundary;
+        }
 
         // 확정 경로의 매핑 방식은 저장된 CommittedMapping이 기록한 플래그를 따른다.
         // 현재 초안 선택점은 확정 후 바뀌었을 수 있으므로 사용하지 않는다.
@@ -985,7 +1012,9 @@ public partial class MainWindow
                         : ElectricalSettingsResolver.Case1PresetIndex;
                 if (WireDiameterBox != null) WireDiameterBox.Text = electrical.WireDiameterText ?? "";
                 if (WireResistanceBox != null) WireResistanceBox.Text = electrical.WireResistanceText ?? "";
-                if (AppliedVoltageBox != null) AppliedVoltageBox.Text = electrical.AppliedVoltageText ?? "";
+                if (AllowedVoltageBox != null)
+                    AllowedVoltageBox.Text = electrical.AllowedVoltageText
+                        ?? electrical.AppliedVoltageText ?? "";
                 if (AllowedCurrentBox != null) AllowedCurrentBox.Text = electrical.AllowedCurrentText ?? "";
                 if (AllowedPowerBox != null) AllowedPowerBox.Text = electrical.AllowedPowerText ?? "";
             }

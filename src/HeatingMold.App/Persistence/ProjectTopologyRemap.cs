@@ -327,6 +327,7 @@ namespace HeatingMold.App.Persistence
 
             ExitEdgeBinding? cadBinding = null;
             ArtificialEdgeBinding? artificialBinding = null;
+            SplitLineBinding? splitBinding = null;
             if (saved.Binding != null)
             {
                 if (!TryMapExitBindingByReference(saved.Binding, savedReferences, freshReferences,
@@ -342,6 +343,13 @@ namespace HeatingMold.App.Persistence
                     return false;
                 artificialBinding = mappedArtificial;
             }
+            else if (saved.SplitBinding != null)
+            {
+                if (!TryMapSplitLineBinding(saved.SplitBinding, contextId, contextRevision,
+                        out SplitLineBinding mappedSplit, out error))
+                    return false;
+                splitBinding = mappedSplit;
+            }
 
             mapped = new CircuitExitPoint(
                 role,
@@ -350,7 +358,8 @@ namespace HeatingMold.App.Persistence
                 saved.BoundaryParameter)
             {
                 Binding = cadBinding,
-                ArtificialBinding = artificialBinding
+                ArtificialBinding = artificialBinding,
+                SplitBinding = splitBinding
             };
             return true;
         }
@@ -382,14 +391,17 @@ namespace HeatingMold.App.Persistence
 
             bool hasCad = saved.Binding != null;
             bool hasArtificial = saved.ArtificialBinding != null;
-            if (hasCad == hasArtificial)
+            bool hasSplit = saved.SplitBinding != null;
+            int kinds = (hasCad ? 1 : 0) + (hasArtificial ? 1 : 0) + (hasSplit ? 1 : 0);
+            if (kinds != 1)
             {
-                error = "저장된 exit boundary point에는 CAD 또는 artificial binding 중 하나만 있어야 합니다.";
+                error = "저장된 exit boundary point에는 CAD/artificial/분할 절단선 binding 중 하나만 있어야 합니다.";
                 return false;
             }
 
             ExitEdgeBinding? cadBinding = null;
             ArtificialEdgeBinding? artificialBinding = null;
+            SplitLineBinding? splitBinding = null;
             if (hasCad)
             {
                 if (savedReferences == null || freshReferences == null ||
@@ -428,12 +440,19 @@ namespace HeatingMold.App.Persistence
                     return false;
                 cadBinding = mappedCad;
             }
-            else
+            else if (hasArtificial)
             {
                 if (!TryMapArtificialBinding(saved.ArtificialBinding, contextId, contextRevision,
                         out ArtificialEdgeBinding mappedArtificial, out error))
                     return false;
                 artificialBinding = mappedArtificial;
+            }
+            else
+            {
+                if (!TryMapSplitLineBinding(saved.SplitBinding, contextId, contextRevision,
+                        out SplitLineBinding mappedSplit, out error))
+                    return false;
+                splitBinding = mappedSplit;
             }
 
             mapped = new ExitBoundaryPoint(
@@ -442,7 +461,8 @@ namespace HeatingMold.App.Persistence
                 saved.SegmentParameter)
             {
                 Binding = cadBinding,
-                ArtificialBinding = artificialBinding
+                ArtificialBinding = artificialBinding,
+                SplitBinding = splitBinding
             };
             return true;
         }
@@ -488,6 +508,56 @@ namespace HeatingMold.App.Persistence
                 saved.FirstParameter,
                 saved.LastParameter,
                 saved.Parameter);
+            return true;
+        }
+
+        internal static bool TryMapSplitLineBinding(
+            ProjectSplitLineBinding saved,
+            long contextId,
+            long contextRevision,
+            out SplitLineBinding mapped,
+            out string error)
+        {
+            mapped = default;
+            error = null;
+
+            if (saved == null)
+            {
+                error = "저장된 분할 절단선 binding이 없습니다.";
+                return false;
+            }
+            if (!double.IsFinite(saved.AX) || !double.IsFinite(saved.AY) ||
+                !double.IsFinite(saved.BX) || !double.IsFinite(saved.BY) ||
+                !double.IsFinite(saved.FirstParameter) ||
+                !double.IsFinite(saved.LastParameter) ||
+                !double.IsFinite(saved.Parameter))
+            {
+                error = "저장된 분할 절단선 binding에 유한하지 않은 값이 있습니다.";
+                return false;
+            }
+            if ((saved.AX - saved.BX) * (saved.AX - saved.BX) + (saved.AY - saved.BY) * (saved.AY - saved.BY) <= 1e-18)
+            {
+                error = "저장된 분할 절단선의 두 끝점이 같습니다.";
+                return false;
+            }
+            if (saved.FirstParameter > saved.LastParameter
+                || saved.Parameter < saved.FirstParameter - 1e-9
+                || saved.Parameter > saved.LastParameter + 1e-9)
+            {
+                error = "저장된 분할 절단선의 parameter 구간이 올바르지 않습니다.";
+                return false;
+            }
+
+            mapped = new SplitLineBinding(
+                contextId,
+                contextRevision,
+                saved.AX,
+                saved.AY,
+                saved.BX,
+                saved.BY,
+                saved.FirstParameter,
+                saved.LastParameter,
+                Math.Clamp(saved.Parameter, saved.FirstParameter, saved.LastParameter));
             return true;
         }
     }

@@ -34,6 +34,7 @@ public partial class MainWindow
             Direction = source.Direction,
             MarginText = source.MarginText,
             SpacingText = source.SpacingText,
+            TargetPowerText = source.TargetPowerText,
             Exclusions = source.Exclusions.ToList(),
             ExitFaceId = source.ExitFaceId,
             ExitFaceRevision = source.ExitFaceRevision,
@@ -76,7 +77,11 @@ public partial class MainWindow
             PatternDisplayed = source.PatternDisplayed,
             RouteEdited = source.RouteEdited,
             AppliedInputs = source.AppliedInputs,
-            CommittedMapping = CopyCommittedRouteContext(source.CommittedMapping)
+            CommittedMapping = CopyCommittedRouteContext(source.CommittedMapping),
+            SplitCutLines = source.SplitCutLines.ToList(),
+            SplitFamilyKey = source.SplitFamilyKey,
+            TargetPowerW = source.TargetPowerW,
+            TargetPowerError = source.TargetPowerError
         };
         candidate.FaceIdSet.UnionWith(source.FaceIdSet);
         candidate.Region.AddRange(source.Region.Select(ring => ring.ToList()));
@@ -631,6 +636,16 @@ public partial class MainWindow
             Number(b.FirstParameter); Number(b.LastParameter); Number(b.Parameter);
             key.Append(';');
         }
+        void Split(SplitLineBinding? binding)
+        {
+            if (!binding.HasValue) { key.Append("no-split;"); return; }
+            SplitLineBinding b = binding.Value;
+            key.Append(b.WorkingContextId).Append(',')
+                .Append(b.WorkingContextRevision).Append(',');
+            Number(b.AX); Number(b.AY); Number(b.BX); Number(b.BY);
+            Number(b.FirstParameter); Number(b.LastParameter); Number(b.Parameter);
+            key.Append(';');
+        }
         void Exits(IReadOnlyList<CircuitExitPoint> exits)
         {
             key.Append(exits.Count).Append(':');
@@ -639,6 +654,7 @@ public partial class MainWindow
                 key.Append(exit.Role).Append(',').Append(exit.BoundarySegmentIndex).Append(',');
                 Number(exit.BoundaryParameter); Point(exit.Point); Binding(exit.Binding);
                 Artificial(exit.ArtificialBinding);
+                Split(exit.SplitBinding);
             }
         }
         key.Append(_modelRevision).Append('|').Append(side.Id.Value).Append('|').Append(side.Revision.Value).Append('|');

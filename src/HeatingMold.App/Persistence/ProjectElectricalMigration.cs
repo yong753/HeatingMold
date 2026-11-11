@@ -36,7 +36,10 @@ internal static class ProjectElectricalMigration
         electrical.WireResistanceText = Format(wire.ResistanceOhmPerMeter);
 
         // 사용자가 편집 중 비워 둔 값은 그대로 보존해 입력 오류로 표시한다.
-        electrical.AppliedVoltageText ??= ElectricalSettingsResolver.DefaultVoltageText;
+        // 전압 입력은 스키마 2까지 인가·허용 공용이었고, 스키마 3부터 허용 전압 한도다.
+        electrical.AllowedVoltageText ??= electrical.AppliedVoltageText
+            ?? ElectricalSettingsResolver.DefaultAllowedVoltageText;
+        electrical.AppliedVoltageText ??= electrical.AllowedVoltageText;
         electrical.AllowedCurrentText ??= ElectricalSettingsResolver.DefaultCurrentLimitText;
         electrical.AllowedPowerText ??= ElectricalSettingsResolver.DefaultPowerLimitText;
 

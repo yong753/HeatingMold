@@ -56,7 +56,7 @@ namespace HeatingMold.App.Tests
                 using JsonDocument json = JsonDocument.Parse(File.ReadAllBytes(path));
                 JsonElement root = json.RootElement;
                 Assert.Equal("HeatingMold.Project", root.GetProperty("format").GetString());
-                Assert.Equal(2, root.GetProperty("schemaVersion").GetInt32());
+                Assert.Equal(4, root.GetProperty("schemaVersion").GetInt32());
                 Assert.Equal(1, root.GetProperty("areas").GetArrayLength());
                 Assert.Equal("A", root.GetProperty("areas")[0].GetProperty("name").GetString());
             }
@@ -148,7 +148,7 @@ namespace HeatingMold.App.Tests
             {
                 string futurePath = Path.Combine(directory, "future.json");
                 File.WriteAllText(futurePath,
-                    "{\"format\":\"HeatingMold.Project\",\"schemaVersion\":3}");
+                    "{\"format\":\"HeatingMold.Project\",\"schemaVersion\":5}");
                 Assert.Throws<InvalidDataException>(() => ProjectJsonStore.Load(futurePath));
 
                 string malformedPath = Path.Combine(directory, "malformed.json");

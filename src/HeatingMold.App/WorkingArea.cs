@@ -31,6 +31,18 @@ internal sealed class WorkingArea
     /// <summary>영역별 간격 입력 문자열. 마지막 성공 생성 조건과는 별개의 UI 초안이다.</summary>
     public string SpacingText { get; set; } = "50";
 
+    /// <summary>이 영역의 목표 발열전력 입력 문자열(W). 빈 문자열이면 미입력이다.</summary>
+    public string TargetPowerText { get; set; } = "";
+
+    /// <summary>
+    /// 이 영역의 목표 발열전력(W). 확정된 값이며 다른 영역과 독립이다.
+    /// 회로 판정은 이 값과 실제 길이로 계산한 필요 전압/전류로 수행한다.
+    /// </summary>
+    public double? TargetPowerW { get; set; }
+
+    /// <summary>목표 발열전력 입력이 올바르지 않을 때의 사유. null이면 형식 오류가 없다.</summary>
+    public string TargetPowerError { get; set; }
+
     /// <summary>인출면 CAD Face ID. -1이면 미지정.</summary>
     public int ExitFaceId { get; set; } = -1;
     public long ExitFaceRevision { get; set; }
@@ -115,6 +127,17 @@ internal sealed class WorkingArea
 
     /// <summary>마지막으로 성공적으로 표시된 경로의 매핑 조건. 다른 영역 재스테이징 시 사용한다.</summary>
     public CommittedRouteContext CommittedMapping { get; set; }
+
+    /// <summary>
+    /// 이 영역을 만든 분할 절단선(작업평면 2D 전체 선분). 비어 있으면 분할로 만들어진 영역이 아니다.
+    /// 절단선 자체가 이 영역의 경계 provenance이며 CAD edge나 제외 사각형 변으로 취급하지 않는다.
+    /// </summary>
+    public List<(Vec2 A, Vec2 B)> SplitCutLines { get; set; } = new();
+
+    /// <summary>같은 분할에서 나온 영역들을 묶는 세션 한정 키. 저장/복원에는 쓰지 않는다.</summary>
+    public string SplitFamilyKey { get; set; } = "";
+
+    public bool HasSplitBoundary => SplitCutLines.Count > 0;
 
     /// <summary>제외영역을 반영한 실제 발열영역(프레임 2D). 제외가 없으면 원본 Region을 그대로 돌려준다.</summary>
     public List<List<Vec2>> EffectiveRegion() =>

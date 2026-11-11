@@ -25,6 +25,7 @@
   "electrical": {
     "presetIndex": 0,
     "voltageV": 220,
+    "targetPowerW": 1000,
     "reviewScope": 0
   },
   "expect": {

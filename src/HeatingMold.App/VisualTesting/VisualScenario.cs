@@ -390,7 +390,10 @@ internal sealed class VisualAnchorSpec
 internal sealed class VisualElectricalSpec
 {
     public int PresetIndex { get; set; }
+    /// <summary>회로별 허용 전압 [V]. 계산 입력이 아니라 판정 한도다.</summary>
     public double VoltageV { get; set; } = 220;
+    /// <summary>영역 하나의 목표 발열전력 [W]. 0이면 미입력 상태로 시나리오를 실행한다.</summary>
+    public double TargetPowerW { get; set; }
     public int ReviewScope { get; set; }
     public double DiameterMm { get; set; }
     public double ResistanceOhmPerMeter { get; set; }

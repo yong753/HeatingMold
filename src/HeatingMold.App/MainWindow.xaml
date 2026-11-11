@@ -488,6 +488,21 @@
                                                          TextChanged="PatternInput_Changed"/>
                                             </StackPanel>
                                         </Grid>
+                                        <TextBlock Text="목표 발열전력 (W)" Style="{StaticResource FieldLabel}"
+                                                   Margin="0,8,0,0"/>
+                                        <TextBox x:Name="TargetPowerBox" Text="" Style="{StaticResource ValueBox}"
+                                                 AutomationProperties.Name="이 영역의 목표 발열전력 와트"
+                                                 TextChanged="TargetPower_Changed"/>
+                                        <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0"
+                                                   Text="이 영역에 필요한 총 발열전력입니다. 실제 회로 길이 비율로 회로에 배분되고, 필요 전압·전류는 배분 전력과 실제 저항으로 계산합니다."/>
+                                        <Button x:Name="SplitAreaButton" Content="한도 초과 시 영역 분할…"
+                                                Click="SplitArea_Click" Padding="8,4" Margin="0,10,0,0"
+                                                AutomationProperties.Name="적용영역을 여러 독립 영역으로 분할"/>
+                                        <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0"
+                                                   Text="가로 배치는 수평 절단선으로 위/아래, 세로 배치는 수직 절단선으로 좌/우를 나눕니다. 분할 후 각 영역에서 시작점과 종료점을 선택하세요."/>
+                                        <TextBlock x:Name="SplitStatusText" Style="{StaticResource Hint}"
+                                                   TextWrapping="Wrap" Margin="0,4,0,0"
+                                                   AutomationProperties.LiveSetting="Polite"/>
                                         <TextBlock x:Name="PatternInputErrorText" Foreground="#B42318"
                                                    FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
                                                    AutomationProperties.LiveSetting="Polite"
@@ -560,7 +575,7 @@
                                         <Separator Margin="0,12,0,8"/>
                                         <TextBlock Text="전기 사양" Style="{StaticResource SectionTitle}"/>
                                         <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0"
-                                                   Text="전선·전압·허용치는 모든 작업 영역에 공통 적용됩니다. 직경·단위 저항은 선택한 Case의 고정값이며, 전압은 계산과 허용 판정에 같은 값을 씁니다."/>
+                                                   Text="전선 규격과 허용치는 모든 작업 영역에 공통 적용됩니다. 직경·단위 저항은 선택한 Case의 고정값입니다. 전압은 회로별 허용 한도이며, 필요 전압은 영역별 목표 발열전력과 실제 길이로 계산합니다."/>
                                         <TextBlock Text="발열사 프리셋" Style="{StaticResource FieldLabel}" Margin="0,8,0,3"/>
                                         <ComboBox x:Name="WirePresetBox" Height="28" SelectedIndex="0"
                                                   AutomationProperties.Name="발열사 프리셋"
@@ -590,8 +605,8 @@
                                                          IsReadOnly="True" Background="#F3F4F6"/>
                                             </StackPanel>
                                             <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,8,0,0">
-                                                <TextBlock Text="전압 (V) — 인가·허용" Style="{StaticResource FieldLabel}"/>
-                                                <TextBox x:Name="AppliedVoltageBox" Text="220" Style="{StaticResource ValueBox}"
+                                                <TextBlock Text="허용 전압 (V)" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox x:Name="AllowedVoltageBox" Text="220" Style="{StaticResource ValueBox}"
                                                          TextChanged="ElectricalInput_Changed"/>
                                             </StackPanel>
                                             <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,8,0,0">
@@ -627,6 +642,7 @@
                                             </DataGrid.RowStyle>
                                             <DataGrid.Columns>
                                                 <DataGridTextColumn Header="회로" Binding="{Binding CircuitId}" Width="*" MinWidth="38"/>
+                                                <DataGridTextColumn Header="목표 W" Binding="{Binding TargetPowerW, StringFormat=F0}" Width="*" MinWidth="44"/>
                                                 <DataGridTextColumn Header="길이 m" Binding="{Binding LengthM, StringFormat=F2}" Width="*" MinWidth="42"/>
                                                 <DataGridTextColumn Header="저항 Ω" Binding="{Binding ResistanceOhm, StringFormat=F2}" Width="*" MinWidth="42"/>
                                                 <DataGridTextColumn Header="전압 V" Binding="{Binding VoltageV, StringFormat=F1}" Width="*" MinWidth="38"/>
@@ -637,7 +653,7 @@
                                             </DataGrid.Columns>
                                         </DataGrid>
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="L은 각 회로의 인출점 사이 경로 전체 길이이며 외부 리드 저항은 반영하지 않습니다. P = V²/(rL), R = rL, I = V/R. 판정은 회로별 계산값이 허용 전류·전압·전력 이하인지 비교합니다."/>
+                                                   Text="L은 각 회로의 인출점 사이 실제 도체 전체 길이이며 외부 리드 저항은 반영하지 않습니다. P_i = P·L_i/ΣL, R_i = rL_i, V_i = √(P_i·R_i), I_i = √(P_i/R_i). 판정은 회로별 필요 전압·전류·전력이 허용치 이하인지 비교합니다."/>
                                     </StackPanel>
                                 </Border>
                             </ScrollViewer>

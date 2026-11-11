@@ -11,7 +11,7 @@ namespace HeatingMold.App.Persistence
     public sealed class ProjectDocument
     {
         public string Format { get; set; } = "HeatingMold.Project";
-        public int SchemaVersion { get; set; } = 2;
+        public int SchemaVersion { get; set; } = 4;
         public string AppVersion { get; set; }
         public string CreatedUtc { get; set; }
         public string SavedUtc { get; set; }
@@ -86,6 +86,9 @@ namespace HeatingMold.App.Persistence
         public string MarginText { get; set; }
         public string SpacingText { get; set; }
 
+        /// <summary>이 영역의 목표 발열전력 입력(W). 스키마 3부터 저장하며, 없으면 미입력 상태다.</summary>
+        public string TargetPowerText { get; set; }
+
         public int ExitFaceId { get; set; } = -1;
         public long ExitFaceRevision { get; set; }
         public List<ProjectVec2> ExitChain { get; set; } = new();
@@ -102,6 +105,12 @@ namespace HeatingMold.App.Persistence
         public string ExitBoundaryKind { get; set; }
         public string RegionExitBoundaryKind { get; set; }
         public string RegionCadBoundaryKind { get; set; }
+
+        /// <summary>
+        /// 분할로 생긴 새 절단선(작업평면 2D 전체 직선). 스키마 4부터 저장하며,
+        /// 값이 있으면 이 영역의 경계는 CAD 외곽 + artificial 절단선 혼합이다.
+        /// </summary>
+        public List<ProjectSplitCutLine> SplitCutLines { get; set; } = new();
 
         public List<ProjectCircuitDocument> Circuits { get; set; } = new();
         public List<int[]> CircuitPieceIndices { get; set; } = new();
@@ -128,8 +137,13 @@ namespace HeatingMold.App.Persistence
         public int WirePresetIndex { get; set; }
         public string WireDiameterText { get; set; }
         public string WireResistanceText { get; set; }
-        /// <summary>계산용 인가전압. 허용전압과 같은 값을 쓴다.</summary>
+        /// <summary>계산용 인가전압. 스키마 2 이하의 공용 전압 값이며, 스키마 3에서는 허용 전압과 같은 값을 유지한다.</summary>
         public string AppliedVoltageText { get; set; }
+        /// <summary>
+        /// 회로별 허용 전압 한도 [V]. 스키마 3부터 저장한다. 목표 발열전력 방식에서는
+        /// 이 값이 계산 입력이 아니라 판정 한도다.
+        /// </summary>
+        public string AllowedVoltageText { get; set; }
         /// <summary>허용 전류 [A]. 스키마 1 파일에는 없으며 기본값으로 복원한다.</summary>
         public string AllowedCurrentText { get; set; }
         /// <summary>허용 전력 [kW]. 스키마 1 파일에는 없으며 기본값으로 복원한다.</summary>
@@ -235,6 +249,7 @@ namespace HeatingMold.App.Persistence
         public double BoundaryParameter { get; set; }
         public ProjectExitEdgeBinding Binding { get; set; }
         public ProjectArtificialEdgeBinding ArtificialBinding { get; set; }
+        public ProjectSplitLineBinding SplitBinding { get; set; }
     }
 
     public sealed class ProjectExitBoundaryPoint
@@ -244,6 +259,30 @@ namespace HeatingMold.App.Persistence
         public double SegmentParameter { get; set; }
         public ProjectExitEdgeBinding Binding { get; set; }
         public ProjectArtificialEdgeBinding ArtificialBinding { get; set; }
+        public ProjectSplitLineBinding SplitBinding { get; set; }
+    }
+
+    /// <summary>영역 분할로 생긴 절단선 위 점의 저장 식별자. CAD edge도 제외 사각형 변도 아니다.</summary>
+    public sealed class ProjectSplitLineBinding
+    {
+        public long WorkingContextId { get; set; }
+        public long WorkingContextRevision { get; set; }
+        public double AX { get; set; }
+        public double AY { get; set; }
+        public double BX { get; set; }
+        public double BY { get; set; }
+        public double FirstParameter { get; set; }
+        public double LastParameter { get; set; }
+        public double Parameter { get; set; }
+    }
+
+    /// <summary>분할 영역의 경계를 재구성하기 위한 절단선(작업평면 2D 전체 직선) 정의.</summary>
+    public sealed class ProjectSplitCutLine
+    {
+        public double AX { get; set; }
+        public double AY { get; set; }
+        public double BX { get; set; }
+        public double BY { get; set; }
     }
 
     public sealed class ProjectExitEdgeBinding

@@ -88,7 +88,10 @@ public partial class MainWindow
         // 경계를 보여 준다. 선택점이 하나라도 있거나 선택 중이면 영역 경계가 정본이다.
         bool showRegionOutline = area.ExitFaceId < 0 || _exitPointPickRole >= 0 ||
             area.SelectedStartExit.HasValue || area.SelectedEndExit.HasValue;
-        if (showRegionOutline && area.RegionExitBoundary is EffectiveRegionBoundary2D effective &&
+        if (showRegionOutline && area.RegionExitBoundary is SplitRegionBoundary2D split &&
+            split.Segments.Count > 0 && area.FaceIdSet.Count > 0)
+            source = BuildSplitOutline3D(area, split);
+        else if (showRegionOutline && area.RegionExitBoundary is EffectiveRegionBoundary2D effective &&
             effective.Segments.Count > 0 && area.FaceIdSet.Count > 0)
             source = BuildEffectiveOutline3D(area, effective);
         else if (area.ExitBoundary != null && area.ExitChain3D != null && area.ExitChain3D.Count >= 2)
@@ -151,6 +154,51 @@ public partial class MainWindow
         }
         if (result.Count >= 2 && result[0] != result[^1]) result.Add(result[0]);
         return result.Count >= 2 ? result : null;
+    }
+
+    /// <summary>
+    /// 분할 영역의 표시용 외곽. CAD 구간은 원본 체인을 보간하고, 새 절단선은
+    /// 작업면 → 선택 면 표면 매핑으로 3D 점을 만든다. 절단선은 설계 구속으로는
+    /// SplitRegionBoundary2D의 독립 artificial provenance로 유지된다.
+    /// </summary>
+    private static List<Vec3> BuildSplitOutline3D(WorkingArea area, SplitRegionBoundary2D split)
+    {
+        IReadOnlyList<Vec2> outline = split.Ring;
+        if (outline.Count < 3) return null;
+        var result = new List<Vec3>();
+        for (int i = 0; i < outline.Count; i++)
+        {
+            Vec2 a = outline[i];
+            Vec2 b = outline[(i + 1) % outline.Count];
+            if (a.DistanceTo(b) <= 1e-9) continue;
+            if (IsSplitOutlineEdge(split, a, b))
+            {
+                int steps = Math.Clamp((int)Math.Ceiling(a.DistanceTo(b) / 2.0), 1, 512);
+                for (int step = 0; step <= steps; step++)
+                    AddMappedOutlinePoint(result, area, split.CadBoundary,
+                        new Vec2(a.X + (b.X - a.X) * step / steps,
+                            a.Y + (b.Y - a.Y) * step / steps));
+            }
+            else
+            {
+                AddCadOutlinePoints(result, area, a, b);
+            }
+        }
+        if (result.Count >= 2 && result[0] != result[^1]) result.Add(result[0]);
+        return result.Count >= 2 ? result : null;
+    }
+
+    private static bool IsSplitOutlineEdge(SplitRegionBoundary2D split, Vec2 a, Vec2 b)
+    {
+        Vec2 midpoint = new((a.X + b.X) / 2, (a.Y + b.Y) / 2);
+        foreach (SplitRegionBoundary2D.SplitSegment segment in split.Segments)
+        {
+            if (DistanceToSegment(segment.A, segment.B, midpoint) <= 0.05 &&
+                DistanceToSegment(segment.A, segment.B, a) <= 0.05 &&
+                DistanceToSegment(segment.A, segment.B, b) <= 0.05)
+                return true;
+        }
+        return false;
     }
 
     private static bool IsArtificialOutlineEdge(
@@ -426,7 +474,7 @@ public partial class MainWindow
         var side = _workingSide?.Confirmed;
         if (area == null || side == null) return false;
         var context = CommittedRouteContext.CaptureRegion(area);
-        if (!TryEvaluateExitSample(side, context, point.Binding, point.ArtificialBinding, point.Point,
+        if (!TryEvaluateExitSample(side, context, point, point.Point,
                 out SurfaceMappedSample sample, out _)) return false;
         position = sample.Point;
         return double.IsFinite(position.X) && double.IsFinite(position.Y) && double.IsFinite(position.Z);

@@ -109,11 +109,14 @@ public partial class MainWindow
         // 아직 화면에 남은 값을 새 영역 초안에 덮어쓰지 않게 한다.
         string marginText = area.MarginText ?? "";
         string spacingText = area.SpacingText ?? "";
+        string targetPowerText = area.TargetPowerText ?? "";
         _suppressPatternInputWriteBack = true;
         try
         {
             if (MarginBox != null && MarginBox.Text != marginText) MarginBox.Text = marginText;
             if (SpacingBox != null && SpacingBox.Text != spacingText) SpacingBox.Text = spacingText;
+            if (TargetPowerBox != null && TargetPowerBox.Text != targetPowerText)
+                TargetPowerBox.Text = targetPowerText;
         }
         finally
         {
@@ -225,6 +228,7 @@ public partial class MainWindow
         }
 
         if (area.AreaId > 0) Bridge.ClearAreaHighlight(area.AreaId);
+        DetachFromSplitFamily(area);
         _areas.Clear();
         _areas.AddRange(remaining);
         ApplyAreaColors();
@@ -310,6 +314,9 @@ public partial class MainWindow
         var clipped = new List<WorkingArea>();
         foreach (var area in _areas)
         {
+            // 분할 영역은 같은 Face 집합을 공유하고, 네이티브 채움은 영역 폴리곤으로
+            // 클립할 수 없다. 통짜 색칠/부분 메시 대신 3D 경계선만 표시한다.
+            if (area.HasSplitBoundary) continue;
             if (area.Exclusions.Count > 0) { clipped.Add(area); continue; }
             double r = area.Color.R / 255.0, g = area.Color.G / 255.0, b = area.Color.B / 255.0;
             foreach (int faceId in area.FaceIdSet)
@@ -348,9 +355,10 @@ public partial class MainWindow
                 if (area.AreaId > 0) Bridge.ClearAreaHighlight(area.AreaId);
                 return;
             }
-            if (area.Exclusions.Count == 0)
+            if (area.Exclusions.Count == 0 || area.HasSplitBoundary)
             {
                 // Face 색칠로 되돌린다. 여러 영역이 공존하므로 전체 색칠을 다시 적용한다.
+                // 분할 영역은 부분 채움을 지원하지 않으므로 경계선 표시만 유지한다.
                 if (area.AreaId > 0) Bridge.ClearAreaHighlight(area.AreaId);
                 ApplyAreaColors();
                 return;

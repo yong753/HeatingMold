@@ -105,7 +105,8 @@ public partial class MainWindow
         new(exit.Point, exit.BoundarySegmentIndex, exit.BoundaryParameter)
         {
             Binding = exit.Binding,
-            ArtificialBinding = exit.ArtificialBinding
+            ArtificialBinding = exit.ArtificialBinding,
+            SplitBinding = exit.SplitBinding
         };
 
     /// <summary>회로 정본과 원본 조각 인덱스 대응이 모두 온전한지 확인한다.</summary>
@@ -128,7 +129,10 @@ public partial class MainWindow
             { reason = "회로 " + (i + 1) + "의 인출점이 없습니다"; return false; }
             foreach (CircuitExitPoint exit in new[] { route.StartExit, route.EndExit })
             {
-                if (exit.Binding.HasValue == exit.ArtificialBinding.HasValue)
+                int kinds = (exit.Binding.HasValue ? 1 : 0)
+                    + (exit.ArtificialBinding.HasValue ? 1 : 0)
+                    + (exit.SplitBinding.HasValue ? 1 : 0);
+                if (kinds != 1)
                 { reason = "회로 " + (i + 1) + "의 인출 경계 식별자가 없습니다"; return false; }
                 ExitBoundaryResolution evaluated = ExitBoundaryConstraint.EvaluateSaved(boundary, ToBoundary(exit));
                 if (!evaluated.Succeeded)

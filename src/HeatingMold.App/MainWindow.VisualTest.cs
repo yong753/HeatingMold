@@ -605,8 +605,9 @@ namespace HeatingMold.App
         {
             SidebarTabs.SelectedIndex = ReviewTabIndex;
             ReviewScopeBox.SelectedIndex = 0;
-            Require(TryReadElectricalSettings(out HeatingWireSpec wire, out PowerSupplySpec supply, out string settingsError),
+            Require(TryReadElectricalLimits(out TargetPowerElectricalSettings settings, out string settingsError),
                 "전기 입력을 읽지 못했습니다: " + settingsError);
+            HeatingWireSpec wire = settings.Wire;
 
             var pieces = 0;
             var turns = 0;
@@ -653,7 +654,10 @@ namespace HeatingMold.App
             {
                 CircuitLengthInfo circuit = snapshot.Circuits.FirstOrDefault(c => c.CircuitId == row.CircuitId);
                 Require(circuit != null, "전기표 회로 ID에 대응하는 회로가 없습니다: " + row.CircuitId);
-                ElectricalResult expected = ElectricalCalculator.Compute(circuit.HeatingLengthMm, wire, supply);
+                Require(circuit.TargetPowerW.HasValue,
+                    "회로에 목표 발열전력이 배정되지 않았습니다: " + row.CircuitId);
+                ElectricalResult expected = ElectricalCalculator.ComputeFromTargetPower(
+                    circuit.HeatingLengthMm, wire, circuit.TargetPowerW.Value);
                 Require(expected.IsValid, "회로 계산이 유효하지 않습니다: " + row.CircuitId);
                 Require(Math.Abs(row.LengthM - expected.LengthM) < 1e-6, "회로 길이가 계산값과 다릅니다: " + row.CircuitId);
                 Require(Math.Abs(row.CurrentA - expected.CurrentA) < 1e-6, "전류가 계산값과 다릅니다: " + row.CircuitId);
@@ -1346,12 +1350,16 @@ namespace HeatingMold.App
             Require(scenario.Electrical.PresetIndex != 2,
                 "직접 입력 발열사 프리셋은 더 이상 지원하지 않습니다. Case 1 또는 Case 2를 사용하세요.");
             WirePresetBox.SelectedIndex = scenario.Electrical.PresetIndex;
-            AppliedVoltageBox.Text = scenario.Electrical.VoltageV.ToString("0.###", CultureInfo.CurrentCulture);
+            AllowedVoltageBox.Text = scenario.Electrical.VoltageV.ToString("0.###", CultureInfo.CurrentCulture);
             AllowedCurrentBox.Text = scenario.Electrical.AllowedCurrentA.ToString("0.###", CultureInfo.CurrentCulture);
             AllowedPowerBox.Text = scenario.Electrical.AllowedPowerKw.ToString("0.###", CultureInfo.CurrentCulture);
+            TargetPowerBox.Text = scenario.Electrical.TargetPowerW > 0
+                ? scenario.Electrical.TargetPowerW.ToString("0.###", CultureInfo.CurrentCulture)
+                : "";
 
-            Require(TryReadElectricalSettings(out HeatingWireSpec wire, out PowerSupplySpec supply, out string settingsError),
+            Require(TryReadElectricalLimits(out TargetPowerElectricalSettings settings, out string settingsError),
                 "전기 입력을 읽지 못했습니다: " + settingsError);
+            HeatingWireSpec wire = settings.Wire;
 
             ReviewSnapshot snapshot = BuildReviewSnapshot();
             Require(snapshot.CanExport, "전기 검토 결과가 내보내기 가능 상태가 아닙니다: " + snapshot.BlockReason);
@@ -1366,10 +1374,14 @@ namespace HeatingMold.App
             {
                 CircuitLengthInfo circuit = snapshot.Circuits.FirstOrDefault(c => c.CircuitId == row.CircuitId);
                 Require(circuit != null, "전기표 회로 ID에 대응하는 회로가 없습니다: " + row.CircuitId);
-                ElectricalResult expected = ElectricalCalculator.Compute(circuit.HeatingLengthMm, wire, supply);
+                Require(circuit.TargetPowerW.HasValue,
+                    "회로에 목표 발열전력이 배정되지 않았습니다: " + row.CircuitId);
+                ElectricalResult expected = ElectricalCalculator.ComputeFromTargetPower(
+                    circuit.HeatingLengthMm, wire, circuit.TargetPowerW.Value);
                 Require(expected.IsValid, "회로 계산이 유효하지 않습니다: " + row.CircuitId);
                 Require(Math.Abs(row.LengthM - expected.LengthM) < 1e-6, "회로 길이가 계산값과 다릅니다: " + row.CircuitId);
                 Require(Math.Abs(row.ResistanceOhm - expected.ResistanceOhm) < 1e-6, "저항이 계산값과 다릅니다: " + row.CircuitId);
+                Require(Math.Abs(row.VoltageV - expected.VoltageV) < 1e-6, "필요 전압이 계산값과 다릅니다: " + row.CircuitId);
                 Require(Math.Abs(row.CurrentA - expected.CurrentA) < 1e-6, "전류가 계산값과 다릅니다: " + row.CircuitId);
                 Require(Math.Abs(row.PowerW - expected.PowerW) < 1e-3, "전력이 계산값과 다릅니다: " + row.CircuitId);
                 Require(row.Assessment != null, "회로 허용치 판정이 없습니다: " + row.CircuitId);
@@ -1387,7 +1399,7 @@ namespace HeatingMold.App
                 ["totalPowerW"] = snapshot.Table.TotalPowerW.ToString("0.###", CultureInfo.InvariantCulture),
                 ["wireDiameterMm"] = wire.DiameterMm.ToString("0.###", CultureInfo.InvariantCulture),
                 ["wireResistanceOhmPerM"] = wire.ResistanceOhmPerMeter.ToString("0.###", CultureInfo.InvariantCulture),
-                ["voltageV"] = supply.VoltageV.ToString("0.###", CultureInfo.InvariantCulture),
+                ["targetPowerW"] = snapshot.Table.TotalTargetPowerW.ToString("0.###", CultureInfo.InvariantCulture),
                 ["allowedCurrentA"] = snapshot.Limits.CurrentLimitA.ToString("0.###", CultureInfo.InvariantCulture),
                 ["allowedPowerW"] = snapshot.Limits.PowerLimitW.ToString("0.###", CultureInfo.InvariantCulture),
                 ["okCircuits"] = snapshot.Table.WithinLimitCount.ToString(CultureInfo.InvariantCulture),

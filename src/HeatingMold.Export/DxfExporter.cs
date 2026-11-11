@@ -201,7 +201,7 @@ public static class DxfExporter
         var inv = CultureInfo.InvariantCulture;
 
         AddSpecText(doc, layer, style, "전기 사양표", origin.X, top + 18 * scale, 5.0 * scale);
-        AddSpecText(doc, layer, style, table.Wire.Describe() + " · " + table.Supply.Describe(),
+        AddSpecText(doc, layer, style, table.Wire.Describe() + " · " + ElectricalSupplyCaption(table),
             origin.X, top + 11 * scale, 3.2 * scale);
 
         AddSpecLine(doc, layer, origin.X, top, origin.X + tableWidth, top);
@@ -246,9 +246,24 @@ public static class DxfExporter
         AddSpecText(doc, layer, style, table.TotalPowerW.ToString("F1", inv), x + scale, totalY, textHeight);
 
         AddSpecText(doc, layer, style,
-            "L: 가열부 길이(인출부 제외). 외부 리드 저항은 반영하지 않음.", origin.X, bottom - 7 * scale, 2.8 * scale);
+            "L: 인출점 사이 실제 도체 전체 길이(외부 리드 제외). 외부 리드 저항은 반영하지 않음.",
+            origin.X, bottom - 7 * scale, 2.8 * scale);
         AddSpecText(doc, layer, style,
-            "R = rL, I = V/R, P = V²/(rL). AC RMS, 상온 일정 저항 기준.", origin.X, bottom - 12 * scale, 2.8 * scale);
+            table.IsTargetPowerMode
+                ? "P_i = P·L_i/ΣL, R_i = rL_i, V_i = √(P_i·R_i), I_i = √(P_i/R_i). AC RMS, 상온 일정 저항 기준."
+                : "R = rL, I = V/R, P = V²/(rL). AC RMS, 상온 일정 저항 기준.",
+            origin.X, bottom - 12 * scale, 2.8 * scale);
+    }
+
+    /// <summary>
+    /// 사양표 상단 공급 조건 문구. 목표전력 방식에는 공통 인가전압이 없으므로
+    /// 계산된 필요 전압을 공급 전압처럼 표기하지 않는다.
+    /// </summary>
+    private static string ElectricalSupplyCaption(ElectricalSpecTable table)
+    {
+        if (table.IsTargetPowerMode)
+            return "목표 발열전력 길이비 배분 · 회로별 필요 전압 계산 · 허용 전압/전류/전력 판정";
+        return table.Supply?.Describe() ?? "";
     }
 
     private static void AddSpecText(DxfDocument doc, Layer layer, TextStyle style,

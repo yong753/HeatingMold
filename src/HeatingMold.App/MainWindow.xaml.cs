@@ -161,6 +161,9 @@ namespace HeatingMold.App
             if (ClearConfirmedAreaButton != null) ClearConfirmedAreaButton.IsEnabled = _activeArea != null && !vertexActive && !_isBusy;
             if (GenerateButton != null)
                 GenerateButton.IsEnabled = _activeArea != null && !vertexActive && patternInputValid && !_isBusy;
+            if (SplitAreaButton != null)
+                SplitAreaButton.IsEnabled = _activeArea != null && !vertexActive && !_isBusy
+                    && patternInputValid && _activeArea.TargetPowerW is > 0;
             if (ExportButton != null) ExportButton.IsEnabled = !_isBusy;
             if (OpenButton != null) OpenButton.IsEnabled = !_isBusy;
             if (OpenExampleButton != null) OpenExampleButton.IsEnabled = !_isBusy;
@@ -786,6 +789,14 @@ namespace HeatingMold.App
             clearedStart = false;
             clearedEnd = false;
 
+            // 분할 영역의 경계는 CAD 외곽 + artificial 절단선의 혼합이다. 제외영역을 바꾸면
+            // 절단선 provenance를 재구성할 수 없으므로 기존 경계를 조용히 대체하지 않고 거부한다.
+            if (candidate.HasSplitBoundary)
+            {
+                error = "분할로 만들어진 영역은 절단선 경계를 유지해야 하므로 제외영역을 변경할 수 없습니다. 필요하면 영역을 다시 확정하세요";
+                return false;
+            }
+
             CadExitBoundary2D cad = candidate.RegionCadBoundary
                 ?? candidate.RegionExitBoundary as CadExitBoundary2D;
             if (cad == null)
@@ -1339,6 +1350,8 @@ namespace HeatingMold.App
         private void UpdateCircuitTable()
         {
             if (CircuitLengthGrid == null) return;
+            // 분할 가족의 모든 영역에 회로가 준비되면 실측 길이로 목표전력을 먼저 재배분한다.
+            TryApplySplitFamilyAllocation();
             // 전기 사양표·내보내기와 같은 검토 스냅샷을 사용한다. 회로 ID는 영역명-회로번호로 구분한다.
             ReviewSnapshot snapshot = BuildReviewSnapshot();
             var rows = new List<CircuitLengthRow>();

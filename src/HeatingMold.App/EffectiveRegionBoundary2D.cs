@@ -123,6 +123,73 @@ internal sealed class EffectiveRegionBoundary2D : IExitBoundary2D, IArtificialEx
         return true;
     }
 
+    /// <summary>
+    /// Builds the boundary of a region whose exclusions an area split already subtracted.
+    /// The child ring is authoritative and <paramref name="parentRegion"/> is used only to
+    /// classify exclusion sides, so the "exclusion must actually cut the region" test does
+    /// not apply here. Exclusion provenance is still recovered from the original rectangles;
+    /// it is never re-labelled as CAD.
+    /// </summary>
+    internal static bool TryCreatePreSubtracted(CadExitBoundary2D cad,
+        IReadOnlyList<Vec2> parentRegion, IReadOnlyList<Vec2> region,
+        IReadOnlyList<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
+        out EffectiveRegionBoundary2D boundary, out string failure)
+    {
+        boundary = null!;
+        failure = string.Empty;
+        if (cad == null) { failure = "원본 CAD 경계가 없습니다."; return false; }
+        if (parentRegion == null || parentRegion.Count < 3)
+        { failure = "적용영역 폴리곤이 올바르지 않습니다."; return false; }
+        if (region == null || region.Count < 3) { failure = "분할 영역 폴리곤이 올바르지 않습니다."; return false; }
+        if (exclusions == null) { failure = "제외영역 목록이 없습니다."; return false; }
+
+        List<Vec2> ring = NormalizeRing(region);
+        if (ring.Count < 3 || RegionOps.SignedArea(ring) <= 1e-9)
+        {
+            failure = "분할 영역의 외곽선이 퇴화했습니다.";
+            return false;
+        }
+        if (HasPinch(ring))
+        {
+            failure = "분할 영역의 외곽선이 한 점에서 접힙니다.";
+            return false;
+        }
+
+        var segments = new List<ArtificialSegment>();
+        for (int i = 0; i < exclusions.Count; i++)
+        {
+            var rect = exclusions[i];
+            if (!(rect.MaxX > rect.MinX && rect.MaxY > rect.MinY)) continue;
+            for (int side = 0; side < 4; side++)
+            {
+                if (!TryGetSide(rect, side, out Vec2 a, out Vec2 b)) continue;
+                var intervals = new List<(double First, double Last)> { (0.0, 1.0) };
+                for (int j = 0; j < exclusions.Count && intervals.Count > 0; j++)
+                {
+                    if (j == i) continue;
+                    if (!TryInsideInterval(a, b, exclusions[j], out double first, out double last)) continue;
+                    intervals = SubtractInterval(intervals, first, last);
+                }
+                intervals = KeepInsideRegion(intervals, a, b, parentRegion);
+                foreach ((double first, double last) in intervals)
+                {
+                    if (last - first <= ParameterEpsilon) continue;
+                    Vec2 start = Lerp(a, b, first);
+                    Vec2 end = Lerp(a, b, last);
+                    if (start.DistanceTo(end) <= PointEpsilon) continue;
+                    var binding = new ArtificialEdgeBinding(cad.ContextId, cad.Revision,
+                        rect.MinX, rect.MinY, rect.MaxX, rect.MaxY, side, first, last, first);
+                    segments.Add(new ArtificialSegment(binding, start, end));
+                }
+            }
+        }
+
+        segments.RemoveAll(segment => !IsOnOutline(segment, ring));
+
+        boundary = new EffectiveRegionBoundary2D(cad, exclusions, ring, segments);
+        return true;
+    }
+
     public ExitBoundaryResolution Project(Vec2 point, double tolerance)
     {
         if (!IsFinite(point) || !double.IsFinite(tolerance) || tolerance <= 0)
