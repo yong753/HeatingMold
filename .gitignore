@@ -40,3 +40,6 @@ tools/step-cleanup/diagnostics/*.obj
 tools/step-cleanup/diagnostics/*.exp
 tools/step-cleanup/diagnostics/*.lib
 tools/step-cleanup/diagnostics/dbg.txt
+
+# step-trim 빌드 산출물 (소스 .cpp/.ps1/.md만 추적)
+tools/step-trim/bin/
