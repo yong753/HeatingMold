@@ -15,6 +15,18 @@ struct WorkingNative
     double deflection = 0.05;
     double rayLength = 0;
 };
+// 메시 해상도보다 작아 삼각분할이 만들어지지 않는 퇴화 면은 실루엣에 기여하지 않는다.
+// 건너뛴 면은 조용히 무시하지 않고 OCC 로그에 남긴다.
+static void LogWorkingMeshSkipNative(int count, double area, double deflection)
+{
+    char path[MAX_PATH] = { 0 };
+    const DWORD length = ::GetEnvironmentVariableA("HEATINGMOLD_OCC_LOG", path, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) return;
+    std::ofstream log(path, std::ios::app);
+    if (!log) return;
+    log << "working mesh: skipped " << count << " sub-deflection face(s), total area "
+        << area << " mm^2, deflection " << deflection << " mm\n";
+}
 std::map<long long, std::unique_ptr<WorkingNative>> g_working;
 long long g_nextWorkingId = 1;
 // 커밋 자체는 성공했지만 마지막 Redraw가 실패했음을 App에 알리기 위한 플래그.
@@ -297,10 +309,23 @@ long long CreateWorkingNativeCore(const gp_Dir& xDir, const gp_Dir& yDir, const 
         BRepMesh_IncrementalMesh mesh(g_shape, ctx->deflection, Standard_False, 0.1, Standard_True);
         InvalidateFaceSelectionCachesNative();
         if (!mesh.IsDone()) return 0;
+        int skippedMeshFaces = 0;
+        double skippedMeshArea = 0;
         for (const auto& face : g_faces) {
             TopLoc_Location loc;
             Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
-            if (tri.IsNull()) return 0; // incomplete silhouette is not a successful preview
+            if (tri.IsNull())
+            {
+                // 해상도보다 작은 슬리버는 어떤 편차에서도 삼각분할이 생기지 않는다.
+                // 실루엣에 기여하지 않는 명시적 퇴화 면만 건너뛰고, 그 외 null 면은 실패시킨다.
+                GProp_GProps props;
+                BRepGProp::SurfaceProperties(face, props);
+                const double skippedArea = props.Mass();
+                if (skippedArea > ctx->deflection * ctx->deflection) return 0;
+                ++skippedMeshFaces;
+                skippedMeshArea += skippedArea;
+                continue;
+            }
             for (int i = 1; i <= tri->NbTriangles(); ++i) {
                 int a,b,c; tri->Triangle(i).Get(a,b,c);
                 for (int index : {a,b,c}) {
@@ -309,6 +334,8 @@ long long CreateWorkingNativeCore(const gp_Dir& xDir, const gp_Dir& yDir, const 
                 }
             }
         }
+        if (skippedMeshFaces > 0)
+            LogWorkingMeshSkipNative(skippedMeshFaces, skippedMeshArea, ctx->deflection);
         if (!g_ctx.IsNull() && !g_aisShape.IsNull()) g_ctx->Redisplay(g_aisShape,Standard_False);
         ctx->id = g_nextWorkingId++; ctx->revision = g_modelRevision;
         const long long id = ctx->id;
