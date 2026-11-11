@@ -134,6 +134,26 @@
 - `tests\HeatingMold.Application.Tests`, `Design.Tests`, `Infrastructure.Tests`, `Electrical.Tests` held only `bin`/`obj` with no source and were removed.
 - `x64\UndoRemovalRegression\UndoRemoval.Regression.csproj` is an ignored scratch harness that links `tests\PowerLead.Regression\Program.cs`; it is now stale and is not part of any build.
 
+## Visual test scenario items removed (user-confirmed 2026-11-11)
+
+- **User requirement: delete every existing visual-test item; keep the visual-test feature itself.** The deleted content is the scenario JSON files and their recorded fixtures/expectations, not the runner, launcher, step actions or report code.
+- Deleted 15 files from `tests\HeatingMold.VisualTest\scenarios\`: `basic.json` (v1 fixed 6-step flow) and `01-selection-undo.json` … `14-vertex-edit-discard.json` (v2 action scenarios). The folder stays with a `.gitkeep` so the scenario-name lookup still has a documented home, and no replacement example scenario was added.
+- `VisualTestLauncherWindow` no longer pre-fills a scenario path; the box starts empty, the browse dialog opens at the repository root, and `Run_Click` reports `시나리오 JSON 파일을 선택하세요.` without starting a process. The run-directory default, hold seconds, step mode and the header button are unchanged.
+- `tests\HeatingMold.VisualTest\Run.ps1` no longer defaults `-Scenario` to `basic`; a missing `-Scenario` throws before any build or run-directory creation. Name-only lookup (`-Scenario <name>` → `scenarios\<name>.json`) is kept, and an unknown name still fails with `Scenario not found`.
+- `docs\VisualTest.Scenarios.md` now documents only the schema contract (v1 fixed steps / v2 areas + steps), the action list, the file map and the judging principles; the 14 scenario definitions, model coordinates, per-area baseline values and the verification-status table were removed. `tests\HeatingMold.VisualTest\README.md` keeps the run/screen/result-file/format documentation, requires an explicit scenario and no longer lists the deleted 7-step validation table.
+- Kept deliberately: `VisualScenario.Load`, `VisualScenarioCompiler`, `MainWindow.VisualTest.cs`, `VisualTestOptions`, `VisualTestReport`, `VisualTestRunner`, and `tests\HeatingMold.App.Tests\VisualTestingTests.cs` (these test the feature contract, not a scenario item; they build their own temporary scenarios).
+- Verified 2026-11-11: `HeatingMold.App` builds (Release/x64, isolated `OutDir` because the running app locks the normal output), App tests 175 pass with the OCCT/third-party DLL directories on `PATH`, and running `Run.ps1` without `-Scenario` stops with the explicit message before creating anything. Builds and tests must be redirected to an isolated `-p:OutDir=` while the app is open; the earlier 72 failures were missing OCCT DLLs on `PATH`, not a code regression.
+- Not verified: a real click-through of the launcher window in the running app, and running a newly authored scenario end-to-end.
+
+## Standard view menu removed (user-confirmed 2026-11-11)
+
+- **User requirement:** "표준뷰 항목도 삭제해줘". Scope confirmed with the user: remove the header button and its menu entirely, not just the six direction items.
+- Removed from `MainWindow.xaml`: the `StandardViewButton` dropdown ("표준 뷰 ▾") and its six items (`정면 (−Z)`, `후면 (+Z)`, `위쪽 (−Y)`, `아래쪽 (+Y)`, `좌측 (−X)`, `우측 (+X)`). Removed from `MainWindow.xaml.cs`: `StandardViewMenu_Click` and `StandardView_Click`.
+- Kept deliberately: `Bridge.SetViewFrame` (still called by `tests\WorkingSide.Regression\Program.cs`), `Bridge.GetAutoAxis` (native API with no managed caller now; removing it would require a native change with no product benefit), `WorkingFront_Click` ("작업 정면으로 돌아가기", a separate product feature), and the vertex-edit guard text that only the removed handler used.
+- No other entry point sets a standard view; the app now changes the view only through the viewport itself and the working-front button.
+- Verified 2026-11-11: `HeatingMold.App` builds Release/x64 with 0 errors, App tests 175 pass (isolated `-p:OutDir=` and OCCT DLLs on `PATH`).
+- Not verified: a real click-through of the header bar in the running app; `tests\WorkingSide.Regression` was not rerun (it does not call the removed handlers).
+
 ## Build configuration (verified)
 
 - `HeatingMold.Mvp.sln` declares exactly one solution configuration, `Release|x64`. Do not re-add Debug/Any CPU/x86 rows without verifying every project exposes them.

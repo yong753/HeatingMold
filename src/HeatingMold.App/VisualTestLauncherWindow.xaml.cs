@@ -24,9 +24,8 @@ namespace HeatingMold.App
             InitializeComponent();
 
             _repositoryRoot = VisualTestOptions.FindRepositoryRoot() ?? AppContext.BaseDirectory;
-            string scenario = Path.Combine(_repositoryRoot, "tests",
-                "HeatingMold.VisualTest", "scenarios", "basic.json");
-            ScenarioPathBox.Text = File.Exists(scenario) ? scenario : "";
+            // 저장소에는 시나리오 파일이 포함되지 않는다. 사용자가 직접 선택한 JSON만 실행한다.
+            ScenarioPathBox.Text = "";
             RunDirectoryBox.Text = Path.Combine(_repositoryRoot, "artifacts", "visual-test",
                 "ui-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture));
             HoldSecondsBox.Text = "3";
@@ -39,7 +38,8 @@ namespace HeatingMold.App
             {
                 Title = "시각 테스트 시나리오 선택",
                 Filter = "시나리오 JSON (*.json)|*.json|모든 파일 (*.*)|*.*",
-                CheckFileExists = true
+                CheckFileExists = true,
+                InitialDirectory = _repositoryRoot
             };
             if (!string.IsNullOrWhiteSpace(ScenarioPathBox.Text))
             {
@@ -90,6 +90,11 @@ namespace HeatingMold.App
             }
 
             string scenario = (ScenarioPathBox.Text ?? "").Trim().Trim('"');
+            if (scenario.Length == 0)
+            {
+                ShowError("시나리오 JSON 파일을 선택하세요.");
+                return;
+            }
             try
             {
                 scenario = Path.GetFullPath(scenario);

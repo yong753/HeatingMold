@@ -72,7 +72,7 @@
                 BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,8,0,0"
                 VerticalAlignment="Top">
             <TextBlock TextWrapping="Wrap" Foreground="#42505E"
-                       Text="테스트가 시작되면 새 창의 사이드바와 3D 뷰포트 입력이 잠깁니다. 상단 진행 바에서 일시정지·다음 단계·중단을 제어할 수 있고, 완료 후에도 결과 화면이 유지됩니다. 결과와 DXF는 위 폴더에 기록됩니다."/>
+                       Text="실행할 시나리오 JSON은 직접 선택해야 합니다(저장소에 기본 시나리오는 없습니다). 테스트가 시작되면 새 창의 사이드바와 3D 뷰포트 입력이 잠깁니다. 상단 진행 바에서 일시정지·다음 단계·중단을 제어할 수 있고, 완료 후에도 결과 화면이 유지됩니다. 결과와 DXF는 위 폴더에 기록됩니다."/>
         </Border>
 
         <TextBlock x:Name="StatusText" Grid.Row="3" Foreground="#B3261E"

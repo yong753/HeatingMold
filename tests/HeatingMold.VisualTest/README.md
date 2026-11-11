@@ -4,26 +4,32 @@
 일정 시간 유지해 눈으로 확인하는 테스트입니다. OS 마우스/키보드 입력이나 UI Automation은
 사용하지 않습니다.
 
-> 시나리오 정의와 14개 사용자 행동 시나리오는 [docs/VisualTest.Scenarios.md](../../docs/VisualTest.Scenarios.md)를 참고하세요.
+> 저장소에는 실행할 시나리오 파일이 포함되어 있지 않습니다. 실행하려면 시나리오 JSON을
+> 직접 작성하거나 지정해야 합니다. 형식은 [docs/VisualTest.Scenarios.md](../../docs/VisualTest.Scenarios.md)를
+> 참고하세요.
 
 ## 실행
 
 앱 헤더의 **시각 테스트…** 버튼으로도 실행할 수 있습니다. 시나리오, 결과 폴더,
 관찰 시간, 한 단계씩 실행 여부를 지정하면 현재 창은 그대로 두고 새 앱 창에서
-테스트가 시작됩니다.
+테스트가 시작됩니다. 시나리오 경로가 비어 있으면 실행하지 않고 안내만 표시합니다.
 
 ```powershell
-# 기본 시나리오, 각 단계 3초 관찰
-./tests/HeatingMold.VisualTest/Run.ps1
+# 시나리오 경로를 직접 지정 (필수)
+./tests/HeatingMold.VisualTest/Run.ps1 -Scenario C:\work\my-scenario.json
+
+# scenarios 폴더에 둔 파일은 이름만으로도 지정할 수 있다
+./tests/HeatingMold.VisualTest/Run.ps1 -Scenario my-scenario
 
 # 단계마다 '다음' 버튼을 누를 때까지 대기
-./tests/HeatingMold.VisualTest/Run.ps1 -Step
+./tests/HeatingMold.VisualTest/Run.ps1 -Scenario my-scenario -Step
 
 # 빌드 생략
-./tests/HeatingMold.VisualTest/Run.ps1 -NoBuild
+./tests/HeatingMold.VisualTest/Run.ps1 -Scenario my-scenario -NoBuild
 ```
 
-스크립트는 네이티브 브리지와 앱을 빌드한 뒤 새 실행 디렉터리에서 앱을 시작합니다.
+스크립트는 `-Scenario`가 없으면 빌드와 결과 폴더 생성 전에 오류로 중단합니다.
+경로가 지정되면 네이티브 브리지와 앱을 빌드한 뒤 새 실행 디렉터리에서 앱을 시작합니다.
 결과가 기록되면 요약을 출력하고, **앱은 육안 확인을 위해 열린 상태로 남깁니다.**
 확인이 끝나면 창을 닫습니다. 잘못된 옵션이나 시나리오 경로면 앱 창을 띄우지 않고
 종료 코드 2와 `result.json`(실패 사유)을 남깁니다.
@@ -38,20 +44,15 @@
 
 완료·실패·중단 후에도 창과 마지막 결과 화면은 유지됩니다. 결과를 확인한 뒤 직접 닫습니다.
 
-## 검증 범위
+## 시나리오 스키마
 
-| 단계 | 실행 | 자동 확인 |
-|---|---|---|
-| 1. 모델 로드 | 기존 STEP 로드 경로 | 승인된 경로·SHA-256·면/솔리드 수, 모델 revision, 작업 방향 |
-| 2. 영역 | 기존 면 선택 처리 후 영역 확정 | 영역 1개, 선택 면 집합, 닫힌 경계, 활성 영역 |
-| 3. 인출면·앵커 | 기존 후보 생성·적용 경로 | 인출면/체인 적용, 실제 앵커 후보 선택, 실패 사유 없음 |
-| 4. 발열경로 | 기존 생성 경로 | 패턴 표시, 최신 입력, non-stale, 조각/네이티브 ID/길이 대응, 회로 수 |
-| 5. 회로 분할 | 기존 연결구간 토글 경로 | 대상 연결구간만 비활성, 회로 수 증가, 길이표 갱신 |
-| 6. 전기 사양 | 실제 검토 탭 입력 컨트롤 | 검토 준비 상태, 표 행/계산 일치, 내보내기 가능 |
-| 7. DXF | 기존 저장 보호 로직에 명시 경로 주입 | 저장 성공, 파일 존재, DXF 재읽기, 투상선·전기표 |
+- `schemaVersion: 1`은 고정 단계 순서(모델 로드 → 영역 → 인출면/앵커 → 발열경로 →
+  전기 사양 → DXF)를 그대로 실행하고, 시나리오는 그 단계의 입력값만 지정합니다.
+- `schemaVersion: 2`는 `areas`(영역 정의)와 `steps`(행동 목록)를 사용합니다.
+  실행 단계는 `loadModel`이 암묵적으로 먼저 실행되고, 이후 `steps` 순서대로 진행합니다.
 
-자동 완료는 화면의 육안 합격을 의미하지 않습니다. 결과의 `automation`과
-`visualReview`는 분리되어 있으며, 육안 검토는 기록하지 않습니다(`NotRecorded`).
+사용 가능한 행동은 `docs/VisualTest.Scenarios.md`의 행동 목록을 참고하세요.
+알 수 없는 행동, 중복 alias, 잘못된 참조는 실행 전에 거부됩니다.
 
 ## 결과 파일
 
@@ -66,24 +67,14 @@
 기존 실행 디렉터리에 `result.json`이나 `result.dxf`가 있으면 덮어쓰지 않고 시작을
 거부합니다. `result.json`은 임시 파일을 거쳐 원자적으로 게시됩니다.
 
-## 시나리오
+## 모델과 판정
 
-`scenarios/basic.json`은 현재 앱의 예제 모델인 `resource/Mold_Solids.stp`의 면 `{9}`를
-사용합니다. 구 원본 `Mold.stp`는 저장소에서 제거되었으며, 정리본은 면 번호가 달라
-구 면 번호를 재사용할 수 없습니다.
-
-주요 필드:
-
-- `model`: 저장소 기준 상대 경로, SHA-256, 면 수, 솔리드 수
-- `area`: 선택 면 번호, 마진/간격(mm), 방향(0=자동)
-- `exit`: 인출면 ID와 시작/종료 3D 좌표(후보 식별용)
-- `anchor`: 시작/종료점 후보 인덱스
-- `split`: 분할할 연결구간 순번
-- `electrical`: 와이어 프리셋, 전압, 검토 범위
-- `expect`: 영역/조각/연결구간/분할 전후 회로 수
-
+시나리오의 `model`은 저장소 기준 상대 경로, SHA-256, 면 수, 솔리드 수를 선언합니다.
 모델 해시, 면 수, 후보 지문이 맞지 않거나 후보가 모호하면 다른 모델이나 다른 후보로
 자동 대체하지 않고 실패합니다.
+
+자동 완료는 화면의 육안 합격을 의미하지 않습니다. 결과의 `automation`과
+`visualReview`는 분리되어 있으며, 육안 검토는 기록하지 않습니다(`NotRecorded`).
 
 ## 전제와 한계
 

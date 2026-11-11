@@ -1,5 +1,5 @@
 param(
-    [string]$Scenario = 'basic',
+    [string]$Scenario,
     [double]$HoldSeconds = 3,
     [switch]$Step,
     [switch]$NoBuild,
@@ -9,6 +9,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot/../..").Path
+if (-not $Scenario) {
+    throw "Scenario is required. Pass -Scenario <path|name>, e.g. -Scenario C:\work\my-scenario.json"
+}
 $scenarioPath = if (Test-Path $Scenario) { (Resolve-Path $Scenario).Path }
     else { Join-Path $PSScriptRoot "scenarios/$Scenario.json" }
 if (-not (Test-Path $scenarioPath)) { throw "Scenario not found: $Scenario" }
