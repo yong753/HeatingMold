@@ -7,9 +7,9 @@ public class TargetPowerSplitPlannerTests
     private static ElectricalLimits Limits() => new();
 
     [Fact]
-    public void PowerOverLimit_DrivesPartCount()
+    public void VoltageOverLimit_DrivesPartCount()
     {
-        // 20 m, 5 kW, Case1: R=80Ω, V=632.46V, I=7.906A. 전력 2분할, 전압 3분할이 필요하다.
+        // 20 m, 5 kW, Case1: R=80Ω, V=632.46V, I=7.906A. 전압 한도 220V로 3분할이 필요하다.
         Assert.True(TargetPowerSplitPlanner.TryPlan(
             5000, 20_000, HeatingWireSpec.Case1, Limits(), out TargetPowerSplitPlan plan, out string error));
 
@@ -21,6 +21,20 @@ public class TargetPowerSplitPlannerTests
         Assert.Equal(20.0 / 3.0, plan.PerCircuitLengthMm / 1000.0, 6);
         Assert.False(plan.CurrentExceedsLimit);
         Assert.True(plan.RequiresSplit);
+    }
+
+    [Fact]
+    public void PowerOverCircuitLimit_DoesNotAddParts()
+    {
+        // 1 m, 7 kW, Case1: R=4Ω, V=167.33V로 허용 전압 이하다. 회로별 전력이 3.5 kW를 넘어도
+        // 분할은 전력을 늘리지 않으므로 분할 수를 늘리지 않는다.
+        Assert.True(TargetPowerSplitPlanner.TryPlan(
+            7000, 1_000, HeatingWireSpec.Case1, Limits(), out TargetPowerSplitPlan plan, out string error));
+
+        Assert.True(string.IsNullOrEmpty(error));
+        Assert.Equal(1, plan.Parts);
+        Assert.False(plan.RequiresSplit);
+        Assert.Equal(167.3320, plan.PerCircuitVoltageV, 3);
     }
 
     [Fact]
@@ -60,7 +74,7 @@ public class TargetPowerSplitPlannerTests
     {
         Assert.False(TargetPowerSplitPlanner.TryPlan(
             power, 20_000, HeatingWireSpec.Case1, Limits(), out _, out string error));
-        Assert.Contains("목표", error);
+        Assert.Contains("발열 전력", error);
     }
 
     [Theory]
@@ -106,7 +120,7 @@ public class TargetPowerSplitPlannerTests
         double resistance = HeatingWireSpec.Case2.ResistanceOhmPerMeter * 12.0;
         double expected = Math.Sqrt(4000 / resistance);
         Assert.Equal(expected, plan.PerCircuitCurrentA, 9);
-        Assert.Equal(expected, plan.PerCircuitCurrentA, 9);
+        Assert.Equal(Math.Sqrt(4000 * resistance) / plan.Parts, plan.PerCircuitVoltageV, 6);
         Assert.Equal(4000.0 / plan.Parts, plan.PerCircuitTargetPowerW, 6);
     }
 }

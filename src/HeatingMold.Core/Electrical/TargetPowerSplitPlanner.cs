@@ -16,7 +16,7 @@ public sealed record TargetPowerSplitPlan(
 {
     public bool RequiresSplit => Parts > 1;
 
-    /// <summary>길이비 배분에서 분할 수와 무관하게 유지되는 회로 전류(계획 단계 예상).</summary>
+    /// <summary>계획 단계 예상 전류가 이미 허용 전류를 넘는가. 길이비 배분에서는 분할 수를 바꿔도 그대로다.</summary>
     public bool CurrentExceedsLimit { get; init; }
 
     /// <summary>사용자에게 함께 보여줄 계획 사유.</summary>
@@ -24,10 +24,11 @@ public sealed record TargetPowerSplitPlan(
 }
 
 /// <summary>
-/// 목표 발열전력과 예상 길이로 필요한 분할 수를 정한다. 길이비 배분이면 회로 전류는
-/// I = √(P/(rL))로 분할 수와 무관하므로, 전류 초과는 분할로 해결되지 않는다는 사실을
-/// 숨기지 않고 함께 보고한다. 실제 도체 길이는 분할 후 달라질 수 있으므로 이 판단을
-/// 최종 불가능 판정으로 쓰지 않는다.
+/// 배분된 발열전력과 예상 길이로 필요한 분할 수를 정한다. 총 발열전력은 분할해도 늘지 않으므로
+/// 전력 한도는 분할 수를 늘리는 기준이 아니고, 필요 전압만 분할 수를 정한다. 길이비 배분이면
+/// 회로 전류는 I = √(P/(rL))로 분할 수와 무관하므로 전류 초과는 분할로 해결되지 않는다.
+/// CurrentExceedsLimit은 그 사실을 숨기지 않고 알리는 계획 단계 표시이며, 호출자는 분할을
+/// 시작하지 않는 근거로 쓴다. 최종 판정은 분할 후 실측 길이로 다시 계산한다.
 /// </summary>
 public static class TargetPowerSplitPlanner
 {
@@ -44,7 +45,7 @@ public static class TargetPowerSplitPlanner
         if (limits is null) { error = "허용치가 없습니다"; return false; }
         if (!double.IsFinite(totalTargetPowerW) || totalTargetPowerW <= 0)
         {
-            error = "목표 발열전력은 0보다 커야 합니다";
+            error = "배분된 발열 전력은 0보다 커야 합니다";
             return false;
         }
         if (!double.IsFinite(estimatedLengthMm) || estimatedLengthMm <= 0)
@@ -82,9 +83,10 @@ public static class TargetPowerSplitPlanner
             return false;
         }
 
-        double partsByPower = Math.Ceiling(totalTargetPowerW / limits.PowerLimitW);
+        // 전력은 분할해도 늘지 않는다. 총 발열전력을 나누어 쓰므로 분할 수를 바꾸는 기준은
+        // 회로별 필요 전압뿐이다. (전류는 길이비 배분에서 분할 수와 무관하다.)
         double partsByVoltage = Math.Ceiling(singleVoltage / limits.VoltageLimitV);
-        double parts = Math.Max(1.0, Math.Max(partsByPower, partsByVoltage));
+        double parts = Math.Max(1.0, partsByVoltage);
         if (!double.IsFinite(parts) || parts > int.MaxValue)
         {
             error = "필요한 분할 수가 유효한 범위를 벗어났습니다";

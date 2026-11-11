@@ -56,7 +56,7 @@ public class TargetPowerElectricalTests
             10_000, HeatingWireSpec.Case1, 0.0);
 
         Assert.False(result.IsValid);
-        Assert.Contains("목표 발열전력", result.Message);
+        Assert.Contains("발열 전력", result.Message);
     }
 
     [Theory]
@@ -109,6 +109,45 @@ public class TargetPowerElectricalTests
     }
 
     [Fact]
+    public void SharedPower_SumOverTotalLimit_IsOverLimit()
+    {
+        // 사용자 확정: 영역이 나뉘어도 두 회로 전력의 합이 총 발열전력 이하여야 한다.
+        // 3.5 kW 한도에 2 + 2 kW → 합계 4 kW이므로 OK가 아니다.
+        var inputs = new[]
+        {
+            new TargetPowerCircuitInput("A-1", 2_500, 2_000.0),
+            new TargetPowerCircuitInput("B-1", 2_500, 2_000.0)
+        };
+
+        ElectricalSpecTable table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            inputs, HeatingWireSpec.Case1, Limits);
+
+        Assert.Equal(4_000.0, table.TotalTargetPowerW, 6);
+        Assert.True(table.IsSharedPowerOverLimit);
+        Assert.False(table.IsSharedPowerWithinLimit);
+        // 회로 하나하나의 전압·전류는 한도 이내이므로 회로별 NG가 아니다.
+        Assert.All(table.Rows, row => Assert.True(row.IsValid && row.IsWithinLimits));
+        Assert.Equal(0, table.OverLimitCount);
+    }
+
+    [Fact]
+    public void SharedPower_SumAtTotalLimit_IsWithinLimit()
+    {
+        var inputs = new[]
+        {
+            new TargetPowerCircuitInput("A-1", 2_500, 1_750.0),
+            new TargetPowerCircuitInput("B-1", 2_500, 1_750.0)
+        };
+
+        ElectricalSpecTable table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            inputs, HeatingWireSpec.Case1, Limits);
+
+        Assert.Equal(3_500.0, table.TotalTargetPowerW, 6);
+        Assert.False(table.IsSharedPowerOverLimit);
+        Assert.True(table.IsSharedPowerWithinLimit);
+    }
+
+    [Fact]
     public void BuildFromTargetPower_MissingTarget_KeepsRowWithoutComputing()
     {
         var inputs = new[] { new TargetPowerCircuitInput("A-1", 2_500, null) };
@@ -124,7 +163,7 @@ public class TargetPowerElectricalTests
         Assert.Equal(2.5, row.LengthM, 9);
         // 저항은 목표전력과 무관하게 rL로 확정된다.
         Assert.Equal(10.0, row.ResistanceOhm, 9);
-        Assert.Contains("미입력", row.Message);
+        Assert.Contains("배분되지 않았습니다", row.Message);
         Assert.Equal(0, table.TotalTargetPowerW);
         Assert.Equal(0, table.TotalPowerW);
         Assert.Equal(0, table.OverLimitCount);

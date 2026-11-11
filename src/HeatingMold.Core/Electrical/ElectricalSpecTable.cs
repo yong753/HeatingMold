@@ -4,8 +4,8 @@ namespace HeatingMold.Core.Electrical;
 public sealed record ElectricalCircuitInput(string CircuitId, double LengthMm);
 
 /// <summary>
-/// 목표전력 방식 사양표 한 줄의 입력. TargetPowerW는 이 회로에 배분된 목표 발열전력이며,
-/// null이면 아직 입력되지 않은 상태다(0 W 계산 오류와 구분한다).
+/// 목표전력 방식 사양표 한 줄의 입력. TargetPowerW는 이 회로에 배분된 발열 전력이며,
+/// null이면 아직 배분되지 않은 상태다(0 W 계산 오류와 구분한다).
 /// </summary>
 public sealed record TargetPowerCircuitInput(string CircuitId, double LengthMm, double? TargetPowerW);
 
@@ -69,6 +69,16 @@ public sealed class ElectricalSpecTable
 
     /// <summary>모든 회로에 배분된 목표 발열전력의 합계.</summary>
     public double TotalTargetPowerW { get; init; }
+
+    /// <summary>
+    /// 배분 전력이 허용치를 넘었는지. 배분은 허용 전력을 나누므로 정상 경로에서는 같거나 작고,
+    /// 저장된 옛 계산값처럼 한도를 넘는 입력이 들어올 때만 참이 된다.
+    /// </summary>
+    public bool IsSharedPowerOverLimit =>
+        Limits != null && TotalTargetPowerW > Limits.PowerLimitW;
+
+    /// <summary>배분 합계가 공통 전력 한도 이내인지. 한도가 없으면 판정하지 않는다.</summary>
+    public bool IsSharedPowerWithinLimit => Limits != null && !IsSharedPowerOverLimit;
 
     public bool HasRows => Rows.Count > 0;
     public bool IsTargetPowerMode => Mode == ElectricalCalculationMode.TargetPower;
@@ -167,7 +177,7 @@ public static class ElectricalSpecTableBuilder
                     ResistanceOhm = knownResistance ?? 0.0,
                     TargetPowerW = null,
                     IsTargetPowerMissing = true,
-                    Message = "목표 발열전력 미입력"
+                    Message = "발열 전력이 배분되지 않았습니다"
                 });
                 continue;
             }

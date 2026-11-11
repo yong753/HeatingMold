@@ -4,12 +4,12 @@ using System.Linq;
 
 namespace HeatingMold.Core.Electrical;
 
-/// <summary>분할 회로 하나에 배분된 목표 발열전력. LengthMm는 그 회로의 실제 길이다.</summary>
+/// <summary>분할 회로 하나에 배분된 발열 전력. LengthMm는 그 회로의 실제 길이다.</summary>
 public sealed record TargetPowerShare(string CircuitId, double LengthMm, double TargetPowerW);
 
 /// <summary>
-/// 총 목표 발열전력을 실제 길이 비율로 회로에 배분한다.
-/// 총 목표전력은 분할 이후에도 보존되며, 배분값의 합은 입력 총계와 일치한다(부동소수 오차 범위).
+/// 총 발열전력을 실제 길이 비율로 회로에 배분한다.
+/// 총량은 분할 이후에도 보존되며, 배분값의 합은 입력 총계와 일치한다(부동소수 오차 범위).
 /// 길이 비율 배분에서는 모든 회로의 전류가 √(P / (r·ΣL))로 같아진다.
 /// </summary>
 public static class TargetPowerAllocation
@@ -24,12 +24,12 @@ public static class TargetPowerAllocation
         shares = Array.Empty<TargetPowerShare>();
         if (circuits == null || circuits.Count == 0)
         {
-            error = "목표전력을 배분할 회로가 없습니다";
+            error = "배분할 회로가 없습니다";
             return false;
         }
         if (!double.IsFinite(totalTargetPowerW) || totalTargetPowerW <= 0)
         {
-            error = "총 목표 발열전력은 0보다 커야 합니다";
+            error = "총 발열 전력은 0보다 커야 합니다";
             return false;
         }
 
@@ -62,7 +62,7 @@ public static class TargetPowerAllocation
             if (!double.IsFinite(power) || power <= 0)
             {
                 error = string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                    "회로 {0}의 목표전력 배분이 유효하지 않습니다", id);
+                    "회로 {0}의 발열 전력 배분이 유효하지 않습니다", id);
                 return false;
             }
             allocated += power;

@@ -3,8 +3,10 @@ using System.Globalization;
 namespace HeatingMold.Core.Electrical;
 
 /// <summary>
-/// 전기 검토 허용치. 회로 하나의 계산값을 항목별 상한과 비교하며, 세 항목이 모두
-/// 이하일 때만 OK다. 전압은 계산에 사용한 인가전압과 같은 값을 허용전압으로 쓴다.
+/// 전기 검토 허용치. 전압·전류는 회로 하나의 계산값을 상한과 비교한다.
+/// <see cref="PowerLimitW"/>는 회로별 상한이 아니라 확정된 영역 전체가 나누어 쓰는
+/// 총 발열전력이며, 사용자는 이 한 가지 전력만 입력한다. 회로별 배분값의 합이
+/// 이 값을 넘으면 영역을 어떻게 나누었든 NG다.
 /// </summary>
 public sealed record ElectricalLimits
 {

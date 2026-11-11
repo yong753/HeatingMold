@@ -45,7 +45,7 @@ public static class ElectricalCalculator
     }
 
     /// <summary>
-    /// 목표 발열전력 P에서 이 회로에 필요한 전압과 전류를 계산한다.
+    /// 이 회로에 배분된 발열 전력 P에서 필요한 전압과 전류를 계산한다.
     /// R = rL, V = √(PR), I = √(P/R) = P/V. 실제 공급 장치의 전압 제공 가능성은 검토하지 않는다.
     /// </summary>
     public static ElectricalResult ComputeFromTargetPower(
@@ -58,7 +58,7 @@ public static class ElectricalCalculator
             return ElectricalResult.Invalid("단위 길이당 저항은 0보다 커야 합니다");
         // 0 W는 회로를 정의하지 않는다. 0 V/0 A를 정상 계산으로 보고하면 판정이 조용히 OK가 된다.
         if (!double.IsFinite(targetPowerW) || targetPowerW <= 0)
-            return ElectricalResult.Invalid("목표 발열전력은 0보다 커야 합니다");
+            return ElectricalResult.Invalid("배분된 발열 전력은 0보다 커야 합니다");
 
         double lengthM = lengthMm / 1000.0;
         double resistance = wire.ResistanceOhmPerMeter * lengthM;
