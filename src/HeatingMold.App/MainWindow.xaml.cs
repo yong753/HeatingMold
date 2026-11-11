@@ -1615,7 +1615,8 @@ namespace HeatingMold.App
                 if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
                 // 최종 파일에 바로 쓰지 않는다. 기존 파일은 교체가 성공할 때까지 그대로 둔다.
-                if (!DxfExporter.ExportPlan(temp, plan, specTable: snapshot.Table))
+                if (!DxfExporter.ExportPlan(temp, plan, specTable: snapshot.Table,
+                        lengthNote: RouteLengthLabels.UnitNote))
                     throw new IOException("DXF 작성기가 저장을 완료하지 못했습니다.");
                 if (!File.Exists(temp) || new FileInfo(temp).Length == 0)
                     throw new IOException("DXF 임시 파일이 생성되지 않았습니다.");

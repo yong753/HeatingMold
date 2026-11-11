@@ -333,6 +333,13 @@ public:
     static void SetRouteEndpoints(array<double>^ xyzFlat);
     /// <summary>Update endpoint presentation without redraw; false reports presentation failure only.</summary>
     static bool SetRouteEndpointsNoRedraw(array<double>^ xyzFlat);
+    /// <summary>Replace the whole on-screen route length label set in one atomic presentation step.
+    /// anchors are flat xyz (3 per label), texts and rgb (3 per label) must match that count.
+    /// The labels are presentation only: they never change route geometry, lengths or picking.</summary>
+    static bool ReplaceRouteLengthLabels(long long id, long long revision,
+        array<double>^ anchors, array<System::String^>^ texts, array<double>^ rgb, double height);
+    /// <summary>Remove only the route length labels.</summary>
+    static void ClearRouteLengthLabels();
 
     // ---- 꼭지점 편집 오버레이 ----
     /// <summary>편집 핸들을 표시한다. 좌표는 표시 인덱스 순서의 flat xyz.</summary>

@@ -21,12 +21,24 @@ public static class DxfExporter
 
     public const string HiddenLayer = "HIDDEN_LINE";
     public const string ElectricalSpecLayer = "ELECTRICAL_SPEC";
+    public const string HeatLengthLabelLayer = "HEAT_LENGTH_LABEL";
+    public const string HeatLengthLeaderLayer = "HEAT_LENGTH_LEADER";
 
     private const string ElectricalSpecTextStyle = "ELECTRICAL_SPEC_TEXT";
+    private const string HeatLengthLabelTextStyle = "HEAT_LENGTH_LABEL_TEXT";
     private const string DimensionStyleName = "HEATINGMOLD_DIM";
 
     /// <summary>치수 문자 높이(mm).</summary>
     private const double DimensionTextHeight = 20.0;
+
+    /// <summary>
+    /// 경로 길이 라벨 문자 높이(mm). 레인 간격(기본 50mm) 안에서 인접 선을 가리지
+    /// 않으면서 읽히는 크기이며, 치수 문자 높이(20mm)와는 별개 정책이다.
+    /// </summary>
+    public const double RouteLengthLabelHeight = 8.0;
+
+    /// <summary>단위 안내를 금형 외곽 위쪽에 띄우는 거리(mm).</summary>
+    private const double UnitNoteOffset = 36.0;
 
     /// <summary>
     /// 표 배율 기준이 되는 모델 최대 치수(mm). 200mm당 1배.
@@ -46,7 +58,8 @@ public static class DxfExporter
     {
         var doc = CreateDocument(specTable, out Layer moldLayer, out Layer hiddenLayer,
             out Layer heatLayer, out Layer heatAreaLayer, out Layer dimLayer, out Layer? specLayer,
-            out TextStyle? specStyle, out DimensionStyle dimStyle);
+            out TextStyle? specStyle, out DimensionStyle dimStyle,
+            out Layer labelLayer, out TextStyle labelStyle);
 
         double cursorX = 0;
         double contentMaxY = 0;
@@ -66,6 +79,7 @@ public static class DxfExporter
             AddPolylines(doc, view.HiddenEdges, hiddenLayer, off);
             AddPolylines(doc, view.HeatBands, heatLayer, off);
             AddPolylines(doc, view.HeatLines, heatLayer, off);
+            AddRouteLabels(doc, view, labelLayer, labelStyle, off);
 
             double w = maxX - minX, h = maxY - minY;
             var wDim = new LinearDimension(
@@ -97,7 +111,7 @@ public static class DxfExporter
     /// DXF. The spec table is placed below both the drawing and its dimension lines.
     /// </summary>
     public static bool ExportPlan(string path, DxfView view,
-        ElectricalSpecTable? specTable = null, double dimOffset = 20)
+        ElectricalSpecTable? specTable = null, double dimOffset = 20, string? lengthNote = null)
     {
         if (view == null) return false;
         var all = view.AllPolylines().SelectMany(p => p.Points).ToList();
@@ -105,7 +119,8 @@ public static class DxfExporter
 
         var doc = CreateDocument(specTable, out Layer moldLayer, out Layer hiddenLayer,
             out Layer heatLayer, out Layer heatAreaLayer, out Layer dimLayer, out Layer? specLayer,
-            out TextStyle? specStyle, out DimensionStyle dimStyle);
+            out TextStyle? specStyle, out DimensionStyle dimStyle,
+            out Layer labelLayer, out TextStyle labelStyle);
 
         double minX = all.Min(v => v.X);
         double minY = all.Min(v => v.Y);
@@ -118,6 +133,7 @@ public static class DxfExporter
         AddPolylines(doc, view.HiddenEdges, hiddenLayer, off);
         AddPolylines(doc, view.HeatBands, heatLayer, off);
         AddPolylines(doc, view.HeatLines, heatLayer, off);
+        AddRouteLabels(doc, view, labelLayer, labelStyle, off);
 
         // 치수는 금형 외곽 투상선만 측정한다. 발열경로가 외곽을 벗어나도 금형 치수를
         // 오염시키지 않으며, 경로 길이는 전기 사양표의 커밋된 3D 길이를 쓴다.
@@ -133,6 +149,20 @@ public static class DxfExporter
             // 회전 90°에서 기준선이 아래→위이므로 양수 offset이 금형 왼쪽을 가리킨다.
             doc.Entities.Add(new LinearDimension(
                 new Vector2(moldMinX, moldMinY), new Vector2(moldMinX, moldMaxY), dimOffset, 90, dimStyle) { Layer = dimLayer });
+        }
+
+        // 단위는 경로마다 반복하지 않고 도면에 한 번만 적는다. 치수/전기표 위치를
+        // 바꾸지 않도록 금형 외곽 위쪽 여백에만 둔다.
+        if (!string.IsNullOrWhiteSpace(lengthNote))
+        {
+            double noteX = outline.Count > 0 ? outline.Min(v => v.X) : minX;
+            double noteY = (outline.Count > 0 ? outline.Max(v => v.Y) : maxY) + UnitNoteOffset;
+            doc.Entities.Add(new Text(lengthNote, new Vector2(noteX, noteY), RouteLengthLabelHeight)
+            {
+                Layer = labelLayer,
+                Style = labelStyle,
+                Alignment = TextAlignment.MiddleLeft
+            });
         }
 
         // 표는 모델 좌표와 같은 mm 단위이므로, 큰 모델에서 고정 크기로 두면
@@ -156,7 +186,8 @@ public static class DxfExporter
 
     private static DxfDocument CreateDocument(ElectricalSpecTable? specTable,
         out Layer moldLayer, out Layer hiddenLayer, out Layer heatLayer, out Layer heatAreaLayer,
-        out Layer dimLayer, out Layer? specLayer, out TextStyle? specStyle, out DimensionStyle dimStyle)
+        out Layer dimLayer, out Layer? specLayer, out TextStyle? specStyle, out DimensionStyle dimStyle,
+        out Layer labelLayer, out TextStyle labelStyle)
     {
         var doc = specTable == null ? new DxfDocument() : new DxfDocument(DxfVersion.AutoCad2010);
         moldLayer = new Layer(MoldOutlineLayer) { Color = AciColor.Cyan };
@@ -164,6 +195,9 @@ public static class DxfExporter
         heatLayer = new Layer(HeatWireLayer) { Color = AciColor.Red };
         heatAreaLayer = new Layer(HeatAreaLayer) { Color = AciColor.Default };
         dimLayer = new Layer(DimensionLayer) { Color = AciColor.Yellow };
+        // 경로 길이 숫자는 레이어 기본색을 쓰지 않고 소유 영역 색을 엔티티 색으로 준다.
+        labelLayer = new Layer(HeatLengthLabelLayer) { Color = AciColor.Default };
+        labelStyle = new TextStyle(HeatLengthLabelTextStyle, "malgun.ttf");
         // netDxf 기본 치수 스타일의 문자 높이는 0.18이라 사실상 읽을 수 없다.
         // 제품 평면도 기준으로 20mm 높이의 전용 스타일을 사용한다.
         dimStyle = new DimensionStyle(DimensionStyleName) { TextHeight = DimensionTextHeight };
@@ -173,6 +207,8 @@ public static class DxfExporter
         doc.Layers.Add(heatLayer);
         doc.Layers.Add(heatAreaLayer);
         doc.Layers.Add(dimLayer);
+        doc.Layers.Add(labelLayer);
+        doc.TextStyles.Add(labelStyle);
 
         specLayer = null;
         specStyle = null;
@@ -297,6 +333,62 @@ public static class DxfExporter
             doc.Entities.Add(poly);
         }
     }
+
+    /// <summary>
+    /// 경로 길이 라벨과 인출선을 출력한다. 형상 폴리라인은 자르지 않고 별도
+    /// 엔티티로만 추가하며, 라벨은 도면 bounds(DxfView.AllPolylines)에 포함하지
+    /// 않아 금형 치수와 전기표 위치를 바꾸지 않는다.
+    /// </summary>
+    private static void AddRouteLabels(DxfDocument doc, DxfView view, Layer labelLayer,
+        TextStyle labelStyle, Vec2 off)
+    {
+        foreach (DxfRouteLabel label in view.HeatLabels)
+        {
+            if (string.IsNullOrWhiteSpace(label.Text)) continue;
+            if (!double.IsFinite(label.Position.X) || !double.IsFinite(label.Position.Y)) continue;
+            if (!double.IsFinite(label.Height) || label.Height <= 0) continue;
+            if (!double.IsFinite(label.RotationDeg)) continue;
+            var text = new Text(label.Text,
+                new Vector2(label.Position.X + off.X, label.Position.Y + off.Y), label.Height)
+            {
+                Layer = labelLayer,
+                Style = labelStyle,
+                Alignment = TextAlignment.MiddleCenter,
+                Rotation = label.RotationDeg
+            };
+            if (label.Color != null) text.Color = label.Color;
+            doc.Entities.Add(text);
+        }
+
+        foreach (DxfPolyline leader in view.HeatLabelLeaders)
+        {
+            if (leader.Points.Count < 2) continue;
+            var line = new Line(
+                new Vector2(leader.Points[0].X + off.X, leader.Points[0].Y + off.Y),
+                new Vector2(leader.Points[1].X + off.X, leader.Points[1].Y + off.Y))
+            { Layer = labelLayer };
+            if (leader.Color != null) line.Color = leader.Color;
+            doc.Entities.Add(line);
+        }
+    }
+}
+
+/// <summary>
+/// DXF 길이 라벨. 값은 이미 확정된 실제 3D 경로 길이이고, 위치/회전/높이는
+/// 표시 전용이다. HasLeader이면 LeaderStart→LeaderEnd 짧은 인출선을 함께 쓴다.
+/// </summary>
+public sealed class DxfRouteLabel
+{
+    public string Text { get; init; } = string.Empty;
+    public Vec2 Position { get; init; }
+    public double RotationDeg { get; init; }
+    public double Height { get; init; } = DxfExporter.RouteLengthLabelHeight;
+    public bool HasLeader { get; init; }
+    public Vec2 LeaderStart { get; init; }
+    public Vec2 LeaderEnd { get; init; }
+
+    /// <summary>엔티티 색상. null이면 레이어 색상을 사용한다.</summary>
+    public AciColor? Color { get; set; }
 }
 
 /// <summary>DXF 2D polyline (points + closed flag).</summary>
@@ -317,6 +409,12 @@ public sealed class DxfView
     public List<DxfPolyline> HeatAreas { get; } = new();
     public List<DxfPolyline> HeatLines { get; } = new();
     public List<DxfPolyline> HeatBands { get; } = new();
+
+    /// <summary>경로 길이 라벨. AllPolylines에는 포함하지 않는다(도면 bounds 불변).</summary>
+    public List<DxfRouteLabel> HeatLabels { get; } = new();
+
+    /// <summary>라벨 인출선. 형상 폴리라인과 분리해 별도 레이어로 출력한다.</summary>
+    public List<DxfPolyline> HeatLabelLeaders { get; } = new();
 
     public IEnumerable<DxfPolyline> AllPolylines()
     {

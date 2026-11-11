@@ -148,6 +148,21 @@ public partial class MainWindow
                 _nextAreaId = Math.Max(_nextAreaId, _areas.Count == 0 ? 1 : _areas.Max(a => a.AreaId) + 1);
 
                 ApplyAreaColors();
+                // 길이 라벨은 복원된 확정 체인에서 다시 만든다. 라벨 표시 실패는
+                // 이미 커밋된 경로 복원을 되돌리는 이유가 아니므로 경고로만 남긴다.
+                try
+                {
+                    if (!TryReplaceRouteLengthLabels(_workingSide.Confirmed, out string labelFailure))
+                    {
+                        _routePresentationWarning = labelFailure;
+                        try { Bridge.ClearRouteLengthLabels(); } catch (Exception) { }
+                    }
+                }
+                catch (Exception labelException)
+                {
+                    _routePresentationWarning = labelException.Message;
+                    try { Bridge.ClearRouteLengthLabels(); } catch (Exception) { }
+                }
                 WorkingArea active = _areas.FirstOrDefault(a => a.AreaId == document.ActiveAreaId) ?? _areas.FirstOrDefault();
                 ActivateArea(active);
                 RefreshAreaList();
@@ -163,6 +178,8 @@ public partial class MainWindow
                 StatusText.Text = string.Format(
                     "프로젝트 열기 완료 — {0} · 영역 {1}개 · 모델 r{2}",
                     Path.GetFileName(projectPath), _areas.Count, context.Revision);
+                if (_routePresentationWarning != null)
+                    StatusText.Text += " · 경고: 경로 길이 라벨을 표시하지 못했습니다";
                 UpdateActionStates();
                 ReturnToAreaTab();
                 return true;

@@ -404,6 +404,7 @@ public class DxfExporterTests
     public void ExportPlan_WritesEachHeatRouteWithItsOwnColor()
     {
         var view = new DxfView();
+
         view.VisibleEdges.Add(new DxfPolyline
         {
             Points = new[]
@@ -435,6 +436,130 @@ public class DxfExporterTests
             Assert.Equal(2, lines.Count);
             Assert.Contains(lines, l => l.Color.R == 255 && l.Color.G == 0 && l.Color.B == 0);
             Assert.Contains(lines, l => l.Color.R == 0 && l.Color.G == 0 && l.Color.B == 255);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void ExportPlan_WritesRouteLengthLabelsOnDedicatedLayer()
+    {
+        var view = new DxfView();
+        view.VisibleEdges.Add(new DxfPolyline
+        {
+            Points = new[]
+            {
+                new Vec2(0, 0), new Vec2(1200, 0), new Vec2(1200, 600), new Vec2(0, 600)
+            },
+            Closed = true
+        });
+        view.HeatLines.Add(new DxfPolyline
+        {
+            Points = new[] { new Vec2(100, 300), new Vec2(1100, 300) },
+            Color = new AciColor(255, 0, 0)
+        });
+        view.HeatLabels.Add(new DxfRouteLabel
+        {
+            Text = "1000.0",
+            Position = new Vec2(600, 306),
+            RotationDeg = 0,
+            Color = new AciColor(255, 0, 0)
+        });
+        view.HeatLabels.Add(new DxfRouteLabel
+        {
+            Text = "50.0",
+            Position = new Vec2(1130, 330),
+            RotationDeg = 90,
+            HasLeader = true,
+            LeaderStart = new Vec2(1100, 300),
+            LeaderEnd = new Vec2(1130, 326)
+        });
+        view.HeatLabelLeaders.Add(new DxfPolyline
+        {
+            Points = new[] { new Vec2(1100, 300), new Vec2(1130, 326) }
+        });
+
+        string path = Path.Combine(Path.GetTempPath(),
+            "hm_length_label_" + Guid.NewGuid().ToString("N") + ".dxf");
+        try
+        {
+            Assert.True(DxfExporter.ExportPlan(path, view, lengthNote: RouteLengthLabels.UnitNote));
+
+            DxfDocument doc = DxfDocument.Load(path);
+            Assert.True(doc.Layers.Contains(DxfExporter.HeatLengthLabelLayer));
+
+            List<Text> labels = doc.Entities.All.OfType<Text>()
+                .Where(t => t.Layer.Name == DxfExporter.HeatLengthLabelLayer).ToList();
+
+            Text lane = labels.Single(t => t.Value == "1000.0");
+            Assert.Equal(DxfExporter.RouteLengthLabelHeight, lane.Height, 6);
+            Assert.Equal(TextAlignment.MiddleCenter, lane.Alignment);
+            Assert.Equal(600, lane.Position.X, 6);
+            Assert.Equal(306, lane.Position.Y, 6);
+            Assert.Equal(255, lane.Color.R);
+            Assert.Equal(0, lane.Color.G);
+
+            Text turn = labels.Single(t => t.Value == "50.0");
+            Assert.Equal(90, turn.Rotation, 6);
+
+            // 단위는 라벨마다 반복하지 않고 도면에 한 번만 적는다.
+            Assert.Single(labels.Where(t => t.Value == RouteLengthLabels.UnitNote));
+
+            Line leader = Assert.Single(doc.Entities.All.OfType<Line>()
+                .Where(l => l.Layer.Name == DxfExporter.HeatLengthLabelLayer));
+            Assert.Equal(1100, leader.StartPoint.X, 6);
+            Assert.Equal(326, leader.EndPoint.Y, 6);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void ExportPlan_KeepsDimensionsAndTableIndependentOfLabels()
+    {
+        var table = ElectricalSpecTableBuilder.Build(
+            new[] { new ElectricalCircuitInput("A-1", 20000) },
+            HeatingWireSpec.Case1, new PowerSupplySpec());
+        var view = new DxfView();
+        view.VisibleEdges.Add(new DxfPolyline
+        {
+            Points = new[]
+            {
+                new Vec2(0, 0), new Vec2(1200, 0), new Vec2(1200, 600), new Vec2(0, 600)
+            },
+            Closed = true
+        });
+        view.HeatLines.Add(new DxfPolyline
+        {
+            Points = new[] { new Vec2(100, 100), new Vec2(1100, 100) }
+        });
+        // 도면 밖으로 나가는 라벨도 금형 치수와 전기표 위치를 바꾸면 안 된다.
+        view.HeatLabels.Add(new DxfRouteLabel
+        {
+            Text = "1000.0",
+            Position = new Vec2(600, 5000),
+            RotationDeg = 0
+        });
+
+        string path = Path.Combine(Path.GetTempPath(),
+            "hm_length_label_bounds_" + Guid.NewGuid().ToString("N") + ".dxf");
+        try
+        {
+            Assert.True(DxfExporter.ExportPlan(path, view, table));
+
+            DxfDocument doc = DxfDocument.Load(path);
+            List<AlignedDimension> dims = doc.Entities.All.OfType<AlignedDimension>().ToList();
+            Assert.Equal(2, dims.Count);
+            Assert.Contains(dims, d => Math.Abs(d.Measurement - 1200) < 1e-6);
+            Assert.Contains(dims, d => Math.Abs(d.Measurement - 600) < 1e-6);
+            Assert.All(dims, d => Assert.Equal(20.0, d.Style.TextHeight, 6));
+
+            Text title = doc.Entities.All.OfType<Text>().Single(t => t.Value == "전기 사양표");
+            Assert.True(title.Position.Y < -20, "표 제목이 치수선 아래에 있어야 합니다.");
         }
         finally
         {

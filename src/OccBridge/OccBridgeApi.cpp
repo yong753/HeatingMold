@@ -90,6 +90,7 @@
 #include <Geom_CartesianPoint.hxx>
 #include <AIS_InteractiveObject.hxx>
 #include <AIS_RubberBand.hxx>
+#include <AIS_TextLabel.hxx>
 #include <WNT_Window.hxx>
 #include <Quantity_Color.hxx>
 #include <Graphic3d_ZLayerId.hxx>
@@ -351,9 +352,17 @@ namespace
     std::map<int, std::pair<long long,long long>> g_stagedWorkingRouteOwners;
     // 발열 경로 인출점/끝점 마커. 경로를 지울 때 함께 제거한다.
     std::vector<Handle(AIS_Point)> g_routeEndpointMarkers;
+    // 화면 표시 전용 경로 길이 라벨. 경로 형상/길이/픽킹과 분리해서 관리한다.
+    struct RouteLengthLabelOverlay {
+        Handle(AIS_TextLabel) label;
+        long long contextId = 0, revision = 0;
+    };
+    std::map<int, RouteLengthLabelOverlay> g_routeLengthLabels;
     std::set<int> g_hoveredCircuitPieces;
     void HighlightCircuitNative(const std::vector<int>& ids);
     void ClearRouteEndpointMarkersNative();
+    // 경로 길이 라벨 (WorkingSideNative.inc에서 정의, 이 파일 뒤쪽에 include됨)
+    void ClearRouteLengthLabelsNative();
     // 꼭지점 편집 오버레이 (WorkingSideNative.inc에서 정의, 이 파일 뒤쪽에 include됨)
     void ClearVertexHandlesNative();
     void ClearRoutePreviewNative();
@@ -2762,6 +2771,7 @@ namespace
         ClearRouteEndpointMarkersNative();
         ClearVertexHandlesNative();
         ClearRoutePreviewNative();
+        ClearRouteLengthLabelsNative();
         if (!g_ctx.IsNull()) for (const auto& piece : g_routePieces) g_ctx->Remove(piece.second.ais, Standard_False);
         g_routePieces.clear();
         g_stagedWorkingRouteOwners.clear();
@@ -4561,6 +4571,30 @@ bool Bridge::SetRoutePieceColors(long long id, long long revision, array<int>^ p
 }
 
 void Bridge::ClearRoutePieces() { ClearRoutePiecesNative(); if (!g_view.IsNull()) g_view->Redraw(); }
+
+bool Bridge::ReplaceRouteLengthLabels(long long id, long long revision,
+    array<double>^ anchors, array<System::String^>^ texts, array<double>^ rgb, double height)
+{
+    if (anchors == nullptr || texts == nullptr || rgb == nullptr) return false;
+    std::vector<double> anchorValues((size_t)anchors->Length);
+    std::vector<double> colorValues((size_t)rgb->Length);
+    for (int i = 0; i < anchors->Length; ++i) anchorValues[(size_t)i] = anchors[i];
+    for (int i = 0; i < rgb->Length; ++i) colorValues[(size_t)i] = rgb[i];
+    std::vector<std::string> labelTexts;
+    labelTexts.reserve((size_t)texts->Length);
+    for (int i = 0; i < texts->Length; ++i) {
+        if (texts[i] == nullptr) return false;
+        System::String^ text = texts[i];
+        labelTexts.push_back(msclr::interop::marshal_as<std::string>(text));
+    }
+    return ReplaceRouteLengthLabelsNative(id, revision, anchorValues, labelTexts, colorValues, height);
+}
+
+void Bridge::ClearRouteLengthLabels()
+{
+    ClearRouteLengthLabelsNative();
+    if (!g_view.IsNull()) g_view->Redraw();
+}
 
 bool Bridge::SetVertexHandles(long long id, long long revision, array<double>^ xyzFlat)
 {

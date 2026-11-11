@@ -1407,3 +1407,74 @@ bool RestoreWorkingPresentationNative(long long id)
         return true;
     } catch (const Standard_Failure&) { return false; }
 }
+
+// 화면 표시 전용 경로 길이 라벨. 경로 형상/길이/픽킹에는 관여하지 않는다.
+void ClearRouteLengthLabelsNative()
+{
+    if (!g_ctx.IsNull())
+        for (const auto& entry : g_routeLengthLabels) g_ctx->Remove(entry.second.label,Standard_False);
+    g_routeLengthLabels.clear();
+}
+
+// 라벨 교체 결과를 OCC 로그에 남긴다. 화면 표시가 조용히 비지 않도록 확인할 수 있게 한다.
+static void LogRouteLengthLabelsNative(size_t count,const char* outcome)
+{
+    char path[MAX_PATH] = { 0 };
+    const DWORD length = ::GetEnvironmentVariableA("HEATINGMOLD_OCC_LOG", path, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) return;
+    std::ofstream log(path, std::ios::app);
+    if (!log) return;
+    log << "route-length-labels: " << outcome << " count=" << count << "\n";
+}
+
+bool ReplaceRouteLengthLabelsNative(long long contextId, long long revision,
+    const std::vector<double>& anchors, const std::vector<std::string>& texts,
+    const std::vector<double>& rgb, double height)
+{
+    if (!std::isfinite(height) || height<=0.0) return false;
+    if (anchors.size()%3!=0) return false;
+    const size_t count=texts.size();
+    if (anchors.size()!=count*3 || rgb.size()!=count*3) return false;
+    for (const double value : anchors) if (!std::isfinite(value)) return false;
+    for (const double value : rgb) {
+        if (!std::isfinite(value) || value<0.0 || value>1.0) return false;
+    }
+    if (!FindWorking(contextId,revision)) return false;
+    if (count==0) { ClearRouteLengthLabelsNative(); return true; }
+    if (g_ctx.IsNull()) return false;
+
+    std::map<int,RouteLengthLabelOverlay> next;
+    try {
+        for (size_t i=0;i<count;++i) {
+            if (texts[i].empty()) {
+                for (const auto& entry : next) g_ctx->Remove(entry.second.label,Standard_False);
+                return false;
+            }
+            Handle(AIS_TextLabel) label=new AIS_TextLabel();
+            label->SetText(TCollection_ExtendedString(texts[i].c_str()));
+            label->SetPosition(gp_Pnt(anchors[i*3],anchors[i*3+1],anchors[i*3+2]));
+            label->SetHJustification(Graphic3d_HTA_CENTER);
+            label->SetVJustification(Graphic3d_VTA_CENTER);
+            label->SetZoomable(Standard_True);
+            label->SetHeight(height);
+            label->SetColor(Quantity_Color(rgb[i*3],rgb[i*3+1],rgb[i*3+2],Quantity_TOC_RGB));
+            RouteLengthLabelOverlay overlay;
+            overlay.label=label;
+            overlay.contextId=contextId;
+            overlay.revision=revision;
+            next.emplace((int)i,overlay);
+            g_ctx->Display(label,Standard_False);
+            g_ctx->SetZLayer(label,Graphic3d_ZLayerId_Topmost);
+            g_ctx->Deactivate(label,Standard_False);
+        }
+    } catch (const Standard_Failure&) {
+        try {
+            for (const auto& entry : next) g_ctx->Remove(entry.second.label,Standard_False);
+        } catch (const Standard_Failure&) {}
+        return false;
+    }
+    ClearRouteLengthLabelsNative();
+    g_routeLengthLabels.swap(next);
+    LogRouteLengthLabelsNative(count,"replaced");
+    return true;
+}

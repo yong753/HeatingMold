@@ -13,7 +13,8 @@ public partial class MainWindow
 {
     /// <summary>내보내기용 확정 조각 하나. 좌표는 확정된 실제 3D 체인이다.</summary>
     private sealed record DxfPlanPieceExport(
-        string AreaName, int PieceIndex, int NativePieceId, bool Connector,
+        string AreaName, int PieceIndex, int NativePieceId,
+        SerpentineRoutePieceKind Kind, int LaneIndex, double LengthMm,
         IReadOnlyList<Vec3> Points, byte ColorR, byte ColorG, byte ColorB);
 
     /// <summary>내보내기용 확정 회로 하나. 조각 순서는 회로 정본과 같다.</summary>
@@ -63,9 +64,15 @@ public partial class MainWindow
         error = null;
         var circuits = new List<DxfPlanCircuitExport>();
         var usedNativeIds = new HashSet<int>();
+        var usedAreaNames = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (WorkingArea area in snapshot.ReadyAreas)
         {
+            if (string.IsNullOrEmpty(area.Name) || !usedAreaNames.Add(area.Name))
+            {
+                error = "영역 이름 " + (area.Name ?? "") + "이 비었거나 중복되어 내보낼 수 없습니다.";
+                return null;
+            }
             if (!TryValidateAreaRouteIndex(area, usedNativeIds, out error)) return null;
 
             var pieces = area.Pattern.RoutePieces;
@@ -144,7 +151,9 @@ public partial class MainWindow
                 }
                 circuitPieces.Add(new DxfPlanPieceExport(
                     area.Name, index, area.NativePieceIds[index],
-                    area.Pattern.RoutePieces[index].Kind != SerpentineRoutePieceKind.HeatingRun,
+                    area.Pattern.RoutePieces[index].Kind,
+                    area.Pattern.RoutePieces[index].LaneIndex,
+                    area.RoutePieceLengths[index],
                     points, area.Color.R, area.Color.G, area.Color.B));
             }
             circuits.Add(new DxfPlanCircuitExport(prefix + "1", circuitPieces));
@@ -178,6 +187,23 @@ public partial class MainWindow
         {
             error = "영역 " + area.Name + "의 회로와 조각 대응이 일치하지 않습니다.";
             return false;
+        }
+        // 길이 라벨은 확정된 실제 3D 길이를 그대로 쓴다. 표시할 수 없는 값은
+        // 라벨을 조용히 빼지 않고 내보내기 실패로 알린다.
+        for (int index = 0; index < count; index++)
+        {
+            double length = area.RoutePieceLengths[index];
+            if (!double.IsFinite(length) || length < 0)
+            {
+                error = "영역 " + area.Name + " 조각 " + (index + 1) + "의 확정 길이가 유효하지 않습니다.";
+                return false;
+            }
+            if (area.Pattern.RoutePieces[index].Kind != SerpentineRoutePieceKind.FixedConnector
+                && length <= 0)
+            {
+                error = "영역 " + area.Name + " 조각 " + (index + 1) + "의 확정 길이가 0입니다.";
+                return false;
+            }
         }
         return true;
     }
@@ -280,6 +306,9 @@ public partial class MainWindow
         ProjectionFrame frame, out string error)
     {
         error = null;
+        var sources = new List<RouteLengthLabelSource>();
+        var piecesByKey = new Dictionary<(string AreaName, int PieceIndex), DxfPlanPieceExport>();
+
         foreach (DxfPlanCircuitExport circuit in circuits)
         {
             foreach (DxfPlanPieceExport piece in circuit.Pieces)
@@ -297,12 +326,61 @@ public partial class MainWindow
                     Points = projected.ToList(),
                     Color = new AciColor(piece.ColorR, piece.ColorG, piece.ColorB)
                 });
+                // 인출점 리드(FixedConnector)는 레인도 턴도 아니므로 길이 라벨 대상이 아니다.
+                // 다만 배치 충돌 검사에는 그대로 참여한다.
+                if (piece.Kind == SerpentineRoutePieceKind.FixedConnector) continue;
+                sources.Add(new RouteLengthLabelSource(
+                    piece.AreaName, piece.PieceIndex, piece.Kind, piece.LaneIndex,
+                    piece.LengthMm, projected));
+                piecesByKey[(piece.AreaName, piece.PieceIndex)] = piece;
             }
         }
         if (view.HeatLines.Count == 0)
         {
             error = "평면도에 출력할 발열경로가 없습니다.";
             return false;
+        }
+
+        // 라벨 값은 확정된 실제 3D 길이이고, 배치만 확정 작업평면 2D 좌표를 쓴다.
+        var options = new RouteLengthLabelOptions
+        {
+            OffsetMm = 6.0,
+            TextHeightMm = DxfExporter.RouteLengthLabelHeight
+        };
+        if (!RouteLengthLabels.TryBuild(sources, frame, options,
+                out List<RouteLengthLabel> labels, out string labelFailure))
+        {
+            error = "경로 길이 라벨을 배치하지 못했습니다: " + labelFailure;
+            return false;
+        }
+        foreach (RouteLengthLabel label in labels)
+        {
+            if (!piecesByKey.TryGetValue((label.AreaName, label.PieceIndex), out DxfPlanPieceExport piece))
+            {
+                error = "경로 길이 라벨의 원본 조각을 찾지 못했습니다: 영역 " + label.AreaName
+                    + " 조각 " + (label.PieceIndex + 1) + ".";
+                return false;
+            }
+            var color = new AciColor(piece.ColorR, piece.ColorG, piece.ColorB);
+            view.HeatLabels.Add(new DxfRouteLabel
+            {
+                Text = label.Text,
+                Position = label.Position2D,
+                RotationDeg = label.RotationDeg,
+                Height = DxfExporter.RouteLengthLabelHeight,
+                HasLeader = label.HasLeader,
+                LeaderStart = label.LeaderStart2D,
+                LeaderEnd = label.LeaderEnd2D,
+                Color = color
+            });
+            if (label.HasLeader)
+            {
+                view.HeatLabelLeaders.Add(new DxfPolyline
+                {
+                    Points = new[] { label.LeaderStart2D, label.LeaderEnd2D },
+                    Color = color
+                });
+            }
         }
         return true;
     }
