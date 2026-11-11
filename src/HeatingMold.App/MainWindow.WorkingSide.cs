@@ -41,7 +41,10 @@ public partial class MainWindow
         bool committed = false;
         try
         {
-            var x = Math.Abs(n.X) < .9 ? new Vec3(1,0,0) : new Vec3(0,1,0);
+            // For a ±X working normal keep world +Y as the screen-up direction.
+            var x = Math.Abs(n.X) < .9
+                ? new Vec3(1,0,0)
+                : new Vec3(0, 0, n.X > 0 ? -1 : 1);
             context = Bridge.CreateWorkingContext(n.X,n.Y,n.Z,x.X,x.Y,x.Z);
             if (context == null) throw new InvalidOperationException("전체 모델 작업 방향 구성 실패");
             var f = context.Frame;
