@@ -55,13 +55,13 @@ namespace HeatingMold.App
         }
 
         /// <summary>
-        /// 기본 로드 모델 경로. Mold_Solids.stp = 구 Mold.stp 에서 자유 곡면 바디
-        /// (SURFACE.135 / SURFACE.142)를 제품 구조에서 분리한 파일. 솔리드 30개 / 574면만
-        /// 로드되어 중복 면이 없다. 구 원본 Mold.stp는 저장소에서 제거되었다.
+        /// 기본 예제 모델 경로. Mold_Cover_Trim.step = 제품 STEP 의 YZ 외곽을 100 mm 확장한
+        /// 프리즘으로 자른 Mold 셸(열린 셸 1개 / 80면 / 958,841.060 mm²). 가열면은 +X 로
+        /// 사용자 확정. 원본 STEP 좌표는 이동하지 않고, 작업 프레임만 예제 프리셋으로 고정한다.
         /// </summary>
         public static string FindMoldStp()
         {
-            string[] candidates = { "Mold_Solids.stp" };
+            string[] candidates = { "Mold_Cover_Trim.step" };
             foreach (string name in candidates)
             {
                 if (RepoRoot != null)

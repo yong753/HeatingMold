@@ -13,10 +13,10 @@
     <RootNamespace>HeatingMold.App</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <!-- 기본 로드 STEP: 솔리드 30개 / 574면 (중복 면 0).
-         생성 스크립트: tools/step-cleanup/remove-surface-bodies.ps1 -->
-    <Content Include="..\..\resource\Mold_Solids.stp">
-      <Link>resource\Mold_Solids.stp</Link>
+    <!-- 기본 예제 STEP: 열린 셸 1개 / 80면 / 958,841.060 mm². 가열면 +X (사용자 확정).
+         작업 프레임은 ExampleModelPresets 가 파일 해시로 지정한다. -->
+    <Content Include="..\..\resource\Mold_Cover_Trim.step">
+      <Link>resource\Mold_Cover_Trim.step</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

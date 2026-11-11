@@ -340,7 +340,13 @@ namespace HeatingMold.App
             var info = Bridge.GetShapeInfo();
             StatusText.Text = string.Format("{0} — 솔리드 {1} · 셸 {2} · 면 {3} · 평면 {4} · 로드 {5}ms",
                 Path.GetFileName(path), info.Solids, info.Shells, info.Faces, info.Planes, sw.ElapsedMilliseconds);
-            ApplyWorkingSide(new Vec3(0,0,1));
+            // 기본은 +Z. 예제 프리셋이 있는 모델은 그 작업 법선을 쓴다
+            // (Mold_Cover_Trim.step → +X 가열면). 파일 해시로 판별하므로
+            // '예제 열기'와 'STEP 열기'가 같은 좌표를 쓴다.
+            var workingNormal = new Vec3(0, 0, 1);
+            if (ExampleModelPresets.TryGetWorkingNormal(path, out var presetNormal))
+                workingNormal = presetNormal;
+            ApplyWorkingSide(workingNormal);
             UpdateActionStates();
             ReturnToAreaTab();
         }
