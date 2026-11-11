@@ -1412,7 +1412,10 @@ bool RestoreWorkingPresentationNative(long long id)
 void ClearRouteLengthLabelsNative()
 {
     if (!g_ctx.IsNull())
-        for (const auto& entry : g_routeLengthLabels) g_ctx->Remove(entry.second.label,Standard_False);
+        for (const auto& entry : g_routeLengthLabels) {
+            g_ctx->Remove(entry.second.label,Standard_False);
+            if (!entry.second.leader.IsNull()) g_ctx->Remove(entry.second.leader,Standard_False);
+        }
     g_routeLengthLabels.clear();
 }
 
@@ -1429,13 +1432,16 @@ static void LogRouteLengthLabelsNative(size_t count,const char* outcome)
 
 bool ReplaceRouteLengthLabelsNative(long long contextId, long long revision,
     const std::vector<double>& anchors, const std::vector<std::string>& texts,
-    const std::vector<double>& rgb, double height)
+    const std::vector<double>& rgb, double height,
+    const std::vector<double>& leaders, const std::vector<char>& hasLeader)
 {
     if (!std::isfinite(height) || height<=0.0) return false;
     if (anchors.size()%3!=0) return false;
     const size_t count=texts.size();
     if (anchors.size()!=count*3 || rgb.size()!=count*3) return false;
+    if (leaders.size()!=count*6 || hasLeader.size()!=count) return false;
     for (const double value : anchors) if (!std::isfinite(value)) return false;
+    for (const double value : leaders) if (!std::isfinite(value)) return false;
     for (const double value : rgb) {
         if (!std::isfinite(value) || value<0.0 || value>1.0) return false;
     }
@@ -1443,13 +1449,24 @@ bool ReplaceRouteLengthLabelsNative(long long contextId, long long revision,
     if (count==0) { ClearRouteLengthLabelsNative(); return true; }
     if (g_ctx.IsNull()) return false;
 
+    // 준비가 끝난 뒤에만 기존 라벨을 바꾼다. 중간 실패는 새로 만든 것만 지우고 이전 표시를 남긴다.
+    auto discard = [&](const std::map<int,RouteLengthLabelOverlay>& created) {
+        for (const auto& entry : created) {
+            try { g_ctx->Remove(entry.second.label,Standard_False); } catch (const Standard_Failure&) {}
+            if (!entry.second.leader.IsNull()) {
+                try { g_ctx->Remove(entry.second.leader,Standard_False); } catch (const Standard_Failure&) {}
+            }
+        }
+    };
+
     std::map<int,RouteLengthLabelOverlay> next;
     try {
         for (size_t i=0;i<count;++i) {
             if (texts[i].empty()) {
-                for (const auto& entry : next) g_ctx->Remove(entry.second.label,Standard_False);
+                discard(next);
                 return false;
             }
+            const Quantity_Color color(rgb[i*3],rgb[i*3+1],rgb[i*3+2],Quantity_TOC_RGB);
             Handle(AIS_TextLabel) label=new AIS_TextLabel();
             label->SetText(TCollection_ExtendedString(texts[i].c_str()));
             label->SetPosition(gp_Pnt(anchors[i*3],anchors[i*3+1],anchors[i*3+2]));
@@ -1457,20 +1474,30 @@ bool ReplaceRouteLengthLabelsNative(long long contextId, long long revision,
             label->SetVJustification(Graphic3d_VTA_CENTER);
             label->SetZoomable(Standard_True);
             label->SetHeight(height);
-            label->SetColor(Quantity_Color(rgb[i*3],rgb[i*3+1],rgb[i*3+2],Quantity_TOC_RGB));
+            label->SetColor(color);
             RouteLengthLabelOverlay overlay;
             overlay.label=label;
             overlay.contextId=contextId;
             overlay.revision=revision;
+            if (hasLeader[i]!=0) {
+                Handle(AIS_Line) leader=new AIS_Line(
+                    new Geom_CartesianPoint(gp_Pnt(leaders[i*6],leaders[i*6+1],leaders[i*6+2])),
+                    new Geom_CartesianPoint(gp_Pnt(leaders[i*6+3],leaders[i*6+4],leaders[i*6+5])));
+                leader->SetColor(color);
+                overlay.leader=leader;
+            }
             next.emplace((int)i,overlay);
             g_ctx->Display(label,Standard_False);
             g_ctx->SetZLayer(label,Graphic3d_ZLayerId_Topmost);
             g_ctx->Deactivate(label,Standard_False);
+            if (!overlay.leader.IsNull()) {
+                g_ctx->Display(overlay.leader,Standard_False);
+                g_ctx->SetZLayer(overlay.leader,Graphic3d_ZLayerId_Topmost);
+                g_ctx->Deactivate(overlay.leader,Standard_False);
+            }
         }
     } catch (const Standard_Failure&) {
-        try {
-            for (const auto& entry : next) g_ctx->Remove(entry.second.label,Standard_False);
-        } catch (const Standard_Failure&) {}
+        discard(next);
         return false;
     }
     ClearRouteLengthLabelsNative();

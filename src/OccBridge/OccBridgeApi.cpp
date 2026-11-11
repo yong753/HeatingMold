@@ -91,6 +91,7 @@
 #include <AIS_InteractiveObject.hxx>
 #include <AIS_RubberBand.hxx>
 #include <AIS_TextLabel.hxx>
+#include <AIS_Line.hxx>
 #include <WNT_Window.hxx>
 #include <Quantity_Color.hxx>
 #include <Graphic3d_ZLayerId.hxx>
@@ -353,8 +354,10 @@ namespace
     // 발열 경로 인출점/끝점 마커. 경로를 지울 때 함께 제거한다.
     std::vector<Handle(AIS_Point)> g_routeEndpointMarkers;
     // 화면 표시 전용 경로 길이 라벨. 경로 형상/길이/픽킹과 분리해서 관리한다.
+    // leader는 라벨을 경로선에 연결하는 짧은 선이며 라벨과 함께 교체·삭제된다.
     struct RouteLengthLabelOverlay {
         Handle(AIS_TextLabel) label;
+        Handle(AIS_Line) leader;
         long long contextId = 0, revision = 0;
     };
     std::map<int, RouteLengthLabelOverlay> g_routeLengthLabels;
@@ -4573,13 +4576,20 @@ bool Bridge::SetRoutePieceColors(long long id, long long revision, array<int>^ p
 void Bridge::ClearRoutePieces() { ClearRoutePiecesNative(); if (!g_view.IsNull()) g_view->Redraw(); }
 
 bool Bridge::ReplaceRouteLengthLabels(long long id, long long revision,
-    array<double>^ anchors, array<System::String^>^ texts, array<double>^ rgb, double height)
+    array<double>^ anchors, array<System::String^>^ texts, array<double>^ rgb, double height,
+    array<double>^ leaders, array<bool>^ hasLeader)
 {
     if (anchors == nullptr || texts == nullptr || rgb == nullptr) return false;
+    if (leaders == nullptr || hasLeader == nullptr) return false;
+    if (leaders->Length != texts->Length * 6 || hasLeader->Length != texts->Length) return false;
     std::vector<double> anchorValues((size_t)anchors->Length);
     std::vector<double> colorValues((size_t)rgb->Length);
+    std::vector<double> leaderValues((size_t)leaders->Length);
+    std::vector<char> leaderFlags((size_t)hasLeader->Length);
     for (int i = 0; i < anchors->Length; ++i) anchorValues[(size_t)i] = anchors[i];
     for (int i = 0; i < rgb->Length; ++i) colorValues[(size_t)i] = rgb[i];
+    for (int i = 0; i < leaders->Length; ++i) leaderValues[(size_t)i] = leaders[i];
+    for (int i = 0; i < hasLeader->Length; ++i) leaderFlags[(size_t)i] = hasLeader[i] ? 1 : 0;
     std::vector<std::string> labelTexts;
     labelTexts.reserve((size_t)texts->Length);
     for (int i = 0; i < texts->Length; ++i) {
@@ -4587,7 +4597,8 @@ bool Bridge::ReplaceRouteLengthLabels(long long id, long long revision,
         System::String^ text = texts[i];
         labelTexts.push_back(msclr::interop::marshal_as<std::string>(text));
     }
-    return ReplaceRouteLengthLabelsNative(id, revision, anchorValues, labelTexts, colorValues, height);
+    return ReplaceRouteLengthLabelsNative(id, revision, anchorValues, labelTexts, colorValues, height,
+        leaderValues, leaderFlags);
 }
 
 void Bridge::ClearRouteLengthLabels()

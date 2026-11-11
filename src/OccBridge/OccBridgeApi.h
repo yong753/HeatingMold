@@ -335,9 +335,11 @@ public:
     static bool SetRouteEndpointsNoRedraw(array<double>^ xyzFlat);
     /// <summary>Replace the whole on-screen route length label set in one atomic presentation step.
     /// anchors are flat xyz (3 per label), texts and rgb (3 per label) must match that count.
+    /// leaders are flat xyz pairs (6 per label, start then end) and hasLeader selects which are drawn.
     /// The labels are presentation only: they never change route geometry, lengths or picking.</summary>
     static bool ReplaceRouteLengthLabels(long long id, long long revision,
-        array<double>^ anchors, array<System::String^>^ texts, array<double>^ rgb, double height);
+        array<double>^ anchors, array<System::String^>^ texts, array<double>^ rgb, double height,
+        array<double>^ leaders, array<bool>^ hasLeader);
     /// <summary>Remove only the route length labels.</summary>
     static void ClearRouteLengthLabels();
 

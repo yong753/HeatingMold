@@ -7,8 +7,16 @@ namespace HeatingMold.App;
 
 public partial class MainWindow
 {
-    /// <summary>화면 길이 라벨의 고정 문자 높이(화면 픽셀).</summary>
+    /// <summary>
+    /// 화면 길이 라벨의 문자 높이. 모델 좌표계 mm이며 화면 픽셀이 아니다.
+    /// 배치 계산과 실제 표시가 같은 값을 써야 충돌 판정과 화면이 어긋나지 않는다.
+    /// </summary>
     private const double RouteLengthLabelScreenHeight = 16.0;
+
+    /// <summary>
+    /// 라벨을 경로선에서 띄우는 거리. 문자 높이의 절반보다 커야 글자가 경로선을 덮지 않는다.
+    /// </summary>
+    private const double RouteLengthLabelScreenOffset = RouteLengthLabelScreenHeight * 0.75;
 
     /// <summary>
     /// 표시 중인 모든 확정 영역의 길이 라벨을 한 번에 교체한다.
@@ -93,7 +101,11 @@ public partial class MainWindow
             return true;
         }
 
-        var options = new RouteLengthLabelOptions { OffsetMm = 6.0, TextHeightMm = 10.0 };
+        var options = new RouteLengthLabelOptions
+        {
+            OffsetMm = RouteLengthLabelScreenOffset,
+            TextHeightMm = RouteLengthLabelScreenHeight
+        };
         if (!RouteLengthLabels.TryBuild(sources, side.Frame, options,
                 out List<RouteLengthLabel> labels, out string labelFailure))
         {
@@ -104,6 +116,9 @@ public partial class MainWindow
         var anchors = new double[labels.Count * 3];
         var texts = new string[labels.Count];
         var rgb = new double[labels.Count * 3];
+        var leaders = new double[labels.Count * 6];
+        var hasLeader = new bool[labels.Count];
+        ProjectionFrame frame = side.Frame;
         for (int i = 0; i < labels.Count; i++)
         {
             RouteLengthLabel label = labels[i];
@@ -117,6 +132,29 @@ public partial class MainWindow
             anchors[i * 3] = anchor.X;
             anchors[i * 3 + 1] = anchor.Y;
             anchors[i * 3 + 2] = anchor.Z;
+            if (label.HasLeader)
+            {
+                // 인출선은 작업평면 2D 선분이다. 라벨 3D 위치에서 같은 평면 변위를 빼면
+                // 경로 위 시작점의 3D 위치가 정확히 나온다.
+                double dx = label.LeaderEnd2D.X - label.LeaderStart2D.X;
+                double dy = label.LeaderEnd2D.Y - label.LeaderStart2D.Y;
+                if (!double.IsFinite(dx) || !double.IsFinite(dy))
+                {
+                    failure = "영역 " + label.AreaName + " 조각 " + (label.PieceIndex + 1)
+                        + "의 인출선 좌표가 유한하지 않습니다.";
+                    return false;
+                }
+                double startX = anchor.X - frame.AxisX.X * dx - frame.AxisY.X * dy;
+                double startY = anchor.Y - frame.AxisX.Y * dx - frame.AxisY.Y * dy;
+                double startZ = anchor.Z - frame.AxisX.Z * dx - frame.AxisY.Z * dy;
+                leaders[i * 6] = startX;
+                leaders[i * 6 + 1] = startY;
+                leaders[i * 6 + 2] = startZ;
+                leaders[i * 6 + 3] = anchor.X;
+                leaders[i * 6 + 4] = anchor.Y;
+                leaders[i * 6 + 5] = anchor.Z;
+                hasLeader[i] = true;
+            }
             texts[i] = label.Text;
             (byte R, byte G, byte B) color = BlendLabelColor(areaColors[label.AreaName]);
             rgb[i * 3] = color.R / 255.0;
@@ -125,7 +163,7 @@ public partial class MainWindow
         }
 
         if (!Bridge.ReplaceRouteLengthLabels(side.Id.Value, side.Revision.Value,
-                anchors, texts, rgb, RouteLengthLabelScreenHeight))
+                anchors, texts, rgb, RouteLengthLabelScreenHeight, leaders, hasLeader))
         {
             failure = "화면 길이 라벨 갱신에 실패했습니다.";
             return false;
