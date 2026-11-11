@@ -8,6 +8,8 @@
 
 struct AreaVec2 { double x, y; };
 struct AreaRect2 { double minX, minY, maxX, maxY; };
+// 분할 영역 표시용 축 정렬 반평면. axis: 0=x, 1=y. keepLess: 좌표 <= limit 유지.
+struct AreaHalfPlane { int axis = 0; double limit = 0.0; bool keepLess = true; };
 
 struct AreaHighlightEntry
 {
@@ -20,6 +22,8 @@ struct AreaHighlightEntry
     Handle(AIS_Triangulation) presentation;
     int triangleCount = 0;
     bool committed = false;
+    // 빈 메시(null + 0 삼각형)와 "스테이징 안 됨"을 구분한다.
+    bool hasPending = false;
 };
 std::map<int, AreaHighlightEntry> g_areaHighlights;
 
@@ -161,13 +165,18 @@ bool AreaBarycentricTo3D(const AreaVec2& a, const AreaVec2& b, const AreaVec2& c
 // Poly_Triangulation으로 만든다. 삼각형마다 정점을 3개씩 복제해 평면 음영을 얻는다.
 // 제외로 전부 사라지면 triangleCount=0, mesh=null (정상 결과).
 bool BuildAreaHighlightMeshNative(const std::vector<int>& faceIds, const std::vector<AreaRect2>& rects,
+    const std::vector<AreaHalfPlane>& planes,
     const gp_Pnt& origin, const gp_Dir& axisX, const gp_Dir& axisY,
     Handle(Poly_Triangulation)& mesh, int& triangleCount, std::string& diagnostic)
 {
     diagnostic.clear();
     mesh.Nullify();
     triangleCount = 0;
-    if (faceIds.empty() || rects.empty()) { diagnostic = "empty-input"; return false; }
+    if (faceIds.empty() || (rects.empty() && planes.empty()))
+    {
+        diagnostic = "empty-input";
+        return false;
+    }
     const gp_Vec xAxis(axisX), yAxis(axisY);
     std::vector<gp_Pnt> nodes;
     std::vector<Poly_Triangle> triangles;
@@ -215,11 +224,22 @@ bool BuildAreaHighlightMeshNative(const std::vector<int>& faceIds, const std::ve
                     if (triMaxX > rect.minX && triMinX < rect.maxX &&
                         triMaxY > rect.minY && triMinY < rect.maxY)
                         localRects.push_back(rect);
+                // 분할 영역 마스크(축 정렬 반평면)로 먼저 자른다. 절단선은 작업평면에서
+                // 축 정렬이므로 사각형 차감과 같은 볼록 조각 분해가 그대로 성립한다.
+                std::vector<AreaVec2> clipped{a, b, c};
+                for (const AreaHalfPlane& plane : planes)
+                {
+                    std::vector<AreaVec2> next;
+                    ClipHalfPlane2D(clipped, plane.axis, plane.limit, plane.keepLess, next);
+                    clipped.swap(next);
+                    if (clipped.size() < 3) break;
+                }
+                if (clipped.size() < 3) continue;
                 std::vector<std::vector<AreaVec2>> fragments;
                 if (localRects.empty())
-                    fragments.push_back(std::vector<AreaVec2>{a, b, c});
+                    fragments.push_back(clipped);
                 else
-                    SubtractRectsFromConvex(std::vector<AreaVec2>{a, b, c}, localRects, fragments);
+                    SubtractRectsFromConvex(clipped, localRects, fragments);
                 for (const auto& fragment : fragments)
                 {
                     if (fragment.size() < 3) continue;
@@ -317,16 +337,21 @@ void RedrawAreaHighlights()
     if (!g_view.IsNull()) { try { g_view->Redraw(); } catch (...) {} }
 }
 
-bool StageAreaHighlightMeshNative(int areaId, long long modelRevision, long long workingId,
+bool StageAreaHighlightMeshCore(int areaId, long long modelRevision, long long workingId,
     const std::vector<int>& faceIds, const std::vector<double>& rects,
+    const std::vector<double>& planeValues,
     const std::vector<double>& frame, const double* color)
 {
     if (areaId <= 0 || color == nullptr) return false;
-    if (faceIds.empty() || rects.size() < 4 || rects.size() % 4 != 0 || frame.size() != 9) return false;
+    if (faceIds.empty() || rects.size() % 4 != 0 || planeValues.size() % 3 != 0) return false;
+    if (frame.size() != 9) return false;
+    if (rects.empty() && planeValues.empty()) return false;
     if (modelRevision != g_modelRevision || !FindWorking(workingId, modelRevision)) return false;
     for (double value : frame)
         if (!std::isfinite(value)) return false;
     for (double value : rects)
+        if (!std::isfinite(value)) return false;
+    for (double value : planeValues)
         if (!std::isfinite(value)) return false;
     if (!std::isfinite(color[0]) || !std::isfinite(color[1]) || !std::isfinite(color[2])) return false;
 
@@ -339,7 +364,18 @@ bool StageAreaHighlightMeshNative(int areaId, long long modelRevision, long long
         if (rect.maxX - rect.minX < 1e-6 || rect.maxY - rect.minY < 1e-6) continue;   // 퇴화 사각형
         nativeRects.push_back(rect);
     }
-    if (nativeRects.empty()) return false;
+
+    std::vector<AreaHalfPlane> nativePlanes;
+    nativePlanes.reserve(planeValues.size() / 3);
+    for (size_t i = 0; i + 2 < planeValues.size(); i += 3)
+    {
+        const double axisValue = planeValues[i];
+        const int axis = static_cast<int>(std::lround(axisValue));
+        if (axis != 0 && axis != 1) return false;
+        if (std::fabs(axisValue - axis) > 1e-9) return false;
+        nativePlanes.push_back(AreaHalfPlane{axis, planeValues[i + 1], planeValues[i + 2] != 0.0});
+    }
+    if (nativeRects.empty() && nativePlanes.empty()) return false;
 
     gp_Pnt origin;
     gp_Dir axisX, axisY;
@@ -356,7 +392,8 @@ bool StageAreaHighlightMeshNative(int areaId, long long modelRevision, long long
     Handle(Poly_Triangulation) mesh;
     int triangleCount = 0;
     std::string diagnostic;
-    if (!BuildAreaHighlightMeshNative(faceIds, nativeRects, origin, axisX, axisY, mesh, triangleCount, diagnostic))
+    if (!BuildAreaHighlightMeshNative(faceIds, nativeRects, nativePlanes, origin, axisX, axisY,
+            mesh, triangleCount, diagnostic))
         return false;
 
     // 기존 엔트리가 있으면 스테이징 필드만 교체한다. 커밋 표시는 Commit 성공까지 유지된다.
@@ -367,7 +404,26 @@ bool StageAreaHighlightMeshNative(int areaId, long long modelRevision, long long
     entry.color = Quantity_Color(color[0], color[1], color[2], Quantity_TOC_RGB);
     entry.mesh = mesh;
     entry.triangleCount = triangleCount;
+    entry.hasPending = true;
     return true;
+}
+
+bool StageAreaHighlightMeshNative(int areaId, long long modelRevision, long long workingId,
+    const std::vector<int>& faceIds, const std::vector<double>& rects,
+    const std::vector<double>& frame, const double* color)
+{
+    return StageAreaHighlightMeshCore(areaId, modelRevision, workingId, faceIds, rects,
+        std::vector<double>(), frame, color);
+}
+
+// 분할 영역 부분 표시: 축 정렬 절단 반평면(axis, limit, keepLess 3개씩)으로 원본 면
+// 삼각분할을 먼저 자른 뒤 제외 사각형을 뺀다. rects는 비어 있어도 된다.
+bool StageAreaHighlightMeshClippedNative(int areaId, long long modelRevision, long long workingId,
+    const std::vector<int>& faceIds, const std::vector<double>& rects,
+    const std::vector<double>& planes, const std::vector<double>& frame, const double* color)
+{
+    return StageAreaHighlightMeshCore(areaId, modelRevision, workingId, faceIds, rects,
+        planes, frame, color);
 }
 
 bool CommitAreaHighlightNative(int areaId)
@@ -377,6 +433,11 @@ bool CommitAreaHighlightNative(int areaId)
     if (g_ctx.IsNull()) return false;
     AreaHighlightEntry& entry = found->second;
     // 스테이징 결과가 없으면(예: Discard 후 Stage 없이 Commit) 아무것도 바꾸지 않는다.
+    if (!entry.hasPending) return false;
+    // 스테이징 시점의 작업 문맥/모델 리비전이 그대로인지 다시 확인한다. 그 사이 모델이
+    // 바뀌었으면 면 삼각분할이 다른 모델의 것이므로 표시하지 않는다.
+    if (entry.modelRevision != g_modelRevision || !FindWorking(entry.workingId, entry.modelRevision))
+        return false;
     const bool hasStagedMesh = !entry.mesh.IsNull() && entry.triangleCount > 0;
     const bool stagedEmpty = entry.mesh.IsNull() && entry.triangleCount == 0;
     if (!hasStagedMesh && !stagedEmpty) return false;
@@ -398,11 +459,12 @@ bool CommitAreaHighlightNative(int areaId)
             presentation->SetPolygonOffsets(Aspect_POM_Fill, -4.0f, -4.0f);
             presentation->Attributes()->SetupOwnShadingAspect();
             presentation->Attributes()->ShadingAspect()->Aspect()->SetPolygonOffsets(Aspect_POM_Fill, -4.0f, -4.0f);
-            if (!entry.presentation.IsNull()) g_ctx->Remove(entry.presentation, Standard_False);
             // AIS_Triangulation::Compute는 모드 0(AIS_WireFrame)에서만 프리미티브를 만든다.
             // AIS_Shaded(1)로 표시하면 Compute가 즉시 반환해 빈 presentation이 된다.
             // 모드 0에서도 채움 삼각형 배열 + ShadingAspect를 사용하므로 음영으로 그려진다.
             g_ctx->SetDisplayMode(presentation, AIS_WireFrame, Standard_False);
+            // 새 표시를 먼저 올린다(즉시 redraw 없이). 기존 표시 제거를 먼저 하면 새 표시
+            // 생성이 실패했을 때 형상은 그대로인데 채움만 사라진다.
             g_ctx->Display(presentation, Standard_False);
             g_ctx->Deactivate(presentation, Standard_False);
         }
@@ -417,14 +479,16 @@ bool CommitAreaHighlightNative(int areaId)
             return false;
         }
     }
-    else if (!entry.presentation.IsNull())
+    // 새 표시가 준비된 뒤에만 기존 표시를 제거한다.
+    if (!entry.presentation.IsNull())
     {
-        g_ctx->Remove(entry.presentation, Standard_False);
+        try { g_ctx->Remove(entry.presentation, Standard_False); } catch (...) {}
     }
     // 표시가 바뀐 뒤에만 상태를 확정한다. 실패하면 기존 표시/색이 그대로 남는다.
     entry.presentation = presentation;
     entry.committed = true;
     entry.mesh.Nullify();
+    entry.hasPending = false;
     // 이 영역의 Face는 더 이상 통짜 색칠을 쓰지 않는다. 클리핑 메시가 대신 표시된다.
     for (int faceId : entry.faceIds)
     {
@@ -447,6 +511,7 @@ void DiscardAreaHighlightNative(int areaId)
     }
     // 커밋된 표시는 유지한다. 스테이징된 메시만 폐기한다.
     found->second.mesh.Nullify();
+    found->second.hasPending = false;
 }
 
 void ClearAreaHighlightNative(int areaId)

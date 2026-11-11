@@ -311,10 +311,9 @@ public partial class MainWindow
         var clipped = new List<WorkingArea>();
         foreach (var area in _areas)
         {
-            // 분할 영역은 같은 Face 집합을 공유하고, 네이티브 채움은 영역 폴리곤으로
-            // 클립할 수 없다. 통짜 색칠/부분 메시 대신 3D 경계선만 표시한다.
-            if (area.HasSplitBoundary) continue;
-            if (area.Exclusions.Count > 0) { clipped.Add(area); continue; }
+            // 분할 영역은 같은 Face 집합을 공유하므로 통짜 색칠로는 표현할 수 없다.
+            // 절단선 반평면 마스크로 원본 면 삼각분할을 잘라 이 영역 몫만 채운다.
+            if (area.Exclusions.Count > 0 || area.HasSplitBoundary) { clipped.Add(area); continue; }
             double r = area.Color.R / 255.0, g = area.Color.G / 255.0, b = area.Color.B / 255.0;
             foreach (int faceId in area.FaceIdSet)
             {
@@ -327,7 +326,7 @@ public partial class MainWindow
         // 메시를 먼저 확정해 두면 Face 색칠 갱신이 그 영역의 색을 덮어쓰지 않는다.
         foreach (var area in clipped)
             if (!ApplyAreaHighlightMesh(area))
-                StatusText.Text = string.Format("{0} 영역의 제외영역 표시를 갱신하지 못했습니다 — 이전 표시를 유지합니다", area.Name);
+                StatusText.Text = string.Format("{0} 영역의 발열면 표시를 갱신하지 못했습니다 — 이전 표시를 유지합니다", area.Name);
 
         if (faceIds.Count == 0)
         {
@@ -352,10 +351,9 @@ public partial class MainWindow
                 if (area.AreaId > 0) Bridge.ClearAreaHighlight(area.AreaId);
                 return;
             }
-            if (area.Exclusions.Count == 0 || area.HasSplitBoundary)
+            if (area.Exclusions.Count == 0 && !area.HasSplitBoundary)
             {
                 // Face 색칠로 되돌린다. 여러 영역이 공존하므로 전체 색칠을 다시 적용한다.
-                // 분할 영역은 부분 채움을 지원하지 않으므로 경계선 표시만 유지한다.
                 if (area.AreaId > 0) Bridge.ClearAreaHighlight(area.AreaId);
                 ApplyAreaColors();
                 return;
@@ -363,7 +361,7 @@ public partial class MainWindow
             // Stage가 실패하면 이전 표시(이전 커밋 메시 또는 Face 색칠)가 그대로 남는다.
             if (!ApplyAreaHighlightMesh(area))
             {
-                StatusText.Text = "제외영역 표시를 갱신하지 못했습니다 — 이전 표시를 유지합니다";
+                StatusText.Text = "발열면 표시를 갱신하지 못했습니다 — 이전 표시를 유지합니다";
                 return;
             }
             Bridge.RedrawView();
@@ -401,24 +399,56 @@ public partial class MainWindow
         };
     }
 
-    /// <summary>제외 사각형을 뺀 채움 메시를 스테이징한다(표시는 아직 바뀌지 않는다).</summary>
+    /// <summary>제외 사각형/분할 절단선을 반영한 채움 메시를 스테이징한다(표시는 아직 바뀌지 않는다).</summary>
     private bool StageAreaHighlightMesh(WorkingArea area)
     {
         var side = _workingSide?.Confirmed;
         if (area == null || area.AreaId <= 0 || area.Frame == null || area.FaceIdSet == null ||
-            area.FaceIdSet.Count == 0 || area.Exclusions.Count == 0 ||
-            side == null) return false;
+            area.FaceIdSet.Count == 0 || side == null) return false;
+        if (area.Exclusions.Count == 0 && !area.HasSplitBoundary) return false;
         try
         {
             int[] faceIds = SortedFaceIds(area);
+            double[] rects = ExclusionRectValues(area);
+            double[] rgb = { area.Color.R / 255.0, area.Color.G / 255.0, area.Color.B / 255.0 };
+            if (area.HasSplitBoundary)
+            {
+                // 분할 영역: 원본 면 전체가 아니라 절단선 유지측과 교집합인 부분만 채운다.
+                if (!TryGetSplitHalfPlanes(area, out double[] planes)) return false;
+                return Bridge.StageAreaHighlightMeshClipped(area.AreaId, side.Revision.Value, side.Id.Value,
+                    faceIds, rects, planes, FrameValues(area), rgb);
+            }
             return Bridge.StageAreaHighlightMesh(area.AreaId, side.Revision.Value, side.Id.Value,
-                faceIds, ExclusionRectValues(area), FrameValues(area),
-                new[] { area.Color.R / 255.0, area.Color.G / 255.0, area.Color.B / 255.0 });
+                faceIds, rects, FrameValues(area), rgb);
         }
         catch (Exception)
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// 분할 영역이 유지되는 쪽의 절단선 반평면을 (axis, limit, keepLess) 3개씩 펼친다.
+    /// 영역 외곽에 실제로 남은 절단선만 사용하며, 축 정렬이 아니면 표시할 수 없다.
+    /// </summary>
+    private static bool TryGetSplitHalfPlanes(WorkingArea area, out double[] planes)
+    {
+        planes = Array.Empty<double>();
+        SplitRegionBoundary2D boundary = area.RegionExitBoundary as SplitRegionBoundary2D
+            ?? area.ExitBoundary as SplitRegionBoundary2D;
+        if (boundary == null) return false;
+        if (!boundary.TryGetRetainedHalfPlanes(out List<SplitRegionBoundary2D.HalfPlane> halfPlanes,
+                out _)) return false;
+        if (halfPlanes.Count == 0) return false;
+        var values = new double[halfPlanes.Count * 3];
+        for (int i = 0; i < halfPlanes.Count; i++)
+        {
+            values[i * 3] = halfPlanes[i].Axis;
+            values[i * 3 + 1] = halfPlanes[i].Limit;
+            values[i * 3 + 2] = halfPlanes[i].KeepLess ? 1.0 : 0.0;
+        }
+        planes = values;
+        return true;
     }
 
     /// <summary>스테이징된 채움 메시를 확정 표시로 바꾼다.</summary>

@@ -457,6 +457,11 @@ public:
     /// 실패하면 기존 엔트리를 건드리지 않는다(revision/workingId 검증 포함).</summary>
     static bool StageAreaHighlightMesh(int areaId, long long modelRevision, long long workingId,
         array<int>^ faceIds, array<double>^ rects, array<double>^ frame, array<double>^ color);
+    /// <summary>분할 영역 부분 표시. planes는 (axis, limit, keepLess) 3개씩이고 rects는 비어도 된다.
+    /// 원본 면 삼각분할을 축 정렬 반평면으로 먼저 자른 뒤 제외 사각형을 뺀다.</summary>
+    static bool StageAreaHighlightMeshClipped(int areaId, long long modelRevision, long long workingId,
+        array<int>^ faceIds, array<double>^ rects, array<double>^ planes, array<double>^ frame,
+        array<double>^ color);
     /// <summary>스테이징된 메시를 AIS_Triangulation으로 표시하고 해당 Face의 통짜 색칠을 해제한다.</summary>
     static bool CommitAreaHighlight(int areaId);
     /// <summary>스테이징만 폐기한다. 커밋된 표시는 Commit 성공 전까지 유지된다.</summary>

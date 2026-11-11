@@ -19,6 +19,11 @@ internal sealed class SplitRegionBoundary2D :
     private const double PointEpsilon = 1e-6;
     private const double OnRingTolerance = 0.02;
 
+    // 분할 밴드 폴리곤은 0.01 mm 격자에서 만들어지므로, 절단선 위에 놓인 변이
+    // 반 격자(0.005 mm)만큼 바깥으로 어긋날 수 있다. 이는 선이 영역을 가로지르는
+    // 것이 아니라 같은 경계를 공유하는 것이므로 유지측 판정에서 허용한다.
+    private const double RingGridTolerance = 0.01;
+
     private readonly EffectiveRegionBoundary2D _inner;
     private readonly IReadOnlyList<Vec2> _ring;
     private readonly IReadOnlyList<SplitSegment> _segments;
@@ -38,6 +43,105 @@ internal sealed class SplitRegionBoundary2D :
 
     /// <summary>이 영역 외곽에 실제로 남은 절단선 구간.</summary>
     internal IReadOnlyList<SplitSegment> Segments => _segments;
+
+    /// <summary>
+    /// 이 영역이 실제로 유지되는 쪽을 나타내는 절단선 반평면(작업평면 축 정렬 기준).
+    /// 전체 절단선 목록이 아니라 <b>이 영역 외곽에 실제로 남은 절단선</b>만 사용한다.
+    /// 이웃 영역만 가르는 먼 절단선까지 적용하면 이 영역을 잘못 잘라낸다.
+    /// </summary>
+    internal readonly record struct HalfPlane(int Axis, double Limit, bool KeepLess);
+
+    /// <summary>
+    /// 이 영역의 표시용 클리핑 마스크. 제품의 모든 분할 절단선은 가로/세로 축 정렬이므로
+    /// 축·한계·유지측만으로 완전히 표현된다. 축 정렬이 아니거나 영역이 선을 가로지르면
+    /// 표시용으로도 표현할 수 없으므로 명시적으로 실패한다.
+    /// </summary>
+    internal bool TryGetRetainedHalfPlanes(out List<HalfPlane> planes, out string failure)
+    {
+        planes = new List<HalfPlane>();
+        failure = string.Empty;
+        double minX = double.PositiveInfinity, maxX = double.NegativeInfinity;
+        double minY = double.PositiveInfinity, maxY = double.NegativeInfinity;
+        foreach (Vec2 point in _ring)
+        {
+            minX = Math.Min(minX, point.X);
+            maxX = Math.Max(maxX, point.X);
+            minY = Math.Min(minY, point.Y);
+            maxY = Math.Max(maxY, point.Y);
+        }
+
+        var seen = new List<(double AX, double AY, double BX, double BY)>();
+        foreach (SplitSegment segment in _segments)
+        {
+            // 링 변과 정확히 겹치는 절단선은 클리핑 결과가 길이 0인 조각으로 남는다.
+            // 그 조각은 영역을 가르는 선이 아니므로 축 판정 대상에서 제외한다.
+            if (segment.A.DistanceTo(segment.B) <= PointEpsilon) continue;
+            SplitLineBinding binding = segment.Binding;
+            bool duplicate = false;
+            foreach (var line in seen)
+            {
+                if (Math.Abs(line.AX - binding.AX) <= PointEpsilon &&
+                    Math.Abs(line.AY - binding.AY) <= PointEpsilon &&
+                    Math.Abs(line.BX - binding.BX) <= PointEpsilon &&
+                    Math.Abs(line.BY - binding.BY) <= PointEpsilon)
+                {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) continue;
+            seen.Add((binding.AX, binding.AY, binding.BX, binding.BY));
+
+            if (Math.Abs(binding.AX - binding.BX) <= PointEpsilon)
+            {
+                double limit = binding.AX;
+                double beyondLow = limit - minX;
+                double beyondHigh = maxX - limit;
+                if (beyondLow <= RingGridTolerance)
+                    planes.Add(new HalfPlane(0, limit, KeepLess: false));
+                else if (beyondHigh <= RingGridTolerance)
+                    planes.Add(new HalfPlane(0, limit, KeepLess: true));
+                else
+                {
+                    failure = "분할 영역 외곽을 절단선이 가로지릅니다.";
+                    planes.Clear();
+                    return false;
+                }
+            }
+            else if (Math.Abs(binding.AY - binding.BY) <= PointEpsilon)
+            {
+                double limit = binding.AY;
+                double beyondLow = limit - minY;
+                double beyondHigh = maxY - limit;
+                if (beyondLow <= RingGridTolerance)
+                    planes.Add(new HalfPlane(1, limit, KeepLess: false));
+                else if (beyondHigh <= RingGridTolerance)
+                    planes.Add(new HalfPlane(1, limit, KeepLess: true));
+                else
+                {
+                    failure = "분할 영역 외곽을 절단선이 가로지릅니다.";
+                    planes.Clear();
+                    return false;
+                }
+            }
+            else
+            {
+                failure = "축 정렬이 아닌 분할 절단선은 영역 하이라이트로 표시할 수 없습니다.";
+                planes.Clear();
+                return false;
+            }
+        }
+
+        // 절단선이 외곽에 하나도 남지 않으면 분할 영역을 자를 근거가 없다.
+        // 제외 사각형만으로 채우는 기존 경로로 조용히 되돌리지 않고 명시적으로 거부한다.
+        if (planes.Count == 0)
+        {
+            failure = "분할 영역의 절단선을 외곽에서 찾지 못했습니다.";
+            return false;
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// 이 영역의 정확 포함 판정. 경계가 원본 CAD 구간과 artificial 절단선의 혼합이므로

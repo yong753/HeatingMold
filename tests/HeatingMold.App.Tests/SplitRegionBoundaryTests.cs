@@ -245,4 +245,50 @@ public class SplitRegionBoundaryTests
         Assert.Equal(2, cutLines.Count);
         Assert.All(cutLines, line => Assert.NotEqual(line.Item1, line.Item2));
     }
+
+    // 밴드 폴리곤은 0.01 mm 격자로 만들어져 절단선보다 반 격자(0.005 mm) 바깥에 놓일 수 있다.
+    // 이 어긋남은 외곽을 가로지르는 것이 아니므로 유지 측 판정이 성공해야 한다.
+    [Fact]
+    public void RetainedHalfPlanes_AcceptsRingOffsetByHalfGrid()
+    {
+        var cuts = new (Vec2, Vec2)[] { (new Vec2(-10, 50), new Vec2(210, 50)) };
+        var lower = new Vec2[]
+        {
+            new(0, 0), new(200, 0), new(200, 50.005), new(0, 50.005)
+        };
+        var upper = new Vec2[]
+        {
+            new(0, 49.995), new(200, 49.995), new(200, 100), new(0, 100)
+        };
+
+        SplitRegionBoundary2D lowerBoundary = CreateBoundary(lower, cuts);
+        Assert.True(lowerBoundary.TryGetRetainedHalfPlanes(out List<SplitRegionBoundary2D.HalfPlane> lowerPlanes,
+            out string lowerFailure), lowerFailure);
+        SplitRegionBoundary2D.HalfPlane lowerPlane = Assert.Single(lowerPlanes);
+        Assert.Equal(1, lowerPlane.Axis);
+        Assert.Equal(50.0, lowerPlane.Limit, 6);
+        Assert.True(lowerPlane.KeepLess);
+
+        SplitRegionBoundary2D upperBoundary = CreateBoundary(upper, cuts);
+        Assert.True(upperBoundary.TryGetRetainedHalfPlanes(out List<SplitRegionBoundary2D.HalfPlane> upperPlanes,
+            out string upperFailure), upperFailure);
+        SplitRegionBoundary2D.HalfPlane upperPlane = Assert.Single(upperPlanes);
+        Assert.Equal(1, upperPlane.Axis);
+        Assert.False(upperPlane.KeepLess);
+    }
+
+    // 실제로 외곽을 가로지르는 링은 절단선 구간이 외곽에 남지 않으므로 조용히 통과시키지 않는다.
+    [Fact]
+    public void RetainedHalfPlanes_RejectsRingWithoutCutSegment()
+    {
+        var cuts = new (Vec2, Vec2)[] { (new Vec2(-10, 50), new Vec2(210, 50)) };
+        var crossing = new Vec2[]
+        {
+            new(0, 40), new(200, 40), new(200, 60), new(0, 60)
+        };
+
+        SplitRegionBoundary2D boundary = CreateBoundary(crossing, cuts);
+        Assert.False(boundary.TryGetRetainedHalfPlanes(out _, out string failure));
+        Assert.Contains("절단선", failure);
+    }
 }

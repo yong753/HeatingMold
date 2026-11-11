@@ -138,29 +138,56 @@ public class SelectedExitTests
     }
 
     [Fact]
-    public void HorizontalLayoutWithEqualExitHeightsIsRejected()
+    public void HorizontalLayoutWithEqualExitHeights_UsesOneLane()
     {
         var outer = Rect(0, 0, 100, 60);
-
+        // 두 점이 같은 진행 행에 있으면 그 행 하나로 이루어진 단일 레인 회로가 된다.
+        // 분할 영역이 spacing보다 얇을 때 실제로 생기는 배치다.
         var result = Serpentine.GenerateWithSelectedExits(
             outer, null, new PatternParams { Margin = 5, Spacing = 10 },
             PatternDirection.FrameX, Exit(0, 20), Exit(100, 20));
 
-        Assert.False(result.Succeeded);
-        Assert.Equal(AnchoredFailureReason.IndeterminateDirection, result.Failure);
+        Assert.True(result.Succeeded, result.Failure?.ToString());
+        Assert.Equal(1, result.Pattern.LaneCount);
+        SerpentineRoutePiece heating = result.Pattern.RoutePieces[0];
+        Assert.Equal(SerpentineRoutePieceKind.HeatingRun, heating.Kind);
+        AssertNear(new Vec2(0, 20), heating.Points[0]);
+        AssertNear(new Vec2(95, 20), heating.Points[^1]);
+        SerpentineRoutePiece terminal = result.Pattern.RoutePieces[^1];
+        Assert.Equal(SerpentineRoutePieceKind.FixedConnector, terminal.Kind);
+        AssertNear(new Vec2(100, 20), terminal.Points[^1]);
     }
 
     [Fact]
-    public void VerticalLayoutWithEqualExitColumnsIsRejected()
+    public void EqualExitRowInsideTheLaneIsRejected()
+    {
+        var outer = Rect(0, 0, 100, 60);
+        // 같은 행이라도 시작점이 발열구간 안쪽이면 레인 끝에서 시작할 수 없다.
+        var result = Serpentine.GenerateWithSelectedExits(
+            outer, null, new PatternParams { Margin = 5, Spacing = 10 },
+            PatternDirection.FrameX, Exit(40, 20), Exit(100, 20));
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(AnchoredFailureReason.AnchorNotAtLaneEnd, result.Failure);
+    }
+
+    [Fact]
+    public void VerticalLayoutWithEqualExitColumns_UsesOneLane()
     {
         var outer = Rect(0, 0, 60, 100);
-
         var result = Serpentine.GenerateWithSelectedExits(
             outer, null, new PatternParams { Margin = 5, Spacing = 10 },
             PatternDirection.FrameY, Exit(20, 100), Exit(20, 0));
 
-        Assert.False(result.Succeeded);
-        Assert.Equal(AnchoredFailureReason.IndeterminateDirection, result.Failure);
+        Assert.True(result.Succeeded, result.Failure?.ToString());
+        Assert.Equal(1, result.Pattern.LaneCount);
+        SerpentineRoutePiece heating = result.Pattern.RoutePieces[0];
+        Assert.Equal(SerpentineRoutePieceKind.HeatingRun, heating.Kind);
+        AssertNear(new Vec2(20, 100), heating.Points[0]);
+        AssertNear(new Vec2(20, 5), heating.Points[^1]);
+        SerpentineRoutePiece terminal = result.Pattern.RoutePieces[^1];
+        Assert.Equal(SerpentineRoutePieceKind.FixedConnector, terminal.Kind);
+        AssertNear(new Vec2(20, 0), terminal.Points[^1]);
     }
 
     [Fact]

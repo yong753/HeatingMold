@@ -4919,6 +4919,31 @@ bool Bridge::StageAreaHighlightMesh(int areaId, long long modelRevision, long lo
     catch (...) { return false; }
 }
 
+bool Bridge::StageAreaHighlightMeshClipped(int areaId, long long modelRevision, long long workingId,
+    array<int>^ faceIds, array<double>^ rects, array<double>^ planes, array<double>^ frame,
+    array<double>^ color)
+{
+    if (faceIds == nullptr || rects == nullptr || planes == nullptr || frame == nullptr ||
+        color == nullptr) return false;
+    if (faceIds->Length == 0 || frame->Length != 9 || color->Length < 3) return false;
+    if (rects->Length == 0 && planes->Length == 0) return false;
+    try
+    {
+        std::vector<int> ids(static_cast<size_t>(faceIds->Length));
+        for (int i = 0; i < faceIds->Length; ++i) ids[(size_t)i] = faceIds[i];
+        std::vector<double> nativeRects(static_cast<size_t>(rects->Length));
+        for (int i = 0; i < rects->Length; ++i) nativeRects[(size_t)i] = rects[i];
+        std::vector<double> nativePlanes(static_cast<size_t>(planes->Length));
+        for (int i = 0; i < planes->Length; ++i) nativePlanes[(size_t)i] = planes[i];
+        std::vector<double> nativeFrame(static_cast<size_t>(frame->Length));
+        for (int i = 0; i < frame->Length; ++i) nativeFrame[(size_t)i] = frame[i];
+        double nativeColor[3] = {color[0], color[1], color[2]};
+        return StageAreaHighlightMeshClippedNative(areaId, modelRevision, workingId, ids, nativeRects,
+            nativePlanes, nativeFrame, nativeColor);
+    }
+    catch (...) { return false; }
+}
+
 bool Bridge::CommitAreaHighlight(int areaId)
 {
     try { return CommitAreaHighlightNative(areaId); }

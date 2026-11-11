@@ -128,7 +128,7 @@ public partial class MainWindow
         if (HasUncommittedRoute(area))
         {
             string exitNote = autoExits
-                ? "분할이 확정되면 기존 경로는 폐기되고, 새 영역의 시작/종료점은 원래 측면을 따라 자동으로 지정됩니다. 필요하면 다시 선택할 수 있습니다."
+                ? "분할이 확정되면 기존 경로는 폐기되고, 새 영역의 시작/종료점은 원래 범위 안에서 자동으로 지정되며 경로도 같은 분할에서 자동 생성됩니다. 필요하면 다시 선택할 수 있습니다."
                 : "분할이 확정되면 경로·인출점은 각 새 영역에서 다시 선택합니다.";
             MessageBoxResult answer = MessageBox.Show(this,
                 string.Format("{0} 영역의 현재 발열경로를 폐기하고 분할할까요?\n{1}",
@@ -162,11 +162,17 @@ public partial class MainWindow
             return;
         }
 
+        // 자식 AreaId는 경로 커밋 전에 확정한다. 후보 검증·하이라이트 준비가 같은 값을
+        // 참조하므로 먼저 예약하되, 커밋이 실패하면 전역 카운터는 그대로 둔다.
+        int nextAreaId = _nextAreaId;
+        foreach (WorkingArea child in children)
+            child.AreaId = ++nextAreaId;
+
         if (autoExits)
         {
-            // 부모의 시작/종료 측면을 각 영역으로 옮긴다. 하나라도 유일하게 결정되지 않으면
-            // 자식 영역에는 아무 점도 기록하지 않고 분할 자체를 확정하지 않는다.
-            if (!SplitExitPointPlanner.TryAssign(area, children, out string exitFailure))
+            // 부모의 시작/종료 측면을 각 영역의 마진 안쪽 행으로 옮긴다. 하나라도 유일하게
+            // 결정되지 않으면 자식 영역에는 아무 점도 기록하지 않고 분할 자체를 확정하지 않는다.
+            if (!SplitExitPointPlanner.TryAssign(area, children, margin, spacing, out string exitFailure))
             {
                 SetSplitStatus("분할 영역의 인출점을 자동으로 정할 수 없습니다 — " + exitFailure);
                 return;
@@ -189,17 +195,46 @@ public partial class MainWindow
             }
         }
 
-        // 원자적 교체: 모든 자식 영역 경계가 준비된 뒤 한 번의 네이티브 경로 커밋으로
-        // 부모 경로를 삭제하고 최종 영역 집합을 확정한다. 실패하면 부모는 그대로 남는다.
+        // 자식 경로도 커밋 전에 detached 후보에서 모두 생성한다. 하나라도 생성되지 않으면
+        // 부모 영역·경로·선택점을 그대로 두고 분할을 확정하지 않는다.
+        var candidates = new Dictionary<WorkingArea, WorkingArea>();
+        if (autoExits)
+        {
+            foreach (WorkingArea child in children)
+            {
+                WorkingArea fork = ForkAreaRoute(child);
+                List<IReadOnlyList<Vec2>> paths;
+                SerpentineResult? pattern;
+                try
+                {
+                    if (!TryGenerateAreaPattern(fork, margin, spacing, out pattern, out paths,
+                            out string generationFailure))
+                    {
+                        SetSplitStatus(child.Name + " 영역의 경로를 자동 생성할 수 없습니다 — " + generationFailure);
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    SetSplitStatus(child.Name + " 영역의 경로 계산에 실패했습니다 — " + ex.Message);
+                    return;
+                }
+                ApplyPreparedPattern(fork, pattern, paths);
+                candidates[child] = fork;
+            }
+        }
+
+        // 원자적 교체: 모든 자식 영역 경계와 경로가 준비된 뒤 한 번의 네이티브 경로 커밋으로
+        // 부모 경로를 삭제하고 자식 경로를 등록한다. 실패하면 부모는 그대로 남는다.
         var finalAreas = _areas.Where(existing => !ReferenceEquals(existing, area)).ToList();
         finalAreas.AddRange(children);
-        if (!TryCommitAreaRouteCandidates(finalAreas,
-                new Dictionary<WorkingArea, WorkingArea>(), out _, out _))
+        if (!TryCommitAreaRouteCandidates(finalAreas, candidates, out _, out _))
         {
             SetSplitStatus("분할 확정에 실패했습니다 — 기존 영역과 경로를 유지합니다.");
             return;
         }
 
+        _nextAreaId = nextAreaId;
         if (area.AreaId > 0)
         {
             try { Bridge.ClearAreaHighlight(area.AreaId); }
@@ -210,9 +245,6 @@ public partial class MainWindow
         _areas.AddRange(finalAreas);
         // 분할된 영역은 부모와 같은 공통 발열전력을 길이 비율로 나누어 쓴다.
         // 총량은 늘지 않으며, 배분은 검토 계산이 확정된 전체 영역을 대상으로 다시 수행한다.
-        foreach (WorkingArea child in children)
-            child.AreaId = ++_nextAreaId;
-
         ApplyAreaColors();
         ActivateArea(children[0]);
         RefreshAreaList();
@@ -221,13 +253,13 @@ public partial class MainWindow
 
         string partsText = string.Join(", ", children.Select(child => child.Name));
         string exitText = autoExits
-            ? "시작/종료점은 원래 측면을 따라 자동으로 지정했습니다 — 경로를 생성하세요(필요하면 다시 선택 가능)."
+            ? "시작/종료점은 원래 범위 안에서 마진을 확보해 자동 지정하고 경로도 자동 생성했습니다(필요하면 다시 선택·생성 가능)."
             : "각 영역에서 시작점과 종료점을 선택한 뒤 생성하세요.";
         SetSplitStatus(string.Format(CultureInfo.CurrentCulture,
             "{0} 영역을 {1}개 독립 영역으로 분할했습니다 — {2}. {3}",
             area.Name, children.Count, partsText, exitText));
         if (!string.IsNullOrEmpty(_routePresentationWarning))
-            SetSplitStatus(StatusText.Text + " · 표시 경고: " + _routePresentationWarning);
+            SetSplitStatus(SplitStatusText.Text + " · 표시 경고: " + _routePresentationWarning);
     }
 
     /// <summary>분할 밴드마다 독립 영역과 그 artificial 절단선 provenance를 준비한다.</summary>

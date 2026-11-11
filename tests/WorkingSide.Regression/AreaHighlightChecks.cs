@@ -90,6 +90,36 @@ static class AreaHighlightChecks
         Check(Bridge.GetAreaHighlightTriangleCount(4003) == -1,
             "discarding a staged mesh leaves no committed or staged entry");
 
+        // ---- 반평면(분할 절단선) 마스크: 제외 사각형이 없어도 자식이 가진 쪽만 채운다 ----
+        var upperOnly = new[] { 1.0, 0.0, 0.0 }; // axis 1(y), limit 0, keep y >= 0
+        Check(!Bridge.StageAreaHighlightMeshClipped(4004, revision, workingId, faces,
+                  Array.Empty<double>(), new[] { 1.0, 0.0 }, frame, color),
+            "a clipped stage with a malformed half-plane list is rejected");
+        Check(Bridge.StageAreaHighlightMeshClipped(4005, revision, workingId, faces,
+                  Array.Empty<double>(), upperOnly, frame, color),
+            "staging with only a half-plane mask (no exclusion rects) succeeds");
+        int splitHalf = Bridge.GetAreaHighlightTriangleCount(4005);
+        Check(splitHalf > 0, "the retained side of a half-plane mask keeps a filled mesh");
+        Check(Bridge.CommitAreaHighlight(4005) && Bridge.GetAreaHighlightTriangleCount(4005) == splitHalf,
+            "committing a half-plane clipped mesh displays it");
+        Bridge.ClearAreaHighlight(4005);
+        // 절단선 위/아래 어느 쪽이든 채움은 남고, 면 밖만 남기는 마스크는 빈 결과가 된다.
+        Check(Bridge.StageAreaHighlightMeshClipped(4006, revision, workingId, faces,
+                  Array.Empty<double>(), new[] { 1.0, 0.0, 1.0 }, frame, color) &&
+              Bridge.GetAreaHighlightTriangleCount(4006) > 0,
+            "the opposite half-plane mask also keeps its own side");
+        Bridge.ClearAreaHighlight(4006);
+        Check(Bridge.StageAreaHighlightMeshClipped(4007, revision, workingId, faces,
+                  Array.Empty<double>(), new[] { 1.0, -100.0, 1.0 }, frame, color) &&
+              Bridge.GetAreaHighlightTriangleCount(4007) == 0,
+            "a retained side outside the face has no triangles");
+        Bridge.ClearAreaHighlight(4007);
+        Check(Bridge.StageAreaHighlightMeshClipped(4008, revision, workingId, faces,
+                  Array.Empty<double>(), new[] { 1.0, 1000.0, 1.0 }, frame, color) &&
+              Bridge.GetAreaHighlightTriangleCount(4008) == intact,
+            "a mask that contains the whole face leaves the source triangles intact");
+        Bridge.ClearAreaHighlight(4008);
+
         // ---- 관리측 배선: 제외가 있는 영역 활성 → 채움 메시, 제외 해제 → Face 색칠 복귀 ----
         var areaType = typeof(MainWindow).Assembly.GetType("HeatingMold.App.WorkingArea")!;
         var area = Activator.CreateInstance(areaType, nonPublic: true)!;
@@ -115,6 +145,70 @@ static class AreaHighlightChecks
         Check(Bridge.GetAreaHighlightTriangleCount(4101) == -1 &&
               ((IList)areaType.GetProperty("Exclusions")!.GetValue(area)!).Count == 0,
             "clearing exclusions drops the clipped mesh and returns to face coloring");
+
+        // ---- 분할 영역: 절단선으로 잘린 자기 몫만 채움 표시한다 ----
+        var splitType = typeof(MainWindow).Assembly.GetType("HeatingMold.App.SplitRegionBoundary2D")!;
+        var parentRing = new List<Vec2> { new(-20, -10), new(20, -10), new(20, 10), new(-20, 10) };
+        var upperRing = new List<Vec2> { new(-20, 0), new(20, 0), new(20, 10), new(-20, 10) };
+        var cuts = new List<(Vec2 A, Vec2 B)> { (new Vec2(-100, 0), new Vec2(100, 0)) };
+        var splitCad = new CadExitBoundary2D(side.Id.Value, side.Revision.Value,
+            Array.Empty<ExitEdgeReference>());
+        object?[] createArgs =
+        {
+            splitCad, parentRing, upperRing,
+            new List<(double MinX, double MinY, double MaxX, double MaxY)>(), cuts, null, null
+        };
+        bool created = (bool)splitType.GetMethod("TryCreate", BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, createArgs)!;
+        Check(created && createArgs[5] != null,
+            "split child boundary is created for the highlight check");
+        if (created && createArgs[5] is IExitBoundary2D splitBoundary)
+        {
+            // 마스크가 자식의 유지 측면을 정확히 가리키는지 먼저 확인한다.
+            object?[] planeArgs = { null, null };
+            bool hasPlanes = (bool)splitType
+                .GetMethod("TryGetRetainedHalfPlanes", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(splitBoundary, planeArgs)!;
+            int planeAxis = -1;
+            double planeLimit = double.NaN;
+            bool planeKeepLess = true;
+            if (planeArgs[0] is IEnumerable planeList)
+                foreach (object item in planeList)
+                {
+                    var itemType = item.GetType();
+                    planeAxis = (int)itemType.GetProperty("Axis")!.GetValue(item)!;
+                    planeLimit = (double)itemType.GetProperty("Limit")!.GetValue(item)!;
+                    planeKeepLess = (bool)itemType.GetProperty("KeepLess")!.GetValue(item)!;
+                    break;
+                }
+            Check(hasPlanes && planeAxis == 1 && Math.Abs(planeLimit) < 1e-9 && !planeKeepLess,
+                "split highlight mask keeps the child's own side of the cut line");
+
+            var splitArea = Activator.CreateInstance(areaType, nonPublic: true)!;
+            areaType.GetProperty("Frame")!.SetValue(splitArea,
+                new ProjectionFrame(new Vec3(0, 0, 100), new Vec3(0, 0, 1), new Vec3(1, 0, 0)));
+            areaType.GetProperty("AreaId")!.SetValue(splitArea, 4103);
+            ((HashSet<int>)areaType.GetProperty("FaceIdSet")!.GetValue(splitArea)!).Add(topFace);
+            ((List<List<Vec2>>)areaType.GetProperty("Region")!.GetValue(splitArea)!).Add(upperRing);
+            // 실제 분할 자식은 부모의 인출 체인을 그대로 물려받는다 — 외곽 표시가 그 체인을 쓴다.
+            ((List<Vec2>)areaType.GetProperty("ExitChain")!.GetValue(splitArea)!).AddRange(upperRing);
+            ((List<Vec3>)areaType.GetProperty("ExitChain3D")!.GetValue(splitArea)!).AddRange(new[]
+            {
+                new Vec3(-20, 0, 20), new Vec3(20, 0, 20), new Vec3(20, 10, 20), new Vec3(-20, 10, 20)
+            });
+            areaType.GetProperty("RegionCadBoundary")!.SetValue(splitArea, splitCad);
+            areaType.GetProperty("RegionExitBoundary")!.SetValue(splitArea, splitBoundary);
+            areaType.GetProperty("ExitBoundary")!.SetValue(splitArea, splitBoundary);
+            ((List<(Vec2 A, Vec2 B)>)areaType.GetProperty("SplitCutLines")!.GetValue(splitArea)!)
+                .AddRange(cuts);
+            areas.Add(splitArea);
+            Invoke(window, "ActivateArea", splitArea);
+            int splitFill = Bridge.GetAreaHighlightTriangleCount(4103);
+            Check(splitFill > 0,
+                "activating a split area displays a filled mesh clipped by its cut line");
+            areas.Remove(splitArea);
+            Bridge.ClearAreaHighlight(4103);
+        }
 
         // 빈 Region/FaceIdSet 영역 활성은 예외 없이 통과해야 한다(하네스 방어).
         var emptyArea = Activator.CreateInstance(areaType, nonPublic: true)!;
