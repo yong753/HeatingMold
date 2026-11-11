@@ -23,8 +23,8 @@ namespace HeatingMold.App
             string sha = ProjectJsonStore.TryComputeFileSha256(path);
             if (!string.Equals(sha, MoldCoverTrimSha256, StringComparison.OrdinalIgnoreCase)) return false;
 
-            // +X 법선. 기존 평면 축 규칙이 X축 (0,1,0) → Y축 (0,0,1) 을 선택하므로
-            // 화면 기준 오른쪽 +Y, 위 +Z 가 유지된다.
+            // +X 법선. 평면 축 규칙이 X축 (0,0,-1) → Y축 (0,1,0) 을 선택하므로
+            // 화면 기준 오른쪽 -Z, 위 +Y 가 유지된다.
             normal = new Vec3(1, 0, 0);
             return true;
         }
