@@ -15,7 +15,8 @@ namespace HeatingMold.App;
 /// 일반 작업영역이며, 영역마다 회로 하나를 생성한다. 분할은 다음 순서를 지킨다.
 /// 1) 목표전력·허용치·마진/간격으로 필요한 영역 수를 계산한다.
 /// 2) 예상 배치 길이가 균등해지도록 절단선을 정하고 자식 영역을 준비한다.
-/// 3) 사용자가 각 영역에서 시작/종료 인출점을 선택한다(자동 배정하지 않는다).
+/// 3) 부모의 시작/종료 인출점이 있으면 그 측면을 따라 새 영역의 인출점을 자동으로 정한다.
+///    (마음에 들지 않으면 기존 인출점 버튼으로 다시 선택할 수 있다.)
 /// 4) 생성 후 실측 3D 길이 비율로 총 목표전력을 다시 배분한다.
 /// </summary>
 public partial class MainWindow
@@ -123,11 +124,15 @@ public partial class MainWindow
             return;
         }
 
+        bool autoExits = SplitExitPointPlanner.HasAssignablePair(area);
         if (HasUncommittedRoute(area))
         {
+            string exitNote = autoExits
+                ? "분할이 확정되면 기존 경로는 폐기되고, 새 영역의 시작/종료점은 원래 측면을 따라 자동으로 지정됩니다. 필요하면 다시 선택할 수 있습니다."
+                : "분할이 확정되면 경로·인출점은 각 새 영역에서 다시 선택합니다.";
             MessageBoxResult answer = MessageBox.Show(this,
-                string.Format("{0} 영역의 현재 발열경로를 폐기하고 분할할까요?\n분할이 확정되면 경로·인출점은 각 새 영역에서 다시 선택합니다.",
-                    area.Name),
+                string.Format("{0} 영역의 현재 발열경로를 폐기하고 분할할까요?\n{1}",
+                    area.Name, exitNote),
                 "영역 분할", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
             if (answer != MessageBoxResult.OK)
             {
@@ -155,6 +160,33 @@ public partial class MainWindow
         {
             SetSplitStatus("분할 영역을 준비할 수 없습니다 — " + childFailure);
             return;
+        }
+
+        if (autoExits)
+        {
+            // 부모의 시작/종료 측면을 각 영역으로 옮긴다. 하나라도 유일하게 결정되지 않으면
+            // 자식 영역에는 아무 점도 기록하지 않고 분할 자체를 확정하지 않는다.
+            if (!SplitExitPointPlanner.TryAssign(area, children, out string exitFailure))
+            {
+                SetSplitStatus("분할 영역의 인출점을 자동으로 정할 수 없습니다 — " + exitFailure);
+                return;
+            }
+            // 확정 전에 각 점의 3D 표면 위치를 검증한다. 실패하면 부모 영역·경로·선택점은 그대로 남는다.
+            foreach (WorkingArea child in children)
+            {
+                if (!TryEvaluateSelectedExit3D(child, child.SelectedStartExit!.Value,
+                        out _, out string startError))
+                {
+                    SetSplitStatus(child.Name + " 시작점을 표면에 올릴 수 없습니다 — " + startError);
+                    return;
+                }
+                if (!TryEvaluateSelectedExit3D(child, child.SelectedEndExit!.Value,
+                        out _, out string endError))
+                {
+                    SetSplitStatus(child.Name + " 종료점을 표면에 올릴 수 없습니다 — " + endError);
+                    return;
+                }
+            }
         }
 
         // 원자적 교체: 모든 자식 영역 경계가 준비된 뒤 한 번의 네이티브 경로 커밋으로
@@ -201,9 +233,12 @@ public partial class MainWindow
         UpdateActionStates();
 
         string partsText = string.Join(", ", children.Select(child => child.Name));
+        string exitText = autoExits
+            ? "시작/종료점은 원래 측면을 따라 자동으로 지정했습니다 — 경로를 생성하세요(필요하면 다시 선택 가능)."
+            : "각 영역에서 시작점과 종료점을 선택한 뒤 생성하세요.";
         SetSplitStatus(string.Format(CultureInfo.CurrentCulture,
-            "{0} 영역을 {1}개 독립 영역으로 분할했습니다 — {2}. 각 영역에서 시작점과 종료점을 선택한 뒤 생성하세요.",
-            area.Name, children.Count, partsText));
+            "{0} 영역을 {1}개 독립 영역으로 분할했습니다 — {2}. {3}",
+            area.Name, children.Count, partsText, exitText));
         if (!string.IsNullOrEmpty(_routePresentationWarning))
             SetSplitStatus(StatusText.Text + " · 표시 경고: " + _routePresentationWarning);
     }
@@ -215,12 +250,19 @@ public partial class MainWindow
         children = new List<WorkingArea>();
         failure = string.Empty;
 
-        List<(Vec2 A, Vec2 B)> cutLines = BuildCutLines(parent.Region[0], split);
-        if (cutLines.Count != split.Bands.Count - 1)
+        List<(Vec2 A, Vec2 B)> newCuts = BuildCutLines(parent.Region[0], split);
+        if (newCuts.Count != split.Bands.Count - 1)
         {
             failure = "절단선 수와 분할 영역 수가 대응하지 않습니다.";
             return false;
         }
+        // 상위 분할에서 물려받은 절단선도 함께 넘긴다. 이미 절단선이던 경계가 원본 CAD edge나
+        // 새 절단선으로 둔갑하지 않고 자기 provenance를 그대로 유지하게 하고, 저장·재열기에서도
+        // 같은 전체 선분 식별자로 복원되게 한다.
+        List<(Vec2 A, Vec2 B)> cutLines = parent.SplitCutLines
+            .Concat(newCuts)
+            .Distinct()
+            .ToList();
 
         var usedNames = new HashSet<string>(_areas.Select(existing => existing.Name), StringComparer.Ordinal);
         var usedColors = new HashSet<System.Windows.Media.Color>(_areas.Select(existing => existing.Color));
@@ -271,10 +313,9 @@ public partial class MainWindow
                 RegionExitBoundary = boundary,
                 ExitBoundary = boundary,
                 RegionBoundary = new ExactRegionContainment(boundary.CreateContainment()),
-                SplitCutLines = boundary.Segments
-                    .Select(segment => (segment.A, segment.B))
-                    .Distinct()
-                    .ToList(),
+                // 전체 절단선(A/B)을 저장한다. 잘라낸 구간을 저장하면 재열기에서 절단선 식별자가
+                // 달라져 그 위에 저장된 인출점을 복원할 수 없다.
+                SplitCutLines = cutLines.ToList(),
                 TargetPowerText = provisionalPower.ToString("0.###", CultureInfo.CurrentCulture),
             };
             child.FaceIdSet.UnionWith(parent.FaceIdSet);

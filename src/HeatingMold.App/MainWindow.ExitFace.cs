@@ -468,16 +468,42 @@ public partial class MainWindow
         return true;
     }
 
-    private bool TryEvaluateSelectedExit3D(WorkingArea area, ExitBoundaryPoint point, out Vec3 position)
+    private bool TryEvaluateSelectedExit3D(WorkingArea area, ExitBoundaryPoint point, out Vec3 position) =>
+        TryEvaluateSelectedExit3D(area, point, out position, out _);
+
+    /// <summary>선택 인출점의 실제 3D 표면 위치를 평가한다. 분할 자동 지정처럼 확정 전에
+    /// 검증하는 호출자는 실패 사유가 필요하므로 별도 overload로 전달한다.</summary>
+    private bool TryEvaluateSelectedExit3D(WorkingArea area, ExitBoundaryPoint point, out Vec3 position,
+        out string failure)
     {
         position = default;
+        failure = string.Empty;
         var side = _workingSide?.Confirmed;
-        if (area == null || side == null) return false;
+        if (area == null)
+        {
+            failure = "작업영역이 없습니다.";
+            return false;
+        }
+        if (side == null)
+        {
+            failure = "확정된 작업 방향이 없습니다.";
+            return false;
+        }
         var context = CommittedRouteContext.CaptureRegion(area);
         if (!TryEvaluateExitSample(side, context, point, point.Point,
-                out SurfaceMappedSample sample, out _)) return false;
+                out SurfaceMappedSample sample, out failure))
+        {
+            if (string.IsNullOrWhiteSpace(failure))
+                failure = "인출점을 작업면에 매핑할 수 없습니다.";
+            return false;
+        }
         position = sample.Point;
-        return double.IsFinite(position.X) && double.IsFinite(position.Y) && double.IsFinite(position.Z);
+        if (!double.IsFinite(position.X) || !double.IsFinite(position.Y) || !double.IsFinite(position.Z))
+        {
+            failure = "인출점의 3D 좌표가 유한하지 않습니다.";
+            return false;
+        }
+        return true;
     }
 
     private static double[] ExitMarkerWire(Vec3 center, ProjectionFrame frame, bool diamond)

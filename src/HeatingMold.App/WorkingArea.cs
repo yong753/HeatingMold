@@ -146,10 +146,15 @@ internal sealed class WorkingArea
     /// <summary>적용영역 외곽 경계의 원본 CAD 참조와 표시 체인이 준비되었는지.</summary>
     public bool HasExitBoundary => ExitBoundary != null && ExitChain.Count >= 2 && ExitEdgeRefs.Count > 0;
 
-    /// <summary>새 인출점 방식의 생성 준비: 두 점이 모두 원본 edge binding을 가져야 한다.</summary>
+    /// <summary>새 인출점 방식의 생성 준비: 두 점이 모두 정확한 경계 provenance(원본 edge,
+    /// 제외 사각형 변, 분할 절단선) 중 하나를 가져야 한다.</summary>
     public bool HasSelectedExits => RegionExitBoundary != null && HasExitBoundary
-        && (SelectedStartExit?.Binding.HasValue == true || SelectedStartExit?.ArtificialBinding.HasValue == true)
-        && (SelectedEndExit?.Binding.HasValue == true || SelectedEndExit?.ArtificialBinding.HasValue == true);
+        && HasExitProvenance(SelectedStartExit) && HasExitProvenance(SelectedEndExit);
+
+    private static bool HasExitProvenance(ExitBoundaryPoint? point) =>
+        point?.Binding.HasValue == true
+            || point?.ArtificialBinding.HasValue == true
+            || point?.SplitBinding.HasValue == true;
 
     public bool HasExitAnchors => HasExitFace && StartAnchor.HasValue && EndAnchor.HasValue &&
         SelectedAnchorCandidate?.StartBinding.HasValue == true && SelectedAnchorCandidate?.EndBinding.HasValue == true;
