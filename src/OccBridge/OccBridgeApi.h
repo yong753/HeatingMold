@@ -262,8 +262,6 @@ public:
     /// <summary>원통/원뿔 면의 축 방향. 그 외 타입은 null</summary>
     static array<double>^ GetFaceAxis(int faceIndex);
 
-    /// <summary>면의 UV 경계 폴리곤 — 외곽 먼저, 이후 홀 (V3)</summary>
-    static array<UvWire^>^ GetFaceUvBoundary(int faceIndex);
     /// <summary>
     /// 임시 0.01mm Sewing 후 공유 내부 Edge를 제거하고 외곽 루프를 3D 적응 샘플링해 반환.
     /// 외곽 순서는 기존 정점 연결만 따라 결정하며 Wire/Edge를 재조립하지 않는다.
@@ -296,8 +294,6 @@ public:
     /// <summary>Exact projected-curve intersections strictly forward of the ray origin. Direction need not be unit.</summary>
     static ExitEdgeRayResult^ IntersectExitEdgeRay(long long id, long long revision,
         ExitEdgeReference^ reference, double u, double v, double du, double dv, double tolerance);
-    /// <summary>Last exit-side extraction diagnostic (ASCII, one item per line).</summary>
-    static System::String^ GetExitSideDiagnostic();
     /// <summary>인출 측면 후보를 임시 강조 표시한다 (이전 강조는 지운다).</summary>
     static void ShowExitCandidates(array<array<double>^>^ polylines);
     static void ClearExitCandidates();
@@ -307,16 +303,8 @@ public:
     static void HighlightExitCandidate(int index);
     /// <summary>인출면 선택 모드에서 후보 면 하나를 호버색으로 강조한다. faceId &lt; 0 이면 해제.</summary>
     static void HighlightExitFace(int faceId);
-    /// <summary>UV → 3D 매핑 (V5)</summary>
-    static array<double>^ SampleUvTo3D(int faceIndex, double u, double v);
     /// <summary>Pick the nearest visible point on the selected faces only when it is on their trim boundary.</summary>
     static array<double>^ PickSelectedBoundaryPoint(array<int>^ faceIds, int x, int y);
-    /// <summary>Project source wire along a fixed axis, then shift result by insertionDepth along that axis; returns [success, length, edgeCount, wireCount, statusCode].</summary>
-    static array<double>^ ProjectPathWireOntoSelectedFaces(array<int>^ faceIds, array<double>^ xyzFlat,
-                                                           double dx, double dy, double dz, double insertionDepth);
-    /// <summary>Project and display one route piece, replacing the cached piece with the same stable ID.</summary>
-    static RoutePieceResult^ ProjectRoutePiece(int pieceId, System::String^ kind, array<double>^ xyzFlat,
-                                               array<int>^ faceIds, double dx, double dy, double dz, double depth);
     /// <summary>Toggle connector presentation; disabled connectors are shown as dashed guides.</summary>
     /// <summary>redraw=false면 호출측이 여러 커넥터를 갱신한 뒤 한 번만 Redraw한다.</summary>
     static bool SetConnectorEnabled(int pieceId, bool enabled, double r, double g, double b, bool redraw);
@@ -411,17 +399,6 @@ public:
 
     /// <summary>진단: face-ID 선택 이미지를 실제로 생성한 횟수(캐시 재사용 검증용)</summary>
     static long long GetFaceIdBuildCount();
-    /// <summary>진단: 마지막 사각형 보충 통계
-    /// [status, 후보면, 후보타일, 렌더패스, 출력픽셀, 투영삼각형, 후보픽셀, 투영ms, 렌더ms, 전체ms]</summary>
-    static array<double>^ GetFaceSelectionRefineStats();
-    /// <summary>진단/자동화 전용: 직교 카메라 상태를 직접 지정한다(eye, center, up, scale).</summary>
-    static bool SetCameraState(array<double>^ eye, array<double>^ center, array<double>^ up, double scale);
-    /// <summary>진단 전용: 지정 기본 픽셀 영역을 8배로 다시 렌더해 디코드되는 face id를 반환한다.</summary>
-    static array<int>^ DebugProbeFaceIdRegion(int x0, int y0, int x1, int y1);
-    /// <summary>진단 전용: 마지막 픽셀 보충 질의의 기본 해상도 face id(제품 사각형 선택은 사용하지 않음).</summary>
-    static array<int>^ DebugGetLastRectangleBaseFaceIds();
-    /// <summary>진단 전용: 다음 보충 렌더 이미지를 지정 경로에 저장한다(빈 문자열이면 해제).</summary>
-    static void DebugSetFaceRefineDumpPath(System::String^ path);
     /// <summary>현재 선택된 face id 목록(정렬). 선택 상태를 바꾸지 않는다.</summary>
     static array<int>^ GetSelectedFaceIds();
     /// <summary>테스트/자동화: face ID 목록으로 네이티브 선택을 교체한다.

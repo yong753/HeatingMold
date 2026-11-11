@@ -100,6 +100,14 @@
 - Verified 2026-11-11: Core tests 195 pass and App tests 154 pass in an isolated repository copy (the running app locks `src\HeatingMold.App\bin`), and `tests\WorkingSide.Regression` passes 173 working-side + 19 project load + 50 exclusion + 3 electrical refresh checks. Not verified: real mouse interaction with the new limit inputs and opening a pre-change project file in the running app.
 - DXF output keeps the existing numeric electrical columns; adding verdict or limit columns is a separate approved change.
 
+## Removed test-only code (2026-11-11)
+
+- Deleted from `src\OccBridge`: `ProjectRoutePiece`, `ProjectPathWireOntoSelectedFaces`, `GetFaceUvBoundary`, `SampleUvTo3D`, `GetExitSideDiagnostic`, `GetFaceSelectionRefineStats`, `DebugProbeFaceIdRegion`, `DebugGetLastRectangleBaseFaceIds`, `DebugSetFaceRefineDumpPath`, `SetCameraState` and their native implementations. Their only callers were the deleted `tests\PowerLead.Regression` and `tests\PatternRegion.Repro`. Do not reintroduce a managed API without a product caller.
+- `ProjectRoutePiece` the persistence DTO in `MainWindow.Project.cs` is unrelated to the removed native API; the name collision is intentional and the DTO stays.
+- Kept deliberately: `GetFaceIdBuildCount` (asserts the product rectangle path never builds a face-ID image), `ProjectPowerLead` and `PickSelectedBoundaryPoint` (product code gated by `WorkingRouteMigrationComplete = false`, not test-only), and the legacy exit-face path (still driven by the visual-test scenario loader).
+- `tests\HeatingMold.Application.Tests`, `Design.Tests`, `Infrastructure.Tests`, `Electrical.Tests` held only `bin`/`obj` with no source and were removed.
+- `x64\UndoRemovalRegression\UndoRemoval.Regression.csproj` is an ignored scratch harness that links `tests\PowerLead.Regression\Program.cs`; it is now stale and is not part of any build.
+
 ## Build configuration (verified)
 
 - `HeatingMold.Mvp.sln` declares exactly one solution configuration, `Release|x64`. Do not re-add Debug/Any CPU/x86 rows without verifying every project exposes them.

@@ -85,7 +85,7 @@ static class ExclusionExitChecks
             if (allRight) { rightSide = candidate; break; }
         }
         if (rightSide == null || rightSide.EdgeReferences == null || rightSide.EdgeReferences.Length == 0)
-            Console.WriteLine(Bridge.GetExitSideDiagnostic());
+            Console.WriteLine("exit-side diagnostic unavailable");
         Check(rightSide != null && rightSide.EdgeReferences != null && rightSide.EdgeReferences.Length > 0,
             "native right exit side carries original edge references for the planar face");
         if (rightSide == null) { Cleanup(window, marginBox, spacingBox, fixtureDir); return; }
@@ -97,7 +97,7 @@ static class ExclusionExitChecks
 
         // 영역은 선택 면의 실제 원본 통합 경계(60x40)를 작업평면에 투영해 구성한다.
         var loops = Bridge.GetSelectedRegionBoundary(new[] { topFace }, 0.05);
-        if (loops == null || loops.Length != 1) Console.WriteLine(Bridge.GetExitSideDiagnostic());
+        if (loops == null || loops.Length != 1) Console.WriteLine("region-boundary diagnostic unavailable");
         Check(loops != null && loops.Length == 1 && loops[0].Closed && loops[0].Points != null,
             "planar face exposes one closed region boundary loop");
         Check(loops[0].EdgeReferences != null && loops[0].EdgeReferences.Length > 0,

@@ -1,6 +1,0 @@
-bin/
-obj/
-native/*.obj
-native/*.exe
-native/*.exp
-native/*.lib
