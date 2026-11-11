@@ -242,11 +242,15 @@ namespace
     }
 
     void ComputeAutoAxesForShape(const Handle(StepData_StepModel)& stepModel,
-                                 const TopoDS_Shape& shape, gp_Dir outAxes[3])
+                                 const TopoDS_Shape& shape, gp_Dir outAxes[3],
+                                 bool legacyPrincipalAxes = false)
     {
         outAxes[0] = gp::DX(); outAxes[1] = gp::DY(); outAxes[2] = gp::DZ();
         if (TryGetSupplementalAxes(stepModel, outAxes)) return;
         if (shape.IsNull()) return;
+        // The model's own coordinates are authoritative. Principal-axis alignment
+        // is retained only to reproduce projects saved with import policy 1.
+        if (!legacyPrincipalAxes) return;
         GProp_GProps props;
         bool hasSolid = false;
         for (TopExp_Explorer ex(shape, TopAbs_SOLID); ex.More(); ex.Next()) { hasSolid = true; break; }
@@ -4120,14 +4124,14 @@ array<System::String^>^ Bridge::GetFaceTopologySignatures()
     catch (...) { return nullptr; }
 }
 
-ProjectRestoreCandidateInfo^ Bridge::BeginProjectRestoreCandidate(String^ path)
+ProjectRestoreCandidateInfo^ Bridge::BeginProjectRestoreCandidate(String^ path, int importPolicyVersion)
 {
     if (String::IsNullOrWhiteSpace(path)) return nullptr;
     try
     {
         const std::string native = msclr::interop::marshal_as<std::string>(path);
         std::string error;
-        const int id = BeginProjectRestoreCandidateNative(native, error);
+        const int id = BeginProjectRestoreCandidateNative(native, importPolicyVersion, error);
         if (id <= 0) return nullptr;
         const auto it = g_projectRestoreCandidates.find(id);
         if (it == g_projectRestoreCandidates.end() || !it->second)

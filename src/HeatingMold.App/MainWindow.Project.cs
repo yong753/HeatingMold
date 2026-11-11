@@ -170,7 +170,7 @@ namespace HeatingMold.App
                     FileLength = File.Exists(_modelPath) ? new FileInfo(_modelPath).Length : 0,
                     Sha256 = sha256,
                     ModelRevision = _modelRevision,
-                    ImportPolicyVersion = 1,
+                    ImportPolicyVersion = 2,
                     FaceTopologySignatures = faceSignatures,
                     TopologyIdentityError = topologyIdentityError
                 },

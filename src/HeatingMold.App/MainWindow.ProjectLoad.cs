@@ -78,7 +78,7 @@ public partial class MainWindow
             int nextNativeId = _nextNativePieceId;
             try
             {
-                candidate = Bridge.BeginProjectRestoreCandidate(sourcePath);
+                candidate = Bridge.BeginProjectRestoreCandidate(sourcePath, document.Source.ImportPolicyVersion);
                 if (candidate == null)
                     throw new InvalidOperationException(
                         "STEP 격리 로드에 실패했습니다: " + (Bridge.GetProjectRestoreCandidateError() ?? "알 수 없는 오류"));
@@ -214,7 +214,7 @@ public partial class MainWindow
             throw new InvalidDataException("원본 STEP 정보가 없습니다.");
         if (string.IsNullOrWhiteSpace(document.Source.Sha256) || document.Source.Sha256.Length != 64)
             throw new InvalidDataException("원본 STEP SHA-256이 올바르지 않습니다.");
-        if (document.Source.ImportPolicyVersion != 1)
+        if (document.Source.ImportPolicyVersion != 1 && document.Source.ImportPolicyVersion != 2)
             throw new InvalidDataException("지원하지 않는 STEP 가져오기 정책 버전입니다: " + document.Source.ImportPolicyVersion);
         if (!string.IsNullOrWhiteSpace(document.Source.TopologyIdentityError))
             throw new InvalidDataException("저장된 topology identity가 완전하지 않습니다: " + document.Source.TopologyIdentityError);

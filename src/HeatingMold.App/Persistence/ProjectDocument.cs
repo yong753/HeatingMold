@@ -45,7 +45,7 @@ namespace HeatingMold.App.Persistence
         /// <summary>가져온 STEP 바이트의 SHA-256. 파일이 바뀌면 불러오기를 거부하기 위한 값이다.</summary>
         public string Sha256 { get; set; }
         public long ModelRevision { get; set; }
-        public int ImportPolicyVersion { get; set; } = 1;
+        public int ImportPolicyVersion { get; set; } = 2;
         /// <summary>모델 전체 Face의 재가져오기 안정 topology signature. FaceId는 현재 런타임 인덱스다.</summary>
         public List<ProjectFaceTopologySignature> FaceTopologySignatures { get; set; } = new();
         /// <summary>signature를 모두 읽지 못한 경우의 진단. 값이 있으면 이 프로젝트는 아직 불러오기 불가다.</summary>

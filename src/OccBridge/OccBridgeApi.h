@@ -247,7 +247,7 @@ public:
     static array<System::String^>^ GetFaceTopologySignatures();
 
     /// <summary>현재 문서를 건드리지 않고 STEP을 격리 후보로 읽는다. 실패 시 null.</summary>
-    static ProjectRestoreCandidateInfo^ BeginProjectRestoreCandidate(System::String^ path);
+    static ProjectRestoreCandidateInfo^ BeginProjectRestoreCandidate(System::String^ path, int importPolicyVersion);
     /// <summary>후보를 현재 문서로 한 번에 교체한다. 표시/카메라는 새 모델에 맞춘다.</summary>
     static bool CommitProjectRestoreCandidate(int candidateId);
     static void DiscardProjectRestoreCandidate(int candidateId);
