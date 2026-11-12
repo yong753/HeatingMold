@@ -100,6 +100,51 @@ namespace HeatingMold.App.Tests
         }
 
         [Fact]
+        public void Load_RejectsUnknownExitPointBindingKind()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string json = "{" +
+                "\"schemaVersion\":2," +
+                "\"name\":\"binding-kind-test\"," +
+                "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) +
+                "\",\"faceCount\":2,\"solidCount\":1}," +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1,2]}]," +
+                "\"steps\":[{\"id\":\"1\",\"action\":\"pickExitPoint\",\"area\":\"A\"," +
+                "\"exitPoint\":{\"role\":\"end\",\"uv\":[1,2],\"toleranceMm\":0.5,\"bindingKind\":\"bogus\"}}]" +
+                "}";
+            string scenarioPath = temp.WriteFile("scenario.json", json);
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(scenario);
+            Assert.Contains("bindingKind", error);
+        }
+
+        [Fact]
+        public void Load_AcceptsSplitExitPointBindingKind()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string json = "{" +
+                "\"schemaVersion\":2," +
+                "\"name\":\"binding-kind-test\"," +
+                "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) +
+                "\",\"faceCount\":2,\"solidCount\":1}," +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1,2]}]," +
+                "\"steps\":[{\"id\":\"1\",\"action\":\"pickExitPoint\",\"area\":\"A\"," +
+                "\"exitPoint\":{\"role\":\"end\",\"uv\":[1,2],\"toleranceMm\":0.5,\"bindingKind\":\" split \"}}]" +
+                "}";
+            string scenarioPath = temp.WriteFile("scenario.json", json);
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(error);
+            Assert.NotNull(scenario);
+            Assert.Equal("split", scenario.Steps[0].ExitPoint.BindingKind);
+        }
+
+        [Fact]
         public void Load_RejectsLegacySchema()
         {
             using var temp = new TempDirectory();

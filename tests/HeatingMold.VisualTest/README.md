@@ -21,6 +21,7 @@
 ./tests/HeatingMold.VisualTest/Run.ps1 -Scenario e2e-full
 ./tests/HeatingMold.VisualTest/Run.ps1 -Scenario e2e-multi-area
 ./tests/HeatingMold.VisualTest/Run.ps1 -Scenario e2e-margin-spacing-exit
+./tests/HeatingMold.VisualTest/Run.ps1 -Scenario e2e-split-safety
 
 # 시나리오 경로를 직접 지정 (필수)
 ./tests/HeatingMold.VisualTest/Run.ps1 -Scenario C:\work\my-scenario.json

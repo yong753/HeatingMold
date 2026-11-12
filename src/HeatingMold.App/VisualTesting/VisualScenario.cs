@@ -279,6 +279,10 @@ internal sealed class VisualScenario
             throw new ArgumentException("steps[" + index + "].exitPoint.uv는 [u, v] 2개 실수여야 합니다.");
         if (!double.IsFinite(point.ToleranceMm) || point.ToleranceMm <= 0)
             throw new ArgumentException("steps[" + index + "].exitPoint.toleranceMm은 0보다 커야 합니다.");
+        string kind = string.IsNullOrWhiteSpace(point.BindingKind) ? "any" : point.BindingKind.Trim().ToLowerInvariant();
+        if (kind != "any" && kind != "cad" && kind != "artificial" && kind != "split")
+            throw new ArgumentException("steps[" + index + "].exitPoint.bindingKind는 any, cad, artificial, split 중 하나여야 합니다.");
+        point.BindingKind = kind;
     }
 
     private static void ValidateElectricalStep(
@@ -397,6 +401,8 @@ internal sealed class VisualExitPointSpec
     public string Role { get; set; } = "start";
     public double[] Uv { get; set; }
     public double ToleranceMm { get; set; } = 0.5;
+    /// <summary>기대하는 경계 연결 종류: any(기본), cad, artificial, split. 절단선 위 점은 split이다.</summary>
+    public string BindingKind { get; set; } = "any";
 }
 
 internal sealed class VisualElectricalSpec

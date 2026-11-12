@@ -491,12 +491,15 @@ namespace HeatingMold.App
 
         private VisualStepOutcome VisualGenerate(VisualActionSpec spec, VisualScenario scenario)
         {
-            VisualAreaDefinition definition = RequireAreaDefinition(scenario, spec.Area);
+            // 자동분할로 새로 생긴 영역은 시나리오의 areas에 정의가 없다. 그 영역은
+            // ActivateArea가 복원한 상속 입력을 그대로 쓰고, 시나리오가 값을 지정한 경우에만
+            // 덮어쓴다. 제품의 생성 경로는 두 경우 모두 같다.
+            VisualAreaDefinition definition = scenario.Areas.FirstOrDefault(a => a.Alias == spec.Area);
             WorkingArea area = ResolveVisualArea(spec.Area);
             ActivateArea(area);
             RefreshAreaList();
             SidebarTabs.SelectedIndex = PatternTabIndex;
-            ConfigurePatternInputs(definition, spec);
+            ConfigurePatternInputs(spec, definition);
             Require(TryGetParams(out _, out _, out string parameterError),
                 "마진/간격 입력을 읽지 못했습니다: " + parameterError);
 
@@ -536,7 +539,7 @@ namespace HeatingMold.App
 
             Require(success, "발열경로 생성이 완료되지 않았습니다: " + StatusText.Text);
             RequireSiblingRoutesPreserved(routesBefore, area, "발열경로 생성");
-            VisualAreaExpect expect = spec.Expect ?? definition.Expect;
+            VisualAreaExpect expect = spec.Expect ?? definition?.Expect;
             string error = CheckAreaState(area, expect, out Dictionary<string, string> data);
             if (error != null) return VisualStepOutcome.Fail(error);
             return VisualStepOutcome.Ok("발열경로 생성·검증", data);
@@ -670,6 +673,11 @@ namespace HeatingMold.App
             }
             Require(point.Binding != null || point.ArtificialBinding != null || point.SplitBinding != null,
                 "인출점에 경계 연결 정보가 없습니다.");
+            string bindingKind = DescribeBindingKind(point);
+            string expectedKind = string.IsNullOrWhiteSpace(requested.BindingKind)
+                ? "any" : requested.BindingKind.Trim().ToLowerInvariant();
+            Require(expectedKind == "any" || expectedKind == bindingKind,
+                "인출점 경계 연결 종류가 기대와 다릅니다. 기대 " + expectedKind + ", 실제 " + bindingKind);
             ApplyPickedExitPoint(area, role, point);
             Require(_exitPointPickRole < 0 && !Viewport.ExitFacePickMode,
                 "인출점 선택 모드가 종료되지 않았습니다.");
@@ -692,7 +700,8 @@ namespace HeatingMold.App
                 ["surfaceX"] = position.X.ToString("0.###", CultureInfo.InvariantCulture),
                 ["surfaceY"] = position.Y.ToString("0.###", CultureInfo.InvariantCulture),
                 ["surfaceZ"] = position.Z.ToString("0.###", CultureInfo.InvariantCulture),
-                ["binding"] = DescribeExitBinding(point)
+                ["binding"] = DescribeExitBinding(point),
+                ["bindingKind"] = bindingKind
             };
             return VisualStepOutcome.Ok("직접 인출점 선택", data);
         }
@@ -927,6 +936,22 @@ namespace HeatingMold.App
             return VisualStepOutcome.Ok("전기 판정·공유 전력 배분 확인", data);
         }
 
+        private static string DescribeCutLines(WorkingArea area)
+        {
+            if (area.SplitCutLines == null || area.SplitCutLines.Count == 0) return "cuts=none";
+            return "cuts=" + string.Join(";", area.SplitCutLines.Select(line => string.Format(
+                CultureInfo.InvariantCulture, "({0:F3},{1:F3})->({2:F3},{3:F3})",
+                line.A.X, line.A.Y, line.B.X, line.B.Y)));
+        }
+
+        private static string DescribeRegionBounds(WorkingArea area)
+        {
+            if (area.Region == null || area.Region.Count == 0 || area.Region[0].Count == 0) return "ring=none";
+            IReadOnlyList<Vec2> ring = area.Region[0];
+            return string.Format(CultureInfo.InvariantCulture, "ring=[{0:F3},{1:F3}]x[{2:F3},{3:F3}]",
+                ring.Min(p => p.X), ring.Max(p => p.X), ring.Min(p => p.Y), ring.Max(p => p.Y));
+        }
+
         private VisualStepOutcome VisualSplitArea(VisualActionSpec spec, VisualScenario scenario)
         {
             WorkingArea parent = ResolveVisualArea(spec.Area);
@@ -939,30 +964,34 @@ namespace HeatingMold.App
                 "분할에 사용할 시작/종료 인출점이 없습니다: " + spec.Area);
 
             List<WorkingArea> beforeAreas = _areas.ToList();
-            List<AreaSnapshot> before = beforeAreas.Select(CaptureAreaSnapshot).ToList();
+            Require(TryCaptureAllAreaRoutes(out Dictionary<WorkingArea, VisualRouteSnapshot> beforeRoutes,
+                out string captureError), "분할 전 확정 경로를 읽지 못했습니다: " + captureError);
 
             QueueVisualTestConfirm(spec);
             SplitActiveArea();
             RequireNoPendingVisualTestConfirms();
 
+            // 자동분할의 결과 문구는 StatusText가 아니라 분할 전용 상태 문구에만 기록된다.
+            string splitStatus = SplitStatusText?.Text ?? string.Empty;
             bool parentRemoved = !_areas.Contains(parent);
-            if (spec.Outcome == "rejected")
+            if (string.Equals(spec.Outcome, "rejected", StringComparison.OrdinalIgnoreCase))
             {
                 Require(!parentRemoved, "거부를 기대했지만 영역이 분할되었습니다.");
-                if (!string.IsNullOrWhiteSpace(spec.FailureContains))
-                    Require(StatusText.Text.Contains(spec.FailureContains, StringComparison.Ordinal),
-                        "분할 거부 사유가 기대와 다릅니다: " + StatusText.Text);
-                RequireSnapshotsUnchanged(before);
+                RequireSameAreasInOrder(beforeAreas, "거부된 분할");
+                string rejectedPreservation = RequireAreaRoutesUnchanged(beforeRoutes, null, "거부된 분할");
+                Require(rejectedPreservation == null, rejectedPreservation);
+                if (!string.IsNullOrEmpty(spec.FailureContains))
+                    Require(splitStatus.Contains(spec.FailureContains, StringComparison.Ordinal),
+                        "분할 거부 사유가 기대와 다릅니다: " + splitStatus);
                 var rejectedData = new Dictionary<string, string>
                 {
-                    ["reason"] = StatusText.Text,
+                    ["reason"] = splitStatus,
                     ["areas"] = _areas.Count.ToString(CultureInfo.InvariantCulture)
                 };
                 return VisualStepOutcome.Ok("자동분할 거부·기존 상태 보존", rejectedData);
             }
 
-            Require(parentRemoved,
-                "자동분할이 완료되지 않았습니다: " + StatusText.Text);
+            Require(parentRemoved, "자동분할이 완료되지 않았습니다: " + splitStatus);
             List<WorkingArea> children = _areas
                 .Where(area => !beforeAreas.Contains(area))
                 .OrderBy(area => area.AreaId)
@@ -972,13 +1001,11 @@ namespace HeatingMold.App
             if (spec.PartCount != null)
                 Require(children.Count == spec.PartCount.Value,
                     "자동분할 영역 수가 기대와 다릅니다. 기대 " + spec.PartCount.Value + ", 실제 " + children.Count);
+            Require(_areas.Count == beforeAreas.Count - 1 + children.Count,
+                "분할 결과 영역 목록에 예상하지 않은 영역이 있습니다.");
 
-            foreach (AreaSnapshot snapshot in before)
-            {
-                if (ReferenceEquals(snapshot.Area, parent)) continue;
-                Require(_areas.Contains(snapshot.Area), "분할 중 다른 영역이 제거되었습니다: " + snapshot.Area.Name);
-                RequireSnapshotsEqual(snapshot, CaptureAreaSnapshot(snapshot.Area), "다른 영역");
-            }
+            string preservation = RequireAreaRoutesUnchanged(beforeRoutes, parent, "자동분할 후 다른 영역");
+            Require(preservation == null, preservation);
 
             string[] childAliases = spec.ChildAliases;
             if (childAliases == null || childAliases.Length == 0)
@@ -986,8 +1013,14 @@ namespace HeatingMold.App
             Require(childAliases.Length == children.Count,
                 "분할 결과 영역 수와 childAliases 수가 다릅니다.");
 
+            int splitAxis = ResolveSplitAxis(parent);
+            double parentSign = Math.Sign(AxisOf(parent.SelectedEndExit.Value.Point, splitAxis)
+                - AxisOf(parent.SelectedStartExit.Value.Point, splitAxis));
+
             _visualAreaAliases.Remove(spec.Area);
             var childData = new List<string>();
+            var childBindingData = new List<string>();
+            var childBoundaryData = new List<string>();
             for (int i = 0; i < children.Count; i++)
             {
                 WorkingArea child = children[i];
@@ -999,8 +1032,25 @@ namespace HeatingMold.App
                     "분할 영역에 회로가 정확히 하나가 아닙니다: " + childAliases[i]);
                 Require(child.FaceIdSet.SetEquals(parent.FaceIdSet),
                     "분할 영역이 부모의 선택 면을 유지하지 않았습니다: " + childAliases[i]);
+                Require(child.SelectedStartExit.HasValue && child.SelectedEndExit.HasValue,
+                    "분할 영역에 자동 배정된 시작/종료 인출점이 없습니다: " + childAliases[i]);
+
+                ExitBoundaryPoint childStart = child.SelectedStartExit.Value;
+                ExitBoundaryPoint childEnd = child.SelectedEndExit.Value;
+                string startKind = DescribeBindingKind(childStart);
+                string endKind = DescribeBindingKind(childEnd);
+                Require(startKind != "none" && endKind != "none",
+                    "분할 영역의 인출점에 경계 연결 정보가 없습니다: " + childAliases[i]);
+                if (parentSign != 0)
+                {
+                    double sign = Math.Sign(AxisOf(childEnd.Point, splitAxis) - AxisOf(childStart.Point, splitAxis));
+                    Require(sign == parentSign,
+                        "분할 영역의 인출 방향이 부모와 다릅니다: " + childAliases[i]);
+                }
                 _visualAreaAliases[childAliases[i]] = child;
                 childData.Add(childAliases[i] + ":" + areaData["pieces"] + "p/" + areaData["totalLengthMm"] + "mm");
+                childBindingData.Add(childAliases[i] + ":" + startKind + "/" + endKind);
+                childBoundaryData.Add(childAliases[i] + ":" + DescribeCutLines(child) + " " + DescribeRegionBounds(child));
             }
 
             double minLength = children.Min(c => c.RoutePieceLengths.Sum());
@@ -1013,10 +1063,12 @@ namespace HeatingMold.App
             {
                 ["areas"] = _areas.Count.ToString(CultureInfo.InvariantCulture),
                 ["children"] = string.Join(",", childData),
+                ["bindings"] = string.Join(",", childBindingData),
+                ["boundaries"] = string.Join(",", childBoundaryData),
                 ["minLengthMm"] = minLength.ToString("0.###", CultureInfo.InvariantCulture),
                 ["maxLengthMm"] = maxLength.ToString("0.###", CultureInfo.InvariantCulture),
                 ["lengthRatio"] = ratio.ToString("0.####", CultureInfo.InvariantCulture),
-                ["status"] = StatusText.Text
+                ["splitStatus"] = splitStatus
             };
             return VisualStepOutcome.Ok("자동분할·자식 영역 확인", data);
         }
@@ -1222,49 +1274,31 @@ namespace HeatingMold.App
             return VisualStepOutcome.Ok("프로젝트 열기·상태 복원", data);
         }
 
-        private sealed record AreaSnapshot(
-            WorkingArea Area, int Pieces, double LengthMm, ExitBoundaryPoint? Start, ExitBoundaryPoint? End);
-
-        private static AreaSnapshot CaptureAreaSnapshot(WorkingArea area) => new(
-            area,
-            area.Pattern?.RoutePieces.Count ?? 0,
-            area.RoutePieceLengths?.Sum() ?? 0,
-            area.SelectedStartExit,
-            area.SelectedEndExit);
-
-        private static void RequireSnapshotsEqual(AreaSnapshot expected, AreaSnapshot actual, string label)
+        /// <summary>거부된 동작이 영역 목록을 바꾸지 않았는지 참조·순서까지 검사한다.</summary>
+        private void RequireSameAreasInOrder(List<WorkingArea> expected, string label)
         {
-            Require(expected.Pieces == actual.Pieces,
-                label + " 조각 수가 달라졌습니다: " + expected.Area.Name);
-            Require(Near(expected.LengthMm, actual.LengthMm, 1e-6),
-                label + " 실제 3D 길이가 달라졌습니다: " + expected.Area.Name);
-            Require(ExitPointEquals(expected.Start, actual.Start),
-                label + " 시작 인출점이 달라졌습니다: " + expected.Area.Name);
-            Require(ExitPointEquals(expected.End, actual.End),
-                label + " 종료 인출점이 달라졌습니다: " + expected.Area.Name);
+            Require(_areas.Count == expected.Count, label + " — 영역 수가 달라졌습니다.");
+            for (int i = 0; i < expected.Count; i++)
+                Require(ReferenceEquals(_areas[i], expected[i]),
+                    label + " — 영역 목록의 순서나 참조가 달라졌습니다: " + expected[i].Name);
         }
 
-        private static void RequireSnapshotsUnchanged(List<AreaSnapshot> expected)
+        /// <summary>자동분할은 레인에 수직인 축으로 영역을 나눈다. 0=X, 1=Y.</summary>
+        private static int ResolveSplitAxis(WorkingArea area)
         {
-            foreach (AreaSnapshot snapshot in expected)
-            {
-                WorkingArea area = snapshot.Area;
-                Require(area != null, "보존해야 할 영역 참조가 사라졌습니다.");
-                RequireSnapshotsEqual(snapshot, CaptureAreaSnapshot(area), "거부 후");
-            }
+            PatternDirection direction = area.AppliedInputs?.Direction ?? area.Direction;
+            // FrameY(2)는 세로 레인이라 X로 나누고, FrameX(1)와 Auto는 가로 레인이라 Y로 나눈다.
+            return direction == PatternDirection.FrameY ? 0 : 1;
         }
 
-        private static bool ExitPointEquals(ExitBoundaryPoint? left, ExitBoundaryPoint? right)
+        private static double AxisOf(Vec2 point, int axis) => axis == 0 ? point.X : point.Y;
+
+        private static string DescribeBindingKind(ExitBoundaryPoint point)
         {
-            if (left.HasValue != right.HasValue) return false;
-            if (!left.HasValue) return true;
-            ExitBoundaryPoint a = left.Value, b = right.Value;
-            return ExitUvDistance(a.Point, b.Point) <= 1e-6
-                && a.SegmentIndex == b.SegmentIndex
-                && Math.Abs(a.SegmentParameter - b.SegmentParameter) <= 1e-9
-                && Nullable.Equals(a.Binding, b.Binding)
-                && Nullable.Equals(a.ArtificialBinding, b.ArtificialBinding)
-                && Nullable.Equals(a.SplitBinding, b.SplitBinding);
+            if (point.Binding.HasValue) return "cad";
+            if (point.ArtificialBinding.HasValue) return "artificial";
+            if (point.SplitBinding.HasValue) return "split";
+            return "none";
         }
 
         private static double ExitUvDistance(Vec2 a, Vec2 b)
@@ -2072,8 +2106,9 @@ namespace HeatingMold.App
             Require(difference == null, difference);
         }
 
-        private void ConfigurePatternInputs(VisualAreaDefinition definition, VisualActionSpec spec)
+        private void ConfigurePatternInputs(VisualActionSpec spec, VisualAreaDefinition definition)
         {
+            _ = definition;
             // 시나리오가 값을 명시한 경우에만 덮어쓴다. 그 외에는 화면에 입력된 초안을
             // 그대로 사용해, 사용자가 조건을 바꾼 뒤 생성 버튼을 누르는 흐름과 같게 한다.
             if (spec.MarginMm != null)

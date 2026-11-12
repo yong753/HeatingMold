@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 2,
+  "name": "E2E 자동분할 안전성·절단선 인출점 (Case 2 세로 2분할)",
+  "model": {
+    "path": "resource/Mold_Cover_Trim.step",
+    "sha256": "8CB03405817606D1917FEF55B46A60011FFB5E93075EECDEF5A8651D4359FCED",
+    "faceCount": 80,
+    "solidCount": 0
+  },
+  "areas": [
+    { "alias": "A", "faceIds": [44, 56, 69], "marginMm": 5, "spacingMm": 15, "direction": 1 },
+    { "alias": "B", "faceIds": [16, 24, 26], "marginMm": 5, "spacingMm": 20, "direction": 2 }
+  ],
+  "steps": [
+    { "id": "s1", "name": "A 발열면 선택", "action": "selectFaces", "faces": [44, 56, 69] },
+    { "id": "s2", "name": "A 영역 확정", "action": "confirmArea", "area": "A" },
+    { "id": "s3", "name": "A 마진·간격 입력", "action": "setAreaInputs", "area": "A", "marginMm": 5, "spacingMm": 15, "direction": 1 },
+    { "id": "s4", "name": "A 시작 인출점", "action": "pickExitPoint", "area": "A",
+      "exitPoint": { "role": "start", "uv": [295.91262149879026, 133.36749353890832], "toleranceMm": 0.5, "bindingKind": "cad" } },
+    { "id": "s5", "name": "A 종료 인출점", "action": "pickExitPoint", "area": "A",
+      "exitPoint": { "role": "end", "uv": [295.9106395319768, -291.6634555349192], "toleranceMm": 0.5, "bindingKind": "cad" } },
+    { "id": "s6", "name": "A 경로 생성", "action": "generate", "area": "A", "marginMm": 5, "spacingMm": 15, "direction": 1,
+      "expect": { "pieces": 60, "turns": 29, "circuits": 1, "lengthMm": 18015.505, "heatingPieces": 30, "heatingLengthMm": 17323.549, "routeEdited": false, "marginMm": 5, "spacingMm": 15 } },
+
+    { "id": "s7", "name": "B 발열면 선택", "action": "selectFaces", "faces": [16, 24, 26] },
+    { "id": "s8", "name": "B 영역 확정", "action": "confirmArea", "area": "B" },
+    { "id": "s9", "name": "B 마진·간격 입력", "action": "setAreaInputs", "area": "B", "marginMm": 5, "spacingMm": 20, "direction": 2 },
+    { "id": "s10", "name": "B 시작 인출점", "action": "pickExitPoint", "area": "B",
+      "exitPoint": { "role": "start", "uv": [310, -172.51], "toleranceMm": 1.5, "bindingKind": "cad" } },
+    { "id": "s11", "name": "B 종료 인출점", "action": "pickExitPoint", "area": "B",
+      "exitPoint": { "role": "end", "uv": [620, -182.03], "toleranceMm": 1.5, "bindingKind": "cad" } },
+    { "id": "s12", "name": "B 경로 생성", "action": "generate", "area": "B", "marginMm": 5, "spacingMm": 20, "direction": 2,
+      "expect": { "pieces": 32, "turns": 15, "circuits": 1, "lengthMm": 8467.619, "heatingPieces": 16, "heatingLengthMm": 8120.784, "routeEdited": false, "marginMm": 5, "spacingMm": 20 } },
+
+    { "id": "s13", "name": "Case 2 전기 설정", "action": "setElectrical",
+      "electrical": { "presetIndex": 1, "voltageV": 220, "allowedCurrentA": 16, "allowedPowerKw": 3.5, "reviewScope": 0 } },
+    { "id": "s14", "name": "기준 전기검사(두 영역 NG)", "action": "checkElectrical",
+      "electrical": { "presetIndex": 1, "voltageV": 220, "allowedCurrentA": 16, "allowedPowerKw": 3.5, "reviewScope": 0, "apply": false, "expectedWithinLimits": false } },
+
+    { "id": "s15", "name": "허용 전류 3A 설정", "action": "setElectrical",
+      "electrical": { "presetIndex": 1, "voltageV": 220, "allowedCurrentA": 3, "allowedPowerKw": 3.5, "reviewScope": 0 } },
+    { "id": "s16", "name": "전류 초과 분할 거부", "action": "splitArea", "area": "B", "outcome": "rejected",
+      "failureContains": "분할해도 해결되지 않습니다" },
+
+    { "id": "s17", "name": "허용 전압 60V 설정", "action": "setElectrical",
+      "electrical": { "presetIndex": 1, "voltageV": 60, "allowedCurrentA": 16, "allowedPowerKw": 3.5, "reviewScope": 0 } },
+    { "id": "s18", "name": "5개 필요 분할 상한 거부", "action": "splitArea", "area": "B", "outcome": "rejected",
+      "failureContains": "최대 4개까지 지원합니다" },
+
+    { "id": "s19", "name": "허용 전압 200V 설정", "action": "setElectrical",
+      "electrical": { "presetIndex": 1, "voltageV": 200, "allowedCurrentA": 16, "allowedPowerKw": 3.5, "reviewScope": 0 } },
+    { "id": "s20", "name": "분할 확인 취소", "action": "splitArea", "area": "B", "confirm": "no", "confirmAction": "영역 분할",
+      "outcome": "rejected", "failureContains": "분할을 취소했습니다" },
+
+    { "id": "s21", "name": "B 세로 2분할", "action": "splitArea", "area": "B", "confirm": "yes", "confirmAction": "영역 분할",
+      "partCount": 2, "childAliases": ["B-1", "B-2"] },
+    { "id": "s22", "name": "B-1 자동 경로 확인", "action": "checkArea", "area": "B-1",
+      "expect": { "pieces": 20, "turns": 9, "circuits": 1, "lengthMm": 5166.151, "heatingPieces": 10, "heatingLengthMm": 4945.436, "routeEdited": false, "marginMm": 5, "spacingMm": 20 } },
+    { "id": "s23", "name": "B-2 자동 경로 확인", "action": "checkArea", "area": "B-2",
+      "expect": { "pieces": 12, "turns": 5, "circuits": 1, "lengthMm": 3285.543, "heatingPieces": 6, "heatingLengthMm": 3180.446, "routeEdited": false, "marginMm": 5, "spacingMm": 20 } },
+
+    { "id": "s24", "name": "B-1 종료점을 절단선 위로 선택", "action": "pickExitPoint", "area": "B-1",
+      "exitPoint": { "role": "end", "uv": [514.19, -175], "toleranceMm": 0.5, "bindingKind": "split" } },
+    { "id": "s25", "name": "B-1 재생성(절단선 종료)", "action": "generate", "area": "B-1",
+      "expect": { "pieces": 20, "turns": 9, "circuits": 1, "lengthMm": 5185.325, "heatingPieces": 10, "heatingLengthMm": 4945.436, "routeEdited": false, "marginMm": 5, "spacingMm": 20 } },
+    { "id": "s26", "name": "B-2 보존 확인", "action": "checkArea", "area": "B-2",
+      "expect": { "pieces": 12, "turns": 5, "circuits": 1, "lengthMm": 3285.543, "heatingPieces": 6, "heatingLengthMm": 3180.446, "routeEdited": false, "marginMm": 5, "spacingMm": 20 } },
+
+    { "id": "s27", "name": "3영역 전기검사(혼합 판정)", "action": "checkElectrical",
+      "electrical": { "presetIndex": 1, "voltageV": 200, "allowedCurrentA": 16, "allowedPowerKw": 3.5, "reviewScope": 0, "apply": false,
+        "circuitVerdicts": [ { "area": "A", "verdict": "NG" }, { "area": "B-1", "verdict": "OK" }, { "area": "B-2", "verdict": "OK" } ] } },
+
+    { "id": "s28", "name": "전체 DXF 출력", "action": "exportDxf", "scope": 0, "fileName": "split-safety.dxf" },
+    { "id": "s29", "name": "전체 STEP 출력", "action": "exportStep", "scope": 0, "fileName": "split-safety.step" },
+    { "id": "s30", "name": "현재 영역 DXF 출력", "action": "exportDxf", "scope": 1, "fileName": "split-safety-current.dxf" },
+
+    { "id": "s31", "name": "프로젝트 저장", "action": "saveProject", "fileName": "split-safety.json" },
+    { "id": "s32", "name": "같은 실행에서 다시 열기·비교", "action": "loadProject", "fileName": "split-safety.json", "compareProject": true },
+    { "id": "s33", "name": "복원 전체 검사", "action": "checkAllAreas" },
+    { "id": "s34", "name": "복원 B-1 확인", "action": "checkArea", "area": "B-1",
+      "expect": { "pieces": 20, "turns": 9, "circuits": 1, "lengthMm": 5185.325, "heatingPieces": 10, "heatingLengthMm": 4945.436, "routeEdited": false, "marginMm": 5, "spacingMm": 20 } },
+    { "id": "s35", "name": "복원 후 B-1 재생성", "action": "generate", "area": "B-1",
+      "expect": { "pieces": 20, "turns": 9, "circuits": 1, "lengthMm": 5185.325, "heatingPieces": 10, "heatingLengthMm": 4945.436, "routeEdited": false, "marginMm": 5, "spacingMm": 20 } },
+    { "id": "s36", "name": "재생성 후 B-1 확인", "action": "checkArea", "area": "B-1" },
+
+    { "id": "s37", "name": "B-1 삭제", "action": "deleteArea", "area": "B-1" },
+    { "id": "s38", "name": "삭제 후 전체 검사", "action": "checkAllAreas" },
+    { "id": "s39", "name": "삭제 후 전기검사(재배분)", "action": "checkElectrical",
+      "electrical": { "presetIndex": 1, "voltageV": 200, "allowedCurrentA": 16, "allowedPowerKw": 3.5, "reviewScope": 0, "apply": false,
+        "circuitVerdicts": [ { "area": "A", "verdict": "NG" }, { "area": "B-2", "verdict": "OK" } ] } },
+    { "id": "s40", "name": "삭제 후 전체 DXF", "action": "exportDxf", "scope": 0, "fileName": "split-safety-after-delete.dxf" }
+  ]
+}
