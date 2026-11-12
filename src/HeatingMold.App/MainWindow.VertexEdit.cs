@@ -69,14 +69,11 @@ public partial class MainWindow
         var side = _workingSide.Confirmed;
         if (side == null) { RejectVertexEdit("작업면이 확정되지 않았습니다"); return; }
         if (Viewport == null || !Viewport.IsReady) { RejectVertexEdit("뷰포트가 준비되지 않았습니다"); return; }
-        if (Viewport.PowerLocationMode || _pendingLeads.Count > 0)
-        { RejectVertexEdit("전원 연결 설정을 취소한 뒤 다시 시도하세요"); return; }
 
         // 다른 편집 모드와 상호 배타.
         CancelExitFacePick();
         ExitExclusionSketch();
         Viewport.RectangleSelectionMode = false;
-        Viewport.PowerLocationMode = false;
         Viewport.CircuitHoverMode = false;
         Bridge.ClearHover();
 

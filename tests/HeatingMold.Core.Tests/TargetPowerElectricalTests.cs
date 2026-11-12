@@ -16,7 +16,6 @@ public class TargetPowerElectricalTests
             lengthMm, HeatingWireSpec.Case1, powerW);
 
         Assert.True(result.IsValid);
-        Assert.True(result.TargetPowerMode);
         Assert.Equal(powerW, result.PowerW, 9);
         double resistance = 4.0 * (lengthMm / 1000.0);
         Assert.Equal(resistance, result.ResistanceOhm, 9);
@@ -84,8 +83,6 @@ public class TargetPowerElectricalTests
         ElectricalSpecTable table = ElectricalSpecTableBuilder.BuildFromTargetPower(
             inputs, HeatingWireSpec.Case1, Limits);
 
-        Assert.True(table.IsTargetPowerMode);
-        Assert.Null(table.Supply);
         Assert.Equal(220.0, table.Rows[0].VoltageV, 6);
         Assert.Equal(22.0, table.Rows[0].CurrentA, 6);
         Assert.False(table.Rows[0].IsValid == false);

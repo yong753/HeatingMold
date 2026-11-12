@@ -54,36 +54,8 @@ namespace HeatingMold.App
             Color.FromRgb(0xFF, 0x00, 0xFF), // G 자홍
             Color.FromRgb(0xFF, 0xFF, 0x00), // H 노랑
         };
-        private sealed record PendingLead(int CircuitIndex, bool IsStart, Vec3 Start);
-        private List<PendingLead> _pendingLeads = new();
-        private double[] _leadLengths = Array.Empty<double>();
-        private double _insertionDepth;
-
         // 제외 체크박스의 프로그램적 해제가 ExcludeMode_Changed를 다시 타지 않게 한다.
         private bool _suppressExcludeToggle;
-        // 전원 연결 대기 중에는 제외영역 입력도 잠근다.
-        private bool _powerEditingLocked;
-
-        private void CancelPowerSetup()
-        {
-            _pendingLeads.Clear();
-            if (Viewport != null) Viewport.PowerLocationMode = false;
-            Bridge.ClearPowerLeads();
-            _leadLengths = Array.Empty<double>();
-            SetPowerEditingLock(false);
-            WorkingArea area = _activeArea;
-            if (area?.Pattern != null && area.RoutePieceLengths.Length == area.Pattern.RoutePieces.Count)
-                UpdateCircuitTable();
-        }
-
-        private void SetPowerEditingLock(bool locked)
-        {
-            _powerEditingLocked = locked;
-            UpdateActionStates();
-        }
-
-        private string PowerPrompt() => _pendingLeads.Count == 0 ? "전원 연결 완료" :
-            $"회로 {_pendingLeads[0].CircuitIndex + 1} · {(_pendingLeads[0].IsStart ? "시작" : "끝")} 단자 (3D 끝점 자동) — 금형 밖 목적지만 클릭하세요";
 
         public MainWindow()
         {
@@ -95,10 +67,8 @@ namespace HeatingMold.App
             Viewport.ExclusionSketchMoved += OnExclusionSketchMoved;
             Viewport.ExclusionSketchCompleted += OnExclusionSketchCompleted;
             Viewport.ExclusionSketchCancelled += () => Bridge.SetExclusionPreview(null);
-            Viewport.PowerLocationPicked += OnPowerLocationPicked;
             Viewport.ExitFacePicked += OnExitFacePicked;
             Viewport.ExitFacePickMoved += OnExitFacePickMoved;
-            Viewport.PowerLocationMoved += OnPowerLocationMoved;
             Viewport.RoutePieceHovered += OnRoutePieceHovered;
             Viewport.VertexHovered += OnVertexHovered;
             Viewport.VertexDragStarted += OnVertexDragStarted;
@@ -108,22 +78,9 @@ namespace HeatingMold.App
             Viewport.VertexEscape += VertexEscape;
             PreviewKeyDown += OnWindowPreviewKeyDown;
             Loaded += OnLoaded;
-            ApplyPowerMigrationState();
             UpdateActionStates();
             InitializeSidebar();
             InitializeElectricalUi();
-        }
-
-        // 전원 연결은 경로 마이그레이션 전까지 네이티브 게이트로만 막혀 있었다.
-        // 버튼도 같은 상수로 비활성화해 UI가 사용 가능한 기능처럼 보이지 않게 한다.
-        private void ApplyPowerMigrationState()
-        {
-            if (PowerSetupButton != null) PowerSetupButton.IsEnabled = WorkingRouteMigrationComplete;
-            if (PowerCancelButton != null) PowerCancelButton.IsEnabled = WorkingRouteMigrationComplete;
-            if (PowerMigrationHint != null)
-                PowerMigrationHint.Visibility = WorkingRouteMigrationComplete
-                    ? Visibility.Collapsed
-                    : Visibility.Visible;
         }
 
         private bool TryEnterBusy(string operation)
@@ -195,13 +152,12 @@ namespace HeatingMold.App
                 && !activeStale;
             if (VertexEditModeBox != null) VertexEditModeBox.IsEnabled = (vertexEligible || vertexActive) && !_isBusy;
 
-            // 제외 도구는 확정 작업영역이 있을 때만, 다른 편집/전원 대기 중에는 비활성화한다.
-            bool exclusionEligible = ExclusionEligible() && !vertexActive && !_powerEditingLocked && !_isBusy;
+            // 제외 도구는 확정 작업영역이 있을 때만, 다른 편집 중에는 비활성화한다.
+            bool exclusionEligible = ExclusionEligible() && !vertexActive && !_isBusy;
             if (ExcludeModeBox != null) ExcludeModeBox.IsEnabled = exclusionEligible;
             if (ClearExclusionsButton != null)
                 ClearExclusionsButton.IsEnabled = _activeArea != null
                     && _activeArea.Exclusions.Count > 0
-                    && !_powerEditingLocked
                     && !_isBusy;
 
             if (ActiveAreaStateText != null)
@@ -293,7 +249,6 @@ namespace HeatingMold.App
             if (!ConfirmDiscardSession("모델 열기")) return;
             ExitVertexEdit();
             ResetWorkingSide();
-            CancelPowerSetup();
             var sw = Stopwatch.StartNew();
             if (!Bridge.LoadStep(path))
             {
@@ -840,7 +795,6 @@ namespace HeatingMold.App
 
         private void OnFacePicked(int faceIndex, bool toggle)
         {
-            if (Viewport.PowerLocationMode) return;
             // 뷰포트에서 이미 차단되지만, 다른 경로로 올라온 선택도 후보 목록을 바꾸지 않게 방어한다.
             if (ActiveSidebarTab != AreaTabIndex) return;
             if (faceIndex < 0)
@@ -1118,7 +1072,6 @@ namespace HeatingMold.App
             if (_activeArea != null && !ConfirmDiscardRouteEdits(_activeArea, "패턴 재생성")) return;
             ExitVertexEdit();
             CancelExitFacePick();
-            CancelPowerSetup();
             if (!WorkingGenerationReady()) return;
             var area = _activeArea;
             if (area == null || area.Frame == null || area.Region.Count == 0)
@@ -1137,7 +1090,6 @@ namespace HeatingMold.App
                 StatusText.Text = "삽입 깊이는 0 이상의 유한한 mm 값이어야 합니다";
                 return;
             }
-            _insertionDepth = insertionDepth;
             if (insertionDepth != 0)
             {
                 StatusText.Text = "작업면 첫 충돌 경로는 현재 깊이 0만 지원합니다. 삽입 깊이 적용은 아직 지원되지 않습니다";
@@ -1432,83 +1384,6 @@ namespace HeatingMold.App
             }
             return groups;
         }
-        private void PowerSetup_Click(object sender, RoutedEventArgs e)
-        {
-            if (_workingSide.Confirmed == null) { WorkingGenerationReady(); return; }
-            if (!WorkingRouteMigrationComplete) { StatusText.Text = "생성 보류: 전원 경로는 아직 작업 방향 첫 충돌 경로로 마이그레이션되지 않았습니다"; return; }
-            if (!WorkingGenerationReady()) return;
-            WorkingArea area = _activeArea;
-            if (area?.Pattern == null || area.Frame == null) { StatusText.Text = "먼저 발열 패턴을 생성하세요"; return; }
-            CancelPowerSetup();
-            if (area.ProjectedPieces.Count != area.Pattern.RoutePieces.Count) { StatusText.Text = "3D 경로 끝점이 없습니다. 패턴을 다시 생성하세요"; return; }
-            var groups = CircuitPieceGroups();
-            _leadLengths = new double[groups.Count];
-            for (int i = 0; i < groups.Count; i++)
-            {
-                int first = Array.IndexOf(area.NativePieceIds, groups[i][0]);
-                int last = Array.IndexOf(area.NativePieceIds, groups[i][^1]);
-                if (first < 0 || last < 0) continue;
-                double[] a = area.ProjectedPieces[first].Start, b = area.ProjectedPieces[last].End;
-                _pendingLeads.Add(new PendingLead(i, true, new Vec3(a[0], a[1], a[2])));
-                _pendingLeads.Add(new PendingLead(i, false, new Vec3(b[0], b[1], b[2])));
-            }
-            ExitExclusionSketch();
-            Viewport.RectangleSelectionMode = false;
-            Bridge.ClearHover();
-            HoverText.Text = "";
-            Viewport.PowerLocationMode = _pendingLeads.Count > 0;
-            Viewport.CircuitHoverMode = false;
-            SetPowerEditingLock(Viewport.PowerLocationMode);
-            UpdateCircuitTable();
-            StatusText.Text = PowerPrompt();
-        }
-        private void PowerCancel_Click(object sender, RoutedEventArgs e)
-        {
-            CancelPowerSetup();
-            StatusText.Text = "전원 설정 취소 — 접속 경로와 접속 길이를 초기화했습니다";
-        }
-        private void OnPowerLocationMoved(int x, int y) => UpdatePowerLocation(x, y, previewOnly: true);
-
-        private void OnPowerLocationPicked(int x, int y)
-        {
-            Viewport.CancelPowerLeadPreview();
-            UpdatePowerLocation(x, y, previewOnly: false);
-        }
-
-        private void UpdatePowerLocation(int x, int y, bool previewOnly)
-        {
-            if (!WorkingRouteMigrationComplete) { Bridge.ClearPowerLeadPreview(); return; }
-            if (_pendingLeads.Count == 0 || !Viewport.PowerLocationMode) { Bridge.ClearPowerLeadPreview(); return; }
-            int[] areaFaces = _activeArea == null ? Array.Empty<int>() : SortedFaceIds(_activeArea);
-            double[] hit = Bridge.PickSelectedBoundaryPoint(areaFaces, x, y);
-            if (hit == null || hit.Length < 4 || hit.Any(v => !double.IsFinite(v))) { Bridge.ClearPowerLeadPreview(); if (!previewOnly) StatusText.Text = "선택 가열면의 외곽 경계를 클릭하세요 · " + PowerPrompt(); return; }
-            ProjectionFrame frame = _activeArea?.Frame;
-            if (frame == null) { Bridge.ClearPowerLeadPreview(); return; }
-            var pending = _pendingLeads[0];
-            Vec3 end = new(hit[0], hit[1], hit[2]);
-            Vec3 source = frame.Unproject(frame.Project(pending.Start));
-            Vec3 datumEnd = end + frame.Normal * _insertionDepth;
-            Vec3 direction = frame.Normal * -1.0;
-            var result = Bridge.ProjectPowerLead(pending.CircuitIndex * 2 + (pending.IsStart ? 0 : 1),
-                new[] { source.X, source.Y, source.Z, datumEnd.X, datumEnd.Y, datumEnd.Z },
-                new[] { pending.Start.X, pending.Start.Y, pending.Start.Z }, areaFaces,
-                direction.X, direction.Y, direction.Z, _insertionDepth, previewOnly);
-            if (result == null || result.Length < 4 || result[0] != 1)
-            {
-                if (previewOnly) return; // Invalid hover: no misleading destination/lead.
-                string reason = result == null ? "native 오류" : result[0] switch {
-                    -2 => "금형 밖 목적지를 선택하세요", -3 => "표면 투영이 끊기거나 중복됩니다 (구멍/재진입/다층)",
-                    -4 => "실제 3D 끝점에서 표면 경계까지 연속 연결을 검증하지 못했습니다",
-                    -5 => "외부 접속 구간이 금형을 통과하거나 재진입합니다", _ => "OCCT 접속 경로 생성 실패" };
-                StatusText.Text = reason + " · " + PowerPrompt(); return;
-            }
-            if (previewOnly) return; // Hover must never consume endpoints or update lengths.
-            _pendingLeads.RemoveAt(0);
-            _leadLengths[pending.CircuitIndex] += result[1];
-            UpdateCircuitTable();
-            if (_pendingLeads.Count == 0) { Viewport.PowerLocationMode = false; SetPowerEditingLock(false); }
-            StatusText.Text = _pendingLeads.Count == 0 ? "전원 연결 경로 완료 — 실제 3D 접속 길이를 회로별 합계에 반영했습니다" : PowerPrompt();
-        }
         private void ClearExclusions_Click(object sender, RoutedEventArgs e)
         {
             RemoveActiveAreaExclusions(out _);
@@ -1522,7 +1397,6 @@ namespace HeatingMold.App
             if (area == null) { error = "작업영역이 없습니다"; StatusText.Text = error; return false; }
             if (!ConfirmDiscardRouteEdits(area, "제외영역 지우기")) return false;
             ExitVertexEdit();
-            CancelPowerSetup();
             var candidate = ForkAreaRoute(area);
             candidate.Exclusions.Clear();
             if (!TryRefreshEffectiveBoundary(candidate, out error,

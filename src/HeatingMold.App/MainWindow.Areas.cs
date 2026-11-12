@@ -14,10 +14,7 @@ public partial class MainWindow
     private void ResetCircuitEditingUi()
     {
         ExitVertexEdit();
-        CancelPowerSetup();
         CancelExitFacePick();
-        if (Viewport != null)
-            Viewport.PowerLocationMode = false;
     }
 
     private void RefreshAreaList()
@@ -659,7 +656,6 @@ public partial class MainWindow
         _nextNativePieceId = 0;
         _selectedFaceIds.Clear();
         if (SelectedFacesList != null) SelectedFacesList.Items.Clear();
-        _leadLengths = Array.Empty<double>();
         if (Viewport != null) Viewport.CircuitHoverMode = false;
         RefreshAreaList();
         SyncExitFaceUi(null);

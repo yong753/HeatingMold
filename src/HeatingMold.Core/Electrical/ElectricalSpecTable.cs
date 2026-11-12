@@ -1,23 +1,10 @@
 namespace HeatingMold.Core.Electrical;
 
-/// <summary>사양표 한 줄의 입력. CircuitId는 회로 구분자를 그대로 표시용 ID로 쓴다(예: A-1).</summary>
-public sealed record ElectricalCircuitInput(string CircuitId, double LengthMm);
-
 /// <summary>
-/// 목표전력 방식 사양표 한 줄의 입력. TargetPowerW는 이 회로에 배분된 발열 전력이며,
+/// 사양표 한 줄의 입력. TargetPowerW는 이 회로에 배분된 발열 전력이며,
 /// null이면 아직 배분되지 않은 상태다(0 W 계산 오류와 구분한다).
 /// </summary>
 public sealed record TargetPowerCircuitInput(string CircuitId, double LengthMm, double? TargetPowerW);
-
-/// <summary>사양표 계산 방식. 전압 열의 의미가 다르므로 표와 내보내기가 구분해 표기한다.</summary>
-public enum ElectricalCalculationMode
-{
-    /// <summary>공통 인가전압을 입력으로 쓰는 기존 방식.</summary>
-    AppliedVoltage = 0,
-
-    /// <summary>회로별 목표 발열전력을 입력으로 쓰고 필요 전압을 계산하는 방식.</summary>
-    TargetPower = 1
-}
 
 public sealed class ElectricalSpecRow
 {
@@ -25,13 +12,13 @@ public sealed class ElectricalSpecRow
     public double LengthM { get; init; }
     public double ResistanceOhm { get; init; }
 
-    /// <summary>인가전압 방식이면 공급 전압, 목표전력 방식이면 필요한 전압이다.</summary>
+    /// <summary>배분된 발열 전력에서 계산한 이 회로의 필요 전압.</summary>
     public double VoltageV { get; init; }
 
     public double CurrentA { get; init; }
     public double PowerW { get; init; }
 
-    /// <summary>이 회로에 배분된 목표 발열전력. 인가전압 방식에서는 계산된 전력과 같다.</summary>
+    /// <summary>이 회로에 배분된 목표 발열전력.</summary>
     public double? TargetPowerW { get; init; }
 
     /// <summary>목표 발열전력이 아직 입력되지 않은 행. 계산 오류(0 W 등)와 구분한다.</summary>
@@ -58,11 +45,7 @@ public sealed class ElectricalSpecTable
 {
     public HeatingWireSpec Wire { get; init; } = null!;
 
-    /// <summary>인가전압 방식의 공급 전압. 목표전력 방식에서는 null이다.</summary>
-    public PowerSupplySpec? Supply { get; init; }
-
     public ElectricalLimits? Limits { get; init; }
-    public ElectricalCalculationMode Mode { get; init; } = ElectricalCalculationMode.AppliedVoltage;
     public IReadOnlyList<ElectricalSpecRow> Rows { get; init; } = Array.Empty<ElectricalSpecRow>();
     public double TotalCurrentA { get; init; }
     public double TotalPowerW { get; init; }
@@ -81,7 +64,6 @@ public sealed class ElectricalSpecTable
     public bool IsSharedPowerWithinLimit => Limits != null && !IsSharedPowerOverLimit;
 
     public bool HasRows => Rows.Count > 0;
-    public bool IsTargetPowerMode => Mode == ElectricalCalculationMode.TargetPower;
     public int WithinLimitCount => Rows.Count(r => r.IsWithinLimits);
     public int OverLimitCount => Rows.Count(r => r.IsOverLimit);
     public bool HasOverLimitCircuits => OverLimitCount > 0;
@@ -89,58 +71,6 @@ public sealed class ElectricalSpecTable
 
 public static class ElectricalSpecTableBuilder
 {
-    public static ElectricalSpecTable Build(
-        IEnumerable<ElectricalCircuitInput> inputs,
-        HeatingWireSpec wire,
-        PowerSupplySpec supply) => Build(inputs, wire, supply, null);
-
-    public static ElectricalSpecTable Build(
-        IEnumerable<ElectricalCircuitInput> inputs,
-        HeatingWireSpec wire,
-        PowerSupplySpec supply,
-        ElectricalLimits? limits)
-    {
-        ArgumentNullException.ThrowIfNull(wire);
-        ArgumentNullException.ThrowIfNull(supply);
-
-        var rows = new List<ElectricalSpecRow>();
-        foreach (ElectricalCircuitInput input in inputs ?? Enumerable.Empty<ElectricalCircuitInput>())
-        {
-            ElectricalResult result = ElectricalCalculator.Compute(input.LengthMm, wire, supply);
-            // 계산 오류 행에는 판정을 만들지 않는다. 정상 계산된 NG 행은 판정만 NG로 남는다.
-            CircuitAssessment? assessment = result.IsValid && limits != null
-                ? CircuitAssessment.Assess(result.CurrentA, result.VoltageV, result.PowerW, limits)
-                : null;
-            rows.Add(new ElectricalSpecRow
-            {
-                CircuitId = input.CircuitId,
-                LengthM = result.LengthM,
-                ResistanceOhm = result.ResistanceOhm,
-                VoltageV = result.VoltageV,
-                CurrentA = result.CurrentA,
-                PowerW = result.PowerW,
-                Message = result.Message,
-                Assessment = assessment
-            });
-        }
-
-        // 합계는 계산이 유효한 모든 회로를 포함한다. 허용치 초과(NG)는 계산 오류가 아니다.
-        double totalCurrent = rows.Where(r => r.IsValid).Sum(r => r.CurrentA);
-        double totalPower = rows.Where(r => r.IsValid).Sum(r => r.PowerW);
-
-        return new ElectricalSpecTable
-        {
-            Wire = wire,
-            Supply = supply,
-            Limits = limits,
-            Mode = ElectricalCalculationMode.AppliedVoltage,
-            Rows = rows,
-            TotalCurrentA = totalCurrent,
-            TotalPowerW = totalPower,
-            TotalTargetPowerW = totalPower
-        };
-    }
-
     /// <summary>
     /// 회로별로 배분된 목표 발열전력에서 필요 전압·전류를 계산한다.
     /// 목표전력이 0 이하이거나 길이가 유효하지 않은 회로는 계산 오류 행으로 남는다.
@@ -209,9 +139,7 @@ public static class ElectricalSpecTableBuilder
         return new ElectricalSpecTable
         {
             Wire = wire,
-            Supply = null,
             Limits = limits,
-            Mode = ElectricalCalculationMode.TargetPower,
             Rows = rows,
             TotalCurrentA = totalCurrent,
             TotalPowerW = totalPower,

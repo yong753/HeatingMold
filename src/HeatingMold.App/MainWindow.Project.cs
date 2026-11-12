@@ -281,9 +281,6 @@ namespace HeatingMold.App
                     ? ToProjectExitBoundaryPoint(area.SelectedEndExit.Value) : null,
                 SelectedAnchorCandidate = area.SelectedAnchorCandidate == null
                     ? null : ToProjectAnchoredCandidate(area.SelectedAnchorCandidate),
-                ExitBoundaryKind = area.ExitBoundary?.GetType().Name,
-                RegionExitBoundaryKind = area.RegionExitBoundary?.GetType().Name,
-                RegionCadBoundaryKind = area.RegionCadBoundary?.GetType().Name,
                 SplitCutLines = area.SplitCutLines.Select(cut => new ProjectSplitCutLine
                 {
                     AX = cut.A.X,
@@ -422,8 +419,6 @@ namespace HeatingMold.App
                 WireDiameterText = diameterText,
                 WireResistanceText = resistanceText,
                 AllowedVoltageText = AllowedVoltageBox?.Text ?? "",
-                // 스키마 2 이하 호환용. 스키마 3에서는 허용 전압과 같은 값을 유지한다.
-                AppliedVoltageText = AllowedVoltageBox?.Text ?? "",
                 AllowedCurrentText = AllowedCurrentBox?.Text ?? "",
                 AllowedPowerText = AllowedPowerBox?.Text ?? ""
             };
@@ -630,8 +625,6 @@ namespace HeatingMold.App
                     ? new List<ProjectVec2>() : context.CircuitStarts.Select(ToProjectVec2).ToList(),
                 CircuitEnds = context.CircuitEnds == null
                     ? new List<ProjectVec2>() : context.CircuitEnds.Select(ToProjectVec2).ToList(),
-                BoundaryKind = context.Boundary?.GetType().Name,
-                RegionBoundaryKind = context.RegionBoundary?.GetType().Name,
                 // 확정 경로가 실제로 사용한 경계를 저장한다. 다음 로드에서 현재 초안
                 // 선택점 상태로 모드를 다시 추론하면 save-load-save-load에서 뒤집힌다.
                 RegionMode = context.Boundary != null &&

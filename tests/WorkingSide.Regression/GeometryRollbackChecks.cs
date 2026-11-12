@@ -389,7 +389,7 @@ static class GeometryRollbackChecks
 
         string[] beforeCandidate = Bridge.GetFaceTopologySignatures();
         long beforeRevision = Bridge.GetModelRevision();
-        var candidate = Bridge.BeginProjectRestoreCandidate(path, 2);
+        var candidate = Bridge.BeginProjectRestoreCandidate(path);
         Check(candidate != null, "project restore candidate loads without touching the live model");
         if (candidate == null) return;
         Check(candidate.CandidateId > 0, "project restore candidate has an id");
@@ -412,7 +412,7 @@ static class GeometryRollbackChecks
         Check(Bridge.GetFaceTopologySignatures().SequenceEqual(beforeCandidate, StringComparer.Ordinal),
             "candidate commit preserves face signatures");
 
-        var discarded = Bridge.BeginProjectRestoreCandidate(path, 2);
+        var discarded = Bridge.BeginProjectRestoreCandidate(path);
         Check(discarded != null, "second project restore candidate loads");
         if (discarded != null)
         {

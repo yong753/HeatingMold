@@ -412,10 +412,8 @@ public partial class MainWindow
         if (Viewport == null || !Viewport.IsReady) return;
 
         // 다른 뷰포트 편집 모드와 상호 배타.
-        CancelPowerSetup();
         ExitExclusionSketch();
         Viewport.RectangleSelectionMode = false;
-        Viewport.PowerLocationMode = false;
         Viewport.CircuitHoverMode = false;
         Bridge.ClearHover();
         CancelExitFacePick();

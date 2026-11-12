@@ -180,7 +180,7 @@ public class AreaSplitterTests
         Assert.Single(result.Cuts);
         Assert.Equal(30.0, result.Cuts[0], 6);
         Assert.Equal(80_000.0, result.Bands.Sum(b => b.AreaMm2), 0);
-        Assert.True(result.MaxToMinLengthRatio > AreaSplitter.HardLengthBalanceLimit);
+        Assert.True(result.MaxToMinLengthRatio > 1.10);
     }
 
     [Fact]

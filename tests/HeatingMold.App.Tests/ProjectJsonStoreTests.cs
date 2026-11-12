@@ -93,26 +93,18 @@ namespace HeatingMold.App.Tests
         }
 
         [Fact]
-        public void LoadAcceptsSchema1DocumentWithoutLimitFields()
+        public void LoadRejectsLegacySchema()
         {
             string directory = Path.Combine(Path.GetTempPath(), "HeatingMold.ProjectTests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
             try
             {
                 string path = Path.Combine(directory, "legacy.json");
-                ProjectDocument document = CreateDocument();
-                document.SchemaVersion = 1;
-                document.Electrical.AllowedCurrentText = null;
-                document.Electrical.AllowedPowerText = null;
-                File.WriteAllBytes(path, ProjectJsonStore.Serialize(document));
+                File.WriteAllText(path, "{\"format\":\"HeatingMold.Project\",\"schemaVersion\":5}");
 
-                using JsonDocument json = JsonDocument.Parse(File.ReadAllBytes(path));
-                Assert.False(json.RootElement.GetProperty("electrical")
-                    .TryGetProperty("allowedCurrentText", out _));
-
-                ProjectDocument loaded = ProjectJsonStore.Load(path);
-                Assert.Equal(1, loaded.SchemaVersion);
-                Assert.Null(loaded.Electrical.AllowedCurrentText);
+                InvalidDataException error = Assert.Throws<InvalidDataException>(
+                    () => ProjectJsonStore.Load(path));
+                Assert.Contains("지원하지 않는 프로젝트 스키마", error.Message);
             }
             finally
             {
@@ -149,7 +141,7 @@ namespace HeatingMold.App.Tests
             {
                 string futurePath = Path.Combine(directory, "future.json");
                 File.WriteAllText(futurePath,
-                    "{\"format\":\"HeatingMold.Project\",\"schemaVersion\":6}");
+                    "{\"format\":\"HeatingMold.Project\",\"schemaVersion\":7}");
                 Assert.Throws<InvalidDataException>(() => ProjectJsonStore.Load(futurePath));
 
                 string malformedPath = Path.Combine(directory, "malformed.json");
@@ -306,7 +298,7 @@ namespace HeatingMold.App.Tests
                     WirePresetIndex = 0,
                     WireDiameterText = "0.3",
                     WireResistanceText = "4",
-                    AppliedVoltageText = "220",
+                    AllowedVoltageText = "220",
                     AllowedCurrentText = "16",
                     AllowedPowerText = "3.5"
                 },

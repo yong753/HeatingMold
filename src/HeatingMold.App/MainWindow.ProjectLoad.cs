@@ -56,26 +56,6 @@ public partial class MainWindow
                 return false;
             }
 
-            // 모델을 교체하기 전에 전기 제원 호환성을 확정한다. 실패하면 현재 작업을 그대로 둔다.
-            if (!ProjectElectricalMigration.TryNormalize(
-                    document, out string electricalMigrationError, out string sharedPowerNotice))
-            {
-                ReportProjectLoadFailure("저장된 전기 검토 설정을 복원할 수 없습니다",
-                    new InvalidDataException(electricalMigrationError));
-                return false;
-            }
-
-            // 이전 정책 파일은 영역마다 목표 발열전력을 따로 저장했다. 총량이 달라 배분 결과가
-            // 바뀌는 경우에는 모델을 교체하기 전에 확인을 받는다.
-            if (sharedPowerNotice != null)
-            {
-                MessageBoxResult powerAnswer = MessageBox.Show(this,
-                    sharedPowerNotice + Environment.NewLine + Environment.NewLine + "이대로 열까요?",
-                    "발열 전력 정책 변경", MessageBoxButton.YesNo, MessageBoxImage.Warning,
-                    MessageBoxResult.Yes);
-                if (powerAnswer != MessageBoxResult.Yes) return false;
-            }
-
             string sourcePath = ResolveProjectSourcePath(document, projectPath);
             if (string.IsNullOrWhiteSpace(sourcePath)) return false;
 
@@ -98,7 +78,7 @@ public partial class MainWindow
             int nextNativeId = _nextNativePieceId;
             try
             {
-                candidate = Bridge.BeginProjectRestoreCandidate(sourcePath, document.Source.ImportPolicyVersion);
+                candidate = Bridge.BeginProjectRestoreCandidate(sourcePath);
                 if (candidate == null)
                     throw new InvalidOperationException(
                         "STEP 격리 로드에 실패했습니다: " + (Bridge.GetProjectRestoreCandidateError() ?? "알 수 없는 오류"));
@@ -266,7 +246,7 @@ public partial class MainWindow
             throw new InvalidDataException("원본 STEP 정보가 없습니다.");
         if (string.IsNullOrWhiteSpace(document.Source.Sha256) || document.Source.Sha256.Length != 64)
             throw new InvalidDataException("원본 STEP SHA-256이 올바르지 않습니다.");
-        if (document.Source.ImportPolicyVersion != 1 && document.Source.ImportPolicyVersion != 2)
+        if (document.Source.ImportPolicyVersion != 2)
             throw new InvalidDataException("지원하지 않는 STEP 가져오기 정책 버전입니다: " + document.Source.ImportPolicyVersion);
         if (!string.IsNullOrWhiteSpace(document.Source.TopologyIdentityError))
             throw new InvalidDataException("저장된 topology identity가 완전하지 않습니다: " + document.Source.TopologyIdentityError);
@@ -1052,11 +1032,9 @@ public partial class MainWindow
                     WirePresetBox.SelectedIndex = electrical.WirePresetIndex == ElectricalSettingsResolver.Case2PresetIndex
                         ? ElectricalSettingsResolver.Case2PresetIndex
                         : ElectricalSettingsResolver.Case1PresetIndex;
-                // 저장된 직경·단위 저항은 위 프리셋과의 일치 검증(ProjectElectricalMigration)에서만 쓰고,
-                // 화면에는 프리셋 이름으로 표시하므로 별도 입력 상자에 다시 채우지 않는다.
+                // 저장된 직경·단위 저항은 화면에 다시 채우지 않고 프리셋 이름으로만 표시한다.
                 if (AllowedVoltageBox != null)
-                    AllowedVoltageBox.Text = electrical.AllowedVoltageText
-                        ?? electrical.AppliedVoltageText ?? "";
+                    AllowedVoltageBox.Text = electrical.AllowedVoltageText ?? "";
                 if (AllowedCurrentBox != null) AllowedCurrentBox.Text = electrical.AllowedCurrentText ?? "";
                 if (AllowedPowerBox != null) AllowedPowerBox.Text = electrical.AllowedPowerText ?? "";
             }

@@ -4,18 +4,17 @@ namespace HeatingMold.Core.Tests;
 
 public class ElectricalSpecTableTests
 {
-    private static readonly PowerSupplySpec Supply = new();
-
     [Fact]
     public void TwoCircuits_SumCurrentAndPower()
     {
         var inputs = new[]
         {
-            new ElectricalCircuitInput("A-1", 20_000),
-            new ElectricalCircuitInput("A-2", 20_000)
+            new TargetPowerCircuitInput("A-1", 20_000, 605.0),
+            new TargetPowerCircuitInput("A-2", 20_000, 605.0)
         };
 
-        ElectricalSpecTable table = ElectricalSpecTableBuilder.Build(inputs, HeatingWireSpec.Case1, Supply);
+        ElectricalSpecTable table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            inputs, HeatingWireSpec.Case1, null);
 
         Assert.Equal(2, table.Rows.Count);
         Assert.Equal(5.5, table.TotalCurrentA, 9);
@@ -28,11 +27,12 @@ public class ElectricalSpecTableTests
     {
         var inputs = new[]
         {
-            new ElectricalCircuitInput("B-2", 10_000),
-            new ElectricalCircuitInput("A-1", 20_000)
+            new TargetPowerCircuitInput("B-2", 10_000, 302.5),
+            new TargetPowerCircuitInput("A-1", 20_000, 605.0)
         };
 
-        ElectricalSpecTable table = ElectricalSpecTableBuilder.Build(inputs, HeatingWireSpec.Case1, Supply);
+        ElectricalSpecTable table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            inputs, HeatingWireSpec.Case1, null);
 
         Assert.Equal(new[] { "B-2", "A-1" }, table.Rows.Select(r => r.CircuitId));
     }
@@ -42,11 +42,12 @@ public class ElectricalSpecTableTests
     {
         var inputs = new[]
         {
-            new ElectricalCircuitInput("A-1", 20_000),
-            new ElectricalCircuitInput("A-2", 0)
+            new TargetPowerCircuitInput("A-1", 20_000, 605.0),
+            new TargetPowerCircuitInput("A-2", 0, 605.0)
         };
 
-        ElectricalSpecTable table = ElectricalSpecTableBuilder.Build(inputs, HeatingWireSpec.Case1, Supply);
+        ElectricalSpecTable table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            inputs, HeatingWireSpec.Case1, null);
 
         Assert.True(table.Rows[0].IsValid);
         Assert.False(table.Rows[1].IsValid);
@@ -58,8 +59,8 @@ public class ElectricalSpecTableTests
     [Fact]
     public void EmptyTable_HasNoRows()
     {
-        ElectricalSpecTable table = ElectricalSpecTableBuilder.Build(
-            Array.Empty<ElectricalCircuitInput>(), HeatingWireSpec.Case1, Supply);
+        ElectricalSpecTable table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            Array.Empty<TargetPowerCircuitInput>(), HeatingWireSpec.Case1, null);
 
         Assert.Empty(table.Rows);
         Assert.False(table.HasRows);
@@ -72,12 +73,12 @@ public class ElectricalSpecTableTests
     {
         var inputs = new[]
         {
-            new ElectricalCircuitInput("A-1", 20_000), // 2.75 A / 605 W
-            new ElectricalCircuitInput("A-2", 1_000)   // 55 A / 12,100 W
+            new TargetPowerCircuitInput("A-1", 20_000, 605.0),   // 2.75 A
+            new TargetPowerCircuitInput("A-2", 1_000, 12_100.0)  // 55 A
         };
 
-        ElectricalSpecTable table = ElectricalSpecTableBuilder.Build(
-            inputs, HeatingWireSpec.Case1, Supply, ElectricalLimits.Default);
+        ElectricalSpecTable table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            inputs, HeatingWireSpec.Case1, ElectricalLimits.Default);
 
         // NG는 계산 오류가 아니므로 두 행 모두 유효하고 합계에도 포함된다.
         Assert.All(table.Rows, row => Assert.True(row.IsValid));
@@ -94,9 +95,10 @@ public class ElectricalSpecTableTests
     [Fact]
     public void TableWithoutLimits_HasNoAssessment()
     {
-        var inputs = new[] { new ElectricalCircuitInput("A-1", 20_000) };
+        var inputs = new[] { new TargetPowerCircuitInput("A-1", 20_000, 605.0) };
 
-        ElectricalSpecTable table = ElectricalSpecTableBuilder.Build(inputs, HeatingWireSpec.Case1, Supply);
+        ElectricalSpecTable table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            inputs, HeatingWireSpec.Case1, null);
 
         Assert.Null(table.Rows[0].Assessment);
         Assert.False(table.Rows[0].IsWithinLimits);
@@ -107,10 +109,10 @@ public class ElectricalSpecTableTests
     [Fact]
     public void InvalidRow_HasNoAssessmentEvenWithLimits()
     {
-        var inputs = new[] { new ElectricalCircuitInput("A-1", 0) };
+        var inputs = new[] { new TargetPowerCircuitInput("A-1", 0, 605.0) };
 
-        ElectricalSpecTable table = ElectricalSpecTableBuilder.Build(
-            inputs, HeatingWireSpec.Case1, Supply, ElectricalLimits.Default);
+        ElectricalSpecTable table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            inputs, HeatingWireSpec.Case1, ElectricalLimits.Default);
 
         Assert.False(table.Rows[0].IsValid);
         Assert.Null(table.Rows[0].Assessment);

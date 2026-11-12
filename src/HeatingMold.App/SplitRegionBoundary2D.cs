@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using HeatingMold.Core.Geometry;
+using static HeatingMold.App.PlanarMath2D;
 
 namespace HeatingMold.App;
 
@@ -506,17 +507,4 @@ internal sealed class SplitRegionBoundary2D :
         return true;
     }
 
-    private static double DistanceToSegment(Vec2 a, Vec2 b, Vec2 point)
-    {
-        Vec2 side = b - a;
-        double lengthSquared = Dot(side, side);
-        if (lengthSquared <= 1e-18) return point.DistanceTo(a);
-        double u = Math.Clamp(Dot(point - a, side) / lengthSquared, 0, 1);
-        return Lerp(a, b, u).DistanceTo(point);
-    }
-
-    private static Vec2 Lerp(Vec2 a, Vec2 b, double t) => new(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t);
-    private static double Dot(Vec2 a, Vec2 b) => a.X * b.X + a.Y * b.Y;
-    private static double Cross(Vec2 a, Vec2 b) => a.X * b.Y - a.Y * b.X;
-    private static bool IsFinite(Vec2 point) => double.IsFinite(point.X) && double.IsFinite(point.Y);
 }

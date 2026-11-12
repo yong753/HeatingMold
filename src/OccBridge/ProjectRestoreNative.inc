@@ -42,7 +42,7 @@ void ClearLiveModelForRestore()
     DiscardAllProjectRestoreCandidates();
 }
 
-int BeginProjectRestoreCandidateNative(const std::string& path, int importPolicyVersion, std::string& error)
+int BeginProjectRestoreCandidateNative(const std::string& path, std::string& error)
 {
     error.clear();
     g_projectRestoreCandidateError.clear();
@@ -65,7 +65,7 @@ int BeginProjectRestoreCandidateNative(const std::string& path, int importPolicy
         }
 
         gp_Dir axes[3];
-        ComputeAutoAxesForShape(reader.StepModel(), shape, axes, importPolicyVersion <= 1);
+        ComputeAutoAxesForShape(reader.StepModel(), shape, axes, false);
         shape = AlignShapeToWorldAxesForShape(shape, axes);
 
         auto candidate = std::make_shared<ProjectRestoreCandidateNative>();
