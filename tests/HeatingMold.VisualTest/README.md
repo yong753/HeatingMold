@@ -4,9 +4,11 @@
 일정 시간 유지해 눈으로 확인하는 테스트입니다. OS 마우스/키보드 입력이나 UI Automation은
 사용하지 않습니다.
 
-> 저장소에는 실행할 시나리오 파일이 포함되어 있지 않습니다. 실행하려면 시나리오 JSON을
-> 직접 작성하거나 지정해야 합니다. 형식은 [docs/VisualTest.Scenarios.md](../../docs/VisualTest.Scenarios.md)를
-> 참고하세요.
+> 저장소에는 대표 시나리오 세 개가 포함되어 있습니다.
+> `scenarios/e2e-full.json`(한 영역 생성·편집·분할·저장/복원 전체 흐름),
+> `scenarios/e2e-multi-area.json`(독립적인 두 영역의 상호 보존),
+> `scenarios/e2e-margin-spacing-exit.json`(다른 마진·간격·인출점 조건의 보존·전력 재배분)입니다.
+> 형식은 [docs/VisualTest.Scenarios.md](../../docs/VisualTest.Scenarios.md)를 참고하세요.
 
 ## 실행
 
@@ -15,18 +17,28 @@
 테스트가 시작됩니다. 시나리오 경로가 비어 있으면 실행하지 않고 안내만 표시합니다.
 
 ```powershell
+# 포함된 대표 시나리오 실행 (이름만 지정)
+./tests/HeatingMold.VisualTest/Run.ps1 -Scenario e2e-full
+./tests/HeatingMold.VisualTest/Run.ps1 -Scenario e2e-multi-area
+./tests/HeatingMold.VisualTest/Run.ps1 -Scenario e2e-margin-spacing-exit
+
 # 시나리오 경로를 직접 지정 (필수)
 ./tests/HeatingMold.VisualTest/Run.ps1 -Scenario C:\work\my-scenario.json
 
-# scenarios 폴더에 둔 파일은 이름만으로도 지정할 수 있다
-./tests/HeatingMold.VisualTest/Run.ps1 -Scenario my-scenario
-
 # 단계마다 '다음' 버튼을 누를 때까지 대기
-./tests/HeatingMold.VisualTest/Run.ps1 -Scenario my-scenario -Step
+./tests/HeatingMold.VisualTest/Run.ps1 -Scenario e2e-full -Step
 
-# 빌드 생략
-./tests/HeatingMold.VisualTest/Run.ps1 -Scenario my-scenario -NoBuild
+# 빌드 생략 (검증된 최신 바이너리로만 실행)
+./tests/HeatingMold.VisualTest/Run.ps1 -Scenario e2e-full -NoBuild
 ```
+
+`-HoldSeconds`(기본 3초, 화면 유지 시간)와 `-TimeoutSeconds`(기본 90초)는 시나리오
+단계 수에 맞게 지정합니다. 대표 시나리오는 `-HoldSeconds 1 -TimeoutSeconds 300`으로
+실행합니다.
+
+> `-NoBuild`를 쓰면 방금 빌드한 `x64\Release\OccBridge.dll`을 앱 출력 폴더로 직접
+> 복사한 뒤 실행하세요. `dotnet build`가 up-to-date로 판단하면 네이티브 DLL 복사가
+> 생략되어 이전 DLL로 실행될 수 있습니다.
 
 스크립트는 `-Scenario`가 없으면 빌드와 결과 폴더 생성 전에 오류로 중단합니다.
 경로가 지정되면 네이티브 브리지와 앱을 빌드한 뒤 새 실행 디렉터리에서 앱을 시작합니다.
@@ -49,6 +61,13 @@
 - `schemaVersion: 2`는 `areas`(영역 정의)와 `steps`(행동 목록)를 사용합니다.
   실행 단계는 `loadModel`이 암묵적으로 먼저 실행되고, 이후 `steps` 순서대로 진행합니다.
 - 다른 스키마 버전은 실행 전에 거부됩니다.
+- 영역 기대값에는 발열선(`HeatingRun`)만 센 `heatingPieces`·`heatingLengthMm`를
+  선택적으로 넣을 수 있습니다. 커넥터 포함 전체 길이가 같아도 제외영역이 실제 발열
+  구간을 바꿨는지 확인할 때 씁니다.
+- 전기 판정이 영역마다 다르면 `expectedWithinLimits`(모든 회로 동일 기대) 대신
+  `circuitVerdicts`로 영역별 `OK`/`NG`를 지정합니다.
+- 각 행동 전후로 모든 영역의 확정 경로 스냅샷을 비교합니다. 비대상 영역이나 읽기
+  동작에서 경로가 달라지면 조각 좌표·길이·native ID·인출점 연결 수준에서 실패합니다.
 
 사용 가능한 행동은 `docs/VisualTest.Scenarios.md`의 행동 목록을 참고하세요.
 알 수 없는 행동, 중복 alias, 잘못된 참조는 실행 전에 거부됩니다.

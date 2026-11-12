@@ -212,6 +212,53 @@
 - 시각테스트 기본 관찰 시간은 3초에서 **1초**로 변경했다(`VisualTestOptions.HoldSeconds`, 런처 입력란).
 - 미검증: 실제 마우스 클릭·드래그·Shift/Ctrl/Enter/Esc·파일 대화상자, 앱 화면 육안 판정, 외부 CAD에서 DXF/STEP 열기, 런처 창 실제 클릭, 새 프로세스에서의 복원, 선택 면/제외 위치가 다른 두 번째 시나리오.
 
+## 두 번째 대표 시나리오: 독립 영역 2개 보존 (사용자 요구·구현 2026-11-12)
+
+- **사용자 요구:** "이제 시각테스트에 두번째 시나리오 추가해보자" → "상세 구현계획세워봐" → "구현시작". 목적은 **서로 겹치지 않는 두 독립 영역(가로·세로)을 만들고, 한 영역의 변경이 다른 영역의 확정 경로를 건드리지 않는지**를 자동 검증하는 것이다. 자동분할 반복은 이 시나리오 범위에서 제외했다.
+- 신규 `tests\HeatingMold.VisualTest\scenarios\e2e-multi-area.json`(54단계, `schemaVersion: 2`). 영역 A `faceIds [44,56,69]` margin 5/spacing 15/**FrameX(1)**, 영역 B `faceIds [16,24,26]` margin 5/spacing 20/**FrameY(2)**. 두 영역 모두 방향을 명시해 `Auto`(0) 정규화 모호성을 피했다. 2D 비중첩 확인: A u 최대 295.914, B u 최소 304.366(간격 8.45 mm).
+- 인출점: A 시작 `(295.91262149879026, 133.36749353890832)`/종료 `(295.9106395319768, -291.6634555349192)` tol 0.5(기존 검증값 재사용), B 시작 `(310, -172.51)`/종료 `(620, -182.03)` tol 1.5. B는 경계 정점 157개를 실제 측정해 고른 값이다.
+- 흐름: A 생성 → B 생성 → A 보존 확인 → 전기 설정/전체 검사 → A 간격 18 초안 변경 → B/A 초안 보존·복원(`expectAreaInputs`) → A 재생성(입력 생략, 복원된 초안 사용) → B 보존 → B 외곽 홈 `[500,240,560,275]` 추가 → `expectNoPattern` → 재생성 → `checkExclusion` → A 보존 → B 간격 방향 `[20,0]` 거부 → B 진행 방향 `[0,15]` 미리보기 취소 → B/A 보존 → 전체·현재B·현재B반복·현재A·전체 전기검사 → 전체/현재 DXF·STEP → 저장·같은 프로세스 재로드(`compareProject`) → `checkAllAreas`·A/B 보존·재출력 → B 삭제 → `checkAllAreas`·A 보존·전기·DXF·STEP.
+- 실측 기준값(result.json): A 60조각/29턴/발열선 30/17,323.549 mm/1회로/총 18,015.505 mm · B 32/15/16/8,120.784/1/8,467.619 · **A 간격 18 재생성** 48/23/24/13,742.906/1/14,416.975 · **B 홈 후** 32/15/16/**8,053.498**/1/**8,410.384**(홈은 레인 수를 바꾸지 않고 3개 레인만 줄인다) · 재로드 후 동일 · B 삭제 후 A 48/23/24/14,416.975.
+- **전기 판정은 혼합이다.** Case1(4 Ω/m)·공유 3,500 W·ΣL 22.827 m → I≈5.75 A, **B OK(194.689 V/220 V) · A NG(약 414 V, 간격 18 이후 357 V)**. 그래서 `expectedWithinLimits`(모든 회로 동일 기대) 대신 `circuitVerdicts[{area,verdict}]`를 쓴다. B 삭제 후는 1회로 14.417 m, A NG.
+- 검증 2026-11-12: `e2e-multi-area` **54/54 OK**를 서로 다른 두 실행(`20261112-210338`, `20261112-211226`)에서 통과했고, `e2e-full` **36/36 OK**(`20261112-211100`)도 유지됐다. 모두 `Status=Completed`, `VisualReview=NotRecorded`. App 테스트 **179 통과**(신규 `VisualRouteSnapshotTests` 9), `tests\WorkingSide.Regression` **EXIT=0**(30 sidebar / 30 area highlight / 19 direct exit / 32 vertex edit / 3 electrical / 43 pattern state / 63 geometry rollback / 20 project load / 51 project-load exclusion / 187 working-side, 총 478 체크, FAIL 0). Core 테스트는 이번 변경이 Core를 건드리지 않아 재실행하지 않았다.
+- **영역 경로 보존 검사(신규):** `src\HeatingMold.App\VisualTesting\VisualRouteSnapshot.cs`가 확정 경로를 값으로 깊은 복사한다(영역 ID/이름/색/선택 면/유효 경계/제외/방향/적용 입력·`RouteContextKey`/표시·수동편집/회로 구성/조각별 종류·레인·2D 길이·native ID·확정 3D 길이·2D/3D 좌표·지지 면/시작·종료 인출점과 binding/인출 경계/분할 절단선). `IsUnchanged`는 **엄격 동등**(허용치 없음)으로 비교하고 첫 차이를 `"{영역}: {필드}이(가) 달라졌습니다 (before → after)"`로 보고한다. `TargetPowerW`·전압/전류·활성 영역·초안 텍스트 같은 파생·표시 값은 대상에서 제외한다(경로 변경 시 정상적으로 바뀐다).
+- 보존 가드 배선: generate는 거부 시 전 영역, 성공 시 비대상 영역 / addExclusion·removeExclusion·deleteArea·pickExitPoint·moveVertex 확정은 비대상 / moveVertex 거부·취소는 전 영역 / activateArea·checkArea·checkAllAreas·expectAreaInputs·checkElectrical·saveProject·exportDxf·exportStep은 전 영역(읽기 동작이 경로를 바꾸지 않는지). 저장/로드 경계는 런타임 식별자가 바뀌므로 프로젝트 JSON 깊은 비교로 판정한다.
+- **검사기 결함 수정:** `VisualCheckElectrical`이 `BuildReviewSnapshot()`(현재 범위 결과)을 전체 범위로 착각해, 현재 범위에서 `apply:false` 연속 검사 시 총 배분을 3.5 kW와 비교해 오판했다. `CheckElectricalCore(spec, entryScope)`로 분리하고 전체 기준자료는 항상 `SetVisualReviewScope(0)` 후 얻으며, 예외 시 원래 범위로 복원하고 마지막에 요청 범위로 전환한다.
+- **발열선 전용 지표 추가:** `VisualAreaExpect`에 `heatingPieces`·`heatingLengthMm`(HeatingRun만, 커넥터 제외)을 넣었다. `checkExclusion`의 기존 `heatingPieces`는 HeatingRun+FixedConnector 합이라 heating-only로 쓰면 안 된다. B 홈은 총길이(8,467.619→8,410.384)와 발열선 길이(8,120.784→8,053.498)가 함께 줄지만, 커넥터가 제외를 지날 수 있는 경우 총길이만으로 효과를 판정할 수 없다.
+- 꼭지점 미리보기 취소 단계는 `UpdateVertexPreview` 뒤 상태 문구에 `VertexPreviewShownFragment`("표시용 2D 미리보기", `MainWindow.VertexEdit.cs`)가 실제로 표시됐는지 확인한 다음 취소한다.
+- **출력 범위 검사:** DXF는 재읽은 파일에서 `HEAT_WIRE` 폴리라인 수(=확정 조각 수)·`HEAT_AREA` 링 수(=영역 수)·영역 색 집합·`ELECTRICAL_SPEC` 표의 Y그룹별 회로 ID와 반올림 수치(F2/F1)·합계·**범위 밖 회로 ID 부재**를 검사한다. STEP은 요청 범위의 영역 수·조각 수·영역명 집합을 제품 수집 결과와 대조하고, 파일 자체 검증은 기존 native 재읽기(XDE 파트/색/기하)에 맡긴다. 전체/현재 출력 지표: 전체 DXF areas 2/rows 2/wires 80/rings 2, 전체 STEP areas 2/pieces 80, 현재 영역 DXF·STEP areas 1/wires·pieces 48, 삭제 후 1/48.
+- **프로젝트 재로드 결함 수정:** `MainWindow.ProjectLoad.cs`의 경로 복원이 기하·색·길이 라벨만 복원하고 **인출점 마커를 설정하지 않아** 재로드 후 `checkAllAreas`가 "발열경로 끝점 마커 수가 영역 수와 다릅니다"로 실패했다. `ApplyAreaColors()` 뒤에 `PrepareCommittedRoutePresentation`(커밋 경로와 같은 추출 규칙)으로 모아 `Bridge.SetRouteEndpointsNoRedraw`를 호출한다. 실패는 `_routePresentationWarning`으로만 남기고 기하 복원을 되돌리지 않는다.
+- **STEP 영역 색 면적 검사 수정:** 선택 면마다 `BRepAlgoAPI_Common(face, prism)` 조각 면적 합을 원본 면적과 동등 비교하던 검사는 "선택 면 전체가 영역 안에 있다"는 가정이라, 제외영역이 면을 가르면 정당하게 일부만 색칠되어 실패했다(면 16: 21,731.25→21,043.98 mm², 손실 687.27). 이제 경계 표본이 기여 영역의 어느 링에도 속하지 않으면 `clipped`으로 보고 `pieceArea > originalArea + max(1.0, 1e-4·원본)`일 때만 실패하며, 완전 포함 면은 기존 엄격 동등 검사를 유지한다. 전제는 한 STEP 안의 모든 영역이 하나의 확정 작업평면을 공유한다는 것이다.
+- **빌드 잔재 함정(중요):** `src\HeatingMold.App\x64\WorkingSideBuild\OccBridge.dll`(과거 빌드 산출물, `.gitignore`의 `x64/`로 무시)이 남아 있으면 App 빌드가 이 낡은 DLL을 앱 출력으로 복사해 네이티브 수정이 반영되지 않는다. 그 디렉터리는 삭제했다. 네이티브 변경 후에는 `x64\Release\OccBridge.dll`을 앱 `bin\x64\Release\net8.0-windows\`로 복사하고 `-NoBuild`로 실행한다.
+- 미검증: 실제 마우스 분할·드래그·화면 육안 판정, 새 프로세스에서의 복원(현재는 같은 실행 내 재로드), 외부 CAD에서 DXF/STEP 열기, 레인 수 자체가 바뀌는 제외영역, 곡면·경사면에서의 `clipped` 판정, 세 번째 면/인출점 조합.
+
+
+## 세 번째 대표 시나리오: 마진·간격·인출점 변형 (사용자 요구·구현 2026-11-12)
+
+- **사용자 요구(원문):** "그 다음 시나리오 3 작성해보자. 이번에는 마진/발열사간간격/ 인출점 위치도 기존과 다르게 구현해야해". 즉 `e2e-multi-area`가 검증한 기본 조건(마진 5 mm, 간격 15/20 mm, 오른쪽·아래쪽 인출)에 의존하지 않는 대조군을 만든다.
+- 신규 `tests\HeatingMold.VisualTest\scenarios\e2e-margin-spacing-exit.json`(58 actions + implicit loadModel = **59단계**, `schemaVersion: 2`). 영역 A `faceIds [44,56,69]` **margin 8 / spacing 24 / FrameX(1) / 왼쪽 변 인출**(start `(-362.7109,-300)`, end `(-362.7109,-36)`, tol 0.5), 영역 B `faceIds [16,24,26]` **margin 12 / spacing 28 / FrameY(2) / 위쪽 변 인출**(start `(600,252.3764)`, end `(370,217.95)` 경사 위쪽 변, tol 1.0). 두 영역 2D 비중첩은 기존과 동일(A u 최대 295.914 < B u 최소 304.366).
+- 실측 기준값(result.json): A **24조각/11턴/발열선 12/7,742.326 mm/1회로/총 8,030.735 mm**, B **20/9/10/4,907.115/1/5,239.919**. 전체 44조각/20턴/2회로/13,270.654 mm. **B 하단 홈 `[520,-200,590,-166]` 후** B 20/9/10/**4,841.326**/1/**5,174.13**(마진 12 확장 `(508,-212)-(602,-154)`, 침범 0). A 초안 10/30 변경 후 원 조건(8/24/1) 재생성은 초기와 완전 동일(결정적).
+- **꼭지점 방향 규칙이 기존과 반대다.** A는 FrameX라 간격 방향(Y) `[0,20]` 이동이 no-op으로 거부되고, 진행 방향(X) `[15,0]` 미리보기는 "표시용 2D 미리보기"를 표시한 뒤 취소된다(`from (287.91,-276)` → expected `(302.91,-276)`).
+- **전기 판정:** 표준 Case1(4 Ω/m·3.5 kW 공유·220 V·16 A)에서 두 영역 **A NG·B OK**(13.271 m). 허용 전류 5 A로 낮추면 **A NG·B NG**(13.205 m). 16 A 복원 시 A NG·B OK. **A 삭제 후 B 단독**은 5.174 m에 3.5 kW 전부를 배분받아 **B가 OK→NG로 바뀐다**(전압 초과). 영역 삭제가 공유 전력 재배분을 일으키는 것을 판정으로 확인하는 사례다.
+- **출력·저장:** 전체 DXF areas 2/rows 2/wires 44/rings 2, 전체 STEP areas 2/pieces 44/"A,B". 현재 B DXF areas 1/wires 20, STEP areas 1/pieces 20. 저장 `variant.json` 811,584 B → 같은 실행 재로드 `checkpoint=equal`, 활성 B, 복원 44/20/2/13,204.865. A 삭제 후 DXF 1/20/1, STEP 1/20.
+- **`apply:false` 전기검사 함정:** 시나리오 DTO 기본값(16 A)을 생략하면 제품 상태(5 A)와 비교해 "제품에 적용된 허용 전류가 시나리오와 다릅니다"로 실패한다. `apply:false` 검사에도 `voltageV`/`allowedCurrentA`/`allowedPowerKw`를 제품 현재값과 똑같이 명시해야 한다.
+- **STEP 발열사 스윕 결함 발견·수정(제품 코드):** 이 시나리오의 A 13번째 조각(33점·2D 642.62 mm·3D 최대 꺾임 0.086°의 거의 직선인 긴 중심선)에서 `BRepOffsetAPI_MakePipeShell`의 보정 프레임이 실패해 `area-face-area`가 아니라 `조각 13의 발열사·발열경로 형상을 만들지 못했습니다(sweep)`로 STEP 전체가 거부됐다. `src\OccBridge\StepExportGeometryNative.inc`에 `MakeSweptSolidNative(spine, profile, frenet, wire)` 헬퍼를 두고 **보정 프레임 실패 시 Frenet 프레임으로 한 번만 재시도**한다. 중심선·반지름·SOLID 1개·valid·volume>0 검사는 그대로이며, 같은 중심선을 근사·분할하거나 기대값을 낮추지 않는다. 이 fallback이 없는 이전 DLL에서는 재현되고, 수정 후 A 단독 STEP과 전체 시나리오 STEP이 통과한다.
+- **검증 2026-11-12:** 새 시나리오 **59/59 OK**를 서로 다른 두 실행(`artifacts\visual-test\20261112-225316`, `20261112-225450`)에서 통과. 기존 `e2e-full` **36/36 OK**(`20261112-225619`), `e2e-multi-area` **54/54 OK**(`20261112-225731`)도 유지. 모두 `Status=Completed`, `VisualReview=NotRecorded`. App 테스트 **180 통과**, `tests\WorkingSide.Regression` **EXIT=0, 485 PASS, FAIL 0**. Core 테스트는 Core를 건드리지 않아 재실행하지 않았다.
+- 문서 갱신: `docs\VisualTest.Scenarios.md`에 §4.3(조건 변형 시나리오)과 세 시나리오 안내를, `tests\HeatingMold.VisualTest\README.md`에 세 번째 시나리오 실행 예를 추가했다.
+- 미검증: 실제 마우스·화면 육안 판정, 새 프로세스에서의 복원(현재는 같은 실행 내 재로드), 외부 CAD에서 이 조건의 DXF/STEP 열기, Frenet fallback이 필요한 다른 형상(곡률이 큰 중심선·급격한 꺾임), 마진 12 mm에서 레인 수 자체가 바뀌는 제외영역, 네 번째 면·인출점 조합.
+
+
+## 시각테스트 완료 후 종료 확인 예외 (원인·수정 2026-11-12)
+
+- **사용자 보고:** 두 번째 시나리오(`e2e-multi-area`)를 실행하고 창을 닫으면 `예상하지 않은 확인 대화상자 요청입니다: 앱 종료`(`ResolveVisualTestConfirm`) 예외가 발생했다.
+- **원인:** 확인 응답 큐는 실행이 끝날 때 `OnVisualTestFinished`가 비우지만, 세션(`VisualTestSession.Current`)은 육안 검토용으로 남겨 둔다. 종료 확인 경로(앱 종료, 경로 편집 삭제, 영역 분할)는 "세션 존재"만 보고 큐를 사용하므로, 실행 완료 후 빈 큐에서 Dequeue를 시도해 예외가 난다. 해당 시나리오는 저장 이후 B 영역을 삭제하므로 종료 시점의 미저장 변경은 정상 상태다.
+- **수정:** 신규 `src\HeatingMold.App\VisualTesting\VisualTestConfirmationPolicy.cs`의 `UsesQueuedResponses(sessionExists, runner)`가 **세션이 있고 실행기가 아직 끝나지 않았을 때만** 큐 사용을 승인한다. `MainWindow.VisualTest.cs`의 `VisualTestAutomationActive` 프로퍼티가 이 판정을 캡슐화하고, `ConfirmDiscardRouteEdits`, `ConfirmDiscardSession`, `ConfirmSplit`이 `VisualTestSession.Current != null` 대신 이 프로퍼티를 쓴다.
+- **자동 실행 중 창 닫기:** `OnClosing`은 자동 실행 중이면 닫기를 거부하고 상태 문구 `시각 테스트 실행 중입니다 — 완료된 뒤에 종료할 수 있습니다`만 표시한다. 단계가 큐에 넣은 응답을 종료 확인이 가로채는 것도 막는다. 예외를 무시하거나 종료를 자동 승인하지 않는다.
+- **실행 종료 후 종료:** 세션은 남지만 정책이 false이므로 제품 대화상자(저장하지 않은 작업: 예/아니요/취소)가 뜬다. '아니요'면 미저장 변경을 버리고 정상 종료한다.
+- **검증 2026-11-12:** App 테스트 **180 통과**(신규 `ConfirmationPolicy_UsesQueueOnlyWhileTheRunIsActive`: 세션 없음·실행기 없음·실행 중·완료 후 네 경우), App Release/x64 빌드 0 errors(기존 CS8632 경고만). `tests\WorkingSide.Regression\Run.ps1` EXIT=0, **478 PASS**(30 sidebar, 30 area highlight, 19 direct exit, 32 vertex edit, 3 electrical, 43 pattern state, 63 geometry rollback, 20 project load, 51 project-load exclusion, 187 working-side). `e2e-multi-area`를 앱 출력 사본으로 `--visual-hold-seconds 1`에서 재실행해 **54/54 OK, Status=Completed**를 확인하고, 이어서 주 창에 WM_CLOSE를 보내 `저장하지 않은 작업` 대화상자가 표시되고 '아니요' 선택으로 exit 0 종료됨을 확인했다. 실행 중(8초 후) WM_CLOSE는 거부되어 창이 살아 있었고 대화상자도 없었다.
+- **미검증:** 실행 중 앱에서 사람이 실제 마우스로 종료를 클릭하는 경우, 경로 편집 삭제·영역 분할 확인의 실행 완료 후 동작(정책 공유만 확인), 다른 시나리오(`e2e-full`) 종료 시 동작. 위 종료 검증은 실제 클릭이 아니라 Win32 WM_CLOSE 메시지 기반 자동 확인이다.
+
+
 ## legacy-cleanup 통합 (2026-11-12)
 
 - **사용자 요청:** 다른 브랜치 `legacy-cleanup`(불필요 코드 삭제)을 지금 병합해도 문제가 없는지 검토하고, 승인 후 구현. 검토 결과 즉시 병합은 보류하고 현재 시각테스트 작업을 먼저 커밋한 뒤 통합 브랜치에서 병합했다.
