@@ -9,6 +9,9 @@ $msbuild = 'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Curr
 if ($LASTEXITCODE) { throw 'Native bridge build failed' }
 & $msbuild "$root/HeatingMold.Mvp.sln" /p:Configuration=Release /p:Platform=x64 "/p:OutDir=$root\x64\WorkingSideBuild\" /m /v:minimal
 if ($LASTEXITCODE) { throw 'Isolated Release build failed' }
+# The solution build can reuse a stale native intermediate under the isolated OutDir.
+# The regression harness references this copy, so pin it to the DLL just built.
+Copy-Item "$root/x64/Release/OccBridge.dll" "$root/x64/WorkingSideBuild/OccBridge.dll" -Force
 $dllDirs = @("$occt/win64/vc14/bin") + @(Get-ChildItem "$root/third_party/3rdparty-vc14-64" -Recurse -Filter *.dll | ForEach-Object DirectoryName | Select-Object -Unique)
 $env:CSF_OCCTResourcePath = "$occt/src"
 $vcvars = 'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat'
