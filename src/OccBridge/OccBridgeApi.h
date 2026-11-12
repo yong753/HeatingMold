@@ -320,8 +320,6 @@ public:
     static System::String^ GetWorkingStageDiagnostic();
     static RoutePieceResult^ StageProjectedWorkingPolyline(long long id, long long revision, int stageId,
         System::String^ kind, array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);
-    /// <summary>Camera-ray nearest visible face hit with face id, point, outward normal and UV.</summary>
-    static FacePickResult^ PickFacePoint(int x, int y);
     /// <summary>3D polylines of the CAD edges shared by the exit face and the heating faces (empty when not adjacent).</summary>
     static array<array<double>^>^ GetSharedBoundaryEdges(int exitFaceId, array<int>^ heatingFaceIds, double deflection);
     static bool CommitWorkingRouteGeometry(long long id, long long revision, array<int>^ stagedRouteIds,
@@ -330,8 +328,6 @@ public:
     static bool CommitWorkingRouteGeometryDelta(long long id, long long revision, array<int>^ stagedRouteIds,
         array<int>^ finalRouteIds, array<int>^ stagedPolylineIds, array<int>^ retainedRouteIds,
         array<int>^ deletedRouteIds);
-    /// <summary>커밋은 성공했지만 마지막 Redraw가 실패했는지 한 번만 보고한다(읽은 뒤 초기화).</summary>
-    static bool ConsumeCommitRedrawFailure();
     static void DiscardWorkingRouteGeometry(long long id, long long revision,
         array<int>^ stagedRouteIds, array<int>^ stagedPolylineIds);
     static bool IsWorkingPointVisible(long long id, long long revision, double x, double y, double z, double tolerance);
@@ -431,12 +427,8 @@ public:
     /// <summary>Remove only the transient power destination/lead; committed leads are untouched.</summary>
     static void ClearPowerLeadPreview();
     static void ClearPowerLeads();
-    /// <summary>Return connector piece ID under screen point, or -1.</summary>
-    static int PickConnector(int x, int y);
     static int PickRoutePiece(int x, int y);
     static void HighlightCircuit(array<int>^ pieceIds);
-    /// <summary>발열 경로 인출점/끝점 마커를 다시 그린다. xyzFlat은 [x,y,z,...].</summary>
-    static void SetRouteEndpoints(array<double>^ xyzFlat);
     /// <summary>Update endpoint presentation without redraw; false reports presentation failure only.</summary>
     static bool SetRouteEndpointsNoRedraw(array<double>^ xyzFlat);
     /// <summary>Replace the whole on-screen route length label set in one atomic presentation step.
@@ -468,9 +460,6 @@ public:
     /// <summary>창 크기 변경 반영 (MustBeResized + Redraw)</summary>
     static void ResizeView(int width, int height);
 
-    /// <summary>FitAll + Redraw</summary>
-    static void FitView();
-
     /// <summary>회전 시작 (마우스 다운 좌표)</summary>
     static void RotateStart(int x, int y);
 
@@ -497,8 +486,6 @@ public:
     /// <summary>선택 정보는 보존하고 선택/호버 하이라이트 숨김. 다음 면 선택 시 복원.</summary>
     static void HideFaceHighlights();
 
-    /// <summary>확정된 작업(발열)영역을 붉은색으로 유지. 선택이 바뀌어도 해제 전까지 남는다.</summary>
-    static void SetConfirmedFaceHighlights(array<int>^ faceIds);
     /// <summary>확정 작업영역을 영역별 색상으로 유지. rgb는 Face별 RGB(0~1) 3개씩.</summary>
     static void SetConfirmedFaceHighlightColors(array<int>^ faceIds, array<double>^ rgb);
     /// <summary>확정 영역 하이라이트 해제 — 선택된 면은 기존 초록색으로 되돌린다.</summary>
@@ -554,7 +541,6 @@ public:
     /// <summary>프리뷰 취소 — 드래그 시작 시점의 선택으로 되돌린다.</summary>
     static void CancelFaceRectanglePreview();
     static array<double>^ ScreenPointOnPlane(int x, int y, double ox, double oy, double oz, double nx, double ny, double nz);
-    static bool AddExclusionOverlay(array<double>^ xyzFlat);
     static void SetExclusionPreview(array<double>^ xyzFlat);
     static void ClearExclusionOverlays();
 

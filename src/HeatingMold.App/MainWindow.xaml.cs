@@ -838,19 +838,6 @@ namespace HeatingMold.App
                     clearedStart && clearedEnd ? "시작·종료" : clearedStart ? "시작" : "종료")
                 : string.Empty;
 
-        /// <summary>조각 순서대로 점을 이어 하나의 폴리라인으로 만든다 — 조각 경계의 중복 시작점은 건너뛴다.</summary>
-        private static List<Vec2> FlattenPieces(IReadOnlyList<SerpentineRoutePiece> pieces)
-        {
-            var points = new List<Vec2>();
-            foreach (var piece in pieces)
-            {
-                int start = points.Count > 0 && piece.Points.Count > 0
-                    && points[^1].DistanceTo(piece.Points[0]) <= 1e-9 ? 1 : 0;
-                for (int i = start; i < piece.Points.Count; i++) points.Add(piece.Points[i]);
-            }
-            return points;
-        }
-
         private void OnFacePicked(int faceIndex, bool toggle)
         {
             if (Viewport.PowerLocationMode) return;

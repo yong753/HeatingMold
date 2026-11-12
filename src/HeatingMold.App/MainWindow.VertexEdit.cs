@@ -709,18 +709,6 @@ public partial class MainWindow
         area.RouteEdited = false;
     }
 
-    private bool ConfirmDiscardAllRouteEdits(string action)
-    {
-        var edited = _areas.Where(a => a.RouteEdited).ToList();
-        if (edited.Count == 0) return true;
-        if (VisualTestSession.Current != null) return ResolveVisualTestConfirm(action);
-        MessageBoxResult result = MessageBox.Show(this,
-            action + " 작업을 계속하면 " + string.Join(", ", edited.Select(a => a.Name))
-            + " 영역의 발열경로 편집 내용이 삭제됩니다." + Environment.NewLine + "계속할까요?",
-            "발열경로 편집 내용 삭제", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
-        return result == MessageBoxResult.Yes;
-    }
-
     /// <summary>모델 교체·앱 종료 전에 저장되지 않은 프로젝트 변경의 손실을 확인한다.</summary>
     private bool ConfirmDiscardSession(string action)
     {

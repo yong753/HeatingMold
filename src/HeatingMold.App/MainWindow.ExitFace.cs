@@ -843,31 +843,6 @@ public partial class MainWindow
         return true;
     }
 
-    /// <summary>
-    /// 기존 좌표 호출자의 호환 경로. 같은 표시 좌표에 여러 원본 후보가 있으면 임의 선택하지 않는다.
-    /// </summary>
-    private bool ApplyAnchorCandidate(Vec2 start, Vec2 end, out string error)
-    {
-        error = null;
-        var area = _activeArea;
-        if (area == null)
-        {
-            error = "활성 작업영역이 없습니다";
-            return false;
-        }
-
-        var matches = area.AnchorCandidates.Where(c =>
-            Dist(c.Start, start) <= 1e-6 && Dist(c.End, end) <= 1e-6).ToList();
-        if (matches.Count != 1)
-        {
-            error = matches.Count == 0
-                ? "요청한 시작/종료점 후보가 현재 목록에 없습니다"
-                : "같은 좌표에 원본 edge가 다른 후보가 여러 개 있습니다 — 후보 identity로 선택하세요";
-            return false;
-        }
-        return ApplyAnchorCandidate(matches[0], out error);
-    }
-
     /// <summary>UI와 자동 선택은 현재 목록의 DTO identity 및 저장된 원본 parameter를 적용한다.</summary>
     private bool ApplyAnchorCandidate(AnchoredCandidate candidate, out string error)
     {
@@ -1106,8 +1081,6 @@ public partial class MainWindow
             "제외영역이 작업영역을 완전히 가로질러 발열영역이 분리되었습니다 — 제외영역을 줄이거나 방향을 바꾸세요",
         SerpentineComponentsFailureReason.TooComplex =>
             "제외영역으로 레인 조각 조합이 너무 많아 경로 탐색 계산 한도를 넘었습니다 — 제외영역을 줄이거나 간격을 조정하세요",
-        SerpentineComponentsFailureReason.TooManyFragments =>
-            "레인 조각이 너무 많습니다 — 제외영역을 줄이세요",
         SerpentineComponentsFailureReason.NoCompletePath =>
             "제외영역 배치로 모든 레인을 한 번씩 잇는 경로가 없습니다 — 제외영역을 줄이거나 방향을 바꾸세요",
         SerpentineComponentsFailureReason.ExitBoundaryConflict => ExplainExitBoundaryFailure(boundaryFailure),

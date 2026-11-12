@@ -18,8 +18,9 @@ It covers visibility at the candidate point, revision ownership, immediate axis 
 (including default +Z), same-axis no-op, and precommit rollback. It does not test pan/zoom
 behavior or the route-generation gate.
 
-Vertex edit history is exercised through the real `CommitVertex` -> Undo/Redo path, including
-multi-step history, redo invalidation after a new edit, and rollback when native rebuild fails.
+Vertex editing is exercised through the real `CommitVertex` commit path, including
+spacing-locked drags, candidate identity preservation, and rollback when native rebuild fails.
+Undo/Redo history is not provided; the harness checks that the removed history members stay absent.
 `GeometryRollbackChecks` covers exclusion-path stage cleanup and `AreaRouteSnapshot` ownership;
 `ElectricalRefreshChecks` covers table invalidation when exclusions invalidate a pattern.
 
@@ -27,10 +28,9 @@ An OCCT `wglMakeCurrent()` diagnostic may be emitted at process teardown when th
 HWND is destroyed before global viewer handles. The checks pass before teardown; this is not
 a manual visual-quality test. Multi-monitor/high-DPI behavior still needs manual verification.
 
-The `tests/PowerLead.Regression` harness retains its native legacy projection checks. Its UI
-regressions now verify the deliberate gate before/after working-side confirmation. Restored pending
-state is seeded explicitly to keep cleanup/late-hover tests non-vacuous; it does not enable the old
-UI route. Its README identifies automatic power entry/queueing as future migration work.
+The former `tests/PowerLead.Regression` harness is no longer part of the repository. Power-lead UI
+remains behind the deliberate `WorkingRouteMigrationComplete` gate, and this harness does not claim
+separate power-lead coverage.
 
 Candidate-application regressions inject camera-preparation and post-preparation/precommit failures.
 They verify that the old context and dependent selection state survive rollback, and that successful

@@ -51,8 +51,6 @@ public enum SerpentineComponentsFailureReason
     SplitByExclusion,
     /// <summary>정확 탐색의 고유 상태 수가 계산 예산을 넘음. 노드 개수 고정 상한이 아니다.</summary>
     TooComplex,
-    /// <summary>호환 경로에서 레인 조각 폴백 한계를 넘음.</summary>
-    TooManyFragments,
     /// <summary>모든 레인 구간을 한 번씩 잇는 완전 경로가 존재하지 않음.</summary>
     NoCompletePath,
     /// <summary>The exact CAD exit boundary could not be resolved or validated.</summary>
@@ -68,25 +66,6 @@ public sealed record SerpentineComponentsResult(
         new(components, null);
     public static SerpentineComponentsResult Fail(SerpentineComponentsFailureReason reason) =>
         new(Array.Empty<IReadOnlyList<SerpentineRoutePiece>>(), reason);
-}
-
-/// <summary>Pure topology projection of route pieces into one continuous polyline.</summary>
-public static class SerpentineTopology
-{
-    public static IReadOnlyList<IReadOnlyList<Vec2>> Compute(
-        IReadOnlyList<SerpentineRoutePiece> pieces)
-    {
-        var components = new List<IReadOnlyList<Vec2>>();
-        var current = new List<Vec2>();
-        foreach (var piece in pieces)
-        {
-            if (piece.Points.Count == 0) continue;
-            if (current.Count == 0) current.AddRange(piece.Points);
-            else current.AddRange(piece.Points.Skip(current[^1] == piece.Points[0] ? 1 : 0));
-        }
-        if (current.Count > 0) components.Add(current);
-        return components;
-    }
 }
 
 /// <summary>스캔라인 기반 사행(serpentine) 발열 패턴 생성기.
@@ -1239,7 +1218,7 @@ public static class Serpentine
         var exclusionList = exclusions.ToList();
 
         var candidates = new List<ExcludedAnchorCandidate>();
-        bool anySplit = false, anyTooComplex = false, anyTooMany = false, anyNoPath = false;
+        bool anySplit = false, anyTooComplex = false, anyNoPath = false;
         ExitBoundaryFailureReason? boundaryFailure = null;
         foreach (double angleDeg in AngleCandidates(outer, direction))
         {
@@ -1317,7 +1296,6 @@ public static class Serpentine
             return new ExcludedCandidatesResult(candidates, SerpentineComponentsFailureReason.ExitBoundaryConflict)
             { BoundaryFailure = boundaryFailure };
         if (anyNoPath) return new ExcludedCandidatesResult(candidates, SerpentineComponentsFailureReason.NoCompletePath);
-        if (anyTooMany) return new ExcludedCandidatesResult(candidates, SerpentineComponentsFailureReason.TooManyFragments);
         if (anyTooComplex) return new ExcludedCandidatesResult(candidates, SerpentineComponentsFailureReason.TooComplex);
         return new ExcludedCandidatesResult(candidates, SerpentineComponentsFailureReason.NoLanes);
     }
@@ -1746,15 +1724,6 @@ public static class Serpentine
         }
         return true;
     }
-
-    private static AnchoredFailureReason MapComponentsFailure(SerpentineComponentsFailureReason failure) =>
-        failure switch
-        {
-            SerpentineComponentsFailureReason.NoLanes => AnchoredFailureReason.NoLanes,
-            SerpentineComponentsFailureReason.SplitByExclusion => AnchoredFailureReason.RegionSplit,
-            SerpentineComponentsFailureReason.InvalidInput => AnchoredFailureReason.InvalidInput,
-            _ => AnchoredFailureReason.NoCompletePath,
-        };
 
     private static bool TryValidateSelectedExit(IExitBoundary2D? boundary, ExitBoundaryPoint point,
         out ExitBoundaryPoint saved, out ExitBoundaryFailureReason? failure)

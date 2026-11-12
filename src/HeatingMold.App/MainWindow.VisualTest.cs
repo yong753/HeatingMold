@@ -921,41 +921,6 @@ namespace HeatingMold.App
             return VisualStepOutcome.Ok("꼭지점 이동·수동 편집 적용 확인", data);
         }
 
-        private static bool SegmentIntersectsRect(Vec2 a, Vec2 b, double[] rect)
-        {
-            double minX = Math.Min(rect[0], rect[2]);
-            double maxX = Math.Max(rect[0], rect[2]);
-            double minY = Math.Min(rect[1], rect[3]);
-            double maxY = Math.Max(rect[1], rect[3]);
-            if (PointInside(a) && PointInside(b)) return true;
-
-            double t0 = 0, t1 = 1;
-            double dx = b.X - a.X;
-            double dy = b.Y - a.Y;
-            return Clip(-dx, a.X - minX) && Clip(dx, maxX - a.X)
-                && Clip(-dy, a.Y - minY) && Clip(dy, maxY - a.Y);
-
-            bool PointInside(Vec2 p) =>
-                p.X > minX + 1e-9 && p.X < maxX - 1e-9 && p.Y > minY + 1e-9 && p.Y < maxY - 1e-9;
-
-            bool Clip(double p, double q)
-            {
-                if (Math.Abs(p) < 1e-12) return q >= 0;
-                double r = q / p;
-                if (p < 0)
-                {
-                    if (r > t1) return false;
-                    if (r > t0) t0 = r;
-                }
-                else
-                {
-                    if (r < t0) return false;
-                    if (r < t1) t1 = r;
-                }
-                return true;
-            }
-        }
-
         // ---- 확인 대화상자 응답 큐 ----
 
         internal bool ResolveVisualTestConfirm(string action)

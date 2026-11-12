@@ -479,13 +479,6 @@ public partial class MainWindow
         return AreaColors[_areas.Count % AreaColors.Length];
     }
 
-    private int[] AllocateNativePieceIds(int count)
-    {
-        var ids = new int[count];
-        for (int i = 0; i < count; i++) ids[i] = _nextNativePieceId++;
-        return ids;
-    }
-
     private int[] SortedFaceIds(WorkingArea area) => area.FaceIdSet.OrderBy(id => id).ToArray();
 
     private string AreaNameForFace(int faceId) =>

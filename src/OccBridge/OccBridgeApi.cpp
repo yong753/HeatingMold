@@ -438,7 +438,7 @@ namespace
     void ClearRoutePreviewNative();
     // 제외영역 채움 메시 점유 면 조회 (AreaHighlightNative.inc에서 정의, 뒤쪽 include)
     bool IsFaceInAreaHighlightNative(int faceId);
-    std::vector<Handle(AIS_Shape)> g_exclusionOverlays;
+
     Handle(AIS_Shape) g_exclusionPreview;
     // 인출 측면 후보 강조 (인출면 선택 모드에서만 표시)
     std::vector<Handle(AIS_Shape)> g_exitCandidateOverlays;
@@ -626,7 +626,6 @@ namespace
     }
 
     const Quantity_Color kSelectedFaceColor(0.12, 0.82, 0.38, Quantity_TOC_RGB);   // 선택 = 초록
-    const Quantity_Color kConfirmedFaceColor(0.90, 0.16, 0.16, Quantity_TOC_RGB);  // 단일 영역 기본값
     const Quantity_Color kHeatingRouteColor(1.00, 0.10, 0.10, Quantity_TOC_RGB);   // 발열 경로 = 두꺼운 빨강
     const Quantity_Color kConnectorRouteColor(1.00, 0.10, 0.10, Quantity_TOC_RGB); // 턴 커넥터 = 발열선과 같은 빨강 점선
     const Quantity_Color kRouteEndpointColor(1.00, 0.05, 0.05, Quantity_TOC_RGB);  // 인출점/끝점 마커
@@ -776,13 +775,6 @@ namespace
         if (!colors.empty()) g_faceHighlightsVisible = true;
         g_ctx->Redisplay(g_aisShape, Standard_False);
         RedrawFaceHighlights();
-    }
-
-    void SetConfirmedFaceHighlightsNative(const std::set<int>& faceIds)
-    {
-        std::map<int, Quantity_Color> colors;
-        for (int faceId : faceIds) colors[faceId] = kConfirmedFaceColor;
-        SetConfirmedFaceHighlightColorsNative(colors);
     }
 
     void ClearConfirmedFaceHighlightsNative()
@@ -2654,13 +2646,6 @@ namespace
         g_view->Redraw();
     }
 
-    void FitViewNative()
-    {
-        if (g_view.IsNull()) return;
-        g_view->FitAll(0.01, Standard_False);
-        g_view->Redraw();
-    }
-
     void RotateStartNative(int x, int y)
     {
         if (!g_view.IsNull()) g_view->StartRotation(x, y);
@@ -3057,22 +3042,6 @@ namespace
         result[0] = 1; result[1] = props.Mass(); result[2] = surfaceProps.Mass(); result[3] = b.Distance(end);
     }
 
-    int PickConnectorNative(int x, int y)
-    {
-        if (g_ctx.IsNull() || g_view.IsNull()) return -1;
-        g_ctx->MoveTo(x, y, g_view, Standard_False);
-        Handle(SelectMgr_EntityOwner) owner = g_ctx->DetectedOwner();
-        int found = -1;
-        if (!owner.IsNull()) {
-            Handle(AIS_InteractiveObject) selectable = Handle(AIS_InteractiveObject)::DownCast(owner->Selectable());
-            for (const auto& piece : g_routePieces)
-                if (piece.second.connector && piece.second.ais == selectable) { found = piece.first; break; }
-        }
-        // 발열 경로(런)에는 AIS 동적 하이라이트(청록)를 쓰지 않는다. 커넥터 호버 피드백만 남긴다.
-        if (found < 0) g_ctx->ClearDetected(Standard_False);
-        return found;
-    }
-
     void HighlightCircuitNative(const std::vector<int>& ids)
     {
         if (g_ctx.IsNull()) return;
@@ -3113,15 +3082,6 @@ namespace
         return overlay;
     }
 
-    bool AddExclusionOverlayNative(const std::vector<double>& xyz)
-    {
-        Handle(AIS_Shape) overlay = MakeExclusionOverlay(xyz, Quantity_Color(0.95, 0.15, 0.10, Quantity_TOC_RGB));
-        if (overlay.IsNull()) return false;
-        g_exclusionOverlays.push_back(overlay);
-        if (!g_view.IsNull()) g_view->Redraw();
-        return true;
-    }
-
     void SetExclusionPreviewNative(const std::vector<double>& xyz)
     {
         if (!g_ctx.IsNull() && !g_exclusionPreview.IsNull())
@@ -3135,12 +3095,8 @@ namespace
 
     void ClearExclusionOverlaysNative()
     {
-        if (!g_ctx.IsNull())
-        {
-            for (const auto& overlay : g_exclusionOverlays) g_ctx->Remove(overlay, Standard_False);
-            if (!g_exclusionPreview.IsNull()) g_ctx->Remove(g_exclusionPreview, Standard_False);
-        }
-        g_exclusionOverlays.clear();
+        if (!g_ctx.IsNull() && !g_exclusionPreview.IsNull())
+            g_ctx->Remove(g_exclusionPreview, Standard_False);
         g_exclusionPreview.Nullify();
         if (!g_view.IsNull()) g_view->Redraw();
     }
@@ -4225,22 +4181,6 @@ RoutePieceResult^ Bridge::StageProjectedWorkingPolyline(long long id,long long r
         double data[7]={};if(!StageProjectedWorkingPolylineNative(id,revision,stageId,msclr::interop::marshal_as<std::string>(kind),xyz,faces,gp_Dir(dx,dy,dz),data))return nullptr;
         auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;}catch(...){return nullptr;}
 }
-FacePickResult^ Bridge::PickFacePoint(int x, int y)
-{
-    try {
-        double point[3] = {}, normal[3] = {}, uv[2] = {};
-        int faceId = -1;
-        const int status = PickFacePointNative(x, y, point, faceId, normal, uv);
-        auto result = gcnew FacePickResult();
-        result->Status = status;
-        result->FaceId = faceId;
-        result->Revision = g_modelRevision;
-        result->Point = gcnew array<double>{point[0], point[1], point[2]};
-        result->Normal = gcnew array<double>{normal[0], normal[1], normal[2]};
-        result->Uv = gcnew array<double>{uv[0], uv[1]};
-        return result;
-    } catch (...) { return nullptr; }
-}
 array<array<double>^>^ Bridge::GetSharedBoundaryEdges(int exitFaceId, array<int>^ heatingFaceIds, double deflection)
 {
     if (heatingFaceIds == nullptr || heatingFaceIds->Length == 0) return nullptr;
@@ -4265,12 +4205,6 @@ bool Bridge::CommitWorkingRouteGeometry(long long id,long long revision,array<in
         for each(int v in finalRouteIds) fr.push_back(v); for each(int v in stagedPolylineIds) sp.push_back(v);
         return CommitWorkingGeometryNative(id,revision,sr,fr,sp);
     } catch (...) { return false; }
-}
-bool Bridge::ConsumeCommitRedrawFailure()
-{
-    const bool failed = g_lastCommitRedrawFailed;
-    g_lastCommitRedrawFailed = false;
-    return failed;
 }
 void Bridge::DiscardWorkingRouteGeometry(long long id,long long revision,array<int>^ stagedRouteIds,array<int>^ stagedPolylineIds)
 {
@@ -4831,11 +4765,6 @@ void Bridge::ClearRoutePreview()
     if (!g_view.IsNull()) g_view->Redraw();
 }
 
-void Bridge::SetRouteEndpoints(array<double>^ xyzFlat)
-{
-    SetRouteEndpointsNoRedraw(xyzFlat);
-    if (!g_view.IsNull()) g_view->Redraw();
-}
 bool Bridge::SetRouteEndpointsNoRedraw(array<double>^ xyzFlat)
 {
     try {
@@ -4887,7 +4816,6 @@ void Bridge::ClearPowerLeadPreview()
     ClearPowerLeadPreviewNative();
     if (hadPreview && !g_view.IsNull()) g_view->Redraw();
 }
-int Bridge::PickConnector(int x, int y) { return PickConnectorNative(x, y); }
 int Bridge::PickRoutePiece(int x, int y)
 {
     if (g_ctx.IsNull() || g_view.IsNull()) return -1;
@@ -4922,11 +4850,6 @@ void Bridge::ResizeView(int width, int height)
 {
     (void)width; (void)height;
     ResizeViewNative();
-}
-
-void Bridge::FitView()
-{
-    FitViewNative();
 }
 
 void Bridge::RotateStart(int x, int y)
@@ -5055,14 +4978,6 @@ array<double>^ Bridge::ScreenPointOnPlane(int x, int y, double ox, double oy, do
     return result;
 }
 
-bool Bridge::AddExclusionOverlay(array<double>^ xyzFlat)
-{
-    if (xyzFlat == nullptr) return false;
-    std::vector<double> xyz(xyzFlat->Length);
-    for (int i = 0; i < xyzFlat->Length; ++i) xyz[(size_t)i] = xyzFlat[i];
-    return AddExclusionOverlayNative(xyz);
-}
-
 void Bridge::SetExclusionPreview(array<double>^ xyzFlat)
 {
     std::vector<double> xyz;
@@ -5162,14 +5077,6 @@ int Bridge::HoverFace(int x, int y)
 void Bridge::HideFaceHighlights()
 {
     HideFaceHighlightsNative();
-}
-
-void Bridge::SetConfirmedFaceHighlights(array<int>^ faceIds)
-{
-    std::set<int> ids;
-    if (faceIds != nullptr)
-        for (int i = 0; i < faceIds->Length; ++i) ids.insert(faceIds[i]);
-    SetConfirmedFaceHighlightsNative(ids);
 }
 
 void Bridge::SetConfirmedFaceHighlightColors(array<int>^ faceIds, array<double>^ rgb)

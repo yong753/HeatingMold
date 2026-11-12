@@ -29,8 +29,6 @@ static void LogWorkingMeshSkipNative(int count, double area, double deflection)
 }
 std::map<long long, std::unique_ptr<WorkingNative>> g_working;
 long long g_nextWorkingId = 1;
-// 커밋 자체는 성공했지만 마지막 Redraw가 실패했음을 App에 알리기 위한 플래그.
-bool g_lastCommitRedrawFailed = false;
 // 매핑점/투영점과 해당 지지면 사이에 허용하는 실제 3D 거리(mm).
 // 좌표별 허용이 아니라 BRepExtrema euclidean 거리 기준이다.
 constexpr double kSurfaceSupportTolerance = 0.1;
@@ -839,56 +837,6 @@ bool StageProjectedWorkingPolylineNative(long long id,long long revision,int sta
     } catch(...) { if(!ais.IsNull()) { try { g_ctx->Remove(ais,Standard_False); } catch(...) {} } g_stagedWorkingPolylines.erase(stageId); return false; }
 }
 
-// ---- 인출면 픽: 화면 광선의 최근접 가시면. 선택 상태를 바꾸지 않는 읽기 전용. ----
-// status: 0=hit, 1=miss, 2=tangent, 3=invalid/geometry
-int PickFacePointNative(int x, int y, double* point, int& faceId, double* normal, double* uv)
-{
-    if (g_view.IsNull() || g_shape.IsNull() || !point || !normal || !uv) return 3;
-    try {
-        Standard_Real rx, ry, rz, vx, vy, vz;
-        g_view->ConvertWithProj(x, y, rx, ry, rz, vx, vy, vz);
-        gp_Vec ray(vx, vy, vz);
-        if (ray.SquareMagnitude() < 1e-18) return 3;
-        ray.Normalize();
-        IntCurvesFace_ShapeIntersector hits;
-        hits.Load(g_shape, 1e-7);
-        hits.Perform(gp_Lin(gp_Pnt(rx, ry, rz), gp_Dir(ray)), 0.0, 1e100);
-        if (!hits.IsDone() || hits.NbPnt() == 0) return 1;
-        int best = 0; double nearest = 1e100;
-        for (int i = 1; i <= hits.NbPnt(); ++i) {
-            if (hits.State(i) != TopAbs_IN && hits.State(i) != TopAbs_ON) continue;
-            const double t = hits.WParameter(i);
-            if (!std::isfinite(t) || t < 0) continue;
-            if (t < nearest) { nearest = t; best = i; }
-        }
-        if (!best) return 1;
-        // Never fall through a nearer occluder to a hidden face.
-        const TopoDS_Face face = hits.Face(best);
-        if (face.IsNull() || !g_faceMap.Contains(face)) return 3;
-        const int id = g_faceMap.FindIndex(face) - 1;
-        if (id < 0) return 3;
-        const gp_Pnt p = hits.Pnt(best);
-        const double u = hits.UParameter(best), v = hits.VParameter(best);
-        if (!std::isfinite(u) || !std::isfinite(v)) return 3;
-        BRepAdaptor_Surface surface(face);
-        gp_Vec n;
-        if (surface.GetType() == GeomAbs_Sphere) n = gp_Vec(surface.Sphere().Location(), p);
-        else {
-            gp_Pnt q; gp_Vec du, dv;
-            surface.D1(u, v, q, du, dv);
-            n = du.Crossed(dv);
-        }
-        if (!std::isfinite(n.SquareMagnitude()) || n.SquareMagnitude() < 1e-24) return 2;
-        n.Normalize();
-        if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
-        if (std::fabs(n.Dot(gp_Vec(ray))) < 1e-7) return 2;
-        point[0]=p.X(); point[1]=p.Y(); point[2]=p.Z();
-        normal[0]=n.X(); normal[1]=n.Y(); normal[2]=n.Z();
-        uv[0]=u; uv[1]=v; faceId=id;
-        return 0;
-    } catch (const Standard_Failure&) { return 3; }
-}
-
 // ---- 인출면과 가열면이 공유하는 실제 CAD edge → 3D 폴리라인 ----
 bool FaceRegionIsClosedNative(int faceId)
 {
@@ -1260,10 +1208,9 @@ bool CommitWorkingGeometryDeltaNative(long long contextId, long long revision,
     g_committedWorkingPolylines.swap(nextLines); g_hoveredCircuitPieces.swap(nextHovered);
     for (int id : stagedRoutes) g_stagedWorkingRouteOwners.erase(id);
     for (int id : stagedLines) g_stagedWorkingPolylines.erase(id);
-    g_lastCommitRedrawFailed = false;
     if (!g_ctx.IsNull()) for (const auto& old : removed) {
         try { g_ctx->Remove(old, Standard_False); }
-        catch (...) { g_lastCommitRedrawFailed = true; }
+        catch (...) { }
     }
     // No Redraw (directly or through HighlightCircuit). Managed references must be
     // published before the caller updates markers and explicitly redraws the view.
@@ -1280,7 +1227,7 @@ bool CommitWorkingGeometryNative(long long contextId, long long revision, const 
             if (route.first >= 0 && route.second.contextId == contextId && !finals.count(route.first)) deleted.push_back(route.first);
         if (!CommitWorkingGeometryDeltaNative(contextId, revision, stagedRoutes, finalRoutes, stagedLines, {}, deleted)) return false;
     } catch (...) { return false; }
-    if (!g_view.IsNull()) { try { g_view->Redraw(); } catch (...) { g_lastCommitRedrawFailed = true; } }
+    if (!g_view.IsNull()) { try { g_view->Redraw(); } catch (...) { } }
     return true;
 }
 

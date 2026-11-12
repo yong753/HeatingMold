@@ -9,17 +9,22 @@ namespace HeatingMold.Core.Tests;
 public class DxfExporterTests
 {
     [Fact]
-    public void ExportViews_WritesSelectableSpecTable()
+    public void ExportPlan_WritesSelectableSpecTable()
     {
         var table = ElectricalSpecTableBuilder.Build(
             new[] { new ElectricalCircuitInput("A-1", 20000) },
             HeatingWireSpec.Case1, new PowerSupplySpec());
+        var view = new DxfView();
+        view.VisibleEdges.Add(new DxfPolyline
+        {
+            Points = new[] { new Vec2(0, 0), new Vec2(1000, 0), new Vec2(1000, 500), new Vec2(0, 500) }
+        });
 
         string path = Path.Combine(Path.GetTempPath(),
             "hm_spec_" + Guid.NewGuid().ToString("N") + ".dxf");
         try
         {
-            DxfExporter.ExportViews(path, Array.Empty<DxfView>(), specTable: table);
+            Assert.True(DxfExporter.ExportPlan(path, view, table));
 
             DxfDocument doc = DxfDocument.Load(path);
             var texts = doc.Entities.All.OfType<Text>().Select(t => t.Value).ToList();

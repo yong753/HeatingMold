@@ -31,12 +31,6 @@ public static class ErrorReporter
     /// </summary>
     public static event Action<string, ErrorLevel> Reported;
 
-    /// <summary>모달 오류 창이 현재 표시 중인지 여부.</summary>
-    public static bool IsShowing
-    {
-        get { lock (Gate) return _showing; }
-    }
-
     public static void ShowError(string context, string message)
         => Show(context, message, ErrorLevel.Error);
 

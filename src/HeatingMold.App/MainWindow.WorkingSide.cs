@@ -11,7 +11,6 @@ public partial class MainWindow
     private readonly WorkingSideSession _workingSide = new();
     private Func<long, long, bool> _prepareWorkingFront = Bridge.ReturnToWorkingFront;
     private Action _beforeWorkingSideCommit = () => { };
-    private Action _afterWorkingSideCommit = () => { };
 
     private void ResetWorkingSide()
     {
@@ -59,7 +58,6 @@ public partial class MainWindow
             committed = true;
             try
             {
-            _afterWorkingSideCommit();
             if (old != null) Bridge.ReleaseWorkingContext(old.Id.Value);
 
             // 작업 방향 컨텍스트가 바뀌면 모든 작업영역의 투영 프레임이 무효가 된다.

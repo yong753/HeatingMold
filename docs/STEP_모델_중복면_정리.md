@@ -1,8 +1,8 @@
 # Mold.stp 중복면 분석 및 정리
 
 > **현재 상태:** 원본 `resource/Mold.stp`는 저장소에서 제거되었다. 이 문서는 정리 작업의
-> 이력이며, 현재 앱과 시각 테스트는 `resource/Mold_Solids.stp`만 사용한다. 아래의 원본
-> 재현 명령은 당시 분석 기록으로만 남겨 둔다.
+> 이력이다. 현재 기본 예제는 `resource/Mold_Cover_Trim.step`이고, `resource/Mold_Solids.stp`는
+> 회귀 fixture로 남아 있다. 아래의 원본 재현 명령은 당시 분석 기록으로만 남겨 둔다.
 
 작성일: 2026-10-25
 대상: `resource/Mold.stp` → `resource/Mold_Solids.stp`

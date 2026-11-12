@@ -347,24 +347,6 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 현재 입력값과 선택된 검토 범위의 확정된 발열 경로로 전기 사양을 계산한다.
-    /// UI 표시와 DXF 출력이 같은 계산 경로를 사용하도록 캐시 없이 매번 계산한다.
-    /// </summary>
-    private bool TryBuildCurrentElectricalTable(out ElectricalSpecTable table, out string error)
-    {
-        ReviewSnapshot snapshot = BuildReviewSnapshot();
-        table = snapshot.Table;
-        error = snapshot.ElectricalError;
-        if (error != null) return false;
-        if (table == null)
-        {
-            error = snapshot.BlockReason ?? "전기 사양을 계산할 수 없습니다";
-            return false;
-        }
-        return true;
-    }
-
-    /// <summary>
     /// 확정된 발열 경로의 회로별 전체 길이로 전기 사양표를 다시 계산한다.
     /// 인출점 사이의 경로 전체를 한 번만 합산한다.
     /// </summary>

@@ -1,8 +1,9 @@
 # Phase 1 — Curved-surface route mapping
 
 > **Historical verification note:** the commands below reference the removed original
-> `resource/Mold.stp`. Current builds use `resource/Mold_Solids.stp`; the recorded
-> face IDs are not valid for the cleaned model.
+> `resource/Mold.stp`. The current example model is `resource/Mold_Cover_Trim.step`;
+> `resource/Mold_Solids.stp` remains as a regression fixture. The recorded face IDs are
+> not valid for either current model.
 
 Status: implemented on branch `feature/phase1-curved-surface-routing`, commit `f4a5444`.
 

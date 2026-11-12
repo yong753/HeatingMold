@@ -22,7 +22,6 @@ public static class DxfExporter
     public const string HiddenLayer = "HIDDEN_LINE";
     public const string ElectricalSpecLayer = "ELECTRICAL_SPEC";
     public const string HeatLengthLabelLayer = "HEAT_LENGTH_LABEL";
-    public const string HeatLengthLeaderLayer = "HEAT_LENGTH_LEADER";
 
     private const string ElectricalSpecTextStyle = "ELECTRICAL_SPEC_TEXT";
     private const string HeatLengthLabelTextStyle = "HEAT_LENGTH_LABEL_TEXT";
@@ -50,62 +49,6 @@ public static class DxfExporter
     private const double SpecTableMaxScale = 16.0;
 
     /// <summary>
-    /// Place multiple orthographic views into one DXF, laid out left-to-right with a gap.
-    /// When a spec table is supplied the document is written as R2010 so Korean text is stored as UTF-8.
-    /// </summary>
-    public static bool ExportViews(string path, IReadOnlyList<DxfView> views,
-        double gap = 60, double dimOffset = 20, ElectricalSpecTable? specTable = null)
-    {
-        var doc = CreateDocument(specTable, out Layer moldLayer, out Layer hiddenLayer,
-            out Layer heatLayer, out Layer heatAreaLayer, out Layer dimLayer, out Layer? specLayer,
-            out TextStyle? specStyle, out DimensionStyle dimStyle,
-            out Layer labelLayer, out TextStyle labelStyle);
-
-        double cursorX = 0;
-        double contentMaxY = 0;
-        foreach (DxfView view in views)
-        {
-            var all = view.AllPolylines().ToList();
-            if (all.Count == 0) continue;
-
-            double minX = all.SelectMany(p => p.Points).Min(v => v.X);
-            double minY = all.SelectMany(p => p.Points).Min(v => v.Y);
-            double maxX = all.SelectMany(p => p.Points).Max(v => v.X);
-            double maxY = all.SelectMany(p => p.Points).Max(v => v.Y);
-            var off = new Vec2(cursorX - minX, -minY);
-
-            AddPolylines(doc, view.HeatAreas, heatAreaLayer, off);
-            AddPolylines(doc, view.VisibleEdges, moldLayer, off);
-            AddPolylines(doc, view.HiddenEdges, hiddenLayer, off);
-            AddPolylines(doc, view.HeatBands, heatLayer, off);
-            AddPolylines(doc, view.HeatLines, heatLayer, off);
-            AddRouteLabels(doc, view, labelLayer, labelStyle, off);
-
-            double w = maxX - minX, h = maxY - minY;
-            var wDim = new LinearDimension(
-                new Vector2(minX + off.X, minY + off.Y),
-                new Vector2(maxX + off.X, minY + off.Y), -dimOffset, 0, dimStyle) { Layer = dimLayer };
-            // 회전 90°에서 기준선이 아래→위이므로 양수 offset이 금형 왼쪽을 가리킨다.
-            var hDim = new LinearDimension(
-                new Vector2(minX + off.X, minY + off.Y),
-                new Vector2(minX + off.X, maxY + off.Y), dimOffset, 90, dimStyle) { Layer = dimLayer };
-            doc.Entities.Add(wDim);
-            doc.Entities.Add(hDim);
-
-            contentMaxY = Math.Max(contentMaxY, maxY + off.Y);
-            cursorX += w + gap;
-        }
-
-        if (specTable != null)
-            AddElectricalSpecTable(doc, specLayer!, specStyle!,
-                new Vec2(0, -contentMaxY - 40), specTable);
-
-        // netDxf Save returns false on a failed write and may throw for I/O errors.
-        // Callers must not treat a temp file's existence alone as success.
-        return doc.Save(path);
-    }
-
-    /// <summary>
     /// Write exactly one plan view in its own coordinate system. Coordinates are not
     /// re-normalized: the confirmed working-plane origin and axes must survive into the
     /// DXF. The spec table is placed below both the drawing and its dimension lines.
@@ -131,7 +74,6 @@ public static class DxfExporter
         AddPolylines(doc, view.HeatAreas, heatAreaLayer, off);
         AddPolylines(doc, view.VisibleEdges, moldLayer, off);
         AddPolylines(doc, view.HiddenEdges, hiddenLayer, off);
-        AddPolylines(doc, view.HeatBands, heatLayer, off);
         AddPolylines(doc, view.HeatLines, heatLayer, off);
         AddRouteLabels(doc, view, labelLayer, labelStyle, off);
 
@@ -408,7 +350,6 @@ public sealed class DxfView
     public List<DxfPolyline> HiddenEdges { get; } = new();
     public List<DxfPolyline> HeatAreas { get; } = new();
     public List<DxfPolyline> HeatLines { get; } = new();
-    public List<DxfPolyline> HeatBands { get; } = new();
 
     /// <summary>경로 길이 라벨. AllPolylines에는 포함하지 않는다(도면 bounds 불변).</summary>
     public List<DxfRouteLabel> HeatLabels { get; } = new();
@@ -421,7 +362,6 @@ public sealed class DxfView
         foreach (var p in VisibleEdges) yield return p;
         foreach (var p in HiddenEdges) yield return p;
         foreach (var p in HeatAreas) yield return p;
-        foreach (var p in HeatBands) yield return p;
         foreach (var p in HeatLines) yield return p;
     }
 }

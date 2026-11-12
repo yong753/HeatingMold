@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    STEP 진단 도구 3종을 빌드한다 (faceinspect / dupcheck / cleanuptest).
+    STEP 진단 도구 4종을 빌드한다 (faceinspect / dupcheck / cleanuptest / thicken).
 
 .DESCRIPTION
     OCCT prebuilt(third_party\opencascade-7.9.3-vc14-64) + VS2022 x64 환경에서 컴파일한다.
@@ -37,7 +37,7 @@ $libs = @(
 
 $linkLibs = ($libs | ForEach-Object { $_ }) -join ' '
 
-foreach ($src in @('faceinspect.cpp', 'dupcheck.cpp', 'cleanuptest.cpp', 'thicken.cpp', 'meshprobe.cpp')) {
+foreach ($src in @('faceinspect.cpp', 'dupcheck.cpp', 'cleanuptest.cpp', 'thicken.cpp')) {
     $exe = [IO.Path]::GetFileNameWithoutExtension($src)
     $cmd = "call `"$vcvars`" >nul && cl /nologo /EHsc /O2 /MD /std:c++17 /utf-8 /Fe:$exe.exe $src /I `"$inc`" /link /SUBSYSTEM:CONSOLE /LIBPATH:`"$lib`" $linkLibs"
     Write-Host ">>> $src"

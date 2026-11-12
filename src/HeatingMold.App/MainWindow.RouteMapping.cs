@@ -12,7 +12,7 @@ public partial class MainWindow
     /// 해당 endpoint occurrence의 원본 edge/parameter override로만 적용한다.
     /// </summary>
     private Func<Vec2, SurfaceMappedSample?> BuildSurfaceMapDelegate(
-        WorkingArea area, WorkingSideDefinition side, Vec2? movedAnchorDatum = null,
+        WorkingArea area, WorkingSideDefinition side,
         CommittedRouteContext context = null)
     {
         context ??= CommittedRouteContext.Capture(area);
@@ -33,17 +33,6 @@ public partial class MainWindow
                     new Vec3(global.Point[0], global.Point[1], global.Point[2]), global.FaceId);
             return null;
         };
-    }
-
-    /// <summary>
-    /// 저장한 원본 parameter를 직접 평가한다. 재검색/스냅/보간은 하지 않는다.
-    /// </summary>
-    private SurfaceMappedSample? MapExitDatum(
-        WorkingSideDefinition side, CommittedRouteContext context, CircuitExitPoint exit)
-    {
-        ExitBoundaryPoint? point = exit == null ? null : ToBoundary(exit);
-        return TryEvaluateExitSample(side, context, point, point?.Point,
-            out SurfaceMappedSample sample, out _) ? sample : null;
     }
 
     /// <summary>인출점 이동 확정/미리보기에서 해당 꼭지점만 대체할 표본을 만든다.</summary>
