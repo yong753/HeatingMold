@@ -206,6 +206,14 @@
 - Failure before the native candidate commit preserves the current document. A failure after that commit cannot restore the previous native model; the load reports the failure and clears the incomplete restored document explicitly.
 - Do not persist native pointers, temporary stage IDs, AIS/presentation objects, caches, hover/preview state, or runtime-only FACE/Edge IDs as durable identity.
 
+## 프로젝트 로드 후 작업 정면 뷰 정렬 (사용자 확정 2026-11-12)
+
+- **사용자 요구:** 프로젝트를 열면 저장된 작업면을 화면 정면으로 자동 정렬한다. 모델 열기(`LoadFile` → `ApplyWorkingSide`)가 이미 하는 동작과 같다.
+- 구현: `MainWindow.LoadProject`가 복원된 작업 컨텍스트를 `RestoreConfirmed`로 확정한 직후 `_prepareWorkingFront(context.Id, context.Revision)`(= `Bridge.ReturnToWorkingFront`)를 한 번 호출한다. 이 호출은 직교 투영 설정 + `SetProj`/`SetUp`(작업 법선/프레임 Y) + `FitAll`이며 표시 전용이다.
+- 뷰 정렬 실패는 기하/경로 복원을 되돌리지 않는다. 예외나 `false` 반환은 완료 상태 문구에 `· 경고: 작업 정면 뷰를 정렬하지 못했습니다`로만 덧붙인다.
+- 검증 2026-11-12: App Release/x64 빌드 0 errors(기존 CS8632 경고 7건). `tests\WorkingSide.Regression` 전 그룹 통과 — project load 20건(신규 `project load aligns the view to the restored working front`: 뷰 준비 호출이 복원된 컨텍스트 ID/리비전으로 정확히 1회 실행됨), project load exclusion 31건, working-side 181건, 나머지 그룹 동일.
+- 미검증: 실행 중 앱에서 실제 프로젝트 열기 시 화면이 작업 정면으로 보이는지. 카메라 상태를 읽는 네이티브 API가 없어 자동 확인은 뷰 준비 호출 여부까지만 검증한다.
+
 ## Topology identity (implemented for load)
 
 - Saved FACE/Edge runtime IDs are not durable. Projects store per-Face and per-Edge topology signatures and remap them to fresh runtime IDs after reimport; raw IDs are diagnostic provenance only.
@@ -255,7 +263,7 @@
 - Run native/App tests with the OCCT `win64\vc14\bin` and bundled third-party DLL directories on `PATH`. `tests\WorkingSide.Regression\Run.ps1` sets this up and builds into isolated output, avoiding locks from a running app.
 - The OCCT 7.9.3 `win64\vc14\bin` folder must also contain `freetype.dll`, `FreeImage.dll`, `openvr_api.dll`, `avcodec-57.dll`, `avformat-57.dll`, `swscale-4.dll`, `avutil-55.dll` and `vcruntime140_1.dll`. `TKService.dll` imports the seven media DLLs, so without them `TKService`, `TKV3d`, `TKOpenGL`, `TKDESTEP` and then `OccBridge.dll` fail to load with `0x8007007E`; the app then dies at startup with a `XamlParseException` whose inner error is `FileNotFoundException: Could not load file or assembly '<run folder>\OccBridge.dll'` even though that file exists (verified 2026-11-11). This is a missing-runtime-file failure, not a managed/native build mismatch — check the full dependency set before suspecting the DLL version. `third_party/` is git-ignored (no history to restore from); flattened copies of the eight files exist in `tests\HeatingMold.App.Tests\bin\x64\Release\net8.0-windows\` and `tests\WorkingSide.Regression\bin\Release\net8.0-windows\`.
 - The WorkingSide regression harness invokes private UI methods by name with fixed parameter counts. Keep existing parameterless entry points when adding overloads that share precomputed state.
-- `tests\WorkingSide.Regression\WorkingSide.Regression.csproj` references `../../x64/WorkingSideBuild/OccBridge.dll`. After a native change, rebuild the solution with `/p:OutDir=x64\WorkingSideBuild\` or copy the new `x64\Release\OccBridge.dll` there; running only `dotnet run` loads the previous DLL and fails the related checks (verified 2026-11-12).
+- `tests\WorkingSide.Regression\WorkingSide.Regression.csproj` references `../../x64/WorkingSideBuild/OccBridge.dll`. After a native change, rebuild the solution with `/p:OutDir=x64\WorkingSideBuild\` or copy the new `x64\Release\OccBridge.dll` there; running only `dotnet run` loads the previous DLL and fails the related checks (verified 2026-11-12). A newer file timestamp is not proof that the fix is present: on 2026-11-12 the WorkingSideBuild copy was newer yet lacked the UTF-8 path fix, and the harness aborted with `0xE0434352` at the Korean-path STEP export check; copying `x64\Release\OccBridge.dll` fixed it.
 - `Run.ps1` sets `$ErrorActionPreference='Stop'`, so a failure-path check that intentionally writes an `[Error] ...` line to stderr can abort the script at its `dotnet run` line even though the check passed. Run the harness through cmd with merged output instead: `cmd /c "chcp 65001>nul & dotnet run --project ... > log 2>&1"` (verified 2026-11-12).
 - Hand-built regression routes must map their 2D endpoints to 3D through `Bridge.MapWorkingPointOntoFaces`; working-frame coordinates are not world model coordinates, and staging raw frame u/v as world points fails.
 

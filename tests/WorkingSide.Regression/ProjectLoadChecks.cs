@@ -143,7 +143,26 @@ static class ProjectLoadChecks
             SetField(window, "_savedProjectFingerprint", ProjectJsonStore.ComputeFingerprint(document));
             SetField(window, "_modelContentHash", document.Source.Sha256);
 
-            bool loaded = (bool)Invoke(window, "LoadProject", projectPath);
+            // 프로젝트를 열면 저장된 작업면을 화면 정면으로 맞춘다. 카메라 상태는 native에서
+            // 직접 읽을 수 없으므로, 복원된 컨텍스트 ID/리비전으로 뷰 준비 호출이 정확히
+            // 한 번 실행되는지를 확인한다.
+            var prepareFront = (Func<long, long, bool>)Field(window, "_prepareWorkingFront");
+            int frontCalls = 0;
+            long frontId = 0, frontRevision = 0;
+            SetField(window, "_prepareWorkingFront",
+                new Func<long, long, bool>((id, revision) =>
+                {
+                    ++frontCalls; frontId = id; frontRevision = revision; return true;
+                }));
+            bool loaded;
+            try
+            {
+                loaded = (bool)Invoke(window, "LoadProject", projectPath);
+            }
+            finally
+            {
+                SetField(window, "_prepareWorkingFront", prepareFront);
+            }
             Check(loaded, "project load reports success");
 
             var restoredAreas = (IList)Field(window, "_areas");
@@ -168,6 +187,8 @@ static class ProjectLoadChecks
             object revisionValue = confirmed.GetType().GetProperty("Revision")!.GetValue(confirmed)!;
             long restoredContextId = (long)idValue.GetType().GetProperty("Value")!.GetValue(idValue)!;
             long restoredRevision = (long)revisionValue.GetType().GetProperty("Value")!.GetValue(revisionValue)!;
+            Check(frontCalls == 1 && frontId == restoredContextId && frontRevision == restoredRevision,
+                "project load aligns the view to the restored working front");
             CommittedRouteChain[] chains = Bridge.GetCommittedRouteChainsDetailed(
                 restoredContextId, restoredRevision, restoredIds);
             Check(chains != null && chains.Length == 1 && chains[0].Points != null &&

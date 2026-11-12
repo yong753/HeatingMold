@@ -141,6 +141,19 @@ public partial class MainWindow
                     new WorkingSideId(context.Id),
                     new ModelRevision(context.Revision),
                     workingFrame));
+                // 프로젝트를 열면 저장된 작업면을 화면 정면으로 맞춘다(모델 열기의
+                // ApplyWorkingSide 와 같은 동작). 뷰 정렬은 표시 전용이므로 실패해도
+                // 기하/경로 복원을 되돌리지 않고 완료 상태에 경고로만 남긴다.
+                string viewWarning = null;
+                try
+                {
+                    if (!_prepareWorkingFront(context.Id, context.Revision))
+                        viewWarning = "작업 정면 뷰를 정렬하지 못했습니다";
+                }
+                catch (Exception viewException)
+                {
+                    viewWarning = viewException.Message;
+                }
                 Bridge.ShowWorkingBoundary(null);
                 WorkingSideText.Text = string.Format(
                     "작업 방향 N={0} · 모델 r{1} · 저장 프레임 복원", workingFrame.Normal, context.Revision);
@@ -192,6 +205,8 @@ public partial class MainWindow
                     Path.GetFileName(projectPath), _areas.Count, context.Revision);
                 if (_routePresentationWarning != null)
                     StatusText.Text += " · 경고: 경로 길이 라벨을 표시하지 못했습니다";
+                if (viewWarning != null)
+                    StatusText.Text += " · 경고: " + viewWarning;
                 UpdateActionStates();
                 ReturnToAreaTab();
                 return true;
