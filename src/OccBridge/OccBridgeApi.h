@@ -364,6 +364,10 @@ public:
     /// <summary>Exact projected-curve intersections strictly forward of the ray origin. Direction need not be unit.</summary>
     static ExitEdgeRayResult^ IntersectExitEdgeRay(long long id, long long revision,
         ExitEdgeReference^ reference, double u, double v, double du, double dv, double tolerance);
+    /// <summary>Exact projected-curve intersections with the full line through (ax,ay)-(bx,by), both directions.
+    /// No cursor tolerance: interval construction needs the end points themselves.</summary>
+    static ExitEdgeRayResult^ IntersectExitEdgeLine(long long id, long long revision,
+        ExitEdgeReference^ reference, double ax, double ay, double bx, double by);
     /// <summary>인출 측면 후보를 임시 강조 표시한다 (이전 강조는 지운다).</summary>
     static void ShowExitCandidates(array<array<double>^>^ polylines);
     static void ClearExitCandidates();

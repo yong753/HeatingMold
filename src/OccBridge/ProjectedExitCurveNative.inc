@@ -190,7 +190,8 @@ namespace HeatingMoldExitNative
                 if (!found || t < parameter) parameter = t;
                 found = true;
             }
-            return found ? Status::Hit : Status::GeometryFailure;
+            if (!found) return Status::GeometryFailure;
+            return Status::Hit;
         } catch (const Standard_Failure&) { return Status::GeometryFailure; }
     }
 
@@ -255,6 +256,62 @@ namespace HeatingMoldExitNative
                 return gp_Vec2d(origin, curve.datum->Value(a)).Dot(direction) <
                     gp_Vec2d(origin, curve.datum->Value(b)).Dot(direction);
             });
+            return parameters.empty() ? Status::Miss : Status::Hit;
+        } catch (const Standard_Failure&) { parameters.clear(); return Status::GeometryFailure; }
+    }
+
+    // Full-line intersection: the unbounded line through a and b in both directions.
+    // Split-interval construction needs the intersection exactly at a supplied end
+    // point, which the ray query intentionally drops. There is no caller tolerance
+    // here: only GeometryEpsilon decides two coincident solutions.
+    inline Status IntersectLine(const ProjectedCurve& curve, double first, double last,
+        const gp_Pnt2d& a, const gp_Pnt2d& b, std::vector<double>& parameters)
+    {
+        parameters.clear();
+        if (!ValidTrim(curve, first, last) || !std::isfinite(a.X()) || !std::isfinite(a.Y()) ||
+            !std::isfinite(b.X()) || !std::isfinite(b.Y())) return Status::InvalidInput;
+        const gp_Vec2d direction(a, b);
+        if (!std::isfinite(direction.Magnitude()) || direction.Magnitude() <= GeometryEpsilon)
+            return Status::InvalidInput;
+        const gp_Dir2d unit(direction);
+        try {
+            const Handle(Geom2d_Curve) trim = new Geom2d_TrimmedCurve(curve.datum, first, last, Standard_True, Standard_False);
+            const Handle(Geom2d_Curve) line = new Geom2d_Line(a, unit);
+            Geom2dAPI_InterCurveCurve query(trim, line, GeometryEpsilon);
+            const Geom2dInt_GInter& intersections = query.Intersector();
+            if (!intersections.IsDone()) return Status::GeometryFailure;
+            // A collinear overlap means this curve runs along the line, so no isolated
+            // interval boundary exists. Report it instead of sampling it into hits.
+            if (intersections.NbSegments() > 0) return Status::TangentOrOverlap;
+            std::vector<double> found;
+            auto append = [&](double t) -> Status {
+                if (t < first || t > last) return Status::Hit;
+                gp_Pnt2d point; gp_Vec2d tangent;
+                curve.datum->D1(t, point, tangent);
+                if (std::fabs(gp_Vec2d(a, point).Crossed(unit)) > GeometryEpsilon) return Status::GeometryFailure;
+                if (!std::isfinite(tangent.SquareMagnitude()) || tangent.Magnitude() <= AngularEpsilon)
+                    return Status::DegenerateProjection;
+                if (std::fabs(tangent.Crossed(gp_Vec2d(unit))) <= AngularEpsilon * tangent.Magnitude())
+                    return Status::TangentOrOverlap;
+                for (double previous : found) {
+                    if (SameSolution(curve, previous, t)) return Status::Hit;
+                    if (curve.datum->Value(previous).Distance(point) <= GeometryEpsilon) return Status::Ambiguous;
+                }
+                found.push_back(t);
+                return Status::Hit;
+            };
+            for (int i = 1; i <= intersections.NbPoints(); ++i) {
+                const Status status = append(intersections.Point(i).ParamOnFirst());
+                if (status != Status::Hit) { parameters.clear(); return status; }
+            }
+            // OCCT may classify a trim endpoint as outside an intersection domain.
+            for (double t : {first, last}) {
+                if (std::fabs(gp_Vec2d(a, curve.datum->Value(t)).Crossed(unit)) > GeometryEpsilon) continue;
+                const Status status = append(t);
+                if (status != Status::Hit) { parameters.clear(); return status; }
+            }
+            std::sort(found.begin(), found.end());
+            parameters = found;
             return parameters.empty() ? Status::Miss : Status::Hit;
         } catch (const Standard_Failure&) { parameters.clear(); return Status::GeometryFailure; }
     }

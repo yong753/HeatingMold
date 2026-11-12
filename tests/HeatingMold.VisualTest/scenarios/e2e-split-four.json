@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 2,
+  "name": "e2e: Case2 세로 4분할 (자동분할 최대 개수)",
+  "model": {
+    "path": "resource/Mold_Cover_Trim.step",
+    "sha256": "8CB03405817606D1917FEF55B46A60011FFB5E93075EECDEF5A8651D4359FCED",
+    "faceCount": 80,
+    "solidCount": 0
+  },
+  "areas": [
+    { "alias": "A", "faceIds": [44, 56, 69], "marginMm": 5, "spacingMm": 15, "direction": 1 },
+    { "alias": "B", "faceIds": [16, 24, 26], "marginMm": 5, "spacingMm": 20, "direction": 2 }
+  ],
+  "steps": [
+    { "id": "p1", "name": "A 선택", "action": "selectFaces", "faces": [44, 56, 69] },
+    { "id": "p2", "name": "A 확정", "action": "confirmArea", "area": "A" },
+    { "id": "p3", "name": "A 입력", "action": "setAreaInputs", "area": "A", "marginMm": 5, "spacingMm": 15, "direction": 1 },
+    { "id": "p4", "name": "A 시작", "action": "pickExitPoint", "area": "A",
+      "exitPoint": { "role": "start", "uv": [295.91262149879026, 133.36749353890832], "toleranceMm": 0.5 } },
+    { "id": "p5", "name": "A 종료", "action": "pickExitPoint", "area": "A",
+      "exitPoint": { "role": "end", "uv": [295.9106395319768, -291.6634555349192], "toleranceMm": 0.5 } },
+    { "id": "p6", "name": "A 생성", "action": "generate", "area": "A" },
+
+    { "id": "p7", "name": "B 선택", "action": "selectFaces", "faces": [16, 24, 26] },
+    { "id": "p8", "name": "B 확정", "action": "confirmArea", "area": "B" },
+    { "id": "p9", "name": "B 입력", "action": "setAreaInputs", "area": "B", "marginMm": 5, "spacingMm": 20, "direction": 2 },
+    { "id": "p10", "name": "B 시작", "action": "pickExitPoint", "area": "B",
+      "exitPoint": { "role": "start", "uv": [310, -172.51], "toleranceMm": 1.5 } },
+    { "id": "p11", "name": "B 종료", "action": "pickExitPoint", "area": "B",
+      "exitPoint": { "role": "end", "uv": [620, -182.03], "toleranceMm": 1.5 } },
+    { "id": "p12", "name": "B 생성", "action": "generate", "area": "B" },
+
+    { "id": "p13", "name": "Case2 80V", "action": "setElectrical",
+      "electrical": { "presetIndex": 1, "voltageV": 80, "allowedCurrentA": 16, "allowedPowerKw": 3.5, "reviewScope": 0 } },
+    { "id": "p14", "name": "B 4분할", "action": "splitArea", "area": "B", "confirm": "yes", "confirmAction": "영역 분할",
+      "partCount": 4, "childAliases": ["B-1", "B-2", "B-3", "B-4"] },
+    { "id": "p15", "name": "B-1", "action": "checkArea", "area": "B-1" },
+    { "id": "p16", "name": "B-2", "action": "checkArea", "area": "B-2" },
+    { "id": "p17", "name": "B-3", "action": "checkArea", "area": "B-3" },
+    { "id": "p18", "name": "B-4", "action": "checkArea", "area": "B-4" }
+  ]
+}

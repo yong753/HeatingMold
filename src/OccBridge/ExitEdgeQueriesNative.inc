@@ -126,6 +126,30 @@ ExitEdgeStatusNative IntersectExitEdgeRayNative(long long id, long long revision
     } catch (...) { hits.clear(); return ExitEdgeStatusNative::GeometryFailure; }
 }
 
+ExitEdgeStatusNative IntersectExitEdgeLineNative(long long id, long long revision, const NativeExitEdgeRef& reference,
+    double ax, double ay, double bx, double by, std::vector<ExitEdgeHitNative>& hits)
+{
+    hits.clear();
+    if (!std::isfinite(ax) || !std::isfinite(ay) || !std::isfinite(bx) || !std::isfinite(by))
+        return ExitEdgeStatusNative::InvalidInput;
+    try {
+        HeatingMoldExitNative::ProjectedCurve* curve; const StoredExitEdge* stored; int support;
+        auto status = ResolveExitReference(id, revision, reference, curve, stored, support);
+        if (status != ExitEdgeStatusNative::Hit) return status;
+        std::vector<double> parameters;
+        status = HeatingMoldExitNative::IntersectLine(*curve, reference.firstParameter, reference.lastParameter,
+            gp_Pnt2d(ax, ay), gp_Pnt2d(bx, by), parameters);
+        if (status != ExitEdgeStatusNative::Hit) return status;
+        for (double parameter : parameters) {
+            ExitEdgeHitNative hit;
+            status = FillExitHit(*curve, *stored, reference, support, parameter, hit);
+            if (status != ExitEdgeStatusNative::Hit) { hits.clear(); return status; }
+            hits.push_back(hit);
+        }
+        return ExitEdgeStatusNative::Hit;
+    } catch (...) { hits.clear(); return ExitEdgeStatusNative::GeometryFailure; }
+}
+
 ExitEdgeHitNative EvaluateExitEdgeLegacyNative(long long id, long long revision, long long edgeRevision,
     long long edgeKey, double u, double v, double tolerance)
 {

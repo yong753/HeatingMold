@@ -4117,6 +4117,24 @@ ExitEdgeRayResult^ Bridge::IntersectExitEdgeRay(long long id, long long revision
     } catch (...) { result->Status = ExitEdgeQueryStatus::GeometryFailure; return result; }
 }
 
+ExitEdgeRayResult^ Bridge::IntersectExitEdgeLine(long long id, long long revision, ExitEdgeReference^ reference,
+    double ax, double ay, double bx, double by)
+{
+    auto result = gcnew ExitEdgeRayResult();
+    result->Hits = gcnew array<ExitEdgeHit^>(0);
+    if (reference == nullptr) { result->Status = ExitEdgeQueryStatus::MissingReference; return result; }
+    try {
+        std::vector<ExitEdgeHitNative> hits;
+        result->Status = static_cast<ExitEdgeQueryStatus>(IntersectExitEdgeLineNative(id, revision, CopyExitReference(reference),
+            ax, ay, bx, by, hits));
+        if (result->Status != ExitEdgeQueryStatus::Hit) return result;
+        result->Hits = gcnew array<ExitEdgeHit^>(static_cast<int>(hits.size()));
+        for (int i = 0; i < result->Hits->Length; ++i)
+            result->Hits[i] = ManagedExitHit(id, revision, reference->EdgeKey, hits[i]);
+        return result;
+    } catch (...) { result->Status = ExitEdgeQueryStatus::GeometryFailure; return result; }
+}
+
 void Bridge::ShowExitCandidates(array<array<double>^>^ polylines)
 {
     std::vector<std::vector<double>> native;

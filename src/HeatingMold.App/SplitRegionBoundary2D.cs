@@ -28,19 +28,24 @@ internal sealed class SplitRegionBoundary2D :
     private readonly EffectiveRegionBoundary2D _inner;
     private readonly IReadOnlyList<Vec2> _ring;
     private readonly IReadOnlyList<SplitSegment> _segments;
+    private readonly SplitBoundarySnapshot _snapshot;
 
     private SplitRegionBoundary2D(EffectiveRegionBoundary2D inner, IReadOnlyList<Vec2> ring,
-        IReadOnlyList<SplitSegment> segments)
+        IReadOnlyList<SplitSegment> segments, SplitBoundarySnapshot snapshot)
     {
         _inner = inner;
         _ring = ring;
         _segments = segments;
+        _snapshot = snapshot;
     }
 
     internal readonly record struct SplitSegment(SplitLineBinding Binding, Vec2 A, Vec2 B);
 
     internal CadExitBoundary2D CadBoundary => _inner.CadBoundary;
     internal IReadOnlyList<Vec2> Ring => _ring;
+
+    /// <summary>이 영역의 정확 경계(원본 CAD 구간 + 유지 반평면 + 제외영역).</summary>
+    internal SplitBoundarySnapshot Snapshot => _snapshot;
 
     /// <summary>이 영역 외곽에 실제로 남은 절단선 구간.</summary>
     internal IReadOnlyList<SplitSegment> Segments => _segments;
@@ -168,8 +173,9 @@ internal sealed class SplitRegionBoundary2D :
             return false;
 
         IReadOnlyList<Vec2> ring = inner.Outline;
+        IReadOnlyList<(Vec2 A, Vec2 B)> lines = cutLines ?? Array.Empty<(Vec2, Vec2)>();
         var segments = new List<SplitSegment>();
-        foreach ((Vec2 a, Vec2 b) in cutLines ?? Array.Empty<(Vec2, Vec2)>())
+        foreach ((Vec2 a, Vec2 b) in lines)
         {
             foreach ((double first, double last) in ClipToRing(a, b, ring))
             {
@@ -179,7 +185,14 @@ internal sealed class SplitRegionBoundary2D :
             }
         }
 
-        boundary = new SplitRegionBoundary2D(inner, ring, segments);
+        // 자식 소속은 근사 외곽 폴리곤까지의 거리가 아니라 원본 CAD 구간과 유지 반평면으로
+        // 판정한다. 폴리곤은 유지측 판정과 절단선 표시 구간에만 쓴다.
+        if (!SplitBoundarySnapshot.TryBuild(cad, ring,
+                exclusions ?? Array.Empty<(double MinX, double MinY, double MaxX, double MaxY)>(),
+                lines, out SplitBoundarySnapshot snapshot, out failure))
+            return false;
+
+        boundary = new SplitRegionBoundary2D(inner, ring, segments, snapshot);
         failure = string.Empty;
         return true;
     }
@@ -189,28 +202,23 @@ internal sealed class SplitRegionBoundary2D :
         if (!IsFinite(point) || !double.IsFinite(tolerance) || tolerance <= 0)
             return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.InvalidInput);
 
-        ExitBoundaryResolution inner = _inner.Project(point, tolerance);
-        ExitBoundaryPoint? innerPoint = null;
-        if (inner.Succeeded && IsOnRing(inner.Point!.Value.Point)) innerPoint = inner.Point;
+        var candidates = new List<ExitBoundaryPoint>(8);
+        ExitBoundaryFailureReason cadFailure = _snapshot.ProjectCad(point, tolerance, candidates);
+        if (candidates.Count == 0 && cadFailure != ExitBoundaryFailureReason.NoIntersection)
+            return ExitBoundaryResolution.Fail(cadFailure);
+
+        AddArtificialCandidates(point, tolerance, candidates);
 
         bool hasSplit = TryNearestSplit(point, tolerance, out ExitBoundaryPoint split, out bool ambiguous);
         if (ambiguous) return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.MultipleIntersections);
-        if (!inner.Succeeded && inner.Failure != ExitBoundaryFailureReason.NoIntersection && !hasSplit)
-            return inner;
-        if (innerPoint.HasValue && hasSplit)
-        {
-            double innerDistance = innerPoint.Value.Point.DistanceTo(point);
-            double splitDistance = split.Point.DistanceTo(point);
-            if (innerPoint.Value.Point.DistanceTo(split.Point) > PointEpsilon
-                && Math.Abs(innerDistance - splitDistance) <= ExitBoundaryConstraint.Tolerance)
-                return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.MultipleIntersections);
-            return splitDistance < innerDistance
-                ? ExitBoundaryResolution.Ok(split)
-                : ExitBoundaryResolution.Ok(innerPoint.Value);
-        }
-        if (innerPoint.HasValue) return ExitBoundaryResolution.Ok(innerPoint.Value);
-        if (hasSplit) return ExitBoundaryResolution.Ok(split);
-        return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.NoIntersection);
+        if (hasSplit) AddCandidate(candidates, split);
+
+        if (candidates.Count == 0)
+            return ExitBoundaryResolution.Fail(
+                _snapshot.HasCadIntervals || _inner.Segments.Count > 0 || _segments.Count > 0
+                    ? ExitBoundaryFailureReason.NoIntersection
+                    : ExitBoundaryFailureReason.MissingReference);
+        return SelectNearest(point, candidates);
     }
 
     public ExitBoundaryResolution ResolveOutward(Vec2 endpoint, Vec2 next, double tolerance)
@@ -221,41 +229,37 @@ internal sealed class SplitRegionBoundary2D :
         if (!double.IsFinite(direction.Length) || direction.Length <= tolerance)
             return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.DegenerateSegment);
 
-        ExitBoundaryResolution inner = _inner.ResolveOutward(endpoint, next, tolerance);
-        ExitBoundaryPoint? innerPoint = null;
-        if (inner.Succeeded && IsOnRing(inner.Point!.Value.Point)) innerPoint = inner.Point;
+        var hits = new List<ExitBoundaryPoint>(8);
+        ExitBoundaryFailureReason cadFailure = _snapshot.AddRayHits(endpoint, direction, tolerance, hits);
+        if (hits.Count == 0 && cadFailure != ExitBoundaryFailureReason.NoIntersection)
+            return ExitBoundaryResolution.Fail(cadFailure);
 
-        var hits = new List<ExitBoundaryPoint>();
+        bool tangent = AddArtificialRayHits(endpoint, direction, tolerance, hits);
         foreach (SplitSegment segment in _segments)
         {
-            if (!TryRaySegment(endpoint, direction, segment, tolerance, out Vec2 hit, out bool tangent))
+            if (!TryRaySegment(endpoint, direction, segment, tolerance, out Vec2 hit, out bool segmentTangent))
             {
-                if (tangent) return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.TangentOrOverlap);
+                if (segmentTangent) tangent = true;
                 continue;
             }
-            if (hits.All(p => p.Point.DistanceTo(hit) > tolerance))
-                hits.Add(MakeSplitPoint(segment, hit));
+            AddCandidate(hits, MakeSplitPoint(segment, hit));
         }
+
         if (hits.Count > 1)
             return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.MultipleIntersections);
-        if (!inner.Succeeded && inner.Failure != ExitBoundaryFailureReason.NoIntersection && hits.Count == 0)
-            return inner;
-
-        if (innerPoint.HasValue)
-        {
-            if (hits.Count == 1 && innerPoint.Value.Point.DistanceTo(hits[0].Point) > PointEpsilon)
-                return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.MultipleIntersections);
-            return ExitBoundaryResolution.Ok(innerPoint.Value);
-        }
         if (hits.Count == 1) return ExitBoundaryResolution.Ok(hits[0]);
-        return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.NoIntersection);
+        if (tangent) return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.TangentOrOverlap);
+        return ExitBoundaryResolution.Fail(
+            _snapshot.HasCadIntervals || _inner.Segments.Count > 0 || _segments.Count > 0
+                ? ExitBoundaryFailureReason.NoIntersection
+                : ExitBoundaryFailureReason.MissingReference);
     }
 
     public ExitBoundaryResolution ProjectBound(ExitEdgeBinding binding, Vec2 point, double tolerance)
     {
         ExitBoundaryResolution result = _inner.ProjectBound(binding, point, tolerance);
         if (!result.Succeeded) return result;
-        return IsOnRing(result.Point!.Value.Point)
+        return _snapshot.IsInside(result.Point!.Value.Point)
             ? result
             : ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.MissingReference);
     }
@@ -264,7 +268,7 @@ internal sealed class SplitRegionBoundary2D :
     {
         ExitBoundaryResolution result = _inner.Evaluate(binding);
         if (!result.Succeeded) return result;
-        return IsOnRing(result.Point!.Value.Point)
+        return _snapshot.IsInside(result.Point!.Value.Point)
             ? result
             : ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.MissingReference);
     }
@@ -420,6 +424,71 @@ internal sealed class SplitRegionBoundary2D :
         {
             SplitBinding = segment.Binding with { Parameter = parameter },
         };
+    }
+
+    private void AddArtificialCandidates(Vec2 point, double tolerance, List<ExitBoundaryPoint> candidates)
+    {
+        foreach (EffectiveRegionBoundary2D.ArtificialSegment segment in _inner.Segments)
+        {
+            ExitBoundaryResolution projected = _inner.ProjectArtificial(segment.Binding, point, tolerance);
+            if (projected.Succeeded) AddCandidate(candidates, projected.Point!.Value);
+        }
+    }
+
+    private bool AddArtificialRayHits(Vec2 origin, Vec2 direction, double tolerance,
+        List<ExitBoundaryPoint> hits)
+    {
+        bool tangent = false;
+        double directionLength = direction.Length;
+        foreach (EffectiveRegionBoundary2D.ArtificialSegment segment in _inner.Segments)
+        {
+            Vec2 edge = segment.B - segment.A;
+            double edgeLength = edge.Length;
+            if (!(edgeLength > PointEpsilon)) continue;
+            double cross = Cross(direction, edge);
+            if (Math.Abs(cross) <= ExitBoundaryConstraint.Tolerance * directionLength * edgeLength)
+            {
+                if (Math.Abs(Cross(segment.A - origin, direction)) <= tolerance * directionLength)
+                    tangent = true;
+                continue;
+            }
+            double along = Cross(segment.A - origin, edge) / cross;
+            if (along < -tolerance) continue;
+            double t = Cross(segment.A - origin, direction) / cross;
+            if (t < -ParameterEpsilon || t > 1 + ParameterEpsilon) continue;
+            double parameter = Math.Clamp(t, 0.0, 1.0);
+            ExitBoundaryResolution evaluated = _inner.EvaluateArtificial(
+                segment.Binding with { Parameter = parameter });
+            if (evaluated.Succeeded) AddCandidate(hits, evaluated.Point!.Value);
+        }
+        return tangent;
+    }
+
+    private static void AddCandidate(List<ExitBoundaryPoint> candidates, ExitBoundaryPoint candidate)
+    {
+        if (candidates.Any(existing => existing.Point.DistanceTo(candidate.Point) <= PointEpsilon)) return;
+        candidates.Add(candidate);
+    }
+
+    private static ExitBoundaryResolution SelectNearest(Vec2 point, List<ExitBoundaryPoint> candidates)
+    {
+        ExitBoundaryPoint best = candidates[0];
+        double bestDistance = best.Point.DistanceTo(point);
+        for (int i = 1; i < candidates.Count; i++)
+        {
+            ExitBoundaryPoint candidate = candidates[i];
+            double distance = candidate.Point.DistanceTo(point);
+            if (distance < bestDistance - ExitBoundaryConstraint.Tolerance)
+            {
+                best = candidate;
+                bestDistance = distance;
+                continue;
+            }
+            if (Math.Abs(distance - bestDistance) <= ExitBoundaryConstraint.Tolerance &&
+                candidate.Point.DistanceTo(best.Point) > PointEpsilon)
+                return ExitBoundaryResolution.Fail(ExitBoundaryFailureReason.MultipleIntersections);
+        }
+        return ExitBoundaryResolution.Ok(best);
     }
 
     private bool IsOnRing(Vec2 point) => DistanceToRing(point) <= OnRingTolerance;

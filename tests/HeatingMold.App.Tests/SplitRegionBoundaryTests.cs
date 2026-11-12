@@ -277,9 +277,10 @@ public class SplitRegionBoundaryTests
         Assert.False(upperPlane.KeepLess);
     }
 
-    // 실제로 외곽을 가로지르는 링은 절단선 구간이 외곽에 남지 않으므로 조용히 통과시키지 않는다.
+    // 실제로 외곽을 가로지르는 링은 절단선이 자식 외곽에 남지 않으므로, 경계 객체를
+    // 만들 때부터 명시적으로 거부한다(조용히 통과시키지 않는다).
     [Fact]
-    public void RetainedHalfPlanes_RejectsRingWithoutCutSegment()
+    public void TryCreate_RejectsRingCrossedByCutLine()
     {
         var cuts = new (Vec2, Vec2)[] { (new Vec2(-10, 50), new Vec2(210, 50)) };
         var crossing = new Vec2[]
@@ -287,8 +288,9 @@ public class SplitRegionBoundaryTests
             new(0, 40), new(200, 40), new(200, 60), new(0, 60)
         };
 
-        SplitRegionBoundary2D boundary = CreateBoundary(crossing, cuts);
-        Assert.False(boundary.TryGetRetainedHalfPlanes(out _, out string failure));
+        var cad = new CadExitBoundary2D(1, 1, Array.Empty<ExitEdgeReference>());
+        Assert.False(SplitRegionBoundary2D.TryCreate(cad, Parent, crossing, NoExclusions, cuts,
+            out _, out string failure));
         Assert.Contains("절단선", failure);
     }
 }

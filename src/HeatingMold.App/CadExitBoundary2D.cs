@@ -23,6 +23,8 @@ internal sealed class CadExitBoundary2D : IExitBoundary2D
 
     internal long ContextId => _contextId;
     internal long Revision => _revision;
+    /// <summary>Original per-edge trims that define this boundary, in their authoritative parameter ranges.</summary>
+    internal IReadOnlyList<ExitEdgeReference> Edges => _edges;
 
     internal static ExitEdgeReference CopyReference(ExitEdgeReference edge) => new()
     {
@@ -149,7 +151,7 @@ internal sealed class CadExitBoundary2D : IExitBoundary2D
 
     private static ExitBoundaryResolution Fail(ExitBoundaryFailureReason reason) => ExitBoundaryResolution.Fail(reason);
 
-    private static ExitBoundaryFailureReason Reason(ExitEdgeQueryStatus? status) => status switch
+    internal static ExitBoundaryFailureReason Reason(ExitEdgeQueryStatus? status) => status switch
     {
         ExitEdgeQueryStatus.Miss => ExitBoundaryFailureReason.NoIntersection,
         ExitEdgeQueryStatus.Ambiguous => ExitBoundaryFailureReason.MultipleIntersections,

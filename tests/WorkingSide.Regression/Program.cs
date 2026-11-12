@@ -191,6 +191,7 @@ static class Program
         AreaHighlightChecks.Run(window);
         RunGroup("SelectedExitChecks", () => SelectedExitChecks.Run(window, args[0]));
         RunGroup("VertexEditChecks", () => VertexEditChecks.Run(window, args[0]));
+        RunGroup("SplitBoundaryChecks", () => SplitBoundaryChecks.Run(window, args[0]));
         RunGroup("ElectricalRefreshChecks", () => ElectricalRefreshChecks.Run(window));
         RunGroup("PatternStateChecks", () => PatternStateChecks.Run(window));
         RunGroup("GeometryRollbackChecks", () => GeometryRollbackChecks.Run(window, args[0]));
