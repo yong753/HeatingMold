@@ -143,22 +143,43 @@ public partial class MainWindow
 
         AreaSplitResult split = AreaSplitter.Split(area.Region[0], area.Exclusions,
             area.Direction, margin, spacing, plan.Parts);
-        if (!split.Succeeded)
+
+        List<WorkingArea> children;
+        var preparedPatterns = new Dictionary<WorkingArea, SerpentineResult>();
+        double balanceRatio = double.NaN;
+
+        if (autoExits)
         {
-            SetSplitStatus("분할에 실패했습니다 — " + split.Failure);
-            return;
+            // 면적 근사만으로 확정하지 않는다. 실제 선택-인출점 2D 생성기로 후보 절단을
+            // 평가해 경로 길이가 가장 균등한 분할을 고르고, 그때 만든 패턴을 그대로 쓴다.
+            if (!TryPrepareBalancedSplit(area, split, plan.Parts, margin, spacing,
+                    out AreaSplitResult balancedSplit, out children, out preparedPatterns,
+                    out balanceRatio, out string balanceFailure))
+            {
+                SetSplitStatus("분할에 실패했습니다 — " + balanceFailure);
+                return;
+            }
+            split = balancedSplit;
         }
+        else
+        {
+            if (!split.Succeeded)
+            {
+                SetSplitStatus("분할에 실패했습니다 — " + split.Failure);
+                return;
+            }
+            if (!TryBuildSplitChildren(area, split, out children,
+                    out string childFailure))
+            {
+                SetSplitStatus("분할 영역을 준비할 수 없습니다 — " + childFailure);
+                return;
+            }
+        }
+
         if (split.Bands.Count != plan.Parts)
         {
             SetSplitStatus(string.Format(CultureInfo.CurrentCulture,
                 "분할 결과 영역 수가 계획과 다릅니다 — 계획 {0}개, 계산 {1}개.", plan.Parts, split.Bands.Count));
-            return;
-        }
-
-        if (!TryBuildSplitChildren(area, split, out List<WorkingArea> children,
-                out string childFailure))
-        {
-            SetSplitStatus("분할 영역을 준비할 수 없습니다 — " + childFailure);
             return;
         }
 
@@ -170,14 +191,8 @@ public partial class MainWindow
 
         if (autoExits)
         {
-            // 부모의 시작/종료 측면을 각 영역의 마진 안쪽 행으로 옮긴다. 하나라도 유일하게
-            // 결정되지 않으면 자식 영역에는 아무 점도 기록하지 않고 분할 자체를 확정하지 않는다.
-            if (!SplitExitPointPlanner.TryAssign(area, children, margin, spacing, out string exitFailure))
-            {
-                SetSplitStatus("분할 영역의 인출점을 자동으로 정할 수 없습니다 — " + exitFailure);
-                return;
-            }
-            // 확정 전에 각 점의 3D 표면 위치를 검증한다. 실패하면 부모 영역·경로·선택점은 그대로 남는다.
+            // 인출점은 실제 2D 생성기로 후보를 평가할 때 이미 배정했다. 확정 전에 각 점의
+            // 3D 표면 위치를 검증한다. 실패하면 부모 영역·경로·선택점은 그대로 남는다.
             foreach (WorkingArea child in children)
             {
                 if (!TryEvaluateSelectedExit3D(child, child.SelectedStartExit!.Value,
@@ -195,31 +210,21 @@ public partial class MainWindow
             }
         }
 
-        // 자식 경로도 커밋 전에 detached 후보에서 모두 생성한다. 하나라도 생성되지 않으면
-        // 부모 영역·경로·선택점을 그대로 두고 분할을 확정하지 않는다.
+        // 자식 경로는 후보 평가에서 이미 생성한 패턴을 그대로 게시한다. 여기서 다시 생성하면
+        // 평가한 2D 길이와 확정 경로가 달라질 수 있으므로 재생성하지 않는다.
         var candidates = new Dictionary<WorkingArea, WorkingArea>();
         if (autoExits)
         {
             foreach (WorkingArea child in children)
             {
                 WorkingArea fork = ForkAreaRoute(child);
-                List<IReadOnlyList<Vec2>> paths;
-                SerpentineResult? pattern;
-                try
+                if (!preparedPatterns.TryGetValue(child, out SerpentineResult pattern))
                 {
-                    if (!TryGenerateAreaPattern(fork, margin, spacing, out pattern, out paths,
-                            out string generationFailure))
-                    {
-                        SetSplitStatus(child.Name + " 영역의 경로를 자동 생성할 수 없습니다 — " + generationFailure);
-                        return;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    SetSplitStatus(child.Name + " 영역의 경로 계산에 실패했습니다 — " + ex.Message);
+                    SetSplitStatus(child.Name + " 영역의 준비된 2D 경로가 없습니다 — 분할을 확정하지 않습니다.");
                     return;
                 }
-                ApplyPreparedPattern(fork, pattern, paths);
+                ApplyPreparedPattern(fork, pattern,
+                    new List<IReadOnlyList<Vec2>> { pattern.Path });
                 candidates[child] = fork;
             }
         }
@@ -255,9 +260,13 @@ public partial class MainWindow
         string exitText = autoExits
             ? "시작/종료점은 원래 범위 안에서 마진을 확보해 자동 지정하고 경로도 자동 생성했습니다(필요하면 다시 선택·생성 가능)."
             : "각 영역에서 시작점과 종료점을 선택한 뒤 생성하세요.";
+        string balanceText = autoExits && double.IsFinite(balanceRatio)
+            ? string.Format(CultureInfo.CurrentCulture,
+                " 실제 2D 경로 길이 편차 {0:F3}배.", balanceRatio)
+            : string.Empty;
         SetSplitStatus(string.Format(CultureInfo.CurrentCulture,
-            "{0} 영역을 {1}개 독립 영역으로 분할했습니다 — {2}. {3}",
-            area.Name, children.Count, partsText, exitText));
+            "{0} 영역을 {1}개 독립 영역으로 분할했습니다 — {2}. {3}{4}",
+            area.Name, children.Count, partsText, exitText, balanceText));
         if (!string.IsNullOrEmpty(_routePresentationWarning))
             SetSplitStatus(SplitStatusText.Text + " · 표시 경고: " + _routePresentationWarning);
     }
@@ -283,8 +292,11 @@ public partial class MainWindow
             .Distinct()
             .ToList();
 
-        var usedNames = new HashSet<string>(_areas.Select(existing => existing.Name), StringComparer.Ordinal);
-        var usedColors = new HashSet<System.Windows.Media.Color>(_areas.Select(existing => existing.Color));
+        // 테스트/초기화 전 창에서는 _areas가 아직 없을 수 있다. 실제 제품 경로에서는 항상
+        // 채워져 있으며, 비어 있으면 새 이름/색을 그대로 쓰면 된다.
+        IReadOnlyList<WorkingArea> existingAreas = _areas != null ? _areas : Array.Empty<WorkingArea>();
+        var usedNames = new HashSet<string>(existingAreas.Select(existing => existing.Name), StringComparer.Ordinal);
+        var usedColors = new HashSet<System.Windows.Media.Color>(existingAreas.Select(existing => existing.Color));
         int parentColorIndex = Array.IndexOf(AreaColors, parent.Color);
         if (parentColorIndex < 0) parentColorIndex = 0;
 

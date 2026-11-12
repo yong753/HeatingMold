@@ -1268,75 +1268,46 @@ namespace HeatingMold.App
             };
 
             SerpentineResult? editablePattern = null;
-            if (candidate.Exclusions.Count > 0)
+            if (!legacyAnchored)
             {
-                if (legacyAnchored)
+                // 선택한 두 인출점을 고정한 실제 생성 경로. 분할 후보 탐색과 최종 생성이 같은
+                // 헬퍼를 쓰므로, 탐색에서 잰 2D 길이와 확정 경로의 길이가 달라지지 않는다.
+                if (!TryGenerateSelectedExitPattern(candidate, margin, spacing,
+                        out editablePattern, out failure))
+                    return false;
+                paths.Add(editablePattern!.Path);
+            }
+            else if (candidate.Exclusions.Count > 0)
+            {
+                var plan = TryPrepareExcludedPlan(candidate, out string planFailure);
+                if (plan == null)
                 {
-                    var plan = TryPrepareExcludedPlan(candidate, out string planFailure);
-                    if (plan == null)
-                    {
-                        failure = planFailure;
-                        return false;
-                    }
-                    var anchored = Serpentine.GenerateAnchoredComponents(candidate.Region[0], candidate.Exclusions,
-                        parameters, candidate.ExitChain, plan, candidate.Direction, boundary: candidate.ExitBoundary);
-                    if (!anchored.Succeeded)
-                    {
-                        failure = ExplainAnchoredFailure(anchored.Failure, anchored.BoundaryFailure);
-                        return false;
-                    }
-                    editablePattern = anchored.Pattern;
-                    if (editablePattern.Path.Count >= 2) paths.Add(editablePattern.Path);
+                    failure = planFailure;
+                    return false;
                 }
-                else
+                var anchored = Serpentine.GenerateAnchoredComponents(candidate.Region[0], candidate.Exclusions,
+                    parameters, candidate.ExitChain, plan, candidate.Direction, boundary: candidate.ExitBoundary);
+                if (!anchored.Succeeded)
                 {
-                    // 제외영역이 있어도 선택한 두 인출점을 고정하고, 모든 레인을 방문하는
-                    // 하나의 완전 경로만 사용한다. 후보/계획 재계산으로 점을 바꾸지 않는다.
-                    var anchored = Serpentine.GenerateComponentsWithSelectedExits(candidate.Region[0],
-                        candidate.Exclusions, parameters, candidate.Direction,
-                        candidate.SelectedStartExit.Value, candidate.SelectedEndExit.Value,
-                        boundary: candidate.RegionExitBoundary);
-                    if (!anchored.Succeeded)
-                    {
-                        failure = ExplainAnchoredFailure(anchored.Failure, anchored.BoundaryFailure);
-                        return false;
-                    }
-                    editablePattern = anchored.Pattern;
-                    if (editablePattern.Path.Count >= 2) paths.Add(editablePattern.Path);
+                    failure = ExplainAnchoredFailure(anchored.Failure, anchored.BoundaryFailure);
+                    return false;
                 }
+                editablePattern = anchored.Pattern;
+                if (editablePattern.Path.Count >= 2) paths.Add(editablePattern.Path);
             }
             else
             {
-                if (legacyAnchored)
+                // 기존 인출면이 지정된 영역은 종전 고정 경로를 그대로 사용한다.
+                var anchored = Serpentine.GenerateAnchored(candidate.Region[0], null, parameters,
+                    candidate.ExitChain, candidate.StartAnchor.Value, candidate.EndAnchor.Value, candidate.Direction,
+                    boundary: candidate.ExitBoundary, candidate: candidate.SelectedAnchorCandidate);
+                if (!anchored.Succeeded)
                 {
-                    // 기존 인출면이 지정된 영역은 종전 고정 경로를 그대로 사용한다.
-                    var anchored = Serpentine.GenerateAnchored(candidate.Region[0], null, parameters,
-                        candidate.ExitChain, candidate.StartAnchor.Value, candidate.EndAnchor.Value, candidate.Direction,
-                        boundary: candidate.ExitBoundary, candidate: candidate.SelectedAnchorCandidate);
-                    if (!anchored.Succeeded)
-                    {
-                        failure = ExplainAnchoredFailure(anchored.Failure, anchored.BoundaryFailure);
-                        return false;
-                    }
-                    editablePattern = anchored.Pattern;
-                    if (editablePattern.Path.Count >= 2) paths.Add(editablePattern.Path);
+                    failure = ExplainAnchoredFailure(anchored.Failure, anchored.BoundaryFailure);
+                    return false;
                 }
-                else
-                {
-                    // 선택 시작점은 첫 발열선 시작에, 선택 종료점은 마지막 별도 연결선 끝에만 적용한다.
-                    // 실패해도 무앵커 경로로 대체하지 않는다.
-                    var anchored = Serpentine.GenerateWithSelectedExits(candidate.Region[0], null,
-                        parameters, candidate.Direction,
-                        candidate.SelectedStartExit.Value, candidate.SelectedEndExit.Value,
-                        boundary: candidate.RegionExitBoundary);
-                    if (!anchored.Succeeded)
-                    {
-                        failure = ExplainAnchoredFailure(anchored.Failure, anchored.BoundaryFailure);
-                        return false;
-                    }
-                    editablePattern = anchored.Pattern;
-                    if (editablePattern.Path.Count >= 2) paths.Add(editablePattern.Path);
-                }
+                editablePattern = anchored.Pattern;
+                if (editablePattern.Path.Count >= 2) paths.Add(editablePattern.Path);
             }
             if (paths.Count == 0 && (editablePattern == null || editablePattern.RoutePieces.Count == 0))
             {
@@ -1344,6 +1315,59 @@ namespace HeatingMold.App
                 return false;
             }
             pattern = editablePattern;
+            return true;
+        }
+
+        /// <summary>
+        /// 선택한 시작/종료 인출점을 고정한 실제 2D 생성 경로. 일반 생성과 분할 후보 평가가
+        /// 같은 코드를 쓰도록 한 곳에 모은다. Auto 방향은 UI·인출점 배정과 같은 가로(FrameX)로
+        /// 해석하고, 실패하면 무앵커 경로로 대체하지 않는다.
+        /// </summary>
+        private bool TryGenerateSelectedExitPattern(WorkingArea candidate, double margin, double spacing,
+            out SerpentineResult pattern, out string failure)
+        {
+            pattern = null;
+            failure = string.Empty;
+            if (candidate == null || candidate.Region.Count != 1 || candidate.Region[0].Count < 3)
+            {
+                failure = "경로를 생성할 영역이 단일 폐합 영역이 아닙니다.";
+                return false;
+            }
+            if (!candidate.HasSelectedExits)
+            {
+                failure = candidate.LastExitFailure
+                    ?? "시작/종료 인출점이 지정되지 않았습니다 — 적용영역 외곽 Edge에서 두 점을 먼저 선택하세요";
+                return false;
+            }
+
+            PatternDirection effectiveDirection = EffectiveDirection(candidate.Direction);
+            var parameters = new PatternParams
+            {
+                Margin = margin,
+                Spacing = spacing,
+                Direction = effectiveDirection,
+            };
+            AnchoredResult anchored = candidate.Exclusions.Count > 0
+                ? Serpentine.GenerateComponentsWithSelectedExits(candidate.Region[0], candidate.Exclusions,
+                    parameters, effectiveDirection,
+                    candidate.SelectedStartExit.Value, candidate.SelectedEndExit.Value,
+                    boundary: candidate.RegionExitBoundary)
+                : Serpentine.GenerateWithSelectedExits(candidate.Region[0], null,
+                    parameters, effectiveDirection,
+                    candidate.SelectedStartExit.Value, candidate.SelectedEndExit.Value,
+                    boundary: candidate.RegionExitBoundary);
+            if (!anchored.Succeeded)
+            {
+                failure = ExplainAnchoredFailure(anchored.Failure, anchored.BoundaryFailure);
+                return false;
+            }
+            SerpentineResult generated = anchored.Pattern;
+            if (generated == null || generated.RoutePieces.Count == 0 || generated.Path.Count < 2)
+            {
+                failure = "생성 가능한 경로가 없습니다. 마진/간격 또는 선택 영역을 확인하세요";
+                return false;
+            }
+            pattern = generated;
             return true;
         }
 

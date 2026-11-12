@@ -350,6 +350,57 @@ public class SplitExitPointPlannerTests
         Assert.True(area.HasSelectedExits, "절단선 provenance 점도 선택 완료로 인정해야 한다.");
     }
 
+    [Fact]
+    public void Variants_ReturnBoundCandidatesInsideParentRangeAndMargin()
+    {
+        (WorkingArea parent, List<WorkingArea> children, _, _, _, _) =
+            CreateNestedSplit(Margin, Spacing, 20, 280);
+
+        Assert.True(SplitExitPointPlanner.TryBuildCandidates(parent, children, Margin, Spacing, true,
+                out List<List<SplitExitPointPlanner.SplitExitCandidate>> candidates,
+                out string failure), failure);
+        Assert.Equal(children.Count, candidates.Count);
+        Assert.All(candidates, list => Assert.True(list.Count >= 2,
+            "탐색용 후보는 기본 배치 외에 시작 측면/종료 측면/레인 위상 후보를 가져야 한다."));
+
+        for (int i = 0; i < children.Count; i++)
+        {
+            WorkingArea child = children[i];
+            var boundary = (SplitRegionBoundary2D)child.RegionExitBoundary!;
+            double low = Math.Max(20, child.Region[0].Min(point => point.Y) + Margin);
+            double high = Math.Min(280, child.Region[0].Max(point => point.Y) - Margin);
+            foreach (SplitExitPointPlanner.SplitExitCandidate candidate in candidates[i])
+            {
+                // 후보도 기본 배정과 같은 실제 경계 provenance를 가진다.
+                Assert.True(boundary.Project(candidate.Start.Point, 1e-3).Succeeded);
+                Assert.True(boundary.Project(candidate.End.Point, 1e-3).Succeeded);
+                // 경계 투영 오차(최대 1 mm) 안에서 부모 구간/마진 밖으로 나가지 않는다.
+                Assert.InRange(candidate.Start.Point.Y, low - 1.0 - 1e-6, high + 1.0 + 1e-6);
+                Assert.InRange(candidate.End.Point.Y, low - 1.0 - 1e-6, high + 1.0 + 1e-6);
+                Assert.True(candidate.Start.Point.DistanceTo(candidate.End.Point) > 1e-4);
+            }
+        }
+    }
+
+    [Fact]
+    public void Variants_DefaultCandidateMatchesTryAssign()
+    {
+        (WorkingArea parent, List<WorkingArea> children, _, _, _, _) =
+            CreateNestedSplit(Margin, Spacing, 20, 280);
+
+        Assert.True(SplitExitPointPlanner.TryBuildCandidates(parent, children, Margin, Spacing, true,
+            out List<List<SplitExitPointPlanner.SplitExitCandidate>> candidates, out string failure), failure);
+        Assert.True(SplitExitPointPlanner.TryAssign(parent, children, Margin, Spacing,
+            out failure), failure);
+
+        for (int i = 0; i < children.Count; i++)
+        {
+            // 탐색을 켜도 첫 후보는 기존 제품 동작과 같아야 한다(순서·동률 우선).
+            Assert.Equal(children[i].SelectedStartExit!.Value, candidates[i][0].Start);
+            Assert.Equal(children[i].SelectedEndExit!.Value, candidates[i][0].End);
+        }
+    }
+
     // 마진 적용 영역의 경계 행은 생성기의 반개구간 스캔라인에서 빈 행이 된다.
     // 자동 배정은 그 행을 그대로 쓰지 않고 안쪽 행에서 시작해야 실제 생성이 성공한다.
     [Fact]

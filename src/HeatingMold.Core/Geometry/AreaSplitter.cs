@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using Clipper2Lib;
 using HeatingMold.Core.Model;
@@ -40,18 +41,19 @@ public sealed record AreaSplitResult
 /// <item>가로 배치(사행 레인이 프레임 X 방향)는 <b>수평 절단선</b>으로 위/아래를 나눈다.</item>
 /// <item>세로 배치(사행 레인이 프레임 Y 방향)는 <b>수직 절단선</b>으로 좌/우를 나눈다.</item>
 /// </list>
-/// 절단 위치는 각 영역의 <b>예상 발열선 길이</b>가 같아지도록 정한다. 예상 길이는
-/// (마진 적용 후 면적 / 간격) + (마진 적용 후 사행 진행 높이)이며, 실제 3D 길이가 아니라
-/// 분할 단계의 근사값이다. 최종 전력 배분과 판정은 생성 후 실제 길이로 다시 계산한다.
+/// 여기서 계산하는 예상 길이는 (마진 적용 후 면적 / 간격) + (마진 적용 후 사행 진행 높이)인
+/// <b>초기 절단 후보</b>다. 실제 2D 발열경로 길이가 아니므로, 분할을 확정하는 쪽은
+/// <see cref="TryBuildAtCuts"/>로 후보를 다시 구성한 뒤 실제 생성기 결과의 길이를 비교해야 한다.
+/// 최종 전력 배분과 판정은 생성 후 실측 3D 길이로 다시 계산한다.
 /// 각 영역은 마진을 자기 내부에 적용하므로, 여기서는 마진을 영역 경계에 적용하지 않는다.
 /// </summary>
 public static class AreaSplitter
 {
-    /// <summary>예상 길이 균등도 허용 비율. 이보다 벌어지면 명시적 실패로 보고한다.</summary>
+    /// <summary>예상 길이 균등도 목표 비율. 이보다 벌어지면 더 나은 절단을 찾는다.</summary>
     public const double LengthBalanceTolerance = 1.02;
 
-    /// <summary>보정 후에도 이 비율을 넘으면 균등 분할 실패로 본다.</summary>
-    private const double HardLengthBalanceLimit = 1.10;
+    /// <summary>실제 2D 길이 기준으로도 이 비율을 넘으면 균등 분할 실패로 본다.</summary>
+    public const double HardLengthBalanceLimit = 1.10;
 
     private const int BisectionSteps = 80;
     private const int RefinementSteps = 80;
@@ -69,38 +71,16 @@ public static class AreaSplitter
         double spacing,
         int count)
     {
-        if (outer == null || outer.Count < 3)
-            return AreaSplitResult.Fail("분할할 적용영역 외곽이 없습니다");
-        if (!double.IsFinite(margin) || margin < 0)
-            return AreaSplitResult.Fail("마진은 0 이상이어야 합니다");
-        if (!double.IsFinite(spacing) || spacing <= 0)
-            return AreaSplitResult.Fail("발열사 간격은 0보다 커야 합니다");
         if (count < 1)
             return AreaSplitResult.Fail("분할 영역 수는 1 이상이어야 합니다");
-
-        // 1) 유효 적용영역 = 적용영역 - 제외영역. 이 단계에서 갈라지거나 구멍이 나면
-        //    이미 한 회로로 배치할 수 없는 영역이므로 분할도 명시적으로 거부한다.
-        List<List<Vec2>> effective = RegionOps.SubtractRectangles(
-            new List<IReadOnlyList<Vec2>> { outer },
-            exclusions ?? Array.Empty<(double, double, double, double)>());
-        if (!TryClassifyRings(effective, out List<Vec2>? regionOuter, out List<List<Vec2>> holes, out string ringFailure))
-            return AreaSplitResult.Fail(ringFailure);
-        List<Vec2> outerRing = regionOuter!;
-
-        var rings = new List<List<Vec2>> { outerRing };
-        rings.AddRange(holes);
-
-        bool splitAxisIsY = ResolveSplitAxisIsY(direction, outer);
-        double Coord(Vec2 p) => splitAxisIsY ? p.Y : p.X;
-
-        double min = rings.SelectMany(r => r).Min(Coord);
-        double max = rings.SelectMany(r => r).Max(Coord);
-        if (!double.IsFinite(min) || !double.IsFinite(max) || max - min <= 0)
-            return AreaSplitResult.Fail("분할 축의 영역 범위를 계산할 수 없습니다");
+        if (!TryPrepare(outer, exclusions, direction, margin, spacing,
+                out SplitContext context, out string failure))
+            return AreaSplitResult.Fail(failure);
 
         if (count == 1)
         {
-            AreaSplitBand? single = BuildBand(0, outerRing, holes, margin, spacing, splitAxisIsY, out string singleFailure);
+            AreaSplitBand? single = BuildBand(0, context.OuterRing, context.Holes,
+                margin, spacing, context.SplitAxisIsY, out string singleFailure);
             if (single == null) return AreaSplitResult.Fail(singleFailure);
             return new AreaSplitResult
             {
@@ -109,19 +89,21 @@ public static class AreaSplitter
                 Cuts = Array.Empty<double>(),
                 EstimatedTotalLengthMm = single.EstimatedLengthMm,
                 MaxToMinLengthRatio = 1.0,
-                SplitAxisIsY = splitAxisIsY
+                SplitAxisIsY = context.SplitAxisIsY
             };
         }
 
         // 2) 초기 절단: 원면적/간격 + 진행 높이를 균등 배분한다(단조 함수의 역산).
-        double totalEstimate = AccumulatedEstimate(rings, min, max, spacing, splitAxisIsY);
+        double totalEstimate = AccumulatedEstimate(
+            context.Rings, context.Min, context.Max, spacing, context.SplitAxisIsY);
         if (!double.IsFinite(totalEstimate) || totalEstimate <= 0)
             return AreaSplitResult.Fail("분할 영역의 예상 길이를 계산할 수 없습니다");
         var cuts = new List<double>(count - 1);
         for (int i = 1; i < count; i++)
         {
             double target = totalEstimate * i / count;
-            cuts.Add(FindCut(rings, min, max, target, spacing, splitAxisIsY));
+            cuts.Add(FindCut(context.Rings, context.Min, context.Max, target,
+                spacing, context.SplitAxisIsY));
         }
 
         // 3) 마진을 반영한 예상 길이로 절단 위치를 보정한다.
@@ -129,17 +111,17 @@ public static class AreaSplitter
         for (int step = 0; step < RefinementSteps; step++)
         {
             List<AreaSplitBand>? bands = BuildBands(
-                cuts, min, max, rings, margin, spacing, splitAxisIsY);
+                cuts, context.Min, context.Max, context.Rings, margin, spacing, context.SplitAxisIsY);
             if (bands == null || bands.Count != count)
                 return AreaSplitResult.Fail("분할 영역을 구성하지 못했습니다");
             double ratio = LengthRatio(bands);
             if (double.IsFinite(ratio) && ratio <= LengthBalanceTolerance)
-                return Success(bands, cuts, splitAxisIsY);
+                return Success(bands, cuts, context.SplitAxisIsY);
             if (step > 0 && ratio >= lastRatio - 1e-9)
             {
                 // 더 이상 개선되지 않는다. 억지로 통과시키지 않고 현재 편차를 그대로 보고한다.
                 return double.IsFinite(ratio) && ratio <= HardLengthBalanceLimit
-                    ? Success(bands, cuts, splitAxisIsY)
+                    ? Success(bands, cuts, context.SplitAxisIsY)
                     : AreaSplitResult.Fail(DescribeImbalance(ratio));
             }
             lastRatio = ratio;
@@ -147,9 +129,10 @@ public static class AreaSplitter
             bool moved = false;
             for (int j = 0; j < cuts.Count; j++)
             {
-                double left = j == 0 ? min : cuts[j - 1];
-                double right = j == cuts.Count - 1 ? max : cuts[j + 1];
-                double density = CrossSectionLength(rings, cuts[j], splitAxisIsY, max - min) / spacing + 1.0;
+                double left = j == 0 ? context.Min : cuts[j - 1];
+                double right = j == cuts.Count - 1 ? context.Max : cuts[j + 1];
+                double density = CrossSectionLength(
+                    context.Rings, cuts[j], context.SplitAxisIsY, context.Max - context.Min) / spacing + 1.0;
                 if (!double.IsFinite(density) || density <= 0)
                     return AreaSplitResult.Fail("절단 위치의 단면을 계산할 수 없습니다");
 
@@ -164,7 +147,8 @@ public static class AreaSplitter
             if (!moved) break;
         }
 
-        List<AreaSplitBand>? finalBands = BuildBands(cuts, min, max, rings, margin, spacing, splitAxisIsY);
+        List<AreaSplitBand>? finalBands = BuildBands(
+            cuts, context.Min, context.Max, context.Rings, margin, spacing, context.SplitAxisIsY);
         if (finalBands == null || finalBands.Count != count)
             return AreaSplitResult.Fail("분할 영역을 구성하지 못했습니다");
         double finalRatio = LengthRatio(finalBands);
@@ -172,19 +156,137 @@ public static class AreaSplitter
             return AreaSplitResult.Fail("분할 영역의 예상 길이를 계산할 수 없습니다");
         if (finalRatio > HardLengthBalanceLimit)
             return AreaSplitResult.Fail(DescribeImbalance(finalRatio));
-        return Success(finalBands, cuts, splitAxisIsY);
+        return Success(finalBands, cuts, context.SplitAxisIsY);
+    }
+
+    /// <summary>
+    /// 주어진 절단 좌표로 분할 영역만 구성한다. 예상 길이 균등도 한도는 검사하지 않으므로,
+    /// 호출자가 실제 2D 생성 결과의 길이로 후보를 평가할 수 있다. 절단 좌표가 영역 범위를
+    /// 벗어나거나 밴드를 구성할 수 없으면 명시적으로 실패한다.
+    /// </summary>
+    public static AreaSplitResult TryBuildAtCuts(
+        IReadOnlyList<Vec2> outer,
+        IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
+        PatternDirection direction,
+        double margin,
+        double spacing,
+        IReadOnlyList<double> cuts)
+    {
+        if (!TryPrepare(outer, exclusions, direction, margin, spacing,
+                out SplitContext context, out string failure))
+            return AreaSplitResult.Fail(failure);
+
+        if (cuts == null || cuts.Count == 0)
+        {
+            AreaSplitBand? single = BuildBand(0, context.OuterRing, context.Holes,
+                margin, spacing, context.SplitAxisIsY, out string singleFailure);
+            if (single == null) return AreaSplitResult.Fail(singleFailure);
+            return new AreaSplitResult
+            {
+                Succeeded = true,
+                Bands = new[] { single },
+                Cuts = Array.Empty<double>(),
+                EstimatedTotalLengthMm = single.EstimatedLengthMm,
+                MaxToMinLengthRatio = 1.0,
+                SplitAxisIsY = context.SplitAxisIsY
+            };
+        }
+
+        double previous = context.Min;
+        for (int i = 0; i < cuts.Count; i++)
+        {
+            double cut = cuts[i];
+            if (!double.IsFinite(cut) || cut <= previous + 1e-9 || cut >= context.Max - 1e-9)
+            {
+                return AreaSplitResult.Fail(string.Format(CultureInfo.InvariantCulture,
+                    "절단 위치 {0}이 분할 가능한 범위를 벗어났습니다", i + 1));
+            }
+            previous = cut;
+        }
+
+        List<AreaSplitBand>? bands = BuildBands(
+            cuts.ToList(), context.Min, context.Max, context.Rings, margin, spacing, context.SplitAxisIsY);
+        if (bands == null)
+            return AreaSplitResult.Fail("절단 위치로 분할 영역을 구성할 수 없습니다");
+        return Success(bands, cuts.ToList(), context.SplitAxisIsY);
     }
 
     /// <summary>
     /// 가로 배치는 수평(Y=상수) 절단, 세로 배치는 수직(X=상수) 절단이다.
-    /// Auto는 Core의 기존 자동 방향(긴 변 기준)과 같은 규칙으로 해석한다.
+    /// Auto는 UI/생성기와 같은 해석인 가로(FrameX)로 본다. 저장된 Auto도 분할에서는
+    /// 자동 장축 판정을 다시 하지 않는다.
     /// </summary>
     public static bool ResolveSplitAxisIsY(PatternDirection direction, IReadOnlyList<Vec2> outer)
     {
-        if (direction == PatternDirection.FrameX) return true;
-        if (direction == PatternDirection.FrameY) return false;
-        return Math.Abs(Serpentine.AutoAngleDeg(outer)) < 45.0;
+        _ = outer;
+        return direction != PatternDirection.FrameY;
     }
+
+    private static bool TryPrepare(
+        IReadOnlyList<Vec2> outer,
+        IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
+        PatternDirection direction,
+        double margin,
+        double spacing,
+        out SplitContext context,
+        out string failure)
+    {
+        context = null!;
+        failure = string.Empty;
+        if (outer == null || outer.Count < 3)
+        {
+            failure = "분할할 적용영역 외곽이 없습니다";
+            return false;
+        }
+        if (!double.IsFinite(margin) || margin < 0)
+        {
+            failure = "마진은 0 이상이어야 합니다";
+            return false;
+        }
+        if (!double.IsFinite(spacing) || spacing <= 0)
+        {
+            failure = "발열사 간격은 0보다 커야 합니다";
+            return false;
+        }
+
+        // 1) 유효 적용영역 = 적용영역 - 제외영역. 이 단계에서 갈라지거나 구멍이 나면
+        //    이미 한 회로로 배치할 수 없는 영역이므로 분할도 명시적으로 거부한다.
+        List<List<Vec2>> effective = RegionOps.SubtractRectangles(
+            new List<IReadOnlyList<Vec2>> { outer },
+            exclusions ?? Array.Empty<(double, double, double, double)>());
+        if (!TryClassifyRings(effective,
+                out List<Vec2>? regionOuter, out List<List<Vec2>> holes, out string ringFailure))
+        {
+            failure = ringFailure;
+            return false;
+        }
+        List<Vec2> outerRing = regionOuter!;
+
+        var rings = new List<List<Vec2>> { outerRing };
+        rings.AddRange(holes);
+
+        bool splitAxisIsY = ResolveSplitAxisIsY(direction, outer);
+        double Coord(Vec2 p) => splitAxisIsY ? p.Y : p.X;
+
+        double min = rings.SelectMany(r => r).Min(Coord);
+        double max = rings.SelectMany(r => r).Max(Coord);
+        if (!double.IsFinite(min) || !double.IsFinite(max) || max - min <= 0)
+        {
+            failure = "분할 축의 영역 범위를 계산할 수 없습니다";
+            return false;
+        }
+
+        context = new SplitContext(outerRing, holes, rings, min, max, splitAxisIsY);
+        return true;
+    }
+
+    private sealed record SplitContext(
+        List<Vec2> OuterRing,
+        List<List<Vec2>> Holes,
+        List<List<Vec2>> Rings,
+        double Min,
+        double Max,
+        bool SplitAxisIsY);
 
     private static AreaSplitResult Success(List<AreaSplitBand> bands, List<double> cuts, bool splitAxisIsY) =>
         new()
@@ -207,9 +309,9 @@ public static class AreaSplitter
     }
 
     private static string DescribeImbalance(double ratio) =>
-        string.Format(System.Globalization.CultureInfo.InvariantCulture,
-            "분할 영역의 예상 길이를 균등하게 만들 수 없습니다 - 편차 {0:F3}배 (허용 {1:F2}배). 형상/제외영역 때문에 같은 길이 영역으로 나눌 수 없습니다",
-            ratio, LengthBalanceTolerance);
+        string.Format(CultureInfo.InvariantCulture,
+            "분할 영역의 예상 길이를 균등하게 만들 수 없습니다 - 편차 {0:F3}배 (목표 {1:F2}배, 허용 {2:F2}배). 형상/제외영역 때문에 같은 길이 영역으로 나눌 수 없습니다",
+            ratio, LengthBalanceTolerance, HardLengthBalanceLimit);
 
     /// <summary>외곽(CCW)과 홀(CW)을 구분한다. 외곽이 둘 이상이거나 홀이 있으면 실패다.</summary>
     private static bool TryClassifyRings(List<List<Vec2>> rings, out List<Vec2>? outer,
@@ -343,13 +445,13 @@ public static class AreaSplitter
         List<List<Vec2>> patternRegion = RegionOps.BuildPatternRegion(outer, holes, margin);
         if (!TryClassifyRings(patternRegion, out _, out List<List<Vec2>> patternHoles, out _))
         {
-            failure = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            failure = string.Format(CultureInfo.InvariantCulture,
                 "분할 영역 {0}은 마진 적용 후 발열영역이 남지 않습니다", index + 1);
             return null;
         }
         if (patternHoles.Count > 0)
         {
-            failure = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            failure = string.Format(CultureInfo.InvariantCulture,
                 "분할 영역 {0}은 마진 적용 후 구멍이 생깁니다", index + 1);
             return null;
         }
@@ -359,7 +461,7 @@ public static class AreaSplitter
         double estimate = netArea / spacing + height;
         if (!double.IsFinite(estimate) || estimate <= 0)
         {
-            failure = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+            failure = string.Format(CultureInfo.InvariantCulture,
                 "분할 영역 {0}의 예상 길이를 계산할 수 없습니다", index + 1);
             return null;
         }
