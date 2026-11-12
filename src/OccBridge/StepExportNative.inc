@@ -197,7 +197,10 @@ bool WriteStepDocumentNative(const std::string& path, const std::wstring& modelN
 
     // ---- 격리 검증: 방금 쓴 파일만 별도 리더로 읽는다 ----
     {
-        std::ifstream probe(path.c_str(), std::ios::binary | std::ios::ate);
+        // MSVC의 std::ifstream 좁은 경로는 ACP(시스템 코드페이지) 기준이라 UTF-8 경로를 열지 못한다.
+        // OCCT 규약과 같은 OSD_OpenStream으로 연다.
+        std::ifstream probe;
+        OSD_OpenStream(probe, path.c_str(), std::ios::binary | std::ios::ate);
         if (!probe.good() || probe.tellg() <= 0) { failure = "verify-empty"; return false; }
     }
 

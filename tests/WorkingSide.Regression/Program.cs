@@ -742,6 +742,18 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
                     Check(exported,"STEP export writes model plus two wire parts ("+stepFailure+")");
                     Check(File.Exists(stepPath)&&new FileInfo(stepPath).Length>0,
                         "STEP export file is non-empty");
+                    // 한글 경로: 관리→네이티브 경로 변환이 ACP가 아니라 UTF-8이어야
+                    // OCCT가 파일을 만들 수 있다(사용자 기본 파일명이 한글이다).
+                    string koreanDir=Path.Combine(Path.GetTempPath(),"발열몰드 경로 검증");
+                    Directory.CreateDirectory(koreanDir);
+                    string koreanStepPath=Path.Combine(koreanDir,"발열경로_"+Guid.NewGuid().ToString("N")+".step");
+                    bool exportedKorean=Bridge.ExportStepWithRoutes(koreanStepPath,"Mold_Cover_Trim",0.30,
+                        new[]{straightWire},out string koreanFailure);
+                    Check(exportedKorean,"STEP export writes to a Korean output path ("+koreanFailure+")");
+                    Check(File.Exists(koreanStepPath)&&new FileInfo(koreanStepPath).Length>0,
+                        "STEP export to a Korean path is non-empty");
+                    try { if(File.Exists(koreanStepPath)) File.Delete(koreanStepPath); } catch { }
+                    try { if(Directory.GetFileSystemEntries(koreanDir).Length==0) Directory.Delete(koreanDir); } catch { }
                     bool rejectedDiameter=Bridge.ExportStepWithRoutes(stepPath,"Mold_Cover_Trim",0.0,
                         new[]{straightWire},out string diameterFailure);
                     Check(!rejectedDiameter&&diameterFailure=="invalid-diameter",
@@ -761,6 +773,26 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
             }
         }
         ProjectLoadChecks.Run(window,args[0]);
+        // STEP 열기도 같은 UTF-8 경로 규약을 쓴다. 한글 경로 사본으로 확인한다.
+        if (File.Exists(examplePath))
+        {
+            string koreanModelDir=Path.Combine(Path.GetTempPath(),"발열몰드 경로 검증");
+            string koreanModelPath=Path.Combine(koreanModelDir,"한글모델.step");
+            try
+            {
+                Directory.CreateDirectory(koreanModelDir);
+                File.Copy(examplePath,koreanModelPath,true);
+                Check(Bridge.LoadStep(koreanModelPath),"load STEP from a Korean path");
+                int koreanFaces=0;
+                for (int id=0;;++id) { if (Bridge.GetFaceNormal(id)==null) break; ++koreanFaces; }
+                Check(koreanFaces==80,$"Korean-path STEP load exposes 80 faces ({koreanFaces})");
+            }
+            finally
+            {
+                try { if(File.Exists(koreanModelPath)) File.Delete(koreanModelPath); } catch { }
+                try { if(Directory.GetFileSystemEntries(koreanModelDir).Length==0) Directory.Delete(koreanModelDir); } catch { }
+            }
+        }
         window.Close();
         Console.WriteLine($"{count} working-side checks passed.");
     }

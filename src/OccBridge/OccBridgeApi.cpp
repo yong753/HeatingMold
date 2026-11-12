@@ -17,6 +17,7 @@
 
 #include <STEPControl_Reader.hxx>
 #include <IFSelect_ReturnStatus.hxx>
+#include <OSD_OpenFile.hxx>
 #include <TopoDS_Shape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
@@ -198,6 +199,20 @@ namespace
     // 형상/삼각분할 세대. 작업면 생성처럼 모델 revision은 그대로인데 mesh만 다시
     // 만들어지는 경로가 있으므로, mesh에 의존하는 선택 캐시는 이 값으로 무효화한다.
     long long g_meshEpoch = 0;
+    // 관리 계층에서 온 파일 경로를 UTF-8로 변환한다.
+    // OCCT의 char* 경로 규약(OSD_OpenFile/OSD_OpenStream)은 UTF-8이므로,
+    // msclr::interop::marshal_as<std::string>이 만드는 ACP 바이트를 그대로 넘기면
+    // 한글 경로에서 파일을 열거나 만들지 못한다.
+    std::string ToUtf8Path(const std::wstring& value)
+    {
+        if (value.empty()) return std::string();
+        const int length = static_cast<int>(value.size());
+        const int size = ::WideCharToMultiByte(CP_UTF8, 0, value.c_str(), length, nullptr, 0, nullptr, nullptr);
+        if (size <= 0) return std::string();
+        std::string result(static_cast<size_t>(size), '\0');
+        ::WideCharToMultiByte(CP_UTF8, 0, value.c_str(), length, &result[0], size, nullptr, nullptr);
+        return result;
+    }
     void InvalidateWorkingContexts();
     // 사각형 선택 가시성 캐시/프리뷰 (FaceIdSelectionNative.inc 에서 정의)
     void ReleaseFaceIdCacheNative();
@@ -4054,7 +4069,7 @@ bool Bridge::ExportStepWithRoutes(String^ targetPath, String^ modelName, double 
         const std::wstring name = modelName == nullptr
             ? std::wstring(L"model")
             : msclr::interop::marshal_as<std::wstring>(modelName);
-        if (!ExportStepWithRoutesNative(msclr::interop::marshal_as<std::string>(targetPath),
+        if (!ExportStepWithRoutesNative(ToUtf8Path(msclr::interop::marshal_as<std::wstring>(targetPath)),
                 name, wireDiameterMm, nativeCircuits, failure))
         {
             failureReason = gcnew String(failure.c_str());
@@ -4207,7 +4222,7 @@ bool Bridge::LoadStep(String^ path)
     ++g_modelRevision;
     ClearLiveModelForRestore();
     if (String::IsNullOrWhiteSpace(path)) return false;
-    const std::string native = msclr::interop::marshal_as<std::string>(path);
+    const std::string native = ToUtf8Path(msclr::interop::marshal_as<std::wstring>(path));
     return LoadStepFile(native.c_str());
 }
 
@@ -4244,7 +4259,7 @@ ProjectRestoreCandidateInfo^ Bridge::BeginProjectRestoreCandidate(String^ path, 
     if (String::IsNullOrWhiteSpace(path)) return nullptr;
     try
     {
-        const std::string native = msclr::interop::marshal_as<std::string>(path);
+        const std::string native = ToUtf8Path(msclr::interop::marshal_as<std::wstring>(path));
         std::string error;
         const int id = BeginProjectRestoreCandidateNative(native, importPolicyVersion, error);
         if (id <= 0) return nullptr;
