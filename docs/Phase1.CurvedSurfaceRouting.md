@@ -78,7 +78,8 @@ therefore face ids are preserved exactly.
 
 ## Verification (real `resource/Mold.stp`)
 
-Harness: `tests/Phase1Curved.Repro` (offscreen `HwndSource` + `Bridge.InitViewer`).
+Harness: the former `tests/Phase1Curved.Repro` program was removed in the legacy cleanup.
+The recorded results below remain as history.
 
 User case: heating face **79 (Cylinder)** + exit face **11 (BSplineSurface)**, working
 direction +Z, margin 5, spacing 10.
@@ -153,18 +154,5 @@ passes 48/48.
 The solution exposes only `Release|x64`. The C++/CLI bridge is built for that configuration,
 so Debug/x86/Any CPU solution builds are not supported.
 
-```powershell
-# Build the native bridge and app first
-& "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\amd64\MSBuild.exe" `
-  HeatingMold.Mvp.sln /t:Build /p:Configuration=Release /p:Platform=x64 /m /v:m
-
-# Make the OCCT/3rd-party DLLs visible, then run the harness
-$root = (Resolve-Path .).Path
-$occt = "$root/third_party/opencascade-7.9.3-vc14-64"
-$dirs = @("$occt/win64/vc14/bin") + @(Get-ChildItem "$root/third_party/3rdparty-vc14-64" -Recurse -Filter *.dll | ForEach-Object DirectoryName | Select-Object -Unique)
-$env:PATH = ($dirs -join ';') + ';' + $env:PATH
-$env:CSF_OCCTResourcePath = "$occt/src"
-dotnet run --project tests/Phase1Curved.Repro -c Release -- "$root/resource/Mold.stp"
-```
-
-The harness exits non-zero if any of its checks fails.
+The standalone harness that produced the table above was removed in the legacy cleanup.
+Curved-face mapping and staging coverage now lives in the current regression suite.

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using HeatingMold.Core.Geometry;
+using static HeatingMold.App.PlanarMath2D;
 
 namespace HeatingMold.App;
 
@@ -91,16 +92,4 @@ internal sealed class SplitRegionContainmentBoundary : IExactRegionBoundary
             : new RegionBoundaryProbe(RegionRayStatus.Miss, 0.0, string.Empty);
     }
 
-    private static double DistanceToSegment(Vec2 a, Vec2 b, Vec2 point)
-    {
-        Vec2 side = b - a;
-        double lengthSquared = side.X * side.X + side.Y * side.Y;
-        if (!(lengthSquared > 1e-18)) return point.DistanceTo(a);
-        double u = ((point.X - a.X) * side.X + (point.Y - a.Y) * side.Y) / lengthSquared;
-        u = Math.Clamp(u, 0.0, 1.0);
-        return new Vec2(a.X + side.X * u, a.Y + side.Y * u).DistanceTo(point);
-    }
-
-    private static double Cross(Vec2 a, Vec2 b) => a.X * b.Y - a.Y * b.X;
-    private static bool IsFinite(Vec2 point) => double.IsFinite(point.X) && double.IsFinite(point.Y);
 }

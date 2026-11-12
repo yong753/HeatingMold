@@ -90,12 +90,10 @@ static class ProjectLoadChecks
         areaType.GetProperty("Frame")!.SetValue(area, frame);
         areaType.GetProperty("MarginText")!.SetValue(area, "7");
         areaType.GetProperty("SpacingText")!.SetValue(area, "50");
-        areaType.GetProperty("ExitFaceId")!.SetValue(area, -1);
         ((HashSet<int>)areaType.GetProperty("FaceIdSet")!.GetValue(area)!).Add(faceId);
         ((IList)areaType.GetProperty("Region")!.GetValue(area)!).Add(polygon);
         areaType.GetProperty("ExitChain")!.SetValue(area, polygon);
         areaType.GetProperty("ExitChain3D")!.SetValue(area, sourcePoints);
-        areaType.GetProperty("ExitChainFaceIds")!.SetValue(area, new List<int>());
         areaType.GetProperty("ExitEdgeRefs")!.SetValue(area,
             new List<ExitEdgeReference>(loops[0].EdgeReferences));
 
@@ -273,8 +271,6 @@ static class ProjectLoadChecks
         areaType.GetProperty("Name")!.SetValue(area, "ExclusionProjectLoad");
         areaType.GetProperty("AreaId")!.SetValue(area, 9901);
         areaType.GetProperty("Frame")!.SetValue(area, side.Frame);
-        areaType.GetProperty("ExitFaceId")!.SetValue(area, -1);
-        areaType.GetProperty("ExitFaceRevision")!.SetValue(area, 0L);
         areaType.GetProperty("Direction")!.SetValue(area, PatternDirection.FrameX);
         ((HashSet<int>)areaType.GetProperty("FaceIdSet")!.GetValue(area)!).Add(topFace);
         ((List<List<Vec2>>)areaType.GetProperty("Region")!.GetValue(area)!).Add(ring);

@@ -14,12 +14,10 @@ namespace HeatingMold.App.Persistence
     public static class ProjectJsonStore
     {
         public const string FileExtension = ".json";
-        public const int CurrentSchemaVersion = 5;
-        private const int MinSupportedSchemaVersion = 1;
+        public const int CurrentSchemaVersion = 6;
 
-        /// <summary>이 앱이 읽을 수 있는 스키마 버전인지. 쓰기는 항상 CurrentSchemaVersion을 쓴다.</summary>
-        public static bool IsSupportedSchemaVersion(int version) =>
-            version >= MinSupportedSchemaVersion && version <= CurrentSchemaVersion;
+        /// <summary>이 앱이 읽을 수 있는 스키마 버전인지. 구형 파일은 지원하지 않는다.</summary>
+        public static bool IsSupportedSchemaVersion(int version) => version == CurrentSchemaVersion;
 
         private static readonly JsonSerializerOptions Options = new()
         {
@@ -60,19 +58,34 @@ namespace HeatingMold.App.Persistence
             try
             {
                 using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                int schemaVersion = ReadSchemaVersion(stream);
+                if (!IsSupportedSchemaVersion(schemaVersion))
+                    throw new InvalidDataException(
+                        "지원하지 않는 프로젝트 스키마 버전입니다: " + schemaVersion
+                        + " (현재 버전 " + CurrentSchemaVersion + "만 지원합니다).");
+                stream.Position = 0;
                 ProjectDocument document = JsonSerializer.Deserialize<ProjectDocument>(stream, Options);
                 if (document == null)
                     throw new InvalidDataException("프로젝트 JSON이 비어 있습니다.");
                 if (!string.Equals(document.Format, "HeatingMold.Project", StringComparison.Ordinal))
                     throw new InvalidDataException("HeatingMold 프로젝트 파일이 아닙니다.");
-                if (!IsSupportedSchemaVersion(document.SchemaVersion))
-                    throw new InvalidDataException("지원하지 않는 프로젝트 스키마 버전입니다: " + document.SchemaVersion);
                 return document;
             }
             catch (JsonException ex)
             {
                 throw new InvalidDataException("프로젝트 JSON을 읽지 못했습니다: " + ex.Message, ex);
             }
+        }
+
+        /// <summary>엄격 역직렬화 전에 스키마 버전만 먼저 읽어 구형 파일을 명시적으로 거부한다.</summary>
+        private static int ReadSchemaVersion(Stream stream)
+        {
+            using JsonDocument json = JsonDocument.Parse(stream);
+            if (json.RootElement.ValueKind != JsonValueKind.Object
+                || !json.RootElement.TryGetProperty("schemaVersion", out JsonElement version)
+                || !version.TryGetInt32(out int value))
+                throw new InvalidDataException("프로젝트 스키마 버전을 확인할 수 없습니다.");
+            return value;
         }
 
         public static string ComputeFingerprint(ProjectDocument document)

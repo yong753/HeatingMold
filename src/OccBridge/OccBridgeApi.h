@@ -117,31 +117,6 @@ public:
 };
 
 /// <summary>
-/// STEP 내보내기용 확정 회로 하나. Points는 확정된 순서의 3D 점 체인(flat xyz)이며,
-/// 네이티브는 이 좌표를 재생성/재매핑/평면 투영 없이 그대로 사용한다.
-/// </summary>
-public ref class StepExportCircuit
-{
-public:
-    StepExportCircuit(System::String^ name, System::String^ areaName,
-        int colorR, int colorG, int colorB, array<double>^ points)
-    {
-        Name = name;
-        AreaName = areaName;
-        ColorR = colorR;
-        ColorG = colorG;
-        ColorB = colorB;
-        Points = points;
-    }
-    property System::String^ Name;
-    property System::String^ AreaName;
-    property int ColorR;
-    property int ColorG;
-    property int ColorB;
-    property array<double>^ Points;
-};
-
-/// <summary>
 /// STEP 조각 내보내기용 조각 하나(레인 또는 턴커넥터). Points는 확정된 3D 점 체인이며,
 /// 네이티브는 조각마다 중심선 1개와 발열사 솔리드 1개를 만든다.
 /// </summary>
@@ -292,16 +267,10 @@ public:
         array<int>^ pieceIds);
     /// <summary>
     /// 현재 로드된 3D 모델과 확정 발열경로/발열사를 하나의 STEP 파일로 쓴다.
-    /// 회로 좌표는 확정 체인을 그대로 쓰고, 모델 좌표계/mm 단위를 유지한다.
-    /// 파일은 targetPath에 직접 쓰며, 성공 시 별도 리더로 다시 읽어 파트 수와 경계를 검증한다.
-    /// 실패는 ASCII 토큰(no-model, invalid-diameter, ...)으로 돌려주고 managed가 사용자 메시지로 옮긴다.
-    /// </summary>
-    static bool ExportStepWithRoutes(System::String^ targetPath, System::String^ modelName,
-        double wireDiameterMm, array<StepExportCircuit^>^ circuits,
-        [System::Runtime::InteropServices::Out] System::String^% failureReason);
-    /// <summary>
-    /// 조각 단위 STEP 내보내기. 영역마다 발열사/발열경로 assembly를 만들고 각 조각을
+    /// 조각 단위로 내보내며, 영역마다 발열사/발열경로 assembly를 만들고 각 조각을
     /// 하나의 솔리드/중심선 컴포넌트로 기록한 뒤, 다시 읽어 트리와 형상을 검증한다.
+    /// 회로 좌표는 확정 체인을 그대로 쓰고, 모델 좌표계/mm 단위를 유지한다.
+    /// 실패는 ASCII 토큰(no-model, invalid-diameter, ...)으로 돌려주고 managed가 사용자 메시지로 옮긴다.
     /// </summary>
     static bool ExportStepWithRoutes(System::String^ targetPath, System::String^ modelName,
         double wireDiameterMm, array<StepExportArea^>^ areas,
@@ -321,7 +290,6 @@ public:
     static RoutePieceResult^ StageProjectedWorkingPolyline(long long id, long long revision, int stageId,
         System::String^ kind, array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);
     /// <summary>3D polylines of the CAD edges shared by the exit face and the heating faces (empty when not adjacent).</summary>
-    static array<array<double>^>^ GetSharedBoundaryEdges(int exitFaceId, array<int>^ heatingFaceIds, double deflection);
     static bool CommitWorkingRouteGeometry(long long id, long long revision, array<int>^ stagedRouteIds,
         array<int>^ finalRouteIds, array<int>^ stagedPolylineIds);
     /// <summary>Atomic context-owned retain/replace/delete commit. Does not redraw.</summary>
@@ -349,7 +317,7 @@ public:
     static array<System::String^>^ GetFaceTopologySignatures();
 
     /// <summary>현재 문서를 건드리지 않고 STEP을 격리 후보로 읽는다. 실패 시 null.</summary>
-    static ProjectRestoreCandidateInfo^ BeginProjectRestoreCandidate(System::String^ path, int importPolicyVersion);
+    static ProjectRestoreCandidateInfo^ BeginProjectRestoreCandidate(System::String^ path);
     /// <summary>후보를 현재 문서로 한 번에 교체한다. 표시/카메라는 새 모델에 맞춘다.</summary>
     static bool CommitProjectRestoreCandidate(int candidateId);
     static void DiscardProjectRestoreCandidate(int candidateId);
@@ -399,14 +367,8 @@ public:
     /// <summary>인출 측면 후보를 임시 강조 표시한다 (이전 강조는 지운다).</summary>
     static void ShowExitCandidates(array<array<double>^>^ polylines);
     static void ClearExitCandidates();
-    /// <summary>화면 픽셀 거리 기준으로 가장 가까운 인출 측면 후보 인덱스를 반환한다. 없으면 -1.</summary>
-    static int PickExitCandidate(array<array<double>^>^ polylines, int x, int y, double pixelTolerance);
-    /// <summary>후보 하나만 강조한다 (호버). index &lt; 0 이면 모든 후보를 기본 표시로 되돌린다.</summary>
-    static void HighlightExitCandidate(int index);
     /// <summary>인출면 선택 모드에서 후보 면 하나를 호버색으로 강조한다. faceId &lt; 0 이면 해제.</summary>
     static void HighlightExitFace(int faceId);
-    /// <summary>Pick the nearest visible point on the selected faces only when it is on their trim boundary.</summary>
-    static array<double>^ PickSelectedBoundaryPoint(array<int>^ faceIds, int x, int y);
     /// <summary>Toggle connector presentation; disabled connectors are shown as dashed guides.</summary>
     /// <summary>redraw=false면 호출측이 여러 커넥터를 갱신한 뒤 한 번만 Redraw한다.</summary>
     static bool SetConnectorEnabled(int pieceId, bool enabled, double r, double g, double b, bool redraw);
@@ -416,17 +378,6 @@ public:
     static bool SetRoutePieceColors(long long id, long long revision, array<int>^ pieceIds,
         array<double>^ rgb, bool redraw);
     static void ClearRoutePieces();
-    /// <summary>Project datum start-to-destination onto heating faces, then continue externally.
-    /// Returns [status (1=success; negative=failure), total, surface, external] lengths in mm.</summary>
-    static array<double>^ ProjectPowerLead(int leadId, array<double>^ sourceAndDestination,
-        array<double>^ actualStart, array<int>^ faceIds, double dx, double dy, double dz, double depth);
-    /// <summary>previewOnly uses the same validation but replaces only transient cyan geometry.</summary>
-    static array<double>^ ProjectPowerLead(int leadId, array<double>^ sourceAndDestination,
-        array<double>^ actualStart, array<int>^ faceIds, double dx, double dy, double dz, double depth,
-        bool previewOnly);
-    /// <summary>Remove only the transient power destination/lead; committed leads are untouched.</summary>
-    static void ClearPowerLeadPreview();
-    static void ClearPowerLeads();
     static int PickRoutePiece(int x, int y);
     static void HighlightCircuit(array<int>^ pieceIds);
     /// <summary>Update endpoint presentation without redraw; false reports presentation failure only.</summary>
@@ -490,9 +441,6 @@ public:
     static void SetConfirmedFaceHighlightColors(array<int>^ faceIds, array<double>^ rgb);
     /// <summary>확정 영역 하이라이트 해제 — 선택된 면은 기존 초록색으로 되돌린다.</summary>
     static void ClearConfirmedFaceHighlights();
-    /// <summary>활성 작업영역의 인출면을 영역 톤 색으로 지속 강조한다. faceId &lt; 0이면 해제.</summary>
-    static void SetExitFaceHighlight(int faceId, double r, double g, double b);
-    static void ClearExitFaceHighlight();
     /// <summary>활성 작업영역의 인출 경계 edge를 원색(무광) 폴리라인으로 지속 강조한다. 이전 강조는 교체된다.</summary>
     static void SetExitEdgeHighlight(array<double>^ points, double r, double g, double b);
     static void ClearExitEdgeHighlight();
@@ -527,8 +475,6 @@ public:
 
     /// <summary>방향과 화면 위쪽 벡터로 카메라를 설정</summary>
     static void SetViewFrame(double dx, double dy, double dz, double ux, double uy, double uz);
-    /// <summary>로드된 형상에서 자동 추정한 주축(0=X, 1=Y, 2=Z)</summary>
-    static array<double>^ GetAutoAxis(int axis);
     /// <summary>사각형과 일부라도 교차하는 모든 모델 면을 선택한다(화면에 가려진 면 포함).
     /// 실패(선택 판정/적용) 시 null, 성공 시 빈 배열일 수 있다(유효한 빈 선택).</summary>
     static array<int>^ SelectFacesInRectangle(int x0, int y0, int x1, int y1);

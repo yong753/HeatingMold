@@ -7,7 +7,6 @@ namespace HeatingMold.App;
 
 public partial class MainWindow
 {
-    private static readonly bool WorkingRouteMigrationComplete = false;
     private readonly WorkingSideSession _workingSide = new();
     private Func<long, long, bool> _prepareWorkingFront = Bridge.ReturnToWorkingFront;
     private Action _beforeWorkingSideCommit = () => { };

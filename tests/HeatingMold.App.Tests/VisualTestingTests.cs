@@ -54,7 +54,7 @@ namespace HeatingMold.App.Tests
         }
 
         [Fact]
-        public void Load_RejectsDirectInputPresetWithoutValues()
+        public void Load_RejectsDirectInputPreset()
         {
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
@@ -64,7 +64,7 @@ namespace HeatingMold.App.Tests
             VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
 
             Assert.Null(scenario);
-            Assert.Contains("diameterMm", error);
+            Assert.Contains("presetIndex", error);
         }
 
         [Fact]
@@ -79,9 +79,10 @@ namespace HeatingMold.App.Tests
             VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
 
             Assert.Null(error);
-            Assert.Equal(12.0, scenario.Electrical.AllowedCurrentA);
-            Assert.Equal(2.5, scenario.Electrical.AllowedPowerKw);
-            Assert.True(scenario.Electrical.ExpectedWithinLimits);
+            VisualElectricalSpec electrical = Assert.Single(scenario.Steps).Electrical;
+            Assert.Equal(12.0, electrical.AllowedCurrentA);
+            Assert.Equal(2.5, electrical.AllowedPowerKw);
+            Assert.True(electrical.ExpectedWithinLimits);
         }
 
         [Fact]
@@ -99,17 +100,17 @@ namespace HeatingMold.App.Tests
         }
 
         [Fact]
-        public void Load_RejectsRemovedLegacySplitStep()
+        public void Load_RejectsLegacySchema()
         {
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
             string scenarioPath = WriteScenario(temp, model, sha256: VisualScenario.ComputeSha256(model),
-                split: "\"split\":{\"turnIndex\":0},");
+                schemaVersion: 1);
 
             VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
 
             Assert.Null(scenario);
-            Assert.Contains("split", error);
+            Assert.Contains("schemaVersion", error);
         }
 
         [Fact]
@@ -136,7 +137,7 @@ namespace HeatingMold.App.Tests
                 "\"name\":\"v2-test\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
                 "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1],\"marginMm\":5,\"spacingMm\":10,\"direction\":0," +
-                "\"exit\":{\"faceId\":3},\"anchor\":{\"index\":0},\"expect\":{\"pieces\":2}}]," +
+                "\"expect\":{\"pieces\":2}}]," +
                 "\"steps\":[" +
                 "{\"id\":\"1\",\"action\":\"selectFaces\",\"faces\":[1]}," +
                 "{\"id\":\"2\",\"action\":\"confirmArea\",\"area\":\"A\"}," +
@@ -159,12 +160,11 @@ namespace HeatingMold.App.Tests
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
             string json = "{" +
-                "\"schemaVersion\":1," +
+                "\"schemaVersion\":2," +
                 "\"name\":\"zero-solid\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":80,\"solidCount\":0}," +
-                "\"area\":{\"faceIds\":[1],\"marginMm\":5,\"spacingMm\":10,\"direction\":0}," +
-                "\"exit\":{\"faceId\":3}," +
-                "\"electrical\":{\"presetIndex\":0,\"voltageV\":220,\"reviewScope\":0}" +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1],\"marginMm\":5,\"spacingMm\":10,\"direction\":0}]," +
+                "\"steps\":[{\"id\":\"1\",\"action\":\"selectFaces\",\"faces\":[1]}]" +
                 "}";
             string scenarioPath = temp.WriteFile("scenario.json", json);
 
@@ -357,8 +357,8 @@ namespace HeatingMold.App.Tests
                 "\"name\":\"v2-test\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
                 "\"areas\":[" +
-                "{\"alias\":\"A\",\"faceIds\":[1],\"exit\":{\"faceId\":3}}," +
-                "{\"alias\":\"A\",\"faceIds\":[2],\"exit\":{\"faceId\":4}}]," +
+                "{\"alias\":\"A\",\"faceIds\":[1]}," +
+                "{\"alias\":\"A\",\"faceIds\":[2]}]," +
                 "\"steps\":[{\"id\":\"1\",\"action\":\"selectFaces\",\"faces\":[1]}]" +
                 "}";
             string scenarioPath = temp.WriteFile("scenario.json", json);
@@ -370,18 +370,15 @@ namespace HeatingMold.App.Tests
         }
 
         private static string WriteScenario(TempDirectory temp, string model, string sha256,
-            int schemaVersion = 1, string faceIds = "[1, 2]",
-            string electrical = "\"presetIndex\": 0, \"voltageV\": 220, \"reviewScope\": 0",
-            string split = "")
+            int schemaVersion = 2, string faceIds = "[1, 2]",
+            string electrical = "\"presetIndex\": 0, \"voltageV\": 220, \"reviewScope\": 0")
         {
             string json = "{" +
                 "\"schemaVersion\":" + schemaVersion + "," +
                 "\"name\":\"test\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + sha256 + "\",\"faceCount\":2,\"solidCount\":1}," +
-                "\"area\":{\"faceIds\":" + faceIds + ",\"marginMm\":5,\"spacingMm\":10,\"direction\":0}," +
-                "\"exit\":{\"faceId\":3}," +
-                split +
-                "\"electrical\":{" + electrical + "}" +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":" + faceIds + ",\"marginMm\":5,\"spacingMm\":10,\"direction\":0}]," +
+                "\"steps\":[{\"id\":\"1\",\"action\":\"checkElectrical\",\"electrical\":{" + electrical + "}}]" +
                 "}";
             return temp.WriteFile("scenario.json", json);
         }

@@ -11,7 +11,7 @@ namespace HeatingMold.App.Persistence
     public sealed class ProjectDocument
     {
         public string Format { get; set; } = "HeatingMold.Project";
-        public int SchemaVersion { get; set; } = 5;
+        public int SchemaVersion { get; set; } = 6;
         public string AppVersion { get; set; }
         public string CreatedUtc { get; set; }
         public string SavedUtc { get; set; }
@@ -86,28 +86,13 @@ namespace HeatingMold.App.Persistence
         public string MarginText { get; set; }
         public string SpacingText { get; set; }
 
-        /// <summary>
-        /// 스키마 4까지의 영역별 목표 발열전력 입력(W). 스키마 5부터는 저장하지 않는다.
-        /// 이전 파일을 읽을 때만 호환용으로 남기며, 불러오기 정규화가 값을 지운다.
-        /// </summary>
-        public string TargetPowerText { get; set; }
-
-        public int ExitFaceId { get; set; } = -1;
-        public long ExitFaceRevision { get; set; }
         public List<ProjectVec2> ExitChain { get; set; } = new();
         public List<ProjectVec3> ExitChain3D { get; set; } = new();
-        public List<int> ExitChainFaceIds { get; set; } = new();
         public ProjectVec2 StartAnchor { get; set; }
         public ProjectVec2 EndAnchor { get; set; }
         public List<ProjectExitEdgeReference> ExitEdgeRefs { get; set; } = new();
         public ProjectExitBoundaryPoint SelectedStartExit { get; set; }
         public ProjectExitBoundaryPoint SelectedEndExit { get; set; }
-        public ProjectAnchoredCandidate SelectedAnchorCandidate { get; set; }
-
-        /// <summary>런타임 경계 구현의 종류. 객체 자체는 저장하지 않고, 불러오기 때 재구성한다.</summary>
-        public string ExitBoundaryKind { get; set; }
-        public string RegionExitBoundaryKind { get; set; }
-        public string RegionCadBoundaryKind { get; set; }
 
         /// <summary>
         /// 분할로 생긴 새 절단선(작업평면 2D 전체 직선). 스키마 4부터 저장하며,
@@ -140,8 +125,6 @@ namespace HeatingMold.App.Persistence
         public int WirePresetIndex { get; set; }
         public string WireDiameterText { get; set; }
         public string WireResistanceText { get; set; }
-        /// <summary>계산용 인가전압. 스키마 2 이하의 공용 전압 값이며, 스키마 3에서는 허용 전압과 같은 값을 유지한다.</summary>
-        public string AppliedVoltageText { get; set; }
         /// <summary>
         /// 회로별 허용 전압 한도 [V]. 스키마 3부터 저장한다. 발열 전력 배분 방식에서는
         /// 이 값이 계산 입력이 아니라 판정 한도다.
@@ -228,24 +211,17 @@ namespace HeatingMold.App.Persistence
     public sealed class ProjectCommittedContextDocument
     {
         public int[] FaceIds { get; set; } = Array.Empty<int>();
-        public int ExitFaceId { get; set; } = -1;
         public List<ProjectVec2> ExitChain { get; set; } = new();
         public List<ProjectVec3> ExitChain3D { get; set; } = new();
-        public List<int> ExitChainFaceIds { get; set; } = new();
         public ProjectVec2 StartAnchor { get; set; }
         public ProjectVec2 EndAnchor { get; set; }
         public List<ProjectExitEdgeReference> ExitEdgeRefs { get; set; } = new();
         public ProjectExitBoundaryPoint SelectedStartExit { get; set; }
         public ProjectExitBoundaryPoint SelectedEndExit { get; set; }
-        public ProjectAnchoredCandidate SelectedAnchorCandidate { get; set; }
         public List<ProjectExitPoint> StartExits { get; set; } = new();
         public List<ProjectExitPoint> EndExits { get; set; } = new();
         public List<ProjectVec2> CircuitStarts { get; set; } = new();
         public List<ProjectVec2> CircuitEnds { get; set; } = new();
-        public string BoundaryKind { get; set; }
-        public string RegionBoundaryKind { get; set; }
-        /// <summary>확정 경로가 적용영역 선택 인출점 경계를 썼는지. 이전 파일에는 없을 수 있다.</summary>
-        public bool? RegionMode { get; set; }
     }
 
     public sealed class ProjectExitPoint
@@ -330,17 +306,6 @@ namespace HeatingMold.App.Persistence
         public bool Reversed { get; set; }
         public int StartIndex { get; set; }
         public int EndIndex { get; set; }
-    }
-
-    public sealed class ProjectAnchoredCandidate
-    {
-        public ProjectVec2 Start { get; set; }
-        public ProjectVec2 End { get; set; }
-        public double AngleDeg { get; set; }
-        public string CandidateId { get; set; }
-        public ProjectExitEdgeBinding StartBinding { get; set; }
-        public ProjectExitEdgeBinding EndBinding { get; set; }
-        public bool? StartLeftToRight { get; set; }
     }
 
     public sealed class ProjectVec2

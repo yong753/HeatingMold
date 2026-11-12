@@ -189,7 +189,6 @@ static class Program
             "boundary diagnostic canvas removed; axis selector removed because working direction is fixed to +Z");
         SidebarTabChecks.Run(window);
         AreaHighlightChecks.Run(window);
-        RunGroup("ExclusionExitChecks", () => ExclusionExitChecks.Run(window, args[0]));
         RunGroup("SelectedExitChecks", () => SelectedExitChecks.Run(window, args[0]));
         RunGroup("VertexEditChecks", () => VertexEditChecks.Run(window, args[0]));
         RunGroup("ElectricalRefreshChecks", () => ElectricalRefreshChecks.Run(window));
@@ -733,10 +732,12 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
                     "heatingmold_step_export_"+Guid.NewGuid().ToString("N")+".step");
                 try
                 {
-                    var straightWire=new StepExportCircuit("테스트 A 발열경로","테스트 A",255,0,0,
-                        new double[]{0,0,0, 15,0.4,0, 30,0.6,0, 45,0.4,0, 60,0,0});
-                    var turnedWire=new StepExportCircuit("테스트 B 발열경로","테스트 B",0,128,255,
-                        new double[]{0,0,10, 12,0.3,10.2, 24,0.5,10.6, 36,0.3,10.8, 48,0,11});
+                    var straightWire=new StepExportArea("테스트 A","테스트 A",255,0,0,
+                        new[]{new StepExportPiece("테스트 A 발열경로",
+                            new double[]{0,0,0, 15,0.4,0, 30,0.6,0, 45,0.4,0, 60,0,0})});
+                    var turnedWire=new StepExportArea("테스트 B","테스트 B",0,128,255,
+                        new[]{new StepExportPiece("테스트 B 발열경로",
+                            new double[]{0,0,10, 12,0.3,10.2, 24,0.5,10.6, 36,0.3,10.8, 48,0,11})});
                     bool exported=Bridge.ExportStepWithRoutes(stepPath,"Mold_Cover_Trim",0.30,
                         new[]{straightWire,turnedWire},out string stepFailure);
                     Check(exported,"STEP export writes model plus two wire parts ("+stepFailure+")");
@@ -830,11 +831,11 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
                         new[]{straightWire},out string diameterFailure);
                     Check(!rejectedDiameter&&diameterFailure=="invalid-diameter",
                         "STEP export rejects a non-positive wire diameter ("+diameterFailure+")");
-                    var degenerate=new StepExportCircuit("퇴화 경로","테스트 C",0,0,0,
-                        new double[]{1,2,3, 1,2,3});
+                    var degenerate=new StepExportArea("테스트 C","테스트 C",0,0,0,
+                        new[]{new StepExportPiece("퇴화 경로", new double[]{1,2,3, 1,2,3})});
                     bool rejectedWire=Bridge.ExportStepWithRoutes(stepPath,"Mold_Cover_Trim",0.30,
                         new[]{degenerate},out string wireFailure);
-                    Check(!rejectedWire&&wireFailure!=null&&wireFailure.StartsWith("wire-build:"),
+                    Check(!rejectedWire&&wireFailure!=null&&wireFailure.StartsWith("piece-build:"),
                         "STEP export rejects a degenerate wire path ("+wireFailure+")");
                 }
                 finally

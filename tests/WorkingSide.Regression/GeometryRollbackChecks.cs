@@ -71,7 +71,6 @@ static class GeometryRollbackChecks
         type.GetProperty("StartAnchor")!.SetValue(area, new Vec2(-8, 0));
         type.GetProperty("EndAnchor")!.SetValue(area, new Vec2(8, 0));
         type.GetProperty("LastExitFailure")!.SetValue(area, "old failure");
-        type.GetProperty("ExcludedPlanKey")!.SetValue(area, "key-1");
 
         object snapshot = InvokeStatic("CaptureAreaRouteState", area);
         var snapshotExclusions = (IList)snapshot.GetType().GetProperty("Exclusions")!.GetValue(snapshot)!;
@@ -83,7 +82,6 @@ static class GeometryRollbackChecks
         type.GetProperty("Pattern")!.SetValue(area, null);
         type.GetProperty("Paths")!.SetValue(area, new List<List<Vec2>>());
         type.GetProperty("RoutePieceLengths")!.SetValue(area, Array.Empty<double>());
-        type.GetProperty("ExcludedPlanKey")!.SetValue(area, "mutated");
         Check(snapshotExclusions.Count == 1, "snapshot exclusion copy is independent of later mutations");
 
         InvokeStatic("RestoreAreaRouteState", area, snapshot, false);
@@ -92,8 +90,6 @@ static class GeometryRollbackChecks
               ReferenceEquals(type.GetProperty("Paths")!.GetValue(area), paths) &&
               ReferenceEquals(type.GetProperty("RoutePieceLengths")!.GetValue(area), lengths),
             "restore reconnects pattern, paths and lengths by reference");
-        Check((string)type.GetProperty("ExcludedPlanKey")!.GetValue(area)! == "key-1",
-            "restore reconnects the excluded plan key");
 
         InvokeStatic("RestoreAreaRouteState", area, snapshot, true);
         Check(ReferenceEquals(type.GetProperty("Exclusions")!.GetValue(area), exclusions) && exclusions.Count == 1,
@@ -389,7 +385,7 @@ static class GeometryRollbackChecks
 
         string[] beforeCandidate = Bridge.GetFaceTopologySignatures();
         long beforeRevision = Bridge.GetModelRevision();
-        var candidate = Bridge.BeginProjectRestoreCandidate(path, 2);
+        var candidate = Bridge.BeginProjectRestoreCandidate(path);
         Check(candidate != null, "project restore candidate loads without touching the live model");
         if (candidate == null) return;
         Check(candidate.CandidateId > 0, "project restore candidate has an id");
@@ -412,7 +408,7 @@ static class GeometryRollbackChecks
         Check(Bridge.GetFaceTopologySignatures().SequenceEqual(beforeCandidate, StringComparer.Ordinal),
             "candidate commit preserves face signatures");
 
-        var discarded = Bridge.BeginProjectRestoreCandidate(path, 2);
+        var discarded = Bridge.BeginProjectRestoreCandidate(path);
         Check(discarded != null, "second project restore candidate loads");
         if (discarded != null)
         {

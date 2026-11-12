@@ -132,7 +132,8 @@ static class SidebarTabChecks
         Check(!viewport.ExclusionSketchMode && excludeBox.IsChecked != true,
             "leaving the area tab cancels sketch mode");
         Check(exclusions.Count == 1, "tab switch preserves exclusion data");
-        Check(window.FindName("AnchorCandidateList") is ListBox, "pattern tab exposes the anchor candidate list");
+        Check(window.FindName("PickStartExitButton") is Button && window.FindName("PickEndExitButton") is Button,
+            "pattern tab exposes direct exit point buttons");
 
         tabs.SelectedIndex = 1;
         viewport.VertexEditMode = true;

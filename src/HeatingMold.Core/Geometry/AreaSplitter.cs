@@ -52,9 +52,6 @@ public static class AreaSplitter
     /// <summary>예상 길이 균등도 목표 비율. 이보다 벌어지면 더 나은 절단을 찾는다.</summary>
     public const double LengthBalanceTolerance = 1.02;
 
-    /// <summary>실제 2D 길이 기준으로도 이 비율을 넘으면 균등 분할 실패로 본다.</summary>
-    public const double HardLengthBalanceLimit = 1.10;
-
     private const int BisectionSteps = 80;
     private const int RefinementSteps = 80;
     private const int ClipperPrecision = 2;
@@ -119,10 +116,10 @@ public static class AreaSplitter
                 return Success(bands, cuts, context.SplitAxisIsY);
             if (step > 0 && ratio >= lastRatio - 1e-9)
             {
-                // 더 이상 개선되지 않는다. 억지로 통과시키지 않고 현재 편차를 그대로 보고한다.
-                return double.IsFinite(ratio) && ratio <= HardLengthBalanceLimit
+                // 더 이상 개선되지 않는다. 남는 편차는 결과에 그대로 보고하고 확정한다.
+                return double.IsFinite(ratio)
                     ? Success(bands, cuts, context.SplitAxisIsY)
-                    : AreaSplitResult.Fail(DescribeImbalance(ratio));
+                    : AreaSplitResult.Fail("분할 영역의 예상 길이를 계산할 수 없습니다");
             }
             lastRatio = ratio;
 
@@ -154,8 +151,6 @@ public static class AreaSplitter
         double finalRatio = LengthRatio(finalBands);
         if (!double.IsFinite(finalRatio))
             return AreaSplitResult.Fail("분할 영역의 예상 길이를 계산할 수 없습니다");
-        if (finalRatio > HardLengthBalanceLimit)
-            return AreaSplitResult.Fail(DescribeImbalance(finalRatio));
         return Success(finalBands, cuts, context.SplitAxisIsY);
     }
 
@@ -307,11 +302,6 @@ public static class AreaSplitter
         if (!double.IsFinite(min) || min <= 0) return double.PositiveInfinity;
         return max / min;
     }
-
-    private static string DescribeImbalance(double ratio) =>
-        string.Format(CultureInfo.InvariantCulture,
-            "분할 영역의 예상 길이를 균등하게 만들 수 없습니다 - 편차 {0:F3}배 (목표 {1:F2}배, 허용 {2:F2}배). 형상/제외영역 때문에 같은 길이 영역으로 나눌 수 없습니다",
-            ratio, LengthBalanceTolerance, HardLengthBalanceLimit);
 
     /// <summary>외곽(CCW)과 홀(CW)을 구분한다. 외곽이 둘 이상이거나 홀이 있으면 실패다.</summary>
     private static bool TryClassifyRings(List<List<Vec2>> rings, out List<Vec2>? outer,

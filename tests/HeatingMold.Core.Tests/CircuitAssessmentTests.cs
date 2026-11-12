@@ -64,8 +64,8 @@ public class CircuitAssessmentTests
     public void DefaultLimits_ExactCurrentLimitAt220V_ExceedsPowerLimit()
     {
         // 220 V / 16 A = 3,520 W이므로 전류는 경계값이지만 기본 허용 전력 3,500 W를 넘는다.
-        ElectricalResult result = ElectricalCalculator.Compute(
-            13_750, new HeatingWireSpec { ResistanceOhmPerMeter = 1.0 }, new PowerSupplySpec { VoltageV = 220 });
+        ElectricalResult result = ElectricalCalculator.ComputeFromTargetPower(
+            13_750, new HeatingWireSpec { ResistanceOhmPerMeter = 1.0 }, 3_520.0);
 
         CircuitAssessment assessment = CircuitAssessment.Assess(
             result.CurrentA, result.VoltageV, result.PowerW, ElectricalLimits.Default);

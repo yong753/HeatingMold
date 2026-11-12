@@ -11,9 +11,9 @@ public class DxfExporterTests
     [Fact]
     public void ExportPlan_WritesSelectableSpecTable()
     {
-        var table = ElectricalSpecTableBuilder.Build(
-            new[] { new ElectricalCircuitInput("A-1", 20000) },
-            HeatingWireSpec.Case1, new PowerSupplySpec());
+        var table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            new[] { new TargetPowerCircuitInput("A-1", 20000, 605.0) },
+            HeatingWireSpec.Case1, null);
         var view = new DxfView();
         view.VisibleEdges.Add(new DxfPolyline
         {
@@ -45,9 +45,9 @@ public class DxfExporterTests
     [Fact]
     public void ExportPlan_WritesHeatRouteWithoutRenormalizingCoordinates()
     {
-        var table = ElectricalSpecTableBuilder.Build(
-            new[] { new ElectricalCircuitInput("A-1", 20000) },
-            HeatingWireSpec.Case1, new PowerSupplySpec());
+        var table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            new[] { new TargetPowerCircuitInput("A-1", 20000, 605.0) },
+            HeatingWireSpec.Case1, null);
         var view = new DxfView();
         view.VisibleEdges.Add(new DxfPolyline
         {
@@ -88,9 +88,9 @@ public class DxfExporterTests
     [Fact]
     public void ExportPlan_ScalesSpecTableWithMoldExtent()
     {
-        var table = ElectricalSpecTableBuilder.Build(
-            new[] { new ElectricalCircuitInput("A-1", 20000) },
-            HeatingWireSpec.Case1, new PowerSupplySpec());
+        var table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            new[] { new TargetPowerCircuitInput("A-1", 20000, 605.0) },
+            HeatingWireSpec.Case1, null);
         var view = new DxfView();
         view.VisibleEdges.Add(new DxfPolyline
         {
@@ -137,9 +137,9 @@ public class DxfExporterTests
     [Fact]
     public void ExportPlan_CapsSpecTableScaleForVeryLargeMold()
     {
-        var table = ElectricalSpecTableBuilder.Build(
-            new[] { new ElectricalCircuitInput("A-1", 20000) },
-            HeatingWireSpec.Case1, new PowerSupplySpec());
+        var table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            new[] { new TargetPowerCircuitInput("A-1", 20000, 605.0) },
+            HeatingWireSpec.Case1, null);
         var view = new DxfView();
         view.VisibleEdges.Add(new DxfPolyline
         {
@@ -173,9 +173,9 @@ public class DxfExporterTests
     [Fact]
     public void ExportPlan_KeepsMinimumSpecTableSizeForSmallMold()
     {
-        var table = ElectricalSpecTableBuilder.Build(
-            new[] { new ElectricalCircuitInput("A-1", 20000) },
-            HeatingWireSpec.Case1, new PowerSupplySpec());
+        var table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            new[] { new TargetPowerCircuitInput("A-1", 20000, 605.0) },
+            HeatingWireSpec.Case1, null);
         var view = new DxfView();
         view.VisibleEdges.Add(new DxfPolyline
         {
@@ -311,9 +311,9 @@ public class DxfExporterTests
     [Fact]
     public void ExportPlan_WritesEachHeatAreaWithItsOwnColor()
     {
-        var table = ElectricalSpecTableBuilder.Build(
-            new[] { new ElectricalCircuitInput("A-1", 20000) },
-            HeatingWireSpec.Case1, new PowerSupplySpec());
+        var table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            new[] { new TargetPowerCircuitInput("A-1", 20000, 605.0) },
+            HeatingWireSpec.Case1, null);
         var view = new DxfView();
         view.VisibleEdges.Add(new DxfPolyline
         {
@@ -526,9 +526,9 @@ public class DxfExporterTests
     [Fact]
     public void ExportPlan_KeepsDimensionsAndTableIndependentOfLabels()
     {
-        var table = ElectricalSpecTableBuilder.Build(
-            new[] { new ElectricalCircuitInput("A-1", 20000) },
-            HeatingWireSpec.Case1, new PowerSupplySpec());
+        var table = ElectricalSpecTableBuilder.BuildFromTargetPower(
+            new[] { new TargetPowerCircuitInput("A-1", 20000, 605.0) },
+            HeatingWireSpec.Case1, null);
         var view = new DxfView();
         view.VisibleEdges.Add(new DxfPolyline
         {

@@ -386,13 +386,6 @@ namespace
         g_autoAxes[2] = gp::DZ();
     }
 
-    bool GetAutoAxisNative(int axis, double* out)
-    {
-        if (axis < 0 || axis > 2 || out == nullptr) return false;
-        out[0] = g_autoAxes[axis].X(); out[1] = g_autoAxes[axis].Y(); out[2] = g_autoAxes[axis].Z();
-        return true;
-    }
-
     // ---- AIS 뷰어 상태 (S1 항목 1·6) — 프로세스 전역, UI 스레드 전용 ----
     Handle(Aspect_DisplayConnection) g_disp;
     Handle(OpenGl_GraphicDriver) g_driver;
@@ -405,9 +398,6 @@ namespace
     // 확정된 작업영역 Face → 영역별 색상. 여러 영역을 동시에 유지한다.
     std::map<int, Quantity_Color> g_confirmedFaceColors;
     std::vector<Handle(AIS_Shape)> g_worldOverlays;
-    std::map<int, Handle(AIS_Shape)> g_powerLeads;
-    Handle(AIS_Shape) g_powerLeadPreview;
-    Handle(AIS_Point) g_powerDestinationPreview;
     struct RoutePieceOverlay {
         Handle(AIS_Shape) ais; bool connector; bool enabled; Quantity_Color color; double width;
         long long contextId = 0, revision = 0;
@@ -452,13 +442,10 @@ namespace
     const Quantity_Color kExitCandidateHoverColor(0.10, 0.90, 1.00, Quantity_TOC_RGB);
     const Standard_Real kExitCandidateWidth = 2.0;
     const Standard_Real kExitCandidateHoverWidth = 4.0;
-    int g_exitCandidateHighlighted = -1;
-    // 인출면 선택 모드에서 커서 아래 후보 면이 받는 호버 색 override (-1 = 없음).
+        // 인출면 선택 모드에서 커서 아래 후보 면이 받는 호버 색 override (-1 = 없음).
     // g_hoverColorFace와 분리해 W5 호버/선택 색과 서로 덮어쓰지 않게 한다.
     int g_exitFaceHover = -1;
     // 활성 작업영역의 인출면 지속 강조 (-1 = 없음). 영역 전환 시 교체된다.
-    int g_exitFaceHighlightFace = -1;
-    Quantity_Color g_exitFaceHighlightColor(1.00, 0.75, 0.75, Quantity_TOC_RGB);
     // 활성 작업영역에서 선택된 인출 경계 edge의 지속 강조 (폴리라인).
     Handle(AIS_Shape) g_exitEdgeHighlight;
     Handle(AIS_RubberBand) g_selectionRubberBand;
@@ -695,23 +682,12 @@ namespace
         return it == g_confirmedFaceColors.end() ? nullptr : &it->second;
     }
 
-    /// <summary>현재 활성 영역에서 지속 강조 중인 인출면인가.</summary>
-    bool IsExitFaceHighlightNative(int faceId)
-    {
-        return faceId >= 0 && faceId == g_exitFaceHighlightFace;
-    }
-
-    /// <summary>선택 소유를 제외한 나머지 소유자(확정 → 인출면 강조 → 없음) 순으로 색을 되돌린다.</summary>
+    /// <summary>선택 소유를 제외한 나머지 소유자(확정 → 없음) 순으로 색을 되돌린다.</summary>
     void ApplyRemainingFaceColorNative(int faceId)
     {
         if (const Quantity_Color* confirmed = ConfirmedFaceColor(faceId))
         {
             SetFaceColorOverride(faceId, *confirmed, kAreaFillTransparency, true);
-            return;
-        }
-        if (IsExitFaceHighlightNative(faceId))
-        {
-            SetFaceColorOverride(faceId, g_exitFaceHighlightColor);
             return;
         }
         ClearFaceColorOverride(faceId);
@@ -771,7 +747,6 @@ namespace
             if (colors.count(previous.first) == 0)
             {
                 if (g_selectedFaceIds.count(previous.first) != 0) SetFaceColorOverride(previous.first, kSelectedFaceColor);
-                else if (IsExitFaceHighlightNative(previous.first)) SetFaceColorOverride(previous.first, g_exitFaceHighlightColor);
                 else ClearFaceColorOverride(previous.first);
             }
         for (const auto& entry : colors)
@@ -785,46 +760,6 @@ namespace
     void ClearConfirmedFaceHighlightsNative()
     {
         SetConfirmedFaceHighlightColorsNative(std::map<int, Quantity_Color>());
-    }
-
-    /// <summary>활성 영역 인출면 하나를 영역 톤 색으로 지속 강조한다. 이전 인출면 강조는 교체된다.</summary>
-    void SetExitFaceHighlightNative(int faceId, const Quantity_Color& color)
-    {
-        if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
-        if (faceId >= static_cast<int>(g_faces.size())) faceId = -1;
-        const int previous = g_exitFaceHighlightFace;
-        if (previous == faceId)
-        {
-            g_exitFaceHighlightColor = color;
-            if (faceId >= 0 && g_selectedFaceIds.count(faceId) == 0 &&
-                g_confirmedFaceColors.count(faceId) == 0 &&
-                g_hoverColorFace != faceId && g_exitFaceHover != faceId)
-                SetFaceColorOverride(faceId, color);
-            g_ctx->Redisplay(g_aisShape, Standard_False);
-            if (!g_view.IsNull()) g_view->Redraw();
-            return;
-        }
-        g_exitFaceHighlightFace = -1;
-        if (previous >= 0) RestoreFaceColorNative(previous);
-        g_exitFaceHighlightFace = faceId;
-        g_exitFaceHighlightColor = color;
-        if (faceId >= 0 && g_selectedFaceIds.count(faceId) == 0 &&
-            g_confirmedFaceColors.count(faceId) == 0 &&
-            g_hoverColorFace != faceId && g_exitFaceHover != faceId)
-            SetFaceColorOverride(faceId, color);
-        g_ctx->Redisplay(g_aisShape, Standard_False);
-        if (!g_view.IsNull()) g_view->Redraw();
-    }
-
-    void ClearExitFaceHighlightNative()
-    {
-        const int faceId = g_exitFaceHighlightFace;
-        g_exitFaceHighlightFace = -1;
-        if (faceId < 0) return;
-        RestoreFaceColorNative(faceId);
-        if (g_ctx.IsNull() || g_aisShape.IsNull()) return;
-        g_ctx->Redisplay(g_aisShape, Standard_False);
-        if (!g_view.IsNull()) g_view->Redraw();
     }
 
     /// <summary>활성 영역에서 선택된 인출 경계 edge 강조를 제거한다.</summary>
@@ -883,10 +818,6 @@ namespace
             g_confirmedFaceColors.count(g_exitFaceHover) == 0)
             colored->UnsetCustomAspects(g_faces[g_exitFaceHover], Standard_True);
         g_exitFaceHover = -1;
-        if (g_exitFaceHighlightFace >= 0 && g_exitFaceHighlightFace < static_cast<int>(g_faces.size()) &&
-            g_confirmedFaceColors.count(g_exitFaceHighlightFace) == 0)
-            colored->UnsetCustomAspects(g_faces[g_exitFaceHighlightFace], Standard_True);
-        g_exitFaceHighlightFace = -1;
         g_selectedFaceIds.clear();
         g_confirmedFaceColors.clear();
         g_faceHighlightsVisible = false;
@@ -958,7 +889,6 @@ namespace
         g_lastHoverFace = -1;
         g_hoverColorFace = -1;
         g_exitFaceHover = -1;
-        g_exitFaceHighlightFace = -1;
     }
 
     bool LoadStepFile(const char* path)
@@ -2434,7 +2364,6 @@ namespace
             for (const auto& overlay : g_exitCandidateOverlays)
                 if (!overlay.IsNull()) g_ctx->Remove(overlay, Standard_False);
         g_exitCandidateOverlays.clear();
-        g_exitCandidateHighlighted = -1;
         DropExitFaceHoverNative();
         if (!g_view.IsNull()) g_view->Redraw();
     }
@@ -2474,77 +2403,9 @@ namespace
                 g_ctx->Deactivate(overlay, Standard_False);
                 g_exitCandidateOverlays.push_back(overlay);
             }
-            g_exitCandidateHighlighted = -1;
             g_view->Redraw();
         }
         catch (const Standard_Failure&) { }
-    }
-
-    /// <summary>호버한 후보만 강조하고 나머지는 기본 표시로 되돌린다.</summary>
-    void HighlightExitCandidateNative(int index)
-    {
-        if (g_ctx.IsNull() || g_view.IsNull()) return;
-        if (index < 0 || index >= static_cast<int>(g_exitCandidateOverlays.size())) index = -1;
-        if (index == g_exitCandidateHighlighted) return;
-        g_exitCandidateHighlighted = index;
-        for (size_t i = 0; i < g_exitCandidateOverlays.size(); ++i)
-        {
-            if (g_exitCandidateOverlays[i].IsNull()) continue;
-            const bool hovered = static_cast<int>(i) == index;
-            g_ctx->SetColor(g_exitCandidateOverlays[i],
-                            hovered ? kExitCandidateHoverColor : kExitCandidateColor, Standard_False);
-            g_ctx->SetWidth(g_exitCandidateOverlays[i],
-                            hovered ? kExitCandidateHoverWidth : kExitCandidateWidth, Standard_False);
-        }
-        g_view->Redraw();
-    }
-
-    double ScreenDistanceToSegment(double px, double py, double ax, double ay, double bx, double by)
-    {
-        const double dx = bx - ax, dy = by - ay;
-        const double lengthSquared = dx * dx + dy * dy;
-        double t = 0.0;
-        if (lengthSquared > 1e-12) t = ((px - ax) * dx + (py - ay) * dy) / lengthSquared;
-        t = std::max(0.0, std::min(1.0, t));
-        const double qx = ax + t * dx - px, qy = ay + t * dy - py;
-        return std::sqrt(qx * qx + qy * qy);
-    }
-
-    int PickExitCandidateNative(const std::vector<std::vector<double>>& polylines, int x, int y,
-                                double pixelTolerance)
-    {
-        if (g_view.IsNull() || polylines.empty()) return -1;
-        if (!std::isfinite(pixelTolerance) || pixelTolerance <= 0.0) pixelTolerance = 12.0;
-        int bestIndex = -1;
-        double bestDistance = pixelTolerance;
-        try
-        {
-            for (size_t i = 0; i < polylines.size(); ++i)
-            {
-                const std::vector<double>& pts = polylines[i];
-                if (pts.size() < 6) continue;
-                std::vector<std::pair<double, double>> screen;
-                screen.reserve(pts.size() / 3);
-                bool valid = true;
-                for (size_t k = 0; k + 2 < pts.size(); k += 3)
-                {
-                    if (!std::isfinite(pts[k]) || !std::isfinite(pts[k + 1]) || !std::isfinite(pts[k + 2]))
-                    { valid = false; break; }
-                    Standard_Integer sx = 0, sy = 0;
-                    g_view->Convert(pts[k], pts[k + 1], pts[k + 2], sx, sy);
-                    screen.emplace_back(static_cast<double>(sx), static_cast<double>(sy));
-                }
-                if (!valid || screen.size() < 2) continue;
-                for (size_t k = 1; k < screen.size(); ++k)
-                {
-                    const double d = ScreenDistanceToSegment(x, y, screen[k - 1].first, screen[k - 1].second,
-                                                             screen[k].first, screen[k].second);
-                    if (d < bestDistance) { bestDistance = d; bestIndex = static_cast<int>(i); }
-                }
-            }
-        }
-        catch (const Standard_Failure&) { return -1; }
-        return bestIndex;
     }
 
     bool SamplePoint(int faceIndex, double u, double v, double* out)
@@ -2837,216 +2698,6 @@ namespace
         g_stagedWorkingRouteOwners.clear();
     }
 
-    void ClearPowerLeadPreviewNative()
-    {
-        if (!g_ctx.IsNull()) {
-            if (!g_powerLeadPreview.IsNull()) g_ctx->Remove(g_powerLeadPreview, Standard_False);
-            if (!g_powerDestinationPreview.IsNull()) g_ctx->Remove(g_powerDestinationPreview, Standard_False);
-        }
-        g_powerLeadPreview.Nullify();
-        g_powerDestinationPreview.Nullify();
-    }
-
-    void ClearPowerLeadsNative()
-    {
-        ClearPowerLeadPreviewNative();
-        if (!g_ctx.IsNull()) for (const auto& lead : g_powerLeads) g_ctx->Remove(lead.second, Standard_False);
-        g_powerLeads.clear();
-    }
-
-    // Validate the complete external segment, not just its destination. Projecting
-    // onto the WHOLE mold catches even elevated/unselected faces and concave re-entry.
-    bool ExternalLeadIsClear(const gp_Pnt& from, const gp_Pnt& to, const gp_Dir& direction)
-    {
-        const double tolerance = 1e-7;
-        const gp_Vec axis(direction);
-        gp_Vec along(from, to); along -= axis * along.Dot(axis);
-        const double span = along.Magnitude();
-        if (span <= tolerance) return false;
-        along /= span;
-        BRepBuilderAPI_MakePolygon source; source.Add(from); source.Add(to);
-        if (!source.IsDone()) return false;
-        // Keep faces independent: a tolerant imported neighbor must not merge
-        // away a narrow obstruction in a whole-shape projection operation.
-        for (const TopoDS_Face& face : g_faces) {
-            BRepProj_Projection footprint(source.Wire(), face, direction);
-            for (footprint.Init(); footprint.More(); footprint.Next()) {
-                for (TopExp_Explorer ex(footprint.Current(), TopAbs_EDGE); ex.More(); ex.Next()) {
-                    BRepAdaptor_Curve curve(TopoDS::Edge(ex.Current()));
-                    GCPnts_QuasiUniformDeflection sample(curve, 0.01);
-                    if (!sample.IsDone() || sample.NbPoints() < 2 || sample.NbPoints() > 100000) return false;
-                    for (int k = 1; k <= sample.NbPoints(); ++k) {
-                        const double t = gp_Vec(from, sample.Value(k)).Dot(along);
-                        // Only the exit point itself may touch the mold footprint.
-                        if (!std::isfinite(t) || t > tolerance) return false;
-                    }
-                }
-            }
-        }
-        // Also reject direct material intersections (including axis-parallel faces).
-        const gp_Vec segment(from, to);
-        IntCurvesFace_ShapeIntersector material;
-        material.Load(g_shape, tolerance);
-        material.Perform(gp_Lin(from, gp_Dir(segment)), tolerance, segment.Magnitude());
-        return material.IsDone() && material.NbPnt() == 0;
-    }
-
-    bool IsSelectedBoundaryPoint(const gp_Pnt& point, const std::vector<int>& faces, double& tolerance)
-    {
-        // Use model-space trim-edge distance, not a fixed UV classifier epsilon
-        // (UV units need not be mm). Imported edge/vertex tolerances may exceed
-        // the face tolerance; never exceed the route's 0.01 mm sewing budget.
-        const TopoDS_Vertex query = BRepBuilderAPI_MakeVertex(point).Vertex();
-        bool matched = false;
-        for (int id : faces) {
-            const TopoDS_Face& face = g_faces[id];
-            for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
-                const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
-                double cadTolerance = std::max(Precision::Confusion(),
-                    std::max(BRep_Tool::Tolerance(face), BRep_Tool::Tolerance(edge)));
-                for (TopExp_Explorer vertex(edge, TopAbs_VERTEX); vertex.More(); vertex.Next())
-                    cadTolerance = std::max(cadTolerance, BRep_Tool::Tolerance(TopoDS::Vertex(vertex.Current())));
-                const double acceptedTolerance = std::min(0.01, cadTolerance);
-                BRepExtrema_DistShapeShape distance(query, edge);
-                if (distance.IsDone() && distance.Value() <= acceptedTolerance) {
-                    tolerance = std::max(tolerance, acceptedTolerance);
-                    matched = true;
-                }
-            }
-        }
-        return matched;
-    }
-
-    // No sampled/floating fallback: retain the exact OCCT surface edges and add only
-    // the explicit external segment after the trimmed heating-face boundary.
-    void ProjectPowerLeadNative(int id, const std::vector<double>& xyz, const std::vector<double>& actual,
-        const std::vector<int>& faces, const gp_Dir& direction, double depth, double* result, bool previewOnly)
-    {
-        result[0] = -1;
-        if (g_shape.IsNull() || xyz.size() != 6 || actual.size() != 3 || faces.empty() ||
-            !std::isfinite(depth) || depth < 0) return;
-        for (double v : xyz) if (!std::isfinite(v)) return;
-        for (double v : actual) if (!std::isfinite(v)) return;
-        const gp_Pnt start(xyz[0], xyz[1], xyz[2]), destination(xyz[3], xyz[4], xyz[5]);
-        const gp_Pnt expected(actual[0], actual[1], actual[2]);
-        const gp_Vec axis(direction), offset = axis * depth;
-        gp_Vec along(start, destination); along -= axis * along.Dot(axis);
-        const double span = along.Magnitude();
-        if (span < 0.01) return;
-        along /= span;
-        BRepBuilderAPI_Sewing sewing(0.01, Standard_True, Standard_True, Standard_True, Standard_True);
-        std::set<int> unique;
-        for (int face : faces) {
-            if (face < 0 || face >= static_cast<int>(g_faces.size())) return;
-            if (unique.insert(face).second) sewing.Add(g_faces[face]);
-        }
-        sewing.Perform();
-        if (sewing.SewedShape().IsNull()) return;
-        const gp_Pnt end = destination.Translated(offset);
-        gp_Pnt b = expected;
-        TopoDS_Wire surfaceWire;
-        // A verified boundary endpoint directed immediately outside needs no
-        // projected edge. Inward directions fail this clearance test and still
-        // take the normal surface-projection path below.
-        const gp_Vec startDelta(start, expected);
-        double boundaryTolerance = Precision::Confusion();
-        const bool outwardBoundary = IsSelectedBoundaryPoint(expected.Translated(-offset), faces, boundaryTolerance) &&
-            (startDelta - axis * startDelta.Dot(axis)).Magnitude() <= boundaryTolerance &&
-            ExternalLeadIsClear(expected, end, direction);
-        if (!outwardBoundary) {
-            // Plane destinations must remain outside the entire mold. Boundary
-            // destinations are handled as surface endpoints, not axis-line hits.
-            IntCurvesFace_ShapeIntersector outside;
-            outside.Load(g_shape, 1e-7);
-            outside.Perform(gp_Lin(destination, direction), -1e100, 1e100);
-            result[0] = -2;
-            if (!outside.IsDone() || outside.NbPnt() != 0) return;
-            BRepBuilderAPI_MakePolygon source; source.Add(start); source.Add(destination);
-            if (!source.IsDone()) return;
-            BRepProj_Projection projection(source.Wire(), sewing.SewedShape(), direction);
-            std::vector<TopoDS_Wire> wires;
-            for (projection.Init(); projection.More(); projection.Next()) wires.push_back(projection.Current());
-            result[0] = -3;
-            // Multiple wires indicate a gap, re-entry or multiple surface layers.
-            if (wires.size() != 1 || !BRepCheck_Analyzer(wires[0]).IsValid()) return;
-            TopoDS_Vertex first, last;
-            size_t ordered = 0, edges = 0;
-            gp_Pnt previous;
-            for (BRepTools_WireExplorer ex(wires[0]); ex.More(); ex.Next()) {
-                TopoDS_Vertex a, b; TopExp::Vertices(ex.Current(), a, b, Standard_True);
-                if (a.IsNull() || b.IsNull()) return;
-                if (ordered && previous.Distance(BRep_Tool::Pnt(a)) > 0.01) return;
-                if (!ordered) first = a;
-                last = b; previous = BRep_Tool::Pnt(b); ++ordered;
-            }
-            for (TopExp_Explorer ex(wires[0], TopAbs_EDGE); ex.More(); ex.Next()) ++edges;
-            if (!ordered || ordered != edges) return;
-            gp_Pnt a = BRep_Tool::Pnt(first).Translated(offset); b = BRep_Tool::Pnt(last).Translated(offset);
-            if (b.Distance(expected) < a.Distance(expected)) { std::swap(a, b); wires[0].Reverse(); }
-            result[0] = -4;
-            if (a.Distance(expected) > 0.01) return;
-            const double exitParameter = gp_Vec(start, b).Dot(along);
-            if (exitParameter <= 1e-7 || exitParameter >= span - 1e-7) return;
-            // Check every curve sample stays on the projected source segment. This
-            // also rejects reversed/branching excursions instead of bridging them.
-            double previousParameter = -0.01;
-            for (BRepTools_WireExplorer ex(wires[0]); ex.More(); ex.Next()) {
-                BRepAdaptor_Curve curve(ex.Current());
-                GCPnts_QuasiUniformDeflection sample(curve, 0.01);
-                if (!sample.IsDone() || sample.NbPoints() > 100000) return;
-                for (int k = 1; k <= sample.NbPoints(); ++k) {
-                    gp_Pnt p = sample.Value(ex.Current().Orientation() == TopAbs_REVERSED ? sample.NbPoints()-k+1 : k);
-                    gp_Vec v(start, p); const double t = v.Dot(along);
-                    const gp_Vec residual = v - along*t - axis*v.Dot(axis);
-                    if (residual.Magnitude() > 0.01 || t < previousParameter-0.01 || t > span+0.01) return;
-                    previousParameter = t;
-                }
-            }
-            gp_Trsf tr; tr.SetTranslation(offset);
-            BRepBuilderAPI_Transform shifted(wires[0], tr, Standard_True);
-            if (!shifted.IsDone()) return;
-            surfaceWire = TopoDS::Wire(shifted.Shape());
-        }
-        result[0] = -5;
-        if (!ExternalLeadIsClear(b, end, direction)) return;
-        BRepBuilderAPI_MakeEdge external(b, end);
-        if (!external.IsDone()) return;
-        BRepBuilderAPI_MakeWire joined;
-        if (!surfaceWire.IsNull()) joined.Add(surfaceWire);
-        joined.Add(external.Edge());
-        if (!joined.IsDone() || !BRepCheck_Analyzer(joined.Wire()).IsValid()) return;
-        GProp_GProps surfaceProps, props;
-        if (!surfaceWire.IsNull()) BRepGProp::LinearProperties(surfaceWire, surfaceProps);
-        BRepGProp::LinearProperties(joined.Wire(), props);
-        if (!std::isfinite(props.Mass()) || props.Mass() <= 0) return;
-        if (!g_ctx.IsNull()) {
-            Handle(AIS_Shape) overlay = new AIS_Shape(joined.Wire());
-            // Own transient objects before any context operation can throw.
-            if (previewOnly) g_powerLeadPreview = overlay;
-            g_ctx->SetColor(overlay, previewOnly ? Quantity_Color(0.1, 0.9, 1.0, Quantity_TOC_RGB) :
-                Quantity_Color(1.0, 0.65, 0.05, Quantity_TOC_RGB), Standard_False);
-            if (previewOnly) {
-                overlay->SetWidth(3.0);
-                overlay->Attributes()->LineAspect()->SetTypeOfLine(Aspect_TOL_DASH);
-            }
-            g_ctx->Display(overlay, Standard_False);
-            g_ctx->SetZLayer(overlay, Graphic3d_ZLayerId_Topmost); g_ctx->Deactivate(overlay, Standard_False);
-            if (previewOnly) {
-                g_powerDestinationPreview = new AIS_Point(new Geom_CartesianPoint(end));
-                g_powerDestinationPreview->SetMarker(Aspect_TOM_O_POINT);
-                g_ctx->SetColor(g_powerDestinationPreview, Quantity_Color(0.1, 0.9, 1.0, Quantity_TOC_RGB), Standard_False);
-                g_ctx->Display(g_powerDestinationPreview, Standard_False);
-                g_ctx->SetZLayer(g_powerDestinationPreview, Graphic3d_ZLayerId_Topmost);
-                g_ctx->Deactivate(g_powerDestinationPreview, Standard_False);
-            } else {
-                auto old = g_powerLeads.find(id);
-                if (old != g_powerLeads.end()) g_ctx->Remove(old->second, Standard_False);
-                g_powerLeads[id] = overlay;
-            }
-        }
-        result[0] = 1; result[1] = props.Mass(); result[2] = surfaceProps.Mass(); result[3] = b.Distance(end);
-    }
-
     void HighlightCircuitNative(const std::vector<int>& ids)
     {
         if (g_ctx.IsNull()) return;
@@ -3108,7 +2759,6 @@ namespace
 
     void ClearOverlayNative()
     {
-        ClearPowerLeadsNative();
         ClearRoutePiecesNative();
         ClearVertexHandlesNative();
         ClearRoutePreviewNative();
@@ -3420,8 +3070,7 @@ namespace
         DropExitFaceHoverNative();
         g_exitFaceHover = faceId;
         if (faceId >= 0 && g_selectedFaceIds.count(faceId) == 0 &&
-            g_confirmedFaceColors.count(faceId) == 0 &&
-            !IsExitFaceHighlightNative(faceId))
+            g_confirmedFaceColors.count(faceId) == 0)
             SetFaceColorOverride(faceId, HoverFaceColorNative());
         g_ctx->Redisplay(g_aisShape, Standard_False);
         g_view->Redraw();
@@ -3479,17 +3128,13 @@ namespace
         int faceId = -1;
         const PickStatusNative status = PickFaceAtPixelNative(x, y, faceId);
         int idx = (status == PickStatusNative::Ok) ? faceId : -1;
-        // 지속 강조 중인 인출면은 소유 색을 유지하도록 호버 대상에서 뺀다.
-        // 클리핑 메시가 있는 Face도 같은 Face를 다시 선택할 수 있어야 하므로 호버를 막지 않는다.
-        if (idx >= 0 && IsExitFaceHighlightNative(idx)) idx = -1;
         if (idx == g_lastHoverFace) return idx;
         const int previous = g_lastHoverFace;
         g_lastHoverFace = idx;
         if (previous == g_hoverColorFace) g_hoverColorFace = -1;
-        // Selected/confirmed/exit-highlight owners keep their own colour (SetToHilightSelected(false) semantics).
+        // Selected/confirmed owners keep their own colour (SetToHilightSelected(false) semantics).
         if (previous >= 0) RestoreFaceColorNative(previous);
-        if (idx >= 0 && g_selectedFaceIds.count(idx) == 0 && g_confirmedFaceColors.count(idx) == 0 &&
-            !IsExitFaceHighlightNative(idx))
+        if (idx >= 0 && g_selectedFaceIds.count(idx) == 0 && g_confirmedFaceColors.count(idx) == 0)
         {
             SetFaceColorOverride(idx, HoverFaceColorNative());
             g_hoverColorFace = idx;
@@ -3669,100 +3314,6 @@ namespace
         const gp_Pnt hit = rayOrigin.Translated(ray * t);
         out[0] = hit.X(); out[1] = hit.Y(); out[2] = hit.Z();
         return true;
-    }
-
-    bool PickSelectedBoundaryPointNative(const std::vector<int>& faces, int x, int y, double* out)
-    {
-        if (g_view.IsNull() || g_shape.IsNull() || faces.empty() || out == nullptr) return false;
-        try {
-            std::set<int> unique;
-            BRepBuilderAPI_Sewing sewing(0.01, Standard_True, Standard_True, Standard_True, Standard_True);
-            for (int id : faces) {
-                if (id < 0 || id >= static_cast<int>(g_faces.size())) return false;
-                if (unique.insert(id).second) sewing.Add(g_faces[id]);
-            }
-            sewing.Perform();
-            const TopoDS_Shape united = sewing.SewedShape();
-            if (united.IsNull()) return false;
-
-            // Classify the boundary on the sewn working faces, not source faces:
-            // separately represented coincident seams otherwise appear twice.
-            TopTools_IndexedMapOfShape edgeMap;
-            std::vector<int> uses;
-            for (TopExp_Explorer fx(united, TopAbs_FACE); fx.More(); fx.Next())
-                for (TopExp_Explorer ex(fx.Current(), TopAbs_EDGE); ex.More(); ex.Next()) {
-                    const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
-                    int index = edgeMap.FindIndex(edge);
-                    if (!index) { edgeMap.Add(edge); uses.push_back(0); index = edgeMap.Extent(); }
-                    ++uses[index - 1];
-                }
-            std::vector<TopoDS_Edge> edges;
-            for (int i = 1; i <= edgeMap.Extent(); ++i) {
-                if (uses[i - 1] > 2) return false;
-                if (uses[i - 1] == 1) edges.push_back(TopoDS::Edge(edgeMap(i)));
-            }
-            if (edges.empty()) return false;
-
-            double best2 = 100.0; // practical 10 px aperture
-            gp_Pnt bestPoint;
-            for (const TopoDS_Edge& edge : edges) {
-                BRepAdaptor_Curve curve(edge);
-                GCPnts_QuasiUniformDeflection samples(curve, 0.05);
-                if (!samples.IsDone() || samples.NbPoints() < 2 || samples.NbPoints() > 20000) continue;
-                for (int i = 1; i < samples.NbPoints(); ++i) {
-                    gp_Pnt a = samples.Value(i), b = samples.Value(i + 1);
-                    Standard_Integer ax, ay, bx, by;
-                    g_view->Convert(a.X(), a.Y(), a.Z(), ax, ay);
-                    g_view->Convert(b.X(), b.Y(), b.Z(), bx, by);
-                    const double dx = static_cast<double>(bx - ax), dy = static_cast<double>(by - ay);
-                    const double len2 = dx * dx + dy * dy;
-                    const double rawT = len2 > 1e-12 ? ((x-ax)*dx + (y-ay)*dy)/len2 : 0.0;
-                    const double t = std::max(0.0, std::min(1.0, rawT));
-                    const double px = ax + t*dx, py = ay + t*dy;
-                    const double d2 = (x-px)*(x-px) + (y-py)*(y-py);
-                    if (d2 >= best2) continue;
-                    best2 = d2;
-                    // Interpolation is only a screen-space coarse estimate; refine
-                    // on the actual OCCT curve with a 1-D bounded minimization.
-                    const double u0 = samples.Parameter(i), u1 = samples.Parameter(i + 1);
-                    double lo = std::min(u0, u1), hi = std::max(u0, u1);
-                    for (int k = 0; k < 24; ++k) {
-                        const double m1 = lo + (hi-lo)/3.0, m2 = hi - (hi-lo)/3.0;
-                        gp_Pnt p1, p2; curve.D0(m1, p1); curve.D0(m2, p2);
-                        Standard_Integer sx1, sy1, sx2, sy2;
-                        g_view->Convert(p1.X(), p1.Y(), p1.Z(), sx1, sy1);
-                        g_view->Convert(p2.X(), p2.Y(), p2.Z(), sx2, sy2);
-                        const double d1=(x-sx1)*(x-sx1)+(y-sy1)*(y-sy1), d2=(x-sx2)*(x-sx2)+(y-sy2)*(y-sy2);
-                        if (d1 < d2) hi=m2; else lo=m1;
-                    }
-                    curve.D0((lo+hi)*0.5, bestPoint);
-                }
-            }
-            if (best2 >= 100.0) return false;
-
-            // Test visibility at the candidate itself, not at the cursor: the
-            // 10px aperture intentionally permits the cursor to miss the edge.
-            Standard_Integer candidateX, candidateY;
-            g_view->Convert(bestPoint.X(), bestPoint.Y(), bestPoint.Z(), candidateX, candidateY);
-            Standard_Real rx, ry, rz, vx, vy, vz;
-            g_view->ConvertWithProj(candidateX, candidateY, rx, ry, rz, vx, vy, vz);
-            gp_Vec direction(vx, vy, vz);
-            if (direction.SquareMagnitude() < 1e-18) return false;
-            direction.Normalize();
-            IntCurvesFace_ShapeIntersector visibility;
-            visibility.Load(g_shape, 1e-7);
-            visibility.Perform(gp_Lin(gp_Pnt(rx, ry, rz), gp_Dir(direction)), 0.0, 1e100);
-            if (!visibility.IsDone() || visibility.NbPnt() == 0) return false;
-            const gp_Pnt front = visibility.Pnt(1);
-            Standard_Integer frontX, frontY;
-            g_view->Convert(front.X(), front.Y(), front.Z(), frontX, frontY);
-            if (front.Distance(bestPoint) > 0.05 &&
-                (frontX-candidateX)*(frontX-candidateX)+(frontY-candidateY)*(frontY-candidateY) > 1) return false;
-            out[0] = bestPoint.X(); out[1] = bestPoint.Y(); out[2] = bestPoint.Z();
-            out[3] = front.Distance(gp_Pnt(rx, ry, rz));
-            return true;
-        }
-        catch (const Standard_Failure&) { return false; }
     }
 
     // ================= HLR 기하 (M4 DXF 뷰) =================
@@ -4034,41 +3585,6 @@ array<CommittedRouteChain^>^ Bridge::GetCommittedRouteChainsDetailed(long long i
     } catch (...) { return nullptr; }
 }
 bool Bridge::ExportStepWithRoutes(String^ targetPath, String^ modelName, double wireDiameterMm,
-    array<StepExportCircuit^>^ circuits,
-    [System::Runtime::InteropServices::Out] String^% failureReason)
-{
-    failureReason = nullptr;
-    if (String::IsNullOrWhiteSpace(targetPath)) { failureReason = "invalid-path"; return false; }
-    if (circuits == nullptr || circuits->Length == 0) { failureReason = "no-circuits"; return false; }
-    array<StepExportArea^>^ areas = gcnew array<StepExportArea^>(circuits->Length);
-    for (int i = 0; i < circuits->Length; ++i)
-    {
-        StepExportCircuit^ circuit = circuits[i];
-        if (circuit == nullptr || circuit->Points == nullptr || circuit->Points->Length == 0)
-        {
-            failureReason = "invalid-points";
-            return false;
-        }
-        array<StepExportPiece^>^ pieces = gcnew array<StepExportPiece^>(1);
-        pieces[0] = gcnew StepExportPiece(circuit->Name, circuit->Points);
-        areas[i] = gcnew StepExportArea(circuit->Name, circuit->AreaName,
-            circuit->ColorR, circuit->ColorG, circuit->ColorB, pieces);
-    }
-    if (!Bridge::ExportStepWithRoutes(targetPath, modelName, wireDiameterMm, areas, failureReason))
-    {
-        // Legacy callers (and their regression check) expect the previous
-        // wire-build token when a single synthetic piece cannot be built.
-        String^ failure = failureReason;
-        if (failure != nullptr &&
-            failure->StartsWith("piece-build:0:0:", System::StringComparison::Ordinal))
-        {
-            failureReason = "wire-build:0";
-        }
-        return false;
-    }
-    return true;
-}
-bool Bridge::ExportStepWithRoutes(String^ targetPath, String^ modelName, double wireDiameterMm,
     array<StepExportArea^>^ areas,
     [System::Runtime::InteropServices::Out] String^% failureReason)
 {
@@ -4186,22 +3702,6 @@ RoutePieceResult^ Bridge::StageProjectedWorkingPolyline(long long id,long long r
         double data[7]={};if(!StageProjectedWorkingPolylineNative(id,revision,stageId,msclr::interop::marshal_as<std::string>(kind),xyz,faces,gp_Dir(dx,dy,dz),data))return nullptr;
         auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;}catch(...){return nullptr;}
 }
-array<array<double>^>^ Bridge::GetSharedBoundaryEdges(int exitFaceId, array<int>^ heatingFaceIds, double deflection)
-{
-    if (heatingFaceIds == nullptr || heatingFaceIds->Length == 0) return nullptr;
-    try {
-        std::vector<int> ids; for each (int v in heatingFaceIds) ids.push_back(v);
-        std::vector<std::vector<double>> loops;
-        if (!SharedBoundaryNative(exitFaceId, ids, deflection, loops)) return nullptr;
-        auto result = gcnew array<array<double>^>(static_cast<int>(loops.size()));
-        for (int i = 0; i < static_cast<int>(loops.size()); ++i) {
-            auto flat = gcnew array<double>(static_cast<int>(loops[i].size()));
-            for (int k = 0; k < static_cast<int>(loops[i].size()); ++k) flat[k] = loops[i][k];
-            result[i] = flat;
-        }
-        return result;
-    } catch (...) { return nullptr; }
-}
 bool Bridge::CommitWorkingRouteGeometry(long long id,long long revision,array<int>^ stagedRouteIds,array<int>^ finalRouteIds,array<int>^ stagedPolylineIds)
 {
     if (stagedRouteIds==nullptr || finalRouteIds==nullptr || stagedPolylineIds==nullptr) return false;
@@ -4295,14 +3795,14 @@ array<System::String^>^ Bridge::GetFaceTopologySignatures()
     catch (...) { return nullptr; }
 }
 
-ProjectRestoreCandidateInfo^ Bridge::BeginProjectRestoreCandidate(String^ path, int importPolicyVersion)
+ProjectRestoreCandidateInfo^ Bridge::BeginProjectRestoreCandidate(String^ path)
 {
     if (String::IsNullOrWhiteSpace(path)) return nullptr;
     try
     {
         const std::string native = ToUtf8Path(msclr::interop::marshal_as<std::wstring>(path));
         std::string error;
-        const int id = BeginProjectRestoreCandidateNative(native, importPolicyVersion, error);
+        const int id = BeginProjectRestoreCandidateNative(native, error);
         if (id <= 0) return nullptr;
         const auto it = g_projectRestoreCandidates.find(id);
         if (it == g_projectRestoreCandidates.end() || !it->second)
@@ -4632,48 +4132,10 @@ void Bridge::ClearExitCandidates()
     catch (const Standard_Failure&) { }
 }
 
-void Bridge::HighlightExitCandidate(int index)
-{
-    try { HighlightExitCandidateNative(index); }
-    catch (const Standard_Failure&) { }
-}
-
 void Bridge::HighlightExitFace(int faceId)
 {
     try { HighlightExitFaceNative(faceId); }
     catch (const Standard_Failure&) { }
-}
-
-int Bridge::PickExitCandidate(array<array<double>^>^ polylines, int x, int y, double pixelTolerance)
-{
-    std::vector<std::vector<double>> native;
-    if (polylines != nullptr)
-    {
-        native.reserve((size_t)polylines->Length);
-        for (int i = 0; i < polylines->Length; ++i)
-        {
-            array<double>^ flat = polylines[i];
-            if (flat == nullptr || flat->Length < 6) { native.emplace_back(); continue; }
-            std::vector<double> points((size_t)flat->Length);
-            for (int k = 0; k < flat->Length; ++k) points[(size_t)k] = flat[k];
-            native.push_back(std::move(points));
-        }
-    }
-    if (native.empty()) return -1;
-    try { return PickExitCandidateNative(native, x, y, pixelTolerance); }
-    catch (const Standard_Failure&) { return -1; }
-}
-
-array<double>^ Bridge::PickSelectedBoundaryPoint(array<int>^ faceIds, int x, int y)
-{
-    if (faceIds == nullptr || faceIds->Length == 0) return nullptr;
-    std::vector<int> ids(faceIds->Length);
-    for (int i = 0; i < faceIds->Length; ++i) ids[(size_t)i] = faceIds[i];
-    double p[4];
-    if (!PickSelectedBoundaryPointNative(ids, x, y, p)) return nullptr;
-    array<double>^ result = gcnew array<double>(4);
-    for (int i = 0; i < 4; ++i) result[i] = p[i];
-    return result;
 }
 
 bool Bridge::SetConnectorEnabled(int pieceId, bool enabled, double r, double g, double b, bool redraw)
@@ -4779,48 +4241,6 @@ bool Bridge::SetRouteEndpointsNoRedraw(array<double>^ xyzFlat)
     } catch (...) { return false; }
 }
 
-array<double>^ Bridge::ProjectPowerLead(int leadId, array<double>^ sourceAndDestination,
-    array<double>^ actualStart, array<int>^ faceIds, double dx, double dy, double dz, double depth)
-{
-    return ProjectPowerLead(leadId, sourceAndDestination, actualStart, faceIds, dx, dy, dz, depth, false);
-}
-
-array<double>^ Bridge::ProjectPowerLead(int leadId, array<double>^ sourceAndDestination,
-    array<double>^ actualStart, array<int>^ faceIds, double dx, double dy, double dz, double depth, bool previewOnly)
-{
-    // Remove the old preview without painting a blank frame. Redraw once after
-    // replacement/validation, including failure so invalid positions clear it.
-    const bool hadPreview = !g_powerLeadPreview.IsNull() || !g_powerDestinationPreview.IsNull();
-    ClearPowerLeadPreviewNative();
-    auto result = gcnew array<double>(4);
-    result[0] = -1;
-    if (sourceAndDestination == nullptr || actualStart == nullptr || faceIds == nullptr) {
-        if (hadPreview && !g_view.IsNull()) g_view->Redraw();
-        return result;
-    }
-    std::vector<double> xyz(sourceAndDestination->Length), actual(actualStart->Length);
-    std::vector<int> ids(faceIds->Length);
-    for (int i = 0; i < sourceAndDestination->Length; ++i) xyz[i] = sourceAndDestination[i];
-    for (int i = 0; i < actualStart->Length; ++i) actual[i] = actualStart[i];
-    for (int i = 0; i < faceIds->Length; ++i) ids[i] = faceIds[i];
-    double data[4] = { -9, 0, 0, 0 };
-    try { ProjectPowerLeadNative(leadId, xyz, actual, ids, gp_Dir(dx, dy, dz), depth, data, previewOnly); }
-    catch (const Standard_Failure&) {
-        if (previewOnly) ClearPowerLeadPreviewNative();
-        data[0] = -9;
-    }
-    if (!g_view.IsNull()) g_view->Redraw();
-    for (int i = 0; i < 4; ++i) result[i] = data[i];
-    return result;
-}
-
-void Bridge::ClearPowerLeads() { ClearPowerLeadsNative(); if (!g_view.IsNull()) g_view->Redraw(); }
-void Bridge::ClearPowerLeadPreview()
-{
-    const bool hadPreview = !g_powerLeadPreview.IsNull() || !g_powerDestinationPreview.IsNull();
-    ClearPowerLeadPreviewNative();
-    if (hadPreview && !g_view.IsNull()) g_view->Redraw();
-}
 int Bridge::PickRoutePiece(int x, int y)
 {
     if (g_ctx.IsNull() || g_view.IsNull()) return -1;
@@ -4926,15 +4346,6 @@ void Bridge::ClearOverlays()
 void Bridge::SetViewFrame(double dx, double dy, double dz, double ux, double uy, double uz)
 {
     SetViewFrameNative(dx, dy, dz, ux, uy, uz);
-}
-
-array<double>^ Bridge::GetAutoAxis(int axis)
-{
-    double v[3];
-    if (!GetAutoAxisNative(axis, v)) return nullptr;
-    array<double>^ r = gcnew array<double>(3);
-    r[0] = v[0]; r[1] = v[1]; r[2] = v[2];
-    return r;
 }
 
 array<int>^ Bridge::SelectFacesInRectangle(int x0, int y0, int x1, int y1)
@@ -5096,16 +4507,6 @@ void Bridge::SetConfirmedFaceHighlightColors(array<int>^ faceIds, array<double>^
 void Bridge::ClearConfirmedFaceHighlights()
 {
     ClearConfirmedFaceHighlightsNative();
-}
-
-void Bridge::SetExitFaceHighlight(int faceId, double r, double g, double b)
-{
-    SetExitFaceHighlightNative(faceId, Quantity_Color(r, g, b, Quantity_TOC_RGB));
-}
-
-void Bridge::ClearExitFaceHighlight()
-{
-    ClearExitFaceHighlightNative();
 }
 
 void Bridge::SetExitEdgeHighlight(array<double>^ points, double r, double g, double b)

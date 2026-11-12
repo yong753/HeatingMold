@@ -177,20 +177,6 @@ namespace HeatingMold.App
             get => _circuitHoverMode;
             set { if (_circuitHoverMode == value) return; _circuitHoverMode = value; if (!value) RoutePieceHovered?.Invoke(-1); }
         }
-        private bool _powerLocationMode;
-        private DispatcherTimer _powerPreviewTimer;
-        private (int X, int Y)? _pendingPowerPreview, _lastPowerPreview;
-        public bool PowerLocationMode
-        {
-            get => _powerLocationMode;
-            set
-            {
-                CancelPowerLeadPreview();
-                if (_powerLocationMode == value) return;
-                _powerLocationMode = value;
-            }
-        }
-
         private const int ClickDragThreshold = 4;   // px — 이하면 클릭(픽킹), 초과 시 회전
 
         /// <summary>W3 — 면 클릭 선택 결과 (faceId, 없으면 -1)</summary>
@@ -203,8 +189,6 @@ namespace HeatingMold.App
         public event Action<int, int, int, int> ExclusionSketchCompleted;
         public event Action ExclusionSketchCancelled;
         public event Action<int> RoutePieceHovered;
-        public event Action<int, int> PowerLocationPicked;
-        public event Action<int, int> PowerLocationMoved;
         public event Action<int, int> ExitFacePicked;
         /// <summary>인출면 선택 모드에서 커서가 움직일 때 (x, y). 뷰포트를 벗어나면 (-1, -1).</summary>
         public event Action<int, int> ExitFacePickMoved;
@@ -306,7 +290,6 @@ namespace HeatingMold.App
                 if (value)
                 {
                     CancelVertexDrag();
-                    CancelPowerLeadPreview();
                     CancelFaceRectangleDrag();
                     _dragging = false;
                     _panDragging = false;
@@ -344,39 +327,6 @@ namespace HeatingMold.App
         }
 
         public bool IsReady => _ready;
-
-        // Only the latest cursor is projected, at most once per 100 ms. Duplicate
-        // pixels do not rerun OCCT; all navigation/lifecycle exits invalidate it.
-        private void QueuePowerLocationPreview(int x, int y)
-        {
-            var point = (X: x, Y: y);
-            if (_pendingPowerPreview == point || (_pendingPowerPreview == null && _lastPowerPreview == point)) return;
-            _pendingPowerPreview = point;
-            if (_powerPreviewTimer == null)
-            {
-                _powerPreviewTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
-                    { Interval = TimeSpan.FromMilliseconds(100) };
-                _powerPreviewTimer.Tick += FlushPowerLocationPreview;
-            }
-            if (!_powerPreviewTimer.IsEnabled) _powerPreviewTimer.Start();
-        }
-
-        private void FlushPowerLocationPreview(object sender, EventArgs e)
-        {
-            _powerPreviewTimer?.Stop();
-            var point = _pendingPowerPreview;
-            _pendingPowerPreview = null;
-            if (!_ready || !PowerLocationMode || _dragging || _panDragging || point == null || point == _lastPowerPreview) return;
-            _lastPowerPreview = point;
-            PowerLocationMoved?.Invoke(point.Value.X, point.Value.Y);
-        }
-
-        public void CancelPowerLeadPreview()
-        {
-            _powerPreviewTimer?.Stop();
-            _pendingPowerPreview = _lastPowerPreview = null;
-            Bridge.ClearPowerLeadPreview();
-        }
 
         /// <summary>진행 중인 꼭지점 드래그를 취소하고 완료 이벤트를 올리지 않는다.</summary>
         private void CancelVertexDrag()
@@ -477,7 +427,6 @@ namespace HeatingMold.App
 
         protected override void DestroyWindowCore(HandleRef hwnd)
         {
-            CancelPowerLeadPreview();
             StopFaceRectanglePreview();
             if (_rectPreviewSession)
             {
@@ -542,7 +491,6 @@ namespace HeatingMold.App
         {
             base.OnRenderSizeChanged(sizeInfo);
             CancelFaceRectangleDrag();
-            CancelPowerLeadPreview();
             CancelVertexDrag();
             // 이 시점의 base 렌더는 자식 HWND 크기를 아직 갱신하지 않았을 수 있다.
             // 즉시 시도하고, 실제 HWND 크기 기준으로 한 번 더 맞춘다.
@@ -622,7 +570,6 @@ namespace HeatingMold.App
                     break;
 
                 case WM_LBUTTONDOWN:
-                    CancelPowerLeadPreview();
                     SetFocus(hwnd);   // 키보드 포커스가 없으면 Enter가 뷰포트에 전달된다
                     if (VertexEditMode)
                     {
@@ -648,14 +595,13 @@ namespace HeatingMold.App
                     bool shift = (GetKeyState(0x10) & 0x8000) != 0;
                     // Face 선택이 꺼진 탭에서는 Shift+드래그가 사각형 선택으로 승격되지 않게 한다.
                     bool rectangleSelect = (shift || RectangleSelectionMode) && FaceSelectionEnabled;
-                    _activeDragMode = PowerLocationMode ? 0 : (ExclusionSketchMode ? 2 : (rectangleSelect ? 1 : 0));
+                    _activeDragMode = ExclusionSketchMode ? 2 : (rectangleSelect ? 1 : 0);
                     handled = true;
                     break;
 
                 case WM_RBUTTONDOWN:
                     if (VertexEditMode || _vertexDragging) { handled = true; break; }
                     if (_dragging && _activeDragMode == 1) { handled = true; break; }   // 사각형 선택 중 팬 금지(캐시 무효화 방지)
-                    CancelPowerLeadPreview();
                     SetCapture(hwnd);
                     _panDragging = true;
                     _downX = LoWord(lParam);
@@ -727,7 +673,6 @@ namespace HeatingMold.App
                                 {
                                     Bridge.ClearHover();          // 회전 중 잔상 방지
                                     if (ExitFacePickMode) ExitFacePickMoved?.Invoke(-1, -1);
-                                    CancelPowerLeadPreview();
                                     Bridge.RotateStart(_downX, _downY);
                                 }
                                 else if (_activeDragMode == 1)
@@ -769,11 +714,6 @@ namespace HeatingMold.App
                         // ExitFacePickMoved 처리기(MainWindow.ExitFace)가 소유한다.
                         ExitFacePickMoved?.Invoke(x, y);
                     }
-                    else if (_ready && PowerLocationMode)
-                    {
-                        // Do not highlight/select faces or connectors while choosing destinations.
-                        QueuePowerLocationPreview(x, y);
-                    }
                     else if (_ready && CircuitHoverMode)
                     {
                         RoutePieceHovered?.Invoke(Bridge.PickRoutePiece(x, y));
@@ -791,7 +731,6 @@ namespace HeatingMold.App
                 }
 
                 case WM_MOUSELEAVE:
-                    CancelPowerLeadPreview();
                     _trackingMouse = false;
                     Bridge.ClearHover();
                     RoutePieceHovered?.Invoke(-1);
@@ -843,11 +782,6 @@ namespace HeatingMold.App
                         {
                             ExitFacePicked?.Invoke(LoWord(lParam), HiWord(lParam));
                         }
-                        else if (_activeDragMode == 0 && PowerLocationMode)
-                        {
-                            CancelPowerLeadPreview();
-                            PowerLocationPicked?.Invoke(LoWord(lParam), HiWord(lParam));
-                        }
                         else if (_activeDragMode == 0 && FaceSelectionEnabled)
                         {
                             // 이동 없는 클릭 = 면 선택 (W5 — 하이라이트 유지)
@@ -861,7 +795,6 @@ namespace HeatingMold.App
                     break;
 
                 case WM_CAPTURECHANGED:
-                    CancelPowerLeadPreview();
                     CancelVertexDrag();
                     _dragging = false;
                     if (_panDragging && _ready) Bridge.PanEnd();
@@ -891,7 +824,6 @@ namespace HeatingMold.App
                         Y = (short)(((long)lParam >> 16) & 0xFFFF)
                     };
                     ScreenToClient(hwnd, ref point);
-                    CancelPowerLeadPreview();
                     Bridge.ZoomViewAtPoint(point.X, point.Y, WheelZoomAmount(delta));
                     handled = true;
                     break;

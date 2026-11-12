@@ -14,10 +14,7 @@ public partial class MainWindow
     private void ResetCircuitEditingUi()
     {
         ExitVertexEdit();
-        CancelPowerSetup();
         CancelExitFacePick();
-        if (Viewport != null)
-            Viewport.PowerLocationMode = false;
     }
 
     private void RefreshAreaList()
@@ -135,11 +132,6 @@ public partial class MainWindow
         area.LastExitFailure,
         area.StartAnchor,
         area.EndAnchor,
-        area.AnchorCandidates,
-        area.ExcludedCandidates,
-        area.ExcludedPlan,
-        area.ExcludedCandidateFailure,
-        area.ExcludedPlanKey,
         area.Circuits,
         area.CircuitPieceIndices,
         area.ExitEdgeRefs,
@@ -150,7 +142,6 @@ public partial class MainWindow
         area.RegionCadBoundary,
         area.SelectedStartExit,
         area.SelectedEndExit,
-        area.SelectedAnchorCandidate,
         area.RouteEdited);
 
     /// <summary>캡처한 경로 상태를 영역에 되돌린다. 제외 목록은 필요할 때만 복원한다.</summary>
@@ -171,11 +162,6 @@ public partial class MainWindow
         area.LastExitFailure = snapshot.LastExitFailure;
         area.StartAnchor = snapshot.StartAnchor;
         area.EndAnchor = snapshot.EndAnchor;
-        area.AnchorCandidates = snapshot.AnchorCandidates;
-        area.ExcludedCandidates = snapshot.ExcludedCandidates;
-        area.ExcludedPlan = snapshot.ExcludedPlan;
-        area.ExcludedCandidateFailure = snapshot.ExcludedCandidateFailure;
-        area.ExcludedPlanKey = snapshot.ExcludedPlanKey;
         area.Circuits = snapshot.Circuits;
         area.CircuitPieceIndices = snapshot.CircuitPieceIndices;
         area.ExitEdgeRefs = snapshot.ExitEdgeRefs;
@@ -186,7 +172,6 @@ public partial class MainWindow
         area.RegionCadBoundary = snapshot.RegionCadBoundary;
         area.SelectedStartExit = snapshot.SelectedStartExit;
         area.SelectedEndExit = snapshot.SelectedEndExit;
-        area.SelectedAnchorCandidate = snapshot.SelectedAnchorCandidate;
         area.RouteEdited = snapshot.RouteEdited;
     }
 
@@ -659,7 +644,6 @@ public partial class MainWindow
         _nextNativePieceId = 0;
         _selectedFaceIds.Clear();
         if (SelectedFacesList != null) SelectedFacesList.Items.Clear();
-        _leadLengths = Array.Empty<double>();
         if (Viewport != null) Viewport.CircuitHoverMode = false;
         RefreshAreaList();
         SyncExitFaceUi(null);

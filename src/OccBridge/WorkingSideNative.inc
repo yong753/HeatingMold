@@ -885,48 +885,6 @@ bool GetFaceAxisNative(int faceId, double* out)
     }
 }
 
-bool SharedBoundaryNative(int exitFaceId, const std::vector<int>& heatingFaces,
-    double deflection, std::vector<std::vector<double>>& out)
-{
-    out.clear();
-    if (exitFaceId < 0 || exitFaceId >= static_cast<int>(g_faces.size()) || heatingFaces.empty()) return false;
-    if (!std::isfinite(deflection) || deflection <= 0) deflection = 0.05;
-    try {
-        TopTools_IndexedMapOfShape exitEdges;
-        for (TopExp_Explorer ex(g_faces[exitFaceId], TopAbs_EDGE); ex.More(); ex.Next())
-            exitEdges.Add(ex.Current());
-        if (exitEdges.IsEmpty()) return false;
-        TopTools_IndexedMapOfShape shared;
-        for (int id : heatingFaces) {
-            if (id < 0 || id >= static_cast<int>(g_faces.size()) || id == exitFaceId) continue;
-            for (TopExp_Explorer ex(g_faces[id], TopAbs_EDGE); ex.More(); ex.Next()) {
-                const int index = exitEdges.FindIndex(ex.Current());
-                if (index) shared.Add(exitEdges(index));
-            }
-        }
-        for (int i = 1; i <= shared.Extent(); ++i) {
-            BRepAdaptor_Curve curve(TopoDS::Edge(shared(i)));
-            std::vector<double> poly;
-            GCPnts_QuasiUniformDeflection samples(curve, deflection);
-            if (samples.IsDone() && samples.NbPoints() >= 2 && samples.NbPoints() <= 20000) {
-                for (int k = 1; k <= samples.NbPoints(); ++k) {
-                    const gp_Pnt p = samples.Value(k);
-                    poly.insert(poly.end(), {p.X(), p.Y(), p.Z()});
-                }
-            } else {
-                const double first = curve.FirstParameter(), last = curve.LastParameter();
-                if (!std::isfinite(first) || !std::isfinite(last) || last < first) continue;
-                for (double t : {first, last}) {
-                    const gp_Pnt p = curve.Value(t);
-                    poly.insert(poly.end(), {p.X(), p.Y(), p.Z()});
-                }
-            }
-            if (poly.size() >= 6) out.push_back(poly);
-        }
-        return !out.empty();
-    } catch (const Standard_Failure&) { return false; }
-}
-
 // ---- 곡면 라우팅: 이미 3D로 매핑된 조각을 재투영 없이 그대로 스테이징한다. ----
 // 점-면 거리(BRepExtrema)로만 검증하고 폴리라인을 직접 표시한다. BRepProj 재투영을
 // 하지 않으므로 데이텀 평면 밖으로 나간 점이 경계 밖으로 밀려나는 문제가 없다.

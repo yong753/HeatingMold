@@ -56,26 +56,6 @@ public partial class MainWindow
                 return false;
             }
 
-            // 모델을 교체하기 전에 전기 제원 호환성을 확정한다. 실패하면 현재 작업을 그대로 둔다.
-            if (!ProjectElectricalMigration.TryNormalize(
-                    document, out string electricalMigrationError, out string sharedPowerNotice))
-            {
-                ReportProjectLoadFailure("저장된 전기 검토 설정을 복원할 수 없습니다",
-                    new InvalidDataException(electricalMigrationError));
-                return false;
-            }
-
-            // 이전 정책 파일은 영역마다 목표 발열전력을 따로 저장했다. 총량이 달라 배분 결과가
-            // 바뀌는 경우에는 모델을 교체하기 전에 확인을 받는다.
-            if (sharedPowerNotice != null)
-            {
-                MessageBoxResult powerAnswer = MessageBox.Show(this,
-                    sharedPowerNotice + Environment.NewLine + Environment.NewLine + "이대로 열까요?",
-                    "발열 전력 정책 변경", MessageBoxButton.YesNo, MessageBoxImage.Warning,
-                    MessageBoxResult.Yes);
-                if (powerAnswer != MessageBoxResult.Yes) return false;
-            }
-
             string sourcePath = ResolveProjectSourcePath(document, projectPath);
             if (string.IsNullOrWhiteSpace(sourcePath)) return false;
 
@@ -98,7 +78,7 @@ public partial class MainWindow
             int nextNativeId = _nextNativePieceId;
             try
             {
-                candidate = Bridge.BeginProjectRestoreCandidate(sourcePath, document.Source.ImportPolicyVersion);
+                candidate = Bridge.BeginProjectRestoreCandidate(sourcePath);
                 if (candidate == null)
                     throw new InvalidOperationException(
                         "STEP 격리 로드에 실패했습니다: " + (Bridge.GetProjectRestoreCandidateError() ?? "알 수 없는 오류"));
@@ -266,7 +246,7 @@ public partial class MainWindow
             throw new InvalidDataException("원본 STEP 정보가 없습니다.");
         if (string.IsNullOrWhiteSpace(document.Source.Sha256) || document.Source.Sha256.Length != 64)
             throw new InvalidDataException("원본 STEP SHA-256이 올바르지 않습니다.");
-        if (document.Source.ImportPolicyVersion != 1 && document.Source.ImportPolicyVersion != 2)
+        if (document.Source.ImportPolicyVersion != 2)
             throw new InvalidDataException("지원하지 않는 STEP 가져오기 정책 버전입니다: " + document.Source.ImportPolicyVersion);
         if (!string.IsNullOrWhiteSpace(document.Source.TopologyIdentityError))
             throw new InvalidDataException("저장된 topology identity가 완전하지 않습니다: " + document.Source.TopologyIdentityError);
@@ -367,11 +347,6 @@ public partial class MainWindow
         VerifySameFrame(frame, workingFrame, "작업영역 " + document.Name);
 
         int[] mappedFaces = MapFaceIds(document.FaceIds, faceMap, project, "작업영역 " + document.Name);
-        int[] mappedExitChainFaces = MapOptionalFaceIds(document.ExitChainFaceIds, faceMap, project,
-            "작업영역 " + document.Name + " 인출 체인");
-        int mappedExitFace = document.ExitFaceId >= 0
-            ? MapFaceId(document.ExitFaceId, faceMap, project, "작업영역 " + document.Name + " 인출면")
-            : -1;
 
         RegionBoundaryLoop[] regionLoops = Bridge.GetSelectedRegionBoundary(
             mappedFaces.OrderBy(id => id).ToArray(), GeometryTolerancePolicy.DistanceTolerance,
@@ -382,13 +357,7 @@ public partial class MainWindow
                 (string.IsNullOrWhiteSpace(regionFailure) ? "닫힌 단일 루프가 아닙니다" : regionFailure));
 
         ExitEdgeReference[] regionReferences = regionLoops[0].EdgeReferences ?? Array.Empty<ExitEdgeReference>();
-        ExitSideCandidate[] exitSides = Bridge.GetBoundaryExitSides(
-            mappedFaces.OrderBy(id => id).ToArray(), GeometryTolerancePolicy.DistanceTolerance,
-            workingFrame.Normal.X, workingFrame.Normal.Y, workingFrame.Normal.Z);
-        var freshReferences = UniqueExitReferences(
-            regionReferences.Concat((exitSides ?? Array.Empty<ExitSideCandidate>())
-                .Where(side => side?.EdgeReferences != null)
-                .SelectMany(side => side.EdgeReferences)));
+        var freshReferences = UniqueExitReferences(regionReferences);
 
         if (!ProjectTopologyRemap.TryMapExitEdgeReferences(
                 document.ExitEdgeRefs, freshReferences, faceMap,
@@ -416,14 +385,6 @@ public partial class MainWindow
             selectedEnd = mapped;
         }
 
-        AnchoredCandidate selectedAnchor = null;
-        if (document.SelectedAnchorCandidate != null)
-        {
-            if (!TryMapAnchoredCandidate(document.SelectedAnchorCandidate, document.ExitEdgeRefs,
-                    mappedExitRefs, context, out selectedAnchor, out string anchorError))
-                throw new InvalidOperationException("작업영역 " + document.Name + " 기준 후보: " + anchorError);
-        }
-
         var area = new WorkingArea
         {
             Name = document.Name,
@@ -433,17 +394,13 @@ public partial class MainWindow
             Direction = ParseDirection(document.Direction),
             MarginText = document.MarginText ?? "5",
             SpacingText = document.SpacingText ?? "50",
-            ExitFaceId = mappedExitFace,
-            ExitFaceRevision = mappedExitFace >= 0 ? context.Revision : 0,
             ExitChain = MapVec2(document.ExitChain),
             ExitChain3D = MapVec3(document.ExitChain3D),
-            ExitChainFaceIds = mappedExitChainFaces.ToList(),
             StartAnchor = document.StartAnchor == null ? null : ToVec2(document.StartAnchor),
             EndAnchor = document.EndAnchor == null ? null : ToVec2(document.EndAnchor),
             ExitEdgeRefs = mappedExitRefs.ToList(),
             SelectedStartExit = selectedStart,
             SelectedEndExit = selectedEnd,
-            SelectedAnchorCandidate = selectedAnchor,
             Exclusions = (document.Exclusions ?? new List<ProjectRect>())
                 .Select(r => (r.MinX, r.MinY, r.MaxX, r.MaxY)).ToList(),
             Pattern = RestorePattern(document.Pattern, document, mappedExitRefs, context,
@@ -467,9 +424,6 @@ public partial class MainWindow
         if (regionReferences.Length == 0)
             throw new InvalidOperationException(
                 "작업영역 " + document.Name + "의 원본 CAD 외곽 Edge 참조를 복원하지 못했습니다.");
-        area.ExitBoundary = mappedExitRefs.Length > 0
-            ? new CadExitBoundary2D(context.Id, context.Revision, mappedExitRefs)
-            : null;
         area.RegionCadBoundary = new CadExitBoundary2D(context.Id, context.Revision, regionReferences);
         area.RegionBoundary = new ExactRegionContainment(
             new CadRegionBoundary2D(context.Id, context.Revision, regionReferences));
@@ -497,7 +451,6 @@ public partial class MainWindow
             area.SplitCutLines = cutLines;
             area.RegionExitBoundary = splitBoundary;
             area.RegionBoundary = new ExactRegionContainment(splitBoundary.CreateContainment());
-            if (document.ExitFaceId < 0) area.ExitBoundary = splitBoundary;
         }
         else
         {
@@ -509,26 +462,15 @@ public partial class MainWindow
                     document.Name, boundaryFailure));
             }
             area.RegionExitBoundary = restoredRegionExitBoundary;
-            // 인출면을 따로 두지 않는 영역은 인출 경계도 적용영역 외곽이다.
-            // 저장된 ExitFaceId가 -1이면 영역 생성 규칙과 동일하게 유효 외곽선을 쓴다.
-            if (document.ExitFaceId < 0)
-                area.ExitBoundary = restoredRegionExitBoundary;
         }
-
-        // 확정 경로의 매핑 방식은 저장된 CommittedMapping이 기록한 플래그를 따른다.
-        // 현재 초안 선택점은 확정 후 바뀌었을 수 있으므로 사용하지 않는다.
-        bool hasCommittedContext = document.CommittedMapping != null;
-        bool committedRegionMode = ResolveCommittedRegionMode(document.CommittedMapping);
-        IExitBoundary2D restoredRouteBoundary = ResolveRestoredRouteBoundary(area,
-            hasCommittedContext, committedRegionMode);
+        area.ExitBoundary = area.RegionExitBoundary;
 
         // 확정 경로 매핑을 캡처하기 전에 저장된 인출점 provenance를 복원된 경계에서
         // 그대로 검증한다. 실패한 선택점을 지우고 성공 처리하지 않는다.
-        ValidateRestoredExitPoints(area, document.Name, restoredRouteBoundary);
+        bool hasCommittedContext = document.CommittedMapping != null;
+        ValidateRestoredExitPoints(area, document.Name, area.RegionExitBoundary);
         area.CommittedMapping = hasCommittedContext
-            ? (committedRegionMode
-                ? CommittedRouteContext.CaptureRegion(area)
-                : CommittedRouteContext.CaptureExit(area))
+            ? CommittedRouteContext.CaptureRegion(area)
             : CommittedRouteContext.Capture(area);
         area.AppliedInputs = RestoreAppliedInputs(document.AppliedInputs, area);
 
@@ -545,29 +487,6 @@ public partial class MainWindow
             route.ProjectedPieces = area.ProjectedPieces.ToArray();
         }
         return route;
-    }
-
-    /// <summary>
-    /// 저장된 확정 매핑의 경계 모드를 판별한다. 새 파일은 저장된 플래그를 쓰고,
-    /// 플래그가 없는 이전 파일은 캡처 시점의 선택 인출점 유무로 추론한다.
-    /// </summary>
-    internal static bool ResolveCommittedRegionMode(ProjectCommittedContextDocument saved)
-    {
-        if (saved == null) return false;
-        return saved.RegionMode ??
-            (saved.SelectedStartExit != null && saved.SelectedEndExit != null);
-    }
-
-    /// <summary>
-    /// 저장된 확정 경로가 실제로 사용한 경계를 고른다. 저장된 CommittedMapping이 있으면
-    /// 그 확정 모드를 따르고, 없으면 기존 초안 상태 규칙을 유지한다.
-    /// </summary>
-    internal static IExitBoundary2D ResolveRestoredRouteBoundary(WorkingArea area,
-        bool hasCommittedContext, bool committedRegionMode)
-    {
-        if (hasCommittedContext)
-            return committedRegionMode ? area.RegionExitBoundary : area.ExitBoundary;
-        return area.HasSelectedExits ? area.RegionExitBoundary : area.ExitBoundary;
     }
 
     /// <summary>
@@ -870,47 +789,6 @@ public partial class MainWindow
         return new SerpentineRoutePiece(kind, document.LaneIndex, points);
     }
 
-    private static bool TryMapAnchoredCandidate(ProjectAnchoredCandidate document,
-        IReadOnlyList<ProjectExitEdgeReference> savedReferences, IReadOnlyList<ExitEdgeReference> freshReferences,
-        WorkingContext context, out AnchoredCandidate mapped, out string error)
-    {
-        mapped = null;
-        error = null;
-        if (document.Start == null || document.End == null)
-        {
-            error = "기준 후보의 시작/종료점이 없습니다.";
-            return false;
-        }
-
-        ExitEdgeBinding? startBinding = null;
-        ExitEdgeBinding? endBinding = null;
-        if (document.StartBinding != null)
-        {
-            if (!ProjectTopologyRemap.TryMapExitBindingByReference(document.StartBinding, savedReferences,
-                    freshReferences, context.Revision, context.Id, context.Revision,
-                    out ExitEdgeBinding value, out error))
-                return false;
-            startBinding = value;
-        }
-        if (document.EndBinding != null)
-        {
-            if (!ProjectTopologyRemap.TryMapExitBindingByReference(document.EndBinding, savedReferences,
-                    freshReferences, context.Revision, context.Id, context.Revision,
-                    out ExitEdgeBinding value, out error))
-                return false;
-            endBinding = value;
-        }
-
-        mapped = new AnchoredCandidate(ToVec2(document.Start), ToVec2(document.End), document.AngleDeg)
-        {
-            CandidateId = document.CandidateId,
-            StartBinding = startBinding,
-            EndBinding = endBinding,
-            StartLeftToRight = document.StartLeftToRight
-        };
-        return true;
-    }
-
     private AppliedGenerationInputs RestoreAppliedInputs(ProjectAppliedInputs document, WorkingArea area)
     {
         if (document == null) return null;
@@ -1052,11 +930,9 @@ public partial class MainWindow
                     WirePresetBox.SelectedIndex = electrical.WirePresetIndex == ElectricalSettingsResolver.Case2PresetIndex
                         ? ElectricalSettingsResolver.Case2PresetIndex
                         : ElectricalSettingsResolver.Case1PresetIndex;
-                // 저장된 직경·단위 저항은 위 프리셋과의 일치 검증(ProjectElectricalMigration)에서만 쓰고,
-                // 화면에는 프리셋 이름으로 표시하므로 별도 입력 상자에 다시 채우지 않는다.
+                // 저장된 직경·단위 저항은 화면에 다시 채우지 않고 프리셋 이름으로만 표시한다.
                 if (AllowedVoltageBox != null)
-                    AllowedVoltageBox.Text = electrical.AllowedVoltageText
-                        ?? electrical.AppliedVoltageText ?? "";
+                    AllowedVoltageBox.Text = electrical.AllowedVoltageText ?? "";
                 if (AllowedCurrentBox != null) AllowedCurrentBox.Text = electrical.AllowedCurrentText ?? "";
                 if (AllowedPowerBox != null) AllowedPowerBox.Text = electrical.AllowedPowerText ?? "";
             }
