@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -29,6 +31,10 @@ namespace HeatingMold.App
         private readonly Dictionary<string, WorkingArea> _visualAreaAliases =
             new(StringComparer.Ordinal);
         private readonly Queue<(string Contains, bool Yes)> _visualTestConfirmResponses = new();
+        private readonly Dictionary<string, string> _visualProjectCheckpoints =
+            new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Dictionary<string, int>> _visualProjectAliasIds =
+            new(StringComparer.OrdinalIgnoreCase);
 
         private static readonly string[] VisualTestStepNames =
         {
@@ -234,9 +240,12 @@ namespace HeatingMold.App
                 case "setAreaInputs": return VisualSetAreaInputs(step.Spec, scenario);
                 case "expectAreaInputs": return VisualExpectAreaInputs(step.Spec, scenario);
                 case "pickExit": return VisualPickExit(step.Spec, scenario);
+                case "pickExitPoint": return VisualPickExitPoint(step.Spec);
                 case "cancelExitPick": return VisualCancelExitPick(step.Spec);
                 case "generate": return VisualGenerate(step.Spec, scenario);
                 case "checkArea": return VisualCheckArea(step.Spec, scenario);
+                case "checkElectrical": return VisualCheckElectrical(step.Spec);
+                case "splitArea": return VisualSplitArea(step.Spec, scenario);
                 case "checkAllAreas": return VisualCheckAllAreas(step.Spec, scenario);
                 case "addExclusion": return VisualAddExclusion(step.Spec, scenario);
                 case "removeExclusion": return VisualRemoveExclusion(step.Spec);
@@ -244,6 +253,9 @@ namespace HeatingMold.App
                 case "checkExclusion": return VisualCheckExclusion(step.Spec);
                 case "moveVertex": return VisualMoveVertex(step.Spec);
                 case "exportDxf": return await VisualExportDxfAsync(step.Spec);
+                case "exportStep": return VisualExportStep(step.Spec);
+                case "saveProject": return VisualSaveProject(step.Spec);
+                case "loadProject": return VisualLoadProject(step.Spec);
                 default:
                     return VisualStepOutcome.Fail("지원하지 않는 행동입니다: " + step.Action);
             }
@@ -593,9 +605,9 @@ namespace HeatingMold.App
 
         private VisualStepOutcome VisualCheckArea(VisualActionSpec spec, VisualScenario scenario)
         {
-            VisualAreaDefinition definition = RequireAreaDefinition(scenario, spec.Area);
+            VisualAreaDefinition definition = scenario.Areas.FirstOrDefault(a => a.Alias == spec.Area);
             WorkingArea area = ResolveVisualArea(spec.Area);
-            string error = CheckAreaState(area, spec.Expect ?? definition.Expect, out Dictionary<string, string> data);
+            string error = CheckAreaState(area, spec.Expect ?? definition?.Expect, out Dictionary<string, string> data);
             if (error != null) return VisualStepOutcome.Fail(error);
             data["alias"] = spec.Area;
             return VisualStepOutcome.Ok("영역 상태 확인", data);
@@ -613,23 +625,25 @@ namespace HeatingMold.App
             var turns = 0;
             var lengthTotal = 0.0;
             var checkedAliases = new List<string>();
+            var seenAliases = new HashSet<string>(StringComparer.Ordinal);
 
-            foreach (VisualAreaDefinition definition in scenario.Areas)
+            foreach (WorkingArea area in _areas.ToList())
             {
-                WorkingArea area = ResolveVisualArea(definition.Alias);
-                string error = CheckAreaState(area, definition.Expect, out Dictionary<string, string> areaData);
+                string alias = _visualAreaAliases.FirstOrDefault(pair => ReferenceEquals(pair.Value, area)).Key;
+                Require(!string.IsNullOrWhiteSpace(alias),
+                    "현재 영역에 대응하는 시나리오 alias가 없습니다: " + area.Name);
+                Require(seenAliases.Add(alias), "같은 alias가 여러 영역에 연결되었습니다: " + alias);
+                string error = CheckAreaState(area, null, out Dictionary<string, string> areaData);
                 if (error != null)
-                    return VisualStepOutcome.Fail("영역 " + definition.Alias + ": " + error);
-                checkedAliases.Add(definition.Alias);
+                    return VisualStepOutcome.Fail("영역 " + alias + ": " + error);
+                checkedAliases.Add(alias);
                 pieces += area.Pattern.RoutePieces.Count;
                 turns += area.Pattern.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector);
                 lengthTotal += area.RoutePieceLengths.Sum();
             }
 
-            Require(_areas.Count == scenario.Areas.Length,
-                "영역 수가 시나리오 정의와 다릅니다. 기대 " + scenario.Areas.Length + ", 실제 " + _areas.Count);
-            Require(_visualAreaAliases.Count == scenario.Areas.Length,
-                "영역 식별자 매핑 수가 정의와 다릅니다.");
+            Require(_visualAreaAliases.Count == _areas.Count,
+                "영역 식별자 매핑 수가 현재 영역 수와 다릅니다. 매핑 " + _visualAreaAliases.Count + ", 영역 " + _areas.Count);
 
             Dictionary<string, int> diagnostic = ParseDisplayDiagnostic(Bridge.GetDisplayDiagnostic());
             Require(NativeCount(diagnostic, "routes") == pieces, "네이티브 경로 조각 수가 관리 상태와 다릅니다.");
@@ -676,6 +690,589 @@ namespace HeatingMold.App
             };
             return VisualStepOutcome.Ok("전체 영역·전기 내보내기 가능 확인", data);
         }
+
+        private VisualStepOutcome VisualPickExitPoint(VisualActionSpec spec)
+        {
+            VisualExitPointSpec requested = spec.ExitPoint;
+            Require(requested != null, "exitPoint 정의가 없습니다.");
+            int role = requested.Role == "start" ? 0 : 1;
+            WorkingArea area = ResolveVisualArea(spec.Area);
+            ActivateArea(area);
+            SidebarTabs.SelectedIndex = PatternTabIndex;
+
+            BeginExitPointPick(role);
+            Require(_exitPointPickRole == role,
+                "인출점 선택 모드를 시작하지 못했습니다: " + StatusText.Text);
+
+            var datum = new Vec2(requested.Uv[0], requested.Uv[1]);
+            if (!TryResolveExitPoint(area, datum, out ExitBoundaryPoint point, out string resolveError))
+            {
+                CancelExitFacePick();
+                return VisualStepOutcome.Fail("인출점을 영역 경계에 투영하지 못했습니다: " + resolveError);
+            }
+            double distance = ExitUvDistance(point.Point, datum);
+            if (distance > requested.ToleranceMm)
+            {
+                CancelExitFacePick();
+                return VisualStepOutcome.Fail(string.Format(CultureInfo.InvariantCulture,
+                    "인출점이 요청 좌표에서 {0:0.###} mm 떨어져 있습니다(허용 {1:0.###} mm).",
+                    distance, requested.ToleranceMm));
+            }
+            if (!TryEvaluateSelectedExit3D(area, point, out Vec3 position, out string surfaceError))
+            {
+                CancelExitFacePick();
+                return VisualStepOutcome.Fail("인출점의 3D 표면 위치를 평가하지 못했습니다: " + surfaceError);
+            }
+            Require(point.Binding != null || point.ArtificialBinding != null || point.SplitBinding != null,
+                "인출점에 경계 연결 정보가 없습니다.");
+            ApplyPickedExitPoint(area, role, point);
+            Require(_exitPointPickRole < 0 && !Viewport.ExitFacePickMode,
+                "인출점 선택 모드가 종료되지 않았습니다.");
+
+            ExitBoundaryPoint? applied = role == 0 ? area.SelectedStartExit : area.SelectedEndExit;
+            Require(applied.HasValue, "선택 인출점이 영역에 저장되지 않았습니다.");
+            Require(ExitUvDistance(applied.Value.Point, point.Point) <= 1e-6
+                && applied.Value.SegmentIndex == point.SegmentIndex
+                && Math.Abs(applied.Value.SegmentParameter - point.SegmentParameter) <= 1e-9,
+                "저장된 인출점이 투영 결과와 다릅니다.");
+
+            var data = new Dictionary<string, string>
+            {
+                ["role"] = requested.Role,
+                ["u"] = point.Point.X.ToString("0.######", CultureInfo.InvariantCulture),
+                ["v"] = point.Point.Y.ToString("0.######", CultureInfo.InvariantCulture),
+                ["segment"] = point.SegmentIndex.ToString(CultureInfo.InvariantCulture),
+                ["parameter"] = point.SegmentParameter.ToString("0.############", CultureInfo.InvariantCulture),
+                ["surfaceX"] = position.X.ToString("0.###", CultureInfo.InvariantCulture),
+                ["surfaceY"] = position.Y.ToString("0.###", CultureInfo.InvariantCulture),
+                ["surfaceZ"] = position.Z.ToString("0.###", CultureInfo.InvariantCulture),
+                ["binding"] = DescribeExitBinding(point)
+            };
+            return VisualStepOutcome.Ok("직접 인출점 선택", data);
+        }
+
+        private VisualStepOutcome VisualCheckElectrical(VisualActionSpec spec)
+        {
+            VisualElectricalSpec requested = spec.Electrical;
+            Require(requested != null, "electrical 정의가 없습니다.");
+            SidebarTabs.SelectedIndex = ReviewTabIndex;
+            WirePresetBox.SelectedIndex = requested.PresetIndex;
+            AllowedVoltageBox.Text = requested.VoltageV.ToString("0.###", CultureInfo.InvariantCulture);
+            AllowedCurrentBox.Text = requested.AllowedCurrentA.ToString("0.###", CultureInfo.InvariantCulture);
+            AllowedPowerBox.Text = requested.AllowedPowerKw.ToString("0.###", CultureInfo.InvariantCulture);
+            ReviewScopeBox.SelectedIndex = 0;
+            _reviewCurrentAreaOnly = false;
+            RefreshElectricalTable();
+
+            Require(TryReadElectricalLimits(out TargetPowerElectricalSettings settings, out string settingsError),
+                "전기 입력을 읽지 못했습니다: " + settingsError);
+            HeatingWireSpec wire = settings.Wire;
+            ElectricalLimits limits = settings.Limits;
+            Require(limits != null, "전기 허용치를 읽지 못했습니다.");
+            Require(Near(limits.PowerLimitW, requested.AllowedPowerKw * 1000.0, 1e-6),
+                "제품에 적용된 전체 발열전력이 시나리오와 다릅니다.");
+            Require(Near(limits.VoltageLimitV, requested.VoltageV, 1e-9),
+                "제품에 적용된 허용 전압이 시나리오와 다릅니다.");
+            Require(Near(limits.CurrentLimitA, requested.AllowedCurrentA, 1e-9),
+                "제품에 적용된 허용 전류가 시나리오와 다릅니다.");
+
+            ReviewSnapshot global = BuildReviewSnapshot();
+            Require(global.ElectricalError == null, "전기 입력 오류: " + global.ElectricalError);
+            Require(global.Entries.Count > 0, "검토할 작업영역이 없습니다.");
+            Require(global.Entries.All(entry => entry.State == ReviewAreaState.Ready),
+                "준비되지 않은 작업영역이 있습니다: " +
+                string.Join(", ", global.Entries.Where(e => e.State != ReviewAreaState.Ready)
+                    .Select(e => e.Area.Name + "=" + e.State)));
+            Require(global.CanExport, "전체 검토 결과를 내보낼 수 없습니다: " + global.BlockReason);
+            Require(global.Circuits.Count > 0, "검토할 발열회로가 없습니다.");
+            Require(global.Table != null && global.Table.IsTargetPowerMode,
+                "전기 사양표가 공유 발열전력 배분 모드가 아닙니다.");
+            Require(global.Table.Rows.Count == global.Circuits.Count,
+                "전기 사양표 행 수가 회로 수와 다릅니다.");
+            Require(Near(global.Table.TotalTargetPowerW, limits.PowerLimitW, 1e-6),
+                "배분된 발열전력 합계가 전체 한도와 다릅니다.");
+            Require(!global.Table.IsSharedPowerOverLimit,
+                "배분된 발열전력 합계가 전체 한도를 넘었습니다.");
+
+            double totalLengthM = global.Circuits.Sum(c => c.HeatingLengthMm) / 1000.0;
+            Require(totalLengthM > 0, "회로 전체 길이가 0입니다.");
+            double allocated = 0;
+            var targetByCircuit = new Dictionary<string, double>(StringComparer.Ordinal);
+            for (int i = 0; i < global.Circuits.Count; i++)
+            {
+                CircuitLengthInfo circuit = global.Circuits[i];
+                double lengthM = circuit.HeatingLengthMm / 1000.0;
+                double target = i == global.Circuits.Count - 1
+                    ? limits.PowerLimitW - allocated
+                    : limits.PowerLimitW * lengthM / totalLengthM;
+                allocated += target;
+                targetByCircuit[circuit.CircuitId] = target;
+
+                ElectricalSpecRow row = global.Table.Rows.FirstOrDefault(r => r.CircuitId == circuit.CircuitId);
+                Require(row != null, "전기 사양표에 회로 행이 없습니다: " + circuit.CircuitId);
+                Require(row.IsValid, "회로 계산이 유효하지 않습니다: " + circuit.CircuitId + " (" + row.Note + ")");
+                Require(row.TargetPowerW.HasValue, "회로에 배분된 발열전력이 없습니다: " + circuit.CircuitId);
+                Require(Near(row.TargetPowerW.Value, target, 1e-6),
+                    "길이비 배분 전력이 독립 계산과 다릅니다: " + circuit.CircuitId);
+                Require(Near(row.LengthM, lengthM, 1e-9),
+                    "회로 길이가 실제 3D 길이와 다릅니다: " + circuit.CircuitId);
+                Require(Near(row.ResistanceOhm, wire.ResistanceOhmPerMeter * lengthM, 1e-9),
+                    "회로 저항이 독립 계산과 다릅니다: " + circuit.CircuitId);
+
+                double independentResistance = wire.ResistanceOhmPerMeter * lengthM;
+                double independentVoltage = Math.Sqrt(target * independentResistance);
+                double independentCurrent = Math.Sqrt(target / independentResistance);
+                Require(Near(row.VoltageV, independentVoltage, 1e-6),
+                    "회로 필요 전압이 독립 계산과 다릅니다: " + circuit.CircuitId);
+                Require(Near(row.CurrentA, independentCurrent, 1e-9),
+                    "회로 전류가 독립 계산과 다릅니다: " + circuit.CircuitId);
+                Require(Near(row.PowerW, target, 1e-6),
+                    "회로 전력이 배분 전력과 다릅니다: " + circuit.CircuitId);
+
+                bool within = !(independentVoltage > limits.VoltageLimitV)
+                    && !(independentCurrent > limits.CurrentLimitA);
+                Require(row.Assessment != null, "회로 판정이 없습니다: " + circuit.CircuitId);
+                Require(row.Assessment.IsWithinLimits == within,
+                    "회로 판정이 독립 계산과 다릅니다: " + circuit.CircuitId);
+                if (requested.ExpectedWithinLimits.HasValue)
+                {
+                    Require(within == requested.ExpectedWithinLimits.Value,
+                        string.Format(CultureInfo.InvariantCulture,
+                            "회로 {0} 판정이 기대와 다릅니다. 필요 전압 {1:0.###} V / 허용 {2:0.###} V, 전류 {3:0.####} A / 허용 {4:0.####} A",
+                            circuit.CircuitId, independentVoltage, limits.VoltageLimitV,
+                            independentCurrent, limits.CurrentLimitA));
+                }
+            }
+            Require(Near(global.Table.TotalTargetPowerW, allocated, 1e-6),
+                "배분 합계가 회로별 배분의 합과 다릅니다.");
+            Require(Near(global.Table.TotalPowerW, allocated, 1e-6),
+                "총 발열전력이 배분 합계와 다릅니다.");
+
+            bool anyNg = global.Table.Rows.Any(row => row.IsOverLimit);
+            if (requested.ExpectedWithinLimits == false)
+                Require(anyNg, "NG를 기대했지만 모든 회로가 한도 이내입니다.");
+
+            ReviewScopeBox.SelectedIndex = requested.ReviewScope;
+            _reviewCurrentAreaOnly = requested.ReviewScope == 1;
+            RefreshElectricalTable();
+            ReviewSnapshot scoped = BuildReviewSnapshot();
+            Require(scoped.ElectricalError == null, "범위 전환 후 전기 입력 오류: " + scoped.ElectricalError);
+            if (requested.ReviewScope == 1)
+            {
+                Require(scoped.RequestedAreas.Count == 1 && ReferenceEquals(scoped.RequestedAreas[0], _activeArea),
+                    "현재 영역 검토 범위가 활성 영역 하나로 제한되지 않았습니다.");
+                Require(scoped.Entries.All(entry => ReferenceEquals(entry.Area, _activeArea)),
+                    "현재 영역 검토 범위에 다른 영역이 포함되었습니다.");
+            }
+            foreach (CircuitLengthInfo circuit in scoped.Circuits)
+            {
+                Require(targetByCircuit.TryGetValue(circuit.CircuitId, out double globalTarget),
+                    "범위 전환 후 알 수 없는 회로가 표시됩니다: " + circuit.CircuitId);
+                Require(circuit.TargetPowerW.HasValue && Near(circuit.TargetPowerW.Value, globalTarget, 1e-9),
+                    "검토 범위를 바꾸면서 발열전력이 다시 배분되었습니다: " + circuit.CircuitId);
+            }
+            Require(ElectricalSpecGrid.Items.Count == scoped.Table.Rows.Count + 1,
+                "회로별 사양표 화면 행 수가 다릅니다.");
+            Require(ExpandedElectricalGrid.Items.Count == scoped.Table.Rows.Count + 1,
+                "확대 전기 사양표 화면 행 수가 다릅니다.");
+
+            var data = new Dictionary<string, string>
+            {
+                ["circuits"] = global.Circuits.Count.ToString(CultureInfo.InvariantCulture),
+                ["totalLengthM"] = totalLengthM.ToString("0.###", CultureInfo.InvariantCulture),
+                ["allocatedW"] = allocated.ToString("0.###", CultureInfo.InvariantCulture),
+                ["limitW"] = limits.PowerLimitW.ToString("0.###", CultureInfo.InvariantCulture),
+                ["overLimitCircuits"] = global.Table.OverLimitCount.ToString(CultureInfo.InvariantCulture),
+                ["reviewScope"] = requested.ReviewScope.ToString(CultureInfo.InvariantCulture),
+                ["wireResistanceOhmPerM"] = wire.ResistanceOhmPerMeter.ToString("0.###", CultureInfo.InvariantCulture)
+            };
+            return VisualStepOutcome.Ok("전기 판정·공유 전력 배분 확인", data);
+        }
+
+        private VisualStepOutcome VisualSplitArea(VisualActionSpec spec, VisualScenario scenario)
+        {
+            WorkingArea parent = ResolveVisualArea(spec.Area);
+            ActivateArea(parent);
+            SidebarTabs.SelectedIndex = ReviewTabIndex;
+            Require(parent.Pattern != null && parent.Pattern.RoutePieces.Count > 0,
+                "분할할 영역에 확정된 발열경로가 없습니다: " + spec.Area);
+            Require((parent.SelectedStartExit.HasValue && parent.SelectedEndExit.HasValue)
+                || SplitExitPointPlanner.HasAssignablePair(parent),
+                "분할에 사용할 시작/종료 인출점이 없습니다: " + spec.Area);
+
+            List<WorkingArea> beforeAreas = _areas.ToList();
+            List<AreaSnapshot> before = beforeAreas.Select(CaptureAreaSnapshot).ToList();
+
+            QueueVisualTestConfirm(spec);
+            SplitActiveArea();
+            RequireNoPendingVisualTestConfirms();
+
+            bool parentRemoved = !_areas.Contains(parent);
+            if (spec.Outcome == "rejected")
+            {
+                Require(!parentRemoved, "거부를 기대했지만 영역이 분할되었습니다.");
+                if (!string.IsNullOrWhiteSpace(spec.FailureContains))
+                    Require(StatusText.Text.Contains(spec.FailureContains, StringComparison.Ordinal),
+                        "분할 거부 사유가 기대와 다릅니다: " + StatusText.Text);
+                RequireSnapshotsUnchanged(before);
+                var rejectedData = new Dictionary<string, string>
+                {
+                    ["reason"] = StatusText.Text,
+                    ["areas"] = _areas.Count.ToString(CultureInfo.InvariantCulture)
+                };
+                return VisualStepOutcome.Ok("자동분할 거부·기존 상태 보존", rejectedData);
+            }
+
+            Require(parentRemoved,
+                "자동분할이 완료되지 않았습니다: " + StatusText.Text);
+            List<WorkingArea> children = _areas
+                .Where(area => !beforeAreas.Contains(area))
+                .OrderBy(area => area.AreaId)
+                .ToList();
+            Require(children.Count >= 2 && children.Count <= 4,
+                "자동분할 결과 영역 수가 2..4가 아닙니다: " + children.Count);
+            if (spec.PartCount != null)
+                Require(children.Count == spec.PartCount.Value,
+                    "자동분할 영역 수가 기대와 다릅니다. 기대 " + spec.PartCount.Value + ", 실제 " + children.Count);
+
+            foreach (AreaSnapshot snapshot in before)
+            {
+                if (ReferenceEquals(snapshot.Area, parent)) continue;
+                Require(_areas.Contains(snapshot.Area), "분할 중 다른 영역이 제거되었습니다: " + snapshot.Area.Name);
+                RequireSnapshotsEqual(snapshot, CaptureAreaSnapshot(snapshot.Area), "다른 영역");
+            }
+
+            string[] childAliases = spec.ChildAliases;
+            if (childAliases == null || childAliases.Length == 0)
+                childAliases = Enumerable.Range(1, children.Count).Select(i => spec.Area + "-" + i).ToArray();
+            Require(childAliases.Length == children.Count,
+                "분할 결과 영역 수와 childAliases 수가 다릅니다.");
+
+            _visualAreaAliases.Remove(spec.Area);
+            var childData = new List<string>();
+            for (int i = 0; i < children.Count; i++)
+            {
+                WorkingArea child = children[i];
+                Require(!_visualAreaAliases.ContainsKey(childAliases[i]),
+                    "분할 결과 alias가 이미 사용 중입니다: " + childAliases[i]);
+                string error = CheckAreaState(child, null, out Dictionary<string, string> areaData);
+                Require(error == null, "분할 영역 " + childAliases[i] + ": " + error);
+                Require(child.Circuits.Count == 1,
+                    "분할 영역에 회로가 정확히 하나가 아닙니다: " + childAliases[i]);
+                Require(child.FaceIdSet.SetEquals(parent.FaceIdSet),
+                    "분할 영역이 부모의 선택 면을 유지하지 않았습니다: " + childAliases[i]);
+                _visualAreaAliases[childAliases[i]] = child;
+                childData.Add(childAliases[i] + ":" + areaData["pieces"] + "p/" + areaData["totalLengthMm"] + "mm");
+            }
+
+            double minLength = children.Min(c => c.RoutePieceLengths.Sum());
+            double maxLength = children.Max(c => c.RoutePieceLengths.Sum());
+            Require(minLength > 0, "분할 영역의 실제 3D 길이가 0입니다.");
+            double ratio = maxLength / minLength;
+
+            ActivateArea(children[0]);
+            var data = new Dictionary<string, string>
+            {
+                ["areas"] = _areas.Count.ToString(CultureInfo.InvariantCulture),
+                ["children"] = string.Join(",", childData),
+                ["minLengthMm"] = minLength.ToString("0.###", CultureInfo.InvariantCulture),
+                ["maxLengthMm"] = maxLength.ToString("0.###", CultureInfo.InvariantCulture),
+                ["lengthRatio"] = ratio.ToString("0.####", CultureInfo.InvariantCulture),
+                ["status"] = StatusText.Text
+            };
+            return VisualStepOutcome.Ok("자동분할·자식 영역 확인", data);
+        }
+
+        private VisualStepOutcome VisualExportStep(VisualActionSpec spec)
+        {
+            SidebarTabs.SelectedIndex = ExportTabIndex;
+            ReviewScopeBox.SelectedIndex = spec.Scope ?? 0;
+            _reviewCurrentAreaOnly = (spec.Scope ?? 0) == 1;
+            RefreshElectricalTable();
+            string path = VisualArtifactPath(spec.FileName, "result.step");
+            if (File.Exists(path))
+                return VisualStepOutcome.Fail("STEP 결과 파일이 이미 있습니다: " + path);
+
+            ExportStepResult result = ExportStepCore(path, out string error);
+            if (spec.Outcome == "rejected")
+            {
+                Require(result == ExportStepResult.Rejected || result == ExportStepResult.Failed,
+                    "STEP 출력 거부를 기대했지만 결과가 " + result + "입니다.");
+                Require(!string.IsNullOrWhiteSpace(error), "STEP 거부 사유가 비어 있습니다.");
+                if (!string.IsNullOrWhiteSpace(spec.FailureContains))
+                    Require(error.Contains(spec.FailureContains, StringComparison.Ordinal),
+                        "STEP 거부 사유가 기대와 다릅니다: " + error);
+                Require(!File.Exists(path), "STEP 출력이 거부되었는데 파일이 생성되었습니다.");
+                var rejectedData = new Dictionary<string, string> { ["reason"] = error };
+                return VisualStepOutcome.Ok("STEP 출력 거부 확인", rejectedData);
+            }
+
+            Require(result == ExportStepResult.Success, "STEP 출력이 완료되지 않았습니다: " + error);
+            Require(File.Exists(path), "STEP 결과 파일이 없습니다: " + path);
+            var info = new FileInfo(path);
+            Require(info.Length > 0, "STEP 결과 파일이 비어 있습니다.");
+            var data = new Dictionary<string, string>
+            {
+                ["path"] = path,
+                ["bytes"] = info.Length.ToString(CultureInfo.InvariantCulture),
+                ["scope"] = (spec.Scope ?? 0).ToString(CultureInfo.InvariantCulture)
+            };
+            return VisualStepOutcome.Ok("STEP 출력·네이티브 자기검증 확인", data);
+        }
+
+        private VisualStepOutcome VisualSaveProject(VisualActionSpec spec)
+        {
+            string path = VisualArtifactPath(spec.FileName, "project.json");
+            if (File.Exists(path))
+                return VisualStepOutcome.Fail("프로젝트 결과 파일이 이미 있습니다: " + path);
+
+            bool saved = SaveProjectTo(path);
+            if (spec.Outcome == "rejected")
+            {
+                Require(!saved, "프로젝트 저장 거부를 기대했지만 저장되었습니다.");
+                if (!string.IsNullOrWhiteSpace(spec.FailureContains))
+                    Require(StatusText.Text.Contains(spec.FailureContains, StringComparison.Ordinal),
+                        "프로젝트 저장 거부 사유가 기대와 다릅니다: " + StatusText.Text);
+                Require(!File.Exists(path), "저장이 거부되었는데 프로젝트 파일이 생성되었습니다.");
+                return VisualStepOutcome.Ok("프로젝트 저장 거부 확인");
+            }
+
+            Require(saved, "프로젝트 저장이 완료되지 않았습니다: " + StatusText.Text);
+            Require(File.Exists(path), "프로젝트 파일이 없습니다: " + path);
+            var info = new FileInfo(path);
+            Require(info.Length > 0, "프로젝트 파일이 비어 있습니다.");
+            _visualProjectCheckpoints[path] = File.ReadAllText(path);
+            _visualProjectAliasIds[path] = _visualAreaAliases.ToDictionary(
+                pair => pair.Key, pair => pair.Value.AreaId, StringComparer.Ordinal);
+
+            var data = new Dictionary<string, string>
+            {
+                ["path"] = path,
+                ["bytes"] = info.Length.ToString(CultureInfo.InvariantCulture),
+                ["areas"] = _areas.Count.ToString(CultureInfo.InvariantCulture),
+                ["aliases"] = string.Join(",", _visualAreaAliases.Keys.OrderBy(k => k, StringComparer.Ordinal))
+            };
+            return VisualStepOutcome.Ok("프로젝트 저장", data);
+        }
+
+        private VisualStepOutcome VisualLoadProject(VisualActionSpec spec)
+        {
+            string path = VisualArtifactPath(spec.FileName, "project.json");
+            Require(File.Exists(path), "불러올 프로젝트 파일이 없습니다: " + path);
+            Require(_visualProjectAliasIds.ContainsKey(path),
+                "이 실행에서 저장한 프로젝트가 아니어서 영역 alias를 복원할 수 없습니다: " + path);
+
+            QueueVisualTestConfirm(spec);
+            bool loaded = LoadProject(path);
+            RequireNoPendingVisualTestConfirms();
+            if (spec.Outcome == "rejected")
+            {
+                Require(!loaded, "프로젝트 열기 거부를 기대했지만 열렸습니다.");
+                if (!string.IsNullOrWhiteSpace(spec.FailureContains))
+                    Require(StatusText.Text.Contains(spec.FailureContains, StringComparison.Ordinal),
+                        "프로젝트 열기 거부 사유가 기대와 다릅니다: " + StatusText.Text);
+                return VisualStepOutcome.Ok("프로젝트 열기 거부 확인");
+            }
+
+            Require(loaded, "프로젝트 열기가 완료되지 않았습니다: " + StatusText.Text);
+            Require(_areas.Count > 0, "프로젝트를 열었지만 작업영역이 없습니다.");
+
+            Dictionary<string, int> aliasIds = _visualProjectAliasIds[path];
+            var restoredAliases = new Dictionary<string, WorkingArea>(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, int> pair in aliasIds)
+            {
+                WorkingArea area = _areas.FirstOrDefault(a => a.AreaId == pair.Value);
+                Require(area != null, "복원된 영역을 alias에 연결하지 못했습니다: " + pair.Key + " (AreaId " + pair.Value + ")");
+                Require(restoredAliases.Values.All(existing => !ReferenceEquals(existing, area)),
+                    "여러 alias가 같은 복원 영역에 연결되었습니다: " + pair.Key);
+                restoredAliases[pair.Key] = area;
+            }
+            _visualAreaAliases.Clear();
+            foreach (KeyValuePair<string, WorkingArea> pair in restoredAliases)
+                _visualAreaAliases[pair.Key] = pair.Value;
+            Require(_visualAreaAliases.Count == _areas.Count,
+                "복원된 영역 수와 alias 수가 다릅니다. 영역 " + _areas.Count + ", alias " + _visualAreaAliases.Count);
+
+            string checkpointDiff = null;
+            if (spec.CompareProject == true && _visualProjectCheckpoints.TryGetValue(path, out string expectedJson))
+            {
+                string tempPath = Path.Combine(VisualTestSession.Current.Report.RunDirectory,
+                    "reload-check-" + Guid.NewGuid().ToString("N") + ".json");
+                try
+                {
+                    Require(SaveProjectTo(tempPath),
+                        "복원 상태를 임시 프로젝트로 저장하지 못했습니다: " + StatusText.Text);
+                    checkpointDiff = CompareProjectJson(expectedJson, File.ReadAllText(tempPath));
+                }
+                finally
+                {
+                    TryDeleteFile(tempPath);
+                }
+            }
+            if (checkpointDiff != null)
+                return VisualStepOutcome.Fail("저장 시점과 복원 상태가 다릅니다: " + checkpointDiff);
+
+            var data = new Dictionary<string, string>
+            {
+                ["path"] = path,
+                ["areas"] = _areas.Count.ToString(CultureInfo.InvariantCulture),
+                ["aliases"] = string.Join(",", _visualAreaAliases.Keys.OrderBy(k => k, StringComparer.Ordinal)),
+                ["activeAreaId"] = (_activeArea?.AreaId ?? -1).ToString(CultureInfo.InvariantCulture),
+                ["electrical"] = !string.IsNullOrWhiteSpace(AllowedPowerBox.Text) ? AllowedPowerBox.Text : "",
+                ["checkpoint"] = checkpointDiff == null && spec.CompareProject == true ? "equal" : "skipped"
+            };
+            return VisualStepOutcome.Ok("프로젝트 열기·상태 복원", data);
+        }
+
+        private sealed record AreaSnapshot(
+            WorkingArea Area, int Pieces, double LengthMm, ExitBoundaryPoint? Start, ExitBoundaryPoint? End);
+
+        private static AreaSnapshot CaptureAreaSnapshot(WorkingArea area) => new(
+            area,
+            area.Pattern?.RoutePieces.Count ?? 0,
+            area.RoutePieceLengths?.Sum() ?? 0,
+            area.SelectedStartExit,
+            area.SelectedEndExit);
+
+        private static void RequireSnapshotsEqual(AreaSnapshot expected, AreaSnapshot actual, string label)
+        {
+            Require(expected.Pieces == actual.Pieces,
+                label + " 조각 수가 달라졌습니다: " + expected.Area.Name);
+            Require(Near(expected.LengthMm, actual.LengthMm, 1e-6),
+                label + " 실제 3D 길이가 달라졌습니다: " + expected.Area.Name);
+            Require(ExitPointEquals(expected.Start, actual.Start),
+                label + " 시작 인출점이 달라졌습니다: " + expected.Area.Name);
+            Require(ExitPointEquals(expected.End, actual.End),
+                label + " 종료 인출점이 달라졌습니다: " + expected.Area.Name);
+        }
+
+        private static void RequireSnapshotsUnchanged(List<AreaSnapshot> expected)
+        {
+            foreach (AreaSnapshot snapshot in expected)
+            {
+                WorkingArea area = snapshot.Area;
+                Require(area != null, "보존해야 할 영역 참조가 사라졌습니다.");
+                RequireSnapshotsEqual(snapshot, CaptureAreaSnapshot(area), "거부 후");
+            }
+        }
+
+        private static bool ExitPointEquals(ExitBoundaryPoint? left, ExitBoundaryPoint? right)
+        {
+            if (left.HasValue != right.HasValue) return false;
+            if (!left.HasValue) return true;
+            ExitBoundaryPoint a = left.Value, b = right.Value;
+            return ExitUvDistance(a.Point, b.Point) <= 1e-6
+                && a.SegmentIndex == b.SegmentIndex
+                && Math.Abs(a.SegmentParameter - b.SegmentParameter) <= 1e-9
+                && Nullable.Equals(a.Binding, b.Binding)
+                && Nullable.Equals(a.ArtificialBinding, b.ArtificialBinding)
+                && Nullable.Equals(a.SplitBinding, b.SplitBinding);
+        }
+
+        private static double ExitUvDistance(Vec2 a, Vec2 b)
+        {
+            double dx = a.X - b.X, dy = a.Y - b.Y;
+            return Math.Sqrt(dx * dx + dy * dy);
+        }
+
+        private static bool Near(double actual, double expected, double tolerance) =>
+            double.IsFinite(actual) && double.IsFinite(expected) && Math.Abs(actual - expected) <= tolerance;
+
+        private static string DescribeExitBinding(ExitBoundaryPoint point)
+        {
+            if (point.Binding.HasValue)
+            {
+                ExitEdgeBinding binding = point.Binding.Value;
+                return string.Format(CultureInfo.InvariantCulture,
+                    "CAD edge={0} parameter={1:0.############} range=[{2:0.############},{3:0.############}] reversed={4}",
+                    binding.EdgeKey, binding.Parameter, binding.FirstParameter, binding.LastParameter, binding.Reversed);
+            }
+            if (point.ArtificialBinding.HasValue) return "artificial=" + point.ArtificialBinding.Value;
+            if (point.SplitBinding.HasValue) return "split=" + point.SplitBinding.Value;
+            return "none";
+        }
+
+        private static string VisualArtifactPath(string fileName, string fallback)
+        {
+            string name = string.IsNullOrWhiteSpace(fileName) ? fallback : fileName;
+            if (name == "." || name == ".." || name.IndexOfAny(new[] { '\\', '/', ':' }) >= 0)
+                throw new InvalidOperationException("아티팩트 파일명은 실행 폴더 안의 순수 파일명이어야 합니다: " + name);
+            return Path.Combine(VisualTestSession.Current.Report.RunDirectory, name);
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
+        private static string CompareProjectJson(string expected, string actual)
+        {
+            JsonNode left, right;
+            try
+            {
+                left = JsonNode.Parse(expected);
+                right = JsonNode.Parse(actual);
+            }
+            catch (JsonException ex)
+            {
+                return "프로젝트 JSON 해석 실패: " + ex.Message;
+            }
+            return CompareJsonNode(left, right, "$");
+        }
+
+        private static string CompareJsonNode(JsonNode left, JsonNode right, string path)
+        {
+            if (left == null && right == null) return null;
+            if (left == null || right == null) return path + " 한쪽이 null입니다.";
+            if (left is JsonObject leftObject && right is JsonObject rightObject)
+            {
+                List<string> leftNames = leftObject
+                    .Where(pair => !IsVolatileProjectProperty(pair.Key))
+                    .Select(pair => pair.Key)
+                    .OrderBy(name => name, StringComparer.Ordinal)
+                    .ToList();
+                List<string> rightNames = rightObject
+                    .Where(pair => !IsVolatileProjectProperty(pair.Key))
+                    .Select(pair => pair.Key)
+                    .OrderBy(name => name, StringComparer.Ordinal)
+                    .ToList();
+                if (!leftNames.SequenceEqual(rightNames, StringComparer.Ordinal))
+                    return path + " 속성 집합이 다릅니다.";
+                foreach (string name in leftNames)
+                {
+                    string diff = CompareJsonNode(leftObject[name], rightObject[name], path + "." + name);
+                    if (diff != null) return diff;
+                }
+                return null;
+            }
+            if (left is JsonArray leftArray && right is JsonArray rightArray)
+            {
+                if (leftArray.Count != rightArray.Count)
+                    return path + " 배열 길이가 다릅니다. " + leftArray.Count + " != " + rightArray.Count;
+                for (int i = 0; i < leftArray.Count; i++)
+                {
+                    string diff = CompareJsonNode(leftArray[i], rightArray[i], path + "[" + i + "]");
+                    if (diff != null) return diff;
+                }
+                return null;
+            }
+            return JsonNode.DeepEquals(left, right)
+                ? null
+                : path + " 값이 다릅니다: " + left.ToJsonString() + " != " + right.ToJsonString();
+        }
+
+        private static bool IsVolatileProjectProperty(string name) =>
+            name.EndsWith("Utc", StringComparison.Ordinal)
+            || name == "routeContextKey"
+            || name == "edgeKey"
+            || name == "revision"
+            || name == "modelRevision"
+            || name == "workingContextId"
+            || name == "workingContextRevision"
+            || name == "nativePieceId"
+            || name == "nativePieceIds";
 
         // ---- 13·14: 제외영역·수동 편집 ----
 

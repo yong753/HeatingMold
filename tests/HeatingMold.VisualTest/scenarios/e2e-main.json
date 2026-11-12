@@ -1,0 +1,202 @@
+{
+  "schemaVersion": 2,
+  "name": "E2E 대표 흐름",
+  "description": "기본 예제에서 영역 확정, 직접 인출점 선택, 생성, 전기 판정, DXF, 저장, 자동분할, STEP, 저장/복원, 재출력까지 실제 제품 경로로 실행한다.",
+  "model": {
+    "path": "resource/Mold_Cover_Trim.step",
+    "sha256": "8CB03405817606D1917FEF55B46A60011FFB5E93075EECDEF5A8651D4359FCED",
+    "faceCount": 80,
+    "solidCount": 0
+  },
+  "areas": [
+    {
+      "alias": "A",
+      "faceIds": [44, 56, 69],
+      "marginMm": 5,
+      "spacingMm": 15,
+      "direction": 0
+    }
+  ],
+  "steps": [
+    {
+      "id": "select-a",
+      "name": "발열면 선택",
+      "action": "selectFaces",
+      "faces": [44, 56, 69]
+    },
+    {
+      "id": "confirm-a",
+      "name": "영역 A 확정",
+      "action": "confirmArea",
+      "area": "A"
+    },
+    {
+      "id": "pick-start",
+      "name": "시작 인출점 직접 선택",
+      "action": "pickExitPoint",
+      "area": "A",
+      "exitPoint": {
+        "role": "start",
+        "uv": [295.91262149879026, 133.36749353890832],
+        "toleranceMm": 0.5
+      }
+    },
+    {
+      "id": "pick-end",
+      "name": "종료 인출점 직접 선택",
+      "action": "pickExitPoint",
+      "area": "A",
+      "exitPoint": {
+        "role": "end",
+        "uv": [295.9106395319768, -291.6634555349192],
+        "toleranceMm": 0.5
+      }
+    },
+    {
+      "id": "generate-a",
+      "name": "영역 A 가로 경로 생성",
+      "action": "generate",
+      "area": "A",
+      "marginMm": 5,
+      "spacingMm": 15,
+      "direction": 0
+    },
+    {
+      "id": "check-a",
+      "name": "영역 A 구조 확인",
+      "action": "checkArea",
+      "area": "A",
+      "expect": {
+        "pieces": 60,
+        "turns": 29,
+        "circuits": 1,
+        "lengthMm": 18015.505,
+        "lengthToleranceMm": 0.5
+      }
+    },
+    {
+      "id": "electrical-before",
+      "name": "분할 전 전기 판정",
+      "action": "checkElectrical",
+      "electrical": {
+        "presetIndex": 0,
+        "voltageV": 220,
+        "allowedCurrentA": 16,
+        "allowedPowerKw": 3.5,
+        "reviewScope": 0,
+        "expectedWithinLimits": false
+      }
+    },
+    {
+      "id": "dxf-before",
+      "name": "분할 전 DXF 출력",
+      "action": "exportDxf",
+      "scope": 0,
+      "fileName": "before-split.dxf"
+    },
+    {
+      "id": "step-before",
+      "name": "분할 전 STEP 출력",
+      "action": "exportStep",
+      "scope": 0,
+      "fileName": "before-split.step"
+    },
+    {
+      "id": "save-before",
+      "name": "분할 전 프로젝트 저장",
+      "action": "saveProject",
+      "fileName": "before-split.json"
+    },
+    {
+      "id": "split-a",
+      "name": "영역 A 자동 3분할",
+      "action": "splitArea",
+      "area": "A",
+      "partCount": 3,
+      "childAliases": ["A1", "A2", "A3"],
+      "confirm": "yes",
+      "confirmAction": "영역 분할"
+    },
+    {
+      "id": "check-a1",
+      "name": "분할 영역 A1 확인",
+      "action": "checkArea",
+      "area": "A1",
+      "expect": { "pieces": 16, "turns": 7, "circuits": 1, "lengthMm": 5323.82, "lengthToleranceMm": 0.5 }
+    },
+    {
+      "id": "check-a2",
+      "name": "분할 영역 A2 확인",
+      "action": "checkArea",
+      "area": "A2",
+      "expect": { "pieces": 16, "turns": 7, "circuits": 1, "lengthMm": 5343.181, "lengthToleranceMm": 0.5 }
+    },
+    {
+      "id": "check-a3",
+      "name": "분할 영역 A3 확인",
+      "action": "checkArea",
+      "area": "A3",
+      "expect": { "pieces": 24, "turns": 11, "circuits": 1, "lengthMm": 6009.727, "lengthToleranceMm": 0.5 }
+    },
+    {
+      "id": "electrical-after",
+      "name": "분할 후 전기 판정",
+      "action": "checkElectrical",
+      "electrical": {
+        "presetIndex": 0,
+        "voltageV": 220,
+        "allowedCurrentA": 16,
+        "allowedPowerKw": 3.5,
+        "reviewScope": 0,
+        "expectedWithinLimits": true
+      }
+    },
+    {
+      "id": "dxf-after",
+      "name": "분할 후 DXF 출력",
+      "action": "exportDxf",
+      "scope": 0,
+      "fileName": "after-split.dxf"
+    },
+    {
+      "id": "save-after",
+      "name": "분할 후 프로젝트 저장",
+      "action": "saveProject",
+      "fileName": "after-split.json"
+    },
+    {
+      "id": "load-after",
+      "name": "분할 프로젝트 다시 열기·상태 비교",
+      "action": "loadProject",
+      "fileName": "after-split.json",
+      "compareProject": true
+    },
+    {
+      "id": "check-reload-a1",
+      "name": "복원 영역 A1 확인",
+      "action": "checkArea",
+      "area": "A1",
+      "expect": { "pieces": 16, "turns": 7, "circuits": 1, "lengthMm": 5323.82, "lengthToleranceMm": 0.5 }
+    },
+    {
+      "id": "electrical-reload",
+      "name": "복원 후 전기 재판정",
+      "action": "checkElectrical",
+      "electrical": {
+        "presetIndex": 0,
+        "voltageV": 220,
+        "allowedCurrentA": 16,
+        "allowedPowerKw": 3.5,
+        "reviewScope": 0,
+        "expectedWithinLimits": true
+      }
+    },
+    {
+      "id": "dxf-reload",
+      "name": "복원 후 DXF 재출력",
+      "action": "exportDxf",
+      "scope": 0,
+      "fileName": "reloaded.dxf"
+    }
+  ]
+}
