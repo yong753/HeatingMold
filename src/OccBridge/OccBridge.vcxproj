@@ -37,7 +37,7 @@
       <ExceptionHandling>Async</ExceptionHandling>
       <Optimization>MaxSpeed</Optimization>
       <AdditionalIncludeDirectories>$(OcctRoot)\inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/utf-8 /bigobj %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -46,7 +46,7 @@
       <!-- 심볼→툴킷 매핑(findstr)으로 확정: STEPControl_Reader=TKDESTEP, BRepTools/BRepAdaptor/TopExp=TKBRep, IFSelect=TKXSBase, Geom2d=TKG2d, WNT_Window/Aspect_DisplayConnection=TKService, OpenGl_GraphicDriver=TKOpenGl, V3d/AIS/StdSelect(픽킹)=TKV3d, HLR*=TKHLR -->
       <!-- W2: BRepMesh_IncrementalMesh(삼각분할)=TKMesh 추가 -->
       <!-- STEP 내보내기: BRepPrimAPI(BRepPrimAPI_MakeCylinder/MakeSphere)=TKPrim, XDE/STEPCAFWriter=TKXCAF(+TKCAF,TKLCAF,TKCDF) 추가 -->
-      <AdditionalDependencies>TKernel.lib;TKMath.lib;TKG2d.lib;TKG3d.lib;TKGeomBase.lib;TKGeomAlgo.lib;TKBRep.lib;TKTopAlgo.lib;TKBool.lib;TKShHealing.lib;TKMesh.lib;TKPrim.lib;TKBO.lib;TKDESTEP.lib;TKXSBase.lib;TKCDF.lib;TKLCAF.lib;TKCAF.lib;TKXCAF.lib;TKService.lib;TKV3d.lib;TKOpenGl.lib;TKHLR.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>TKernel.lib;TKMath.lib;TKG2d.lib;TKG3d.lib;TKGeomBase.lib;TKGeomAlgo.lib;TKBRep.lib;TKTopAlgo.lib;TKBool.lib;TKShHealing.lib;TKMesh.lib;TKPrim.lib;TKOffset.lib;TKBO.lib;TKDESTEP.lib;TKXSBase.lib;TKCDF.lib;TKLCAF.lib;TKCAF.lib;TKXCAF.lib;TKService.lib;TKV3d.lib;TKOpenGl.lib;TKHLR.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -57,6 +57,7 @@
     <ClInclude Include="FaceIdSelectionNative.inc" />
     <ClInclude Include="FaceIdSelectionRefinementNative.inc" />
     <ClInclude Include="StepExportNative.inc" />
+    <ClInclude Include="StepExportGeometryNative.inc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

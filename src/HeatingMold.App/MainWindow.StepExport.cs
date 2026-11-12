@@ -216,64 +216,9 @@ public partial class MainWindow
         return areas;
     }
 
-    /// <summary>
-    /// 수집된 확정 회로를 네이티브 STEP 작성 입력으로 옮긴다. 조각 순서와 좌표는
-    /// 확정 체인 그대로이며, 조각 경계에서 겹치는 같은 점만 한 번 넣는다.
-    /// </summary>
-    private static StepExportCircuit[] BuildStepPayload(IReadOnlyList<RouteExportCircuit> circuits)
+    private static StepExportArea[] BuildStepPayload(IReadOnlyList<RouteExportCircuit> circuits)
     {
-        var payload = new StepExportCircuit[circuits.Count];
-        for (int i = 0; i < circuits.Count; i++)
-        {
-            RouteExportCircuit circuit = circuits[i];
-            RouteExportPiece first = circuit.Pieces[0];
-            var points = new List<double>();
-            for (int p = 0; p < circuit.Pieces.Count; p++)
-            {
-                // 확정 조각은 최대 RouteJoinTolerance까지 벌어져 있을 수 있다. 자동으로
-                // 잇거나 메우면 확정 형상/길이를 바꾸므로, 그 이상 벌어진 경로는 저장하지
-                // 않고 영역/조각을 지목해 거부한다.
-                if (p > 0)
-                {
-                    RouteExportPiece previous = circuit.Pieces[p - 1];
-                    Vec3 previousEnd = previous.Points[previous.Points.Count - 1];
-                    Vec3 currentStart = circuit.Pieces[p].Points[0];
-                    double gx = previousEnd.X - currentStart.X;
-                    double gy = previousEnd.Y - currentStart.Y;
-                    double gz = previousEnd.Z - currentStart.Z;
-                    double gap = Math.Sqrt(gx * gx + gy * gy + gz * gz);
-                    if (gap > RouteJoinTolerance)
-                    {
-                        throw new IOException("영역 " + first.AreaName + " 회로 1 조각 "
-                            + (previous.PieceIndex + 1) + "과 " + (circuit.Pieces[p].PieceIndex + 1)
-                            + "의 확정 경로가 " + gap.ToString("0.###", CultureInfo.InvariantCulture)
-                            + " mm 벌어져 있어 하나의 발열사로 내보낼 수 없습니다. 경로를 다시 생성하세요.");
-                    }
-                }
-                IReadOnlyList<Vec3> piecePoints = circuit.Pieces[p].Points;
-                for (int k = 0; k < piecePoints.Count; k++)
-                {
-                    Vec3 point = piecePoints[k];
-                    if (points.Count >= 3
-                        && points[points.Count - 3] == point.X
-                        && points[points.Count - 2] == point.Y
-                        && points[points.Count - 1] == point.Z)
-                        continue;
-                    points.Add(point.X);
-                    points.Add(point.Y);
-                    points.Add(point.Z);
-                }
-            }
-            if (points.Count < 6)
-            {
-                throw new IOException("영역 " + first.AreaName + "의 발열경로 좌표가 부족합니다. "
-                    + "경로를 다시 생성한 뒤 내보내세요.");
-            }
-            payload[i] = new StepExportCircuit(
-                first.AreaName + " 발열사", first.AreaName,
-                first.ColorR, first.ColorG, first.ColorB, points.ToArray());
-        }
-        return payload;
+        return StepExportPayload.Build(circuits);
     }
 
     private static string DescribeStepFailure(
@@ -295,6 +240,26 @@ public partial class MainWindow
             {
                 return "영역 " + circuits[index].Pieces[0].AreaName
                     + "의 발열사·발열경로 형상을 만들지 못했습니다. 확정 경로 좌표를 확인하세요.";
+            }
+            return "발열사·발열경로 형상을 만들지 못했습니다.";
+        }
+        if (token.StartsWith("piece-build:", StringComparison.Ordinal))
+        {
+            // piece-build:<area>:<piece>:<reason>
+            string[] parts = token.Split(':');
+            if (parts.Length >= 4
+                && int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int areaIndex)
+                && int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int pieceIndex)
+                && circuits != null && areaIndex >= 0 && areaIndex < circuits.Count)
+            {
+                IReadOnlyList<RouteExportPiece> pieces = circuits[areaIndex].Pieces;
+                string areaName = pieces[0].AreaName;
+                string pieceLabel = pieceIndex >= 0 && pieceIndex < pieces.Count
+                    ? (pieces[pieceIndex].PieceIndex + 1).ToString(CultureInfo.InvariantCulture)
+                    : (pieceIndex + 1).ToString(CultureInfo.InvariantCulture);
+                return "영역 " + areaName + " 조각 " + pieceLabel
+                    + "의 발열사·발열경로 형상을 만들지 못했습니다(" + parts[3]
+                    + "). 확정 경로 좌표를 확인하세요.";
             }
             return "발열사·발열경로 형상을 만들지 못했습니다.";
         }
