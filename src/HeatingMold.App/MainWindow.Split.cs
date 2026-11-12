@@ -17,7 +17,8 @@ namespace HeatingMold.App;
 /// 일부만 분할하지 않고 기존 영역과 경로를 유지한 채 오류로 보고한다. 분할은 다음 순서를 지킨다.
 /// 1) 이 영역이 배분받은 발열 전력·허용치·마진/간격으로 필요한 영역 수를 계산한다.
 /// 2) 예상 배치 길이가 균등해지도록 절단선을 정하고 자식 영역을 준비한다.
-/// 3) 부모의 시작/종료 인출점이 있으면 그 측면을 따라 새 영역의 인출점을 자동으로 정한다.
+/// 3) 부모의 시작/종료 인출점이 있으면 그 방향(같은 측면)을 유지하도록 새 영역의 인출점을
+///    자동으로 정한다. 길이를 맞추기 위해 인출 방향을 바꾸지 않는다.
 ///    (마음에 들지 않으면 기존 인출점 버튼으로 다시 선택할 수 있다.)
 /// 4) 분할 후 검토 계산이 확정된 전체 영역의 실측 3D 길이 비율로 공통 발열전력을 다시 배분한다.
 ///    분할은 총 발열전력을 늘리지 않는다.
@@ -249,12 +250,18 @@ public partial class MainWindow
 
         string partsText = string.Join(", ", children.Select(child => child.Name));
         string exitText = autoExits
-            ? "시작/종료점은 원래 범위 안에서 마진을 확보해 자동 지정하고 경로도 자동 생성했습니다(필요하면 다시 선택·생성 가능)."
+            ? "시작/종료점은 분할 전과 같은 측면을 유지하도록 원래 범위 안에서 자동 지정하고 경로도 자동 생성했습니다(필요하면 다시 선택·생성 가능)."
             : "각 영역에서 시작점과 종료점을 선택한 뒤 생성하세요.";
-        string balanceText = autoExits && double.IsFinite(balanceRatio)
-            ? string.Format(CultureInfo.CurrentCulture,
-                " 실제 2D 경로 길이 편차 {0:F3}배.", balanceRatio)
-            : string.Empty;
+        string balanceText = string.Empty;
+        if (autoExits && double.IsFinite(balanceRatio) && preparedPatterns.Count > 0)
+        {
+            double[] balanceLengths = preparedPatterns.Values
+                .Select(pattern => pattern.RoutePieces.Sum(piece => piece.Length))
+                .ToArray();
+            balanceText = string.Format(CultureInfo.CurrentCulture,
+                " 실제 2D 경로 길이 {0:F1}~{1:F1} mm, 편차 {2:F3}배.",
+                balanceLengths.Min(), balanceLengths.Max(), balanceRatio);
+        }
         SetSplitStatus(string.Format(CultureInfo.CurrentCulture,
             "{0} 영역을 {1}개 독립 영역으로 분할했습니다 — {2}. {3}{4}",
             area.Name, children.Count, partsText, exitText, balanceText));

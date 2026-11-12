@@ -14,37 +14,18 @@ namespace HeatingMold.App;
 /// 모든 경로 조각(발열선 + 턴 연결선 + 기타 연결선)의 2D 길이 합을 비교한다.
 ///
 /// 목표는 가장 긴 영역과 가장 짧은 영역의 2D 길이 비를 1에 가깝게 만드는 것이다.
-/// 탐색은 결정적이며 전역 최적을 보장하지 않는다. 탐색 한도 안에서 허용 비율을
-/// 만족하지 못하면 일부만 확정하지 않고 명시적으로 거부한다.
+/// 인출점의 시작/종료 측면은 분할 전 방향을 그대로 유지하므로, 길이 균등화를 위해
+/// 인출점을 옮기지 않고 절단 위치만 탐색한다. 탐색은 결정적이며 전역 최적을 보장하지
+/// 않는다. 탐색 범위에서 가장 균등한 절단을 그대로 쓰고, 남는 편차는 결과에 표시한다.
+/// 유효한 경로를 만들 수 없는 절단은 후보에서 제외하며, 어떤 후보도 없을 때만 실패한다.
 /// </summary>
 public partial class MainWindow
 {
     /// <summary>분할 후보 2D 평가의 전체 상한. 자동분할 상한 4개에서는 96회를 쓴다.</summary>
     private const int SplitSearchMaxEvaluations = 192;
 
-    /// <summary>인출점 배치 후보까지 평가할 상위 절단 후보 수.</summary>
-    private const int SplitSearchMaxVariantSeeds = 4;
-
-    /// <summary>인출점 배치 후보를 포함해 평가할 절단 위치 후보 수의 상한.</summary>
-    private const int SplitSearchMaxVariantCutSets = 10;
-
-    /// <summary>인출점 배치 후보를 실제 2D로 생성하는 횟수 상한(탐색 폭주 방지).</summary>
-    private const int SplitSearchMaxVariantGenerations = 2400;
-
     /// <summary>실제 2D 생성 결과로 평가한 분할 후보 하나.</summary>
     private sealed class Split2DCandidate
-    {
-        public double[] Cuts { get; init; } = Array.Empty<double>();
-        public AreaSplitResult Split { get; init; } = null!;
-        public List<WorkingArea> Children { get; init; } = null!;
-        public Dictionary<WorkingArea, SerpentineResult> Patterns { get; init; } = null!;
-        public double[] Lengths { get; init; } = Array.Empty<double>();
-        public double Ratio { get; init; }
-        public double Spread { get; init; }
-    }
-
-    /// <summary>절단 위치 하나에서 인출점 배치 후보를 실제 2D로 생성해 고른 조합.</summary>
-    private sealed class SplitVariantCandidate
     {
         public double[] Cuts { get; init; } = Array.Empty<double>();
         public AreaSplitResult Split { get; init; } = null!;
@@ -114,7 +95,6 @@ public partial class MainWindow
         var visited = new HashSet<string>(StringComparer.Ordinal);
         var starts = new List<double[]>();
         var startKeys = new HashSet<string>(StringComparer.Ordinal);
-        var evaluatedCuts = new List<(double[] Cuts, double Ratio, double Spread)>();
         Split2DCandidate best = null;
         string lastFailure = string.Empty;
 
@@ -168,7 +148,6 @@ public partial class MainWindow
                     Ratio = ratio,
                     Spread = spread,
                 };
-                evaluatedCuts.Add((candidate.Cuts, candidate.Ratio, candidate.Spread));
                 return true;
             }
             catch (Exception ex)
@@ -304,292 +283,13 @@ public partial class MainWindow
             return false;
         }
 
-        // 3단계: 절단 위치만으로는 고정 레인 간격의 위상 때문에 길이가 계단처럼 뛴다.
-        // 길이 비가 목표보다 나쁘면, 상위 절단 후보에서 시작 측면·종료 측면·시작 레인 위상을
-        // 바꾼 인출점 배치를 실제 2D로 생성해 조합을 고른다. 인출점은 모두 자식 영역의 실제
-        // 경계 provenance를 가지며 부모 선택 구간과 마진 안에 있다.
-        SplitVariantCandidate bestVariant = null;
-        int variantGenerations = 0;
-        int variantCutSets = 0;
-        string lastVariantFailure = string.Empty;
-        if (best.Ratio > AreaSplitter.LengthBalanceTolerance)
-        {
-            List<(double[] Cuts, double Ratio, double Spread)> variantSeeds = evaluatedCuts
-                .OrderBy(entry => entry.Ratio)
-                .ThenBy(entry => entry.Spread)
-                .Take(SplitSearchMaxVariantSeeds)
-                .ToList();
-            foreach ((double[] seedCuts, _, _) in variantSeeds)
-            {
-                if (TryEvaluateVariantCutSet(parent, seedCuts, margin, spacing,
-                        ref variantGenerations, ref variantCutSets, ref bestVariant,
-                        out SplitVariantCandidate seedVariant, out string seedFailure))
-                {
-                    if (seedVariant != null
-                        && seedVariant.Ratio <= AreaSplitter.LengthBalanceTolerance) break;
-                }
-                else
-                {
-                    lastVariantFailure = seedFailure;
-                }
-            }
-
-            // 4단계: 가장 좋은 인출점 조합의 절단 위치 주변을 좁혀 본다. 절단 좌표는
-            // 인출점 배치와 달리 연속적이므로, 레인 수가 바뀌는 경계 근처만 국소 탐색한다.
-            if (bestVariant != null
-                && bestVariant.Ratio > AreaSplitter.LengthBalanceTolerance)
-            {
-                double[] localCuts = bestVariant.Cuts;
-                SplitVariantCandidate localBest = bestVariant;
-                double[] steps = { spacing * 0.5, spacing * 0.25, spacing * 0.125 };
-                foreach (double step in steps)
-                {
-                    if (!(step > 1e-6)) continue;
-                    const int maxPasses = 2;
-                    for (int pass = 0; pass < maxPasses; pass++)
-                    {
-                        bool improved = false;
-                        for (int index = 0; index < localCuts.Length && !improved; index++)
-                        {
-                            for (int magnitude = 4; magnitude >= 1 && !improved; magnitude--)
-                            {
-                                for (int side = 0; side < 2; side++)
-                                {
-                                    int sign = side == 0 ? 1 : -1;
-                                    if (!TryOffsetCut(localCuts, index, sign * magnitude * step,
-                                            axisMin, axisMax, out double[] moved))
-                                        continue;
-                                    if (!TryEvaluateVariantCutSet(parent, moved, margin, spacing,
-                                            ref variantGenerations, ref variantCutSets, ref bestVariant,
-                                            out SplitVariantCandidate trial, out string trialFailure))
-                                    {
-                                        lastVariantFailure = trialFailure;
-                                        continue;
-                                    }
-                                    if (trial == null) continue;
-                                    if (trial.Ratio < localBest.Ratio - 1e-9)
-                                    {
-                                        localCuts = moved;
-                                        localBest = trial;
-                                        improved = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        if (!improved) break;
-                        if (localBest.Ratio <= AreaSplitter.LengthBalanceTolerance) break;
-                    }
-                    if (localBest.Ratio <= AreaSplitter.LengthBalanceTolerance) break;
-                }
-            }
-        }
-
-        bool preferVariant = bestVariant != null
-            && (bestVariant.Ratio < best.Ratio - 1e-9
-                || (Math.Abs(bestVariant.Ratio - best.Ratio) <= 1e-9
-                    && bestVariant.Spread < best.Spread - 1e-9));
-        if (preferVariant)
-        {
-            chosen = bestVariant!.Split;
-            children = bestVariant.Children;
-            patterns = bestVariant.Patterns;
-            balanceRatio = bestVariant.Ratio;
-        }
-        else
-        {
-            chosen = best.Split;
-            children = best.Children;
-            patterns = best.Patterns;
-            balanceRatio = best.Ratio;
-        }
-
-        if (!double.IsFinite(balanceRatio) || balanceRatio > AreaSplitter.HardLengthBalanceLimit)
-        {
-            double[] finalLengths = preferVariant ? bestVariant!.Lengths : best.Lengths;
-            double min = finalLengths.Min();
-            double max = finalLengths.Max();
-            failure = string.Format(CultureInfo.CurrentCulture,
-                "분할 영역의 실제 2D 발열경로 길이를 허용 범위 안에서 균등하게 만들 수 없습니다 — 최소 {0:F1} mm, 최대 {1:F1} mm, 편차 {2:F3}배 (허용 {3:F2}배). 절단 위치 {4}개, 인출점 배치 {5}개 후보를 실제 2D로 생성해 비교했지만 허용 비율을 만족하지 못했습니다. 이 분할은 확정하지 않습니다.",
-                min, max, balanceRatio, AreaSplitter.HardLengthBalanceLimit,
-                evaluatedCuts.Count, variantGenerations);
-            if (!string.IsNullOrEmpty(lastVariantFailure) &&
-                variantGenerations == 0)
-            {
-                failure += " 인출점 배치 후보 평가 실패: " + lastVariantFailure;
-            }
-            return false;
-        }
-
+        // 3단계: 평가한 후보 중 길이 비가 가장 좋은 절단을 그대로 쓴다. 인출점의 시작/종료
+        // 측면은 분할 전 방향을 유지하므로, 길이를 맞추기 위해 인출점을 다시 배치하지 않는다.
+        chosen = best.Split;
+        children = best.Children;
+        patterns = best.Patterns;
+        balanceRatio = best.Ratio;
         return true;
-    }
-
-    /// <summary>
-    /// 절단 후보 하나에서 인출점 배치 후보를 실제 2D로 생성·평가한다. 성공하면 고른 조합을
-    /// <paramref name="best"/>와 비교해 더 좋은 것만 남긴다.
-    /// </summary>
-    private bool TryEvaluateVariantCutSet(
-        WorkingArea parent,
-        double[] cuts,
-        double margin,
-        double spacing,
-        ref int generations,
-        ref int cutSets,
-        ref SplitVariantCandidate best,
-        out SplitVariantCandidate evaluated,
-        out string failure)
-    {
-        evaluated = null;
-        failure = string.Empty;
-        if (cutSets >= SplitSearchMaxVariantCutSets)
-        {
-            failure = "인출점 배치 후보를 평가할 절단 후보 한도에 도달했습니다.";
-            return false;
-        }
-        AreaSplitResult split = AreaSplitter.TryBuildAtCuts(parent.Region[0], parent.Exclusions,
-            parent.Direction, margin, spacing, cuts);
-        if (!split.Succeeded)
-        {
-            failure = split.Failure;
-            return false;
-        }
-        cutSets++;
-        if (!TryEvaluateSplitVariants(parent, split, margin, spacing, ref generations,
-                out SplitVariantCandidate variant, out failure))
-            return false;
-        evaluated = variant;
-        if (IsBetterVariant(variant, best)) best = variant;
-        return true;
-    }
-
-    /// <summary>
-    /// 자식마다 시작 측면·종료 측면·시작 레인 위상을 바꾼 인출점 후보를 실제 2D로 생성하고,
-    /// 영역별로 하나씩 골라 길이 비가 가장 좋은 조합을 게시한다. 생성한 패턴을 그대로
-    /// 돌려주므로 호출자는 다시 생성하지 않는다.
-    /// </summary>
-    private bool TryEvaluateSplitVariants(
-        WorkingArea parent,
-        AreaSplitResult split,
-        double margin,
-        double spacing,
-        ref int generations,
-        out SplitVariantCandidate candidate,
-        out string failure)
-    {
-        candidate = null!;
-        failure = string.Empty;
-        if (!split.Succeeded || split.Bands.Count < 2)
-        {
-            failure = split.Succeeded ? "분할 영역 수가 2개보다 적습니다." : split.Failure;
-            return false;
-        }
-        if (!TryBuildSplitChildren(parent, split, out List<WorkingArea> children, out failure))
-            return false;
-        if (!SplitExitPointPlanner.TryBuildCandidates(parent, children, margin, spacing, true,
-                out List<List<SplitExitPointPlanner.SplitExitCandidate>> candidateLists,
-                out failure))
-            return false;
-
-        var lengthsByChild = new List<IReadOnlyList<double>>(children.Count);
-        var patternsByChild = new List<List<SerpentineResult>>(children.Count);
-        var exitsByChild = new List<List<SplitExitPointPlanner.SplitExitCandidate>>(children.Count);
-        string firstGenerationFailure = string.Empty;
-
-        for (int childIndex = 0; childIndex < children.Count; childIndex++)
-        {
-            WorkingArea child = children[childIndex];
-            var lengths = new List<double>();
-            var childPatterns = new List<SerpentineResult>();
-            var childExits = new List<SplitExitPointPlanner.SplitExitCandidate>();
-            foreach (SplitExitPointPlanner.SplitExitCandidate exitCandidate in candidateLists[childIndex])
-            {
-                if (generations >= SplitSearchMaxVariantGenerations) break;
-                child.SelectedStartExit = exitCandidate.Start;
-                child.SelectedEndExit = exitCandidate.End;
-                child.StartAnchor = exitCandidate.Start.Point;
-                child.EndAnchor = exitCandidate.End.Point;
-                generations++;
-                if (!TryGenerateSelectedExitPattern(child, margin, spacing,
-                        out SerpentineResult pattern, out string generationFailure))
-                {
-                    if (firstGenerationFailure.Length == 0)
-                        firstGenerationFailure = child.Name + ": " + generationFailure;
-                    continue;
-                }
-                double length = pattern!.RoutePieces.Sum(piece => piece.Length);
-                if (!double.IsFinite(length) || length <= 0) continue;
-                lengths.Add(length);
-                childPatterns.Add(pattern);
-                childExits.Add(exitCandidate);
-            }
-            if (lengths.Count == 0)
-            {
-                failure = child.Name + " 영역의 2D 경로 후보를 만들지 못했습니다 — "
-                    + (firstGenerationFailure.Length > 0
-                        ? firstGenerationFailure
-                        : "인출점 배치 후보가 없습니다.");
-                return false;
-            }
-            lengthsByChild.Add(lengths);
-            patternsByChild.Add(childPatterns);
-            exitsByChild.Add(childExits);
-        }
-
-        if (!SplitLengthCombinationSolver.TrySolve(lengthsByChild,
-                out int[] indices, out double ratio, out _, out _))
-        {
-            failure = "분할 영역의 2D 경로 길이 조합을 계산하지 못했습니다.";
-            return false;
-        }
-
-        var patterns = new Dictionary<WorkingArea, SerpentineResult>();
-        var chosenLengths = new double[children.Count];
-        double mean = 0;
-        for (int childIndex = 0; childIndex < children.Count; childIndex++)
-        {
-            WorkingArea child = children[childIndex];
-            int chosenIndex = indices[childIndex];
-            SplitExitPointPlanner.SplitExitCandidate chosen = exitsByChild[childIndex][chosenIndex];
-            child.SelectedStartExit = chosen.Start;
-            child.SelectedEndExit = chosen.End;
-            child.StartAnchor = chosen.Start.Point;
-            child.EndAnchor = chosen.End.Point;
-            patterns[child] = patternsByChild[childIndex][chosenIndex];
-            chosenLengths[childIndex] = lengthsByChild[childIndex][chosenIndex];
-            mean += chosenLengths[childIndex];
-        }
-        mean /= children.Count;
-        double spread = chosenLengths.Sum(length => (length - mean) * (length - mean));
-
-        candidate = new SplitVariantCandidate
-        {
-            Cuts = split.Cuts.ToArray(),
-            Split = split,
-            Children = children,
-            Patterns = patterns,
-            Lengths = chosenLengths,
-            Ratio = ratio,
-            Spread = spread,
-        };
-        return true;
-    }
-
-    /// <summary>인출점 배치 조합도 길이 비, 편차 제곱합, 절단 좌표 사전순으로 결정적으로 고른다.</summary>
-    private static bool IsBetterVariant(SplitVariantCandidate candidate, SplitVariantCandidate current)
-    {
-        if (candidate == null) return false;
-        if (current == null) return true;
-        if (candidate.Ratio < current.Ratio - 1e-9) return true;
-        if (candidate.Ratio > current.Ratio + 1e-9) return false;
-        if (candidate.Spread < current.Spread - 1e-9) return true;
-        if (candidate.Spread > current.Spread + 1e-9) return false;
-        int shared = Math.Min(candidate.Cuts.Length, current.Cuts.Length);
-        for (int i = 0; i < shared; i++)
-        {
-            int comparison = candidate.Cuts[i].CompareTo(current.Cuts[i]);
-            if (comparison != 0) return comparison < 0;
-        }
-        return candidate.Cuts.Length < current.Cuts.Length;
     }
 
     /// <summary>분할 후보의 자식 경계·인출점·2D 경로를 실제로 만들고 길이를 잰다.</summary>

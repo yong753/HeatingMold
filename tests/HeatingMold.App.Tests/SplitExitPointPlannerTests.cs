@@ -350,54 +350,42 @@ public class SplitExitPointPlannerTests
         Assert.True(area.HasSelectedExits, "절단선 provenance 점도 선택 완료로 인정해야 한다.");
     }
 
+    // 분할 전 종료점이 오른쪽에 있는데 실제 사행이 왼쪽에서 끝나는(레인 수 짝수) 경우에도
+    // 종료 인출점은 분할 전과 같은 오른쪽을 유지해야 한다 — 반대로 바꾸면 방향이 뒤집힌다.
     [Fact]
-    public void Variants_ReturnBoundCandidatesInsideParentRangeAndMargin()
+    public void EndSideFollowsParentDirection_EvenWhenNaturalSerpentineEndsOnTheOtherSide()
     {
-        (WorkingArea parent, List<WorkingArea> children, _, _, _, _) =
-            CreateNestedSplit(Margin, Spacing, 20, 280);
+        (WorkingArea parent, List<WorkingArea> children, SplitLineBinding left, SplitLineBinding right,
+            _, _) = CreateNestedSplit(Margin, Spacing, 10, 300);
 
-        Assert.True(SplitExitPointPlanner.TryBuildCandidates(parent, children, Margin, Spacing, true,
-                out List<List<SplitExitPointPlanner.SplitExitCandidate>> candidates,
-                out string failure), failure);
-        Assert.Equal(children.Count, candidates.Count);
-        Assert.All(candidates, list => Assert.True(list.Count >= 2,
-            "탐색용 후보는 기본 배치 외에 시작 측면/종료 측면/레인 위상 후보를 가져야 한다."));
+        Assert.True(SplitExitPointPlanner.TryAssign(parent, children, Margin, Spacing,
+            out string failure), failure);
 
-        for (int i = 0; i < children.Count; i++)
+        foreach (WorkingArea child in children)
         {
-            WorkingArea child = children[i];
-            var boundary = (SplitRegionBoundary2D)child.RegionExitBoundary!;
-            double low = Math.Max(20, child.Region[0].Min(point => point.Y) + Margin);
-            double high = Math.Min(280, child.Region[0].Max(point => point.Y) - Margin);
-            foreach (SplitExitPointPlanner.SplitExitCandidate candidate in candidates[i])
-            {
-                // 후보도 기본 배정과 같은 실제 경계 provenance를 가진다.
-                Assert.True(boundary.Project(candidate.Start.Point, 1e-3).Succeeded);
-                Assert.True(boundary.Project(candidate.End.Point, 1e-3).Succeeded);
-                // 경계 투영 오차(최대 1 mm) 안에서 부모 구간/마진 밖으로 나가지 않는다.
-                Assert.InRange(candidate.Start.Point.Y, low - 1.0 - 1e-6, high + 1.0 + 1e-6);
-                Assert.InRange(candidate.End.Point.Y, low - 1.0 - 1e-6, high + 1.0 + 1e-6);
-                Assert.True(candidate.Start.Point.DistanceTo(candidate.End.Point) > 1e-4);
-            }
+            Assert.Equal(left.AX, child.SelectedStartExit!.Value.Point.X, 6);
+            Assert.Equal(right.AX, child.SelectedEndExit!.Value.Point.X, 6);
         }
     }
 
+    // 인출점 배치는 길이 균등화 후보를 만들지 않는다. 자식마다 방향이 고정된 후보 하나만 나온다.
     [Fact]
-    public void Variants_DefaultCandidateMatchesTryAssign()
+    public void FixedSides_AreReturnedAsOneCandidatePerChild()
     {
         (WorkingArea parent, List<WorkingArea> children, _, _, _, _) =
             CreateNestedSplit(Margin, Spacing, 20, 280);
 
-        Assert.True(SplitExitPointPlanner.TryBuildCandidates(parent, children, Margin, Spacing, true,
-            out List<List<SplitExitPointPlanner.SplitExitCandidate>> candidates, out string failure), failure);
-        Assert.True(SplitExitPointPlanner.TryAssign(parent, children, Margin, Spacing,
-            out failure), failure);
+        Assert.True(SplitExitPointPlanner.TryBuildCandidates(parent, children, Margin, Spacing,
+                out List<SplitExitPointPlanner.SplitExitCandidate> candidates, out string failure), failure);
+        Assert.Equal(children.Count, candidates.Count);
+        Assert.All(candidates, candidate => Assert.True(candidate.StartLow));
+        Assert.All(candidates, candidate => Assert.False(candidate.EndLow));
 
         for (int i = 0; i < children.Count; i++)
         {
-            // 탐색을 켜도 첫 후보는 기존 제품 동작과 같아야 한다(순서·동률 우선).
-            Assert.Equal(children[i].SelectedStartExit!.Value, candidates[i][0].Start);
-            Assert.Equal(children[i].SelectedEndExit!.Value, candidates[i][0].End);
+            var boundary = (SplitRegionBoundary2D)children[i].RegionExitBoundary!;
+            Assert.True(boundary.Project(candidates[i].Start.Point, 1e-3).Succeeded);
+            Assert.True(boundary.Project(candidates[i].End.Point, 1e-3).Succeeded);
         }
     }
 

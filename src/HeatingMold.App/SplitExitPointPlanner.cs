@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
-using System.Text;
 using HeatingMold.Core.Geometry;
 using HeatingMold.Core.Model;
 
@@ -15,17 +14,14 @@ namespace HeatingMold.App;
 /// 1) 시작/종료점은 분할 전 사용자가 지정한 두 점의 진행 방향 구간(가로 배치 = Y, 세로 배치 = X)
 ///    안에 있어야 한다.
 /// 2) 두 점은 각 영역의 진행 방향 양 끝에서 margin 이상 떨어져야 한다. 가운데 영역도 같다.
-/// 3) 측면(레인 진행의 좌/우)은 부모 시작점에 가까운 쪽을 시작으로 물려받고, 종료측은 실제
-///    사행이 끝나는 쪽으로 정한다.
+/// 3) 측면(레인 진행의 좌/우)은 분할 전 시작점·종료점이 있던 방향을 그대로 물려받는다.
+///    길이를 맞추기 위해 시작/종료 측면이나 시작 레인 위상을 바꾸지 않는다.
 ///
 /// 배정은 좌표 복사가 아니라 각 영역의 실제 경계에서 provenance를 다시 구한다. 후보 행은
 /// 마진이 적용된 생성 영역의 실제 레인 행에서만 고르므로, 시작점이 발열구간 안쪽에 놓이거나
 /// 마진 밖으로 나가지 않는다. 어느 영역이든 유일하게 결정되지 않으면 아무 영역에도 기록하지
-/// 않고 실패한다 — 임의 측면으로 대체하지 않는다.
-///
-/// 길이 균등화를 위해 같은 규칙 안에서 선택 가능한 배치(시작 측면, 종료 측면, 시작 레인 위상)를
-/// 여러 후보로 만들 수 있다. 모든 후보는 이 영역의 실제 경계에서 다시 구한 provenance를 가지며,
-/// 기본 후보(현재 제품 동작)를 항상 첫 번째로 둔다.
+/// 않고 실패한다 — 임의 측면으로 대체하지 않는다. 고정 측면으로 실제 경로를 만들 수 없는
+/// 절단은 호출자의 절단 탐색에서 제외된다.
 /// </summary>
 internal static class SplitExitPointPlanner
 {
@@ -47,11 +43,8 @@ internal static class SplitExitPointPlanner
     /// </summary>
     private const double BoundaryProjectionTolerance = 5.0;
 
-    /// <summary>시작 레인 위상 후보 간격(레인 간격 대비). 0, 1/4, 1/2, 3/4 간격을 쓴다.</summary>
-    private const double PhaseGridFraction = 0.25;
-
     /// <summary>
-    /// 한 영역의 자동 인출점 배치 후보. 시작/종료점은 모두 실제 경계 provenance를 가진다.
+    /// 한 영역의 자동 인출점 배치. 시작/종료점은 모두 실제 경계 provenance를 가진다.
     /// <see cref="AnchorOffset"/>은 시작 레인 행이 기본 앵커에서 진행 방향으로 들어온 거리다.
     /// </summary>
     internal sealed record SplitExitCandidate(
@@ -79,20 +72,20 @@ internal static class SplitExitPointPlanner
     }
 
     /// <summary>
-    /// 모든 자식 영역의 기본 시작/종료점을 먼저 계산한 뒤 한 번에 기록한다.
-    /// 기본 후보는 분할 전 선택점과 실제 사행 종료 측면을 그대로 물려받는 현재 제품 동작이다.
+    /// 모든 자식 영역의 시작/종료점을 먼저 계산한 뒤 한 번에 기록한다.
+    /// 시작점은 분할 전 시작점과 같은 측면, 종료점은 분할 전 종료점과 같은 측면을 쓴다.
     /// </summary>
     internal static bool TryAssign(WorkingArea parent, IReadOnlyList<WorkingArea> children,
         double margin, double spacing, out string failure)
     {
-        if (!TryBuildCandidates(parent, children, margin, spacing, false,
-                out List<List<SplitExitCandidate>> candidates, out failure))
+        if (!TryBuildCandidates(parent, children, margin, spacing,
+                out List<SplitExitCandidate> candidates, out failure))
             return false;
 
         for (int index = 0; index < children.Count; index++)
         {
             WorkingArea child = children[index];
-            SplitExitCandidate candidate = candidates[index][0];
+            SplitExitCandidate candidate = candidates[index];
             child.SelectedStartExit = candidate.Start;
             child.SelectedEndExit = candidate.End;
             // 기존 수동 선택 경로와 같은 호환 좌표를 함께 맞춘다.
@@ -103,19 +96,24 @@ internal static class SplitExitPointPlanner
     }
 
     /// <summary>
-    /// 자식마다 배정 가능한 인출점 후보 목록을 만든다. 기본 후보가 항상 첫 번째이며,
-    /// <paramref name="includeVariants"/>가 true이면 시작 측면·종료 측면·시작 레인 위상을
-    /// 바꾼 후보를 추가한다. 후보는 기록하지 않는다(호출자가 선택 뒤 게시한다).
+    /// 자식마다 배정할 인출점을 하나 만든다. 시작/종료 측면은 부모의 선택점에서 확정한
+    /// 방향을 그대로 쓰고, 시작 행은 마진이 적용된 생성 영역의 첫 레인 행이다.
+    /// 후보는 기록하지 않는다(호출자가 게시한다).
     /// </summary>
     internal static bool TryBuildCandidates(WorkingArea parent, IReadOnlyList<WorkingArea> children,
-        double margin, double spacing, bool includeVariants,
-        out List<List<SplitExitCandidate>> candidates, out string failure)
+        double margin, double spacing,
+        out List<SplitExitCandidate> candidates, out string failure)
     {
-        candidates = new List<List<SplitExitCandidate>>();
+        candidates = new List<SplitExitCandidate>();
         failure = string.Empty;
         if (!HasAssignablePair(parent))
         {
             failure = "부모 영역의 시작/종료 인출점이 준비되지 않았습니다.";
+            return false;
+        }
+        if (parent.Region.Count != 1 || parent.Region[0].Count < 3)
+        {
+            failure = "분할 전 영역이 단일 폐합 영역이 아니어서 인출 방향을 확정할 수 없습니다.";
             return false;
         }
         if (!double.IsFinite(margin) || margin < 0)
@@ -137,12 +135,18 @@ internal static class SplitExitPointPlanner
         ExitBoundaryPoint parentStart = parent.SelectedStartExit!.Value;
         ExitBoundaryPoint parentEnd = parent.SelectedEndExit!.Value;
 
+        // 인출 방향은 모든 자식에서 같은 생성 방향·작업평면을 쓰므로 한 번만 확정한다.
+        double radians = ResolveRadians(parent);
+        if (!SplitExitSidePolicy.TryResolve(parent, radians,
+                out bool startLow, out bool endLow, out failure))
+            return false;
+
         // 모든 자식의 레이아웃(방향·유효 범위·생성 영역)을 먼저 확정한다. 하나라도 성립하지
         // 않으면 후보를 만들지 않고 전체를 실패시킨다.
         var layouts = new List<ChildLayout>(children.Count);
         foreach (WorkingArea child in children)
         {
-            if (!TryPrepareLayout(child, parentStart, parentEnd, margin, spacing,
+            if (!TryPrepareLayout(child, parentStart, parentEnd, radians, margin, spacing,
                     out ChildLayout layout, out failure))
                 return false;
             layouts.Add(layout);
@@ -150,15 +154,26 @@ internal static class SplitExitPointPlanner
 
         foreach (ChildLayout layout in layouts)
         {
-            if (!TryBuildChildCandidates(layout, spacing, includeVariants,
-                    out List<SplitExitCandidate> childCandidates, out string childFailure))
+            if (!TryBuildChildCandidate(layout, startLow, endLow, spacing,
+                    out SplitExitCandidate candidate, out string childFailure))
             {
                 failure = childFailure;
                 return false;
             }
-            candidates.Add(childCandidates);
+            candidates.Add(candidate);
         }
         return true;
+    }
+
+    private static double ResolveRadians(WorkingArea area)
+    {
+        // 생성 단계가 쓰는 방향과 같은 방식으로 해석한다(UI의 EffectiveDirection과 동일:
+        // Auto는 가로/Frame X). 여기서 다른 해석을 쓰면 인출 측면과 실제 레인 방향이 어긋난다.
+        PatternDirection effectiveDirection = area.Direction == PatternDirection.FrameY
+            ? PatternDirection.FrameY
+            : PatternDirection.FrameX;
+        double angleDeg = Serpentine.ResolveAngleDeg(area.Region[0], effectiveDirection);
+        return angleDeg * Math.PI / 180.0;
     }
 
     /// <summary>자식 하나의 고정 조건: 레인 좌표계, 허용 진행 구간, 실제 생성 영역.</summary>
@@ -170,7 +185,6 @@ internal static class SplitExitPointPlanner
         public int StepSign { get; init; }
         public double ParentLow { get; init; }
         public double ParentHigh { get; init; }
-        public double ParentStartLocalX { get; init; }
         public double Spacing { get; init; }
         public List<Vec2> LocalRing { get; init; } = null!;
         public List<List<Vec2>> GenerationRegion { get; init; } = null!;
@@ -178,11 +192,10 @@ internal static class SplitExitPointPlanner
         public double OffsetMaxY { get; init; }
         public double RowLow { get; init; }
         public double RowHigh { get; init; }
-        public bool HasExclusions { get; init; }
     }
 
     private static bool TryPrepareLayout(WorkingArea child, ExitBoundaryPoint parentStart,
-        ExitBoundaryPoint parentEnd, double margin, double spacing,
+        ExitBoundaryPoint parentEnd, double radians, double margin, double spacing,
         out ChildLayout layout, out string failure)
     {
         layout = null!;
@@ -203,14 +216,6 @@ internal static class SplitExitPointPlanner
             failure = child.Name + ": 분할 영역 경계가 준비되지 않았습니다.";
             return false;
         }
-
-        // 생성 단계가 쓰는 방향과 같은 방식으로 해석한다(UI의 EffectiveDirection과 동일:
-        // Auto는 가로/Frame X). 여기서 다른 해석을 쓰면 인출 측면과 실제 레인 방향이 어긋난다.
-        PatternDirection effectiveDirection = child.Direction == PatternDirection.FrameY
-            ? PatternDirection.FrameY
-            : PatternDirection.FrameX;
-        double angleDeg = Serpentine.ResolveAngleDeg(child.Region[0], effectiveDirection);
-        double radians = angleDeg * Math.PI / 180.0;
 
         Vec2 parentStartLocal = parentStart.Point.Rotate(-radians);
         Vec2 parentEndLocal = parentEnd.Point.Rotate(-radians);
@@ -269,7 +274,6 @@ internal static class SplitExitPointPlanner
             StepSign = stepSign,
             ParentLow = parentLow,
             ParentHigh = parentHigh,
-            ParentStartLocalX = parentStartLocal.X,
             Spacing = spacing,
             LocalRing = localRing,
             GenerationRegion = generationRegion,
@@ -277,114 +281,46 @@ internal static class SplitExitPointPlanner
             OffsetMaxY = offsetMaxY,
             RowLow = rowLow,
             RowHigh = rowHigh,
-            HasExclusions = child.Exclusions.Count > 0,
         };
         return true;
     }
 
-    private static bool TryBuildChildCandidates(ChildLayout layout, double spacing, bool includeVariants,
-        out List<SplitExitCandidate> candidates, out string failure)
+    private static bool TryBuildChildCandidate(ChildLayout layout, bool startLow, bool endLow,
+        double spacing, out SplitExitCandidate candidate, out string failure)
     {
-        candidates = new List<SplitExitCandidate>();
+        candidate = null!;
         failure = string.Empty;
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        string lastFailure = string.Empty;
+        if (!TryScanLanes(layout, spacing,
+                out List<(double Y, List<(double X0, double X1)> Intervals)> lanes,
+                out failure))
+            return false;
 
-        // 시작 레인 위상은 간격의 1/4 단위로만 옮긴다. 한 간격 이상 옮기면 레인 하나를
-        // 통째로 건너뛰어 발열 범위를 줄이는 것이므로 후보로 만들지 않는다.
-        int phaseCount = includeVariants
-            ? Math.Max(1, (int)Math.Round(1.0 / PhaseGridFraction))
-            : 1;
-        for (int phase = 0; phase < phaseCount; phase++)
+        (double startRow, _) = lanes[0];
+        double endRow = lanes[^1].Y;
+        // 시작 행의 첫 레인 구간이 여럿이면 생성기는 첫 구간(가장 왼쪽)에서만 시작을 허용한다.
+        // 측면은 부모 방향으로 고정되어 있으므로, 그 방향의 실제 경계에서 점을 다시 구한다.
+        if (!TryRingExtremes(layout.LocalRing, startRow, out double startMinX, out double startMaxX)
+            || !TryRingExtremes(layout.LocalRing, endRow, out double endMinX, out double endMaxX))
         {
-            double anchorOffset = phase * PhaseGridFraction * spacing;
-            if (!TryScanLanes(layout, anchorOffset, spacing,
-                    out List<(double Y, List<(double X0, double X1)> Intervals)> lanes,
-                    out string scanFailure))
-            {
-                lastFailure = scanFailure;
-                continue;
-            }
-
-            (double startRow, List<(double X0, double X1)> firstIntervals) = lanes[0];
-            double endRow = lanes[^1].Y;
-            if (!TryRingExtremes(layout.LocalRing, startRow, out double startMinX, out double startMaxX)
-                || !TryRingExtremes(layout.LocalRing, endRow, out double endMinX, out double endMaxX))
-            {
-                lastFailure = layout.Child.Name + ": 레인 행에서 영역 경계를 찾지 못했습니다.";
-                continue;
-            }
-
-            // 시작 측면: 실제 생성기가 허용하는 첫 레인 구간 끝 중 부모 시작점에 가까운 쪽.
-            // 마진 영역이 여러 구간인 시작 행에서 제외영역이 없는 생성기는 첫 구간(가장 왼쪽)에서만
-            // 시작을 허용하므로 그 경우 반대 측면 후보를 만들지 않는다.
-            bool nearestLow = ResolveNearestStartLow(layout, firstIntervals);
-            bool allowBothStartSides = includeVariants
-                && !(layout.Child.Exclusions.Count == 0 && firstIntervals.Count > 1);
-            bool[] startSides = allowBothStartSides
-                ? new[] { nearestLow, !nearestLow }
-                : new[] { nearestLow };
-
-            foreach (bool startLow in startSides)
-            {
-                // 종료 측면: 자연 사행 종료 측면을 기본으로 하고, 탐색 시 반대 측면도 후보로 둔다.
-                // 반대 측면은 생성기의 마지막 추가 레인 규칙으로 실제 경로를 만들며, 그 레인이
-                // 영역에 존재하지 않으면 생성 실패로 후보에서 제외된다.
-                bool naturalEndLow = PredictNaturalEndLow(lanes, startLow, layout.HasExclusions);
-                bool[] endSides = includeVariants
-                    ? new[] { naturalEndLow, !naturalEndLow }
-                    : new[] { naturalEndLow };
-                foreach (bool endLow in endSides)
-                {
-                    if (!TryResolveCandidate(layout, startRow, startLow,
-                            startLow ? startMinX : startMaxX,
-                            endRow, endLow, endLow ? endMinX : endMaxX,
-                            out SplitExitCandidate candidate, out string resolveFailure))
-                    {
-                        lastFailure = resolveFailure;
-                        continue;
-                    }
-                    if (!seen.Add(CandidateKey(candidate))) continue;
-                    candidates.Add(candidate);
-                }
-            }
-        }
-
-        if (candidates.Count == 0)
-        {
-            failure = string.IsNullOrEmpty(lastFailure)
-                ? layout.Child.Name + ": 마진 적용 영역에서 발열 레인을 만들 수 없습니다."
-                : lastFailure;
+            failure = layout.Child.Name + ": 레인 행에서 영역 경계를 찾지 못했습니다.";
             return false;
         }
+
+        if (!TryResolveCandidate(layout, startRow, startLow,
+                startLow ? startMinX : startMaxX,
+                endRow, endLow, endLow ? endMinX : endMaxX,
+                out candidate, out failure))
+            return false;
         return true;
     }
 
-    private static bool TryScanLanes(ChildLayout layout, double anchorOffset, double spacing,
+    private static bool TryScanLanes(ChildLayout layout, double spacing,
         out List<(double Y, List<(double X0, double X1)> Intervals)> lanes, out string failure)
     {
         lanes = new List<(double Y, List<(double X0, double X1)> Intervals)>();
         failure = string.Empty;
-        if (anchorOffset < -RowEpsilon)
-        {
-            failure = layout.Child.Name + ": 시작 레인 위상이 올바르지 않습니다.";
-            return false;
-        }
 
-        double anchor = layout.StepSign > 0
-            ? layout.RowLow + anchorOffset
-            : layout.RowHigh - anchorOffset;
-        if (anchorOffset > 0)
-        {
-            bool insideBand = layout.StepSign > 0
-                ? anchor <= layout.RowHigh - RowEpsilon
-                : anchor >= layout.RowLow + RowEpsilon;
-            if (!insideBand)
-            {
-                failure = layout.Child.Name + ": 시작 레인 위상을 옮길 진행 방향 여유가 없습니다.";
-                return false;
-            }
-        }
+        double anchor = layout.StepSign > 0 ? layout.RowLow : layout.RowHigh;
 
         // 마진 영역의 경계 행은 그 행에서 시작하는 변만 세는 반개구간 판정 때문에 모서리 조각만
         // 남거나 완전히 비어 있다. 그런 행을 시작 행으로 넘기면 생성기의 첫 스캔라인이 비어
@@ -411,46 +347,6 @@ internal static class SplitExitPointPlanner
             return false;
         }
         return true;
-    }
-
-    private static bool ResolveNearestStartLow(ChildLayout layout,
-        List<(double X0, double X1)> firstIntervals)
-    {
-        double startLeft = firstIntervals.Min(interval => interval.X0);
-        double startRight = firstIntervals.Max(interval => interval.X1);
-        bool startLow = Math.Abs(layout.ParentStartLocalX - startLeft)
-            <= Math.Abs(layout.ParentStartLocalX - startRight);
-        if (layout.Child.Exclusions.Count == 0 && firstIntervals.Count > 1 && !startLow) startLow = true;
-        return startLow;
-    }
-
-    /// <summary>마지막 레인의 종료 측면을 실제 진입 측 선택 규칙으로 계산한다.</summary>
-    private static bool PredictNaturalEndLow(
-        List<(double Y, List<(double X0, double X1)> Intervals)> lanes,
-        bool startLow, bool hasExclusions)
-    {
-        bool laneLowToHigh = startLow;
-        Vec2? previousEnd = null;
-        for (int i = 0; i < lanes.Count; i++)
-        {
-            (double laneY, List<(double X0, double X1)> intervals) = lanes[i];
-            if (i == 0)
-            {
-                laneLowToHigh = startLow;
-            }
-            else if (hasExclusions && previousEnd.HasValue)
-            {
-                laneLowToHigh = ChooseEntryLow(intervals, previousEnd.Value);
-            }
-            else
-            {
-                laneLowToHigh = (i % 2 == 0) == startLow;
-            }
-            previousEnd = laneLowToHigh
-                ? new Vec2(intervals[^1].X1, laneY)
-                : new Vec2(intervals[0].X0, laneY);
-        }
-        return !laneLowToHigh;
     }
 
     private static bool TryResolveCandidate(ChildLayout layout,
@@ -509,54 +405,6 @@ internal static class SplitExitPointPlanner
             return false;
         }
         return true;
-    }
-
-    /// <summary>같은 좌표라도 원본 edge/절단선 identity가 다르면 다른 후보로 유지한다.</summary>
-    private static string CandidateKey(SplitExitCandidate candidate) =>
-        PointKey(candidate.Start) + "|" + PointKey(candidate.End);
-
-    private static string PointKey(ExitBoundaryPoint point)
-    {
-        var text = new StringBuilder();
-        text.Append(point.Point.X.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-            .Append(point.Point.Y.ToString("R", CultureInfo.InvariantCulture));
-        if (point.Binding is { } edge)
-        {
-            text.Append("|E:").Append(edge.ModelRevision).Append(',')
-                .Append(edge.WorkingContextId).Append(',')
-                .Append(edge.WorkingContextRevision).Append(',')
-                .Append(edge.EdgeKey).Append(',')
-                .Append(edge.FirstParameter.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-                .Append(edge.LastParameter.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-                .Append(edge.Parameter.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-                .Append(edge.Reversed ? '1' : '0');
-        }
-        else if (point.ArtificialBinding is { } artificial)
-        {
-            text.Append("|A:").Append(artificial.WorkingContextId).Append(',')
-                .Append(artificial.WorkingContextRevision).Append(',')
-                .Append(artificial.MinX.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-                .Append(artificial.MinY.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-                .Append(artificial.MaxX.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-                .Append(artificial.MaxY.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-                .Append(artificial.Side).Append(',')
-                .Append(artificial.FirstParameter.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-                .Append(artificial.LastParameter.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-                .Append(artificial.Parameter.ToString("R", CultureInfo.InvariantCulture));
-        }
-        else if (point.SplitBinding is { } split)
-        {
-            text.Append("|S:").Append(split.WorkingContextId).Append(',')
-                .Append(split.WorkingContextRevision).Append(',')
-                .Append(split.AX.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-                .Append(split.AY.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-                .Append(split.BX.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-                .Append(split.BY.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-                .Append(split.FirstParameter.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-                .Append(split.LastParameter.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-                .Append(split.Parameter.ToString("R", CultureInfo.InvariantCulture));
-        }
-        return text.ToString();
     }
 
     /// <summary>
@@ -629,14 +477,6 @@ internal static class SplitExitPointPlanner
         }
         segment = default;
         return false;
-    }
-
-    /// <summary>다음 레인의 두 진입 끝 중 이전 끝점에 가까운 쪽. Serpentine.ChooseEntryLow와 같은 규칙.</summary>
-    private static bool ChooseEntryLow(List<(double X0, double X1)> intervals, Vec2 from)
-    {
-        double left = Math.Abs(from.X - intervals.Min(interval => interval.X0));
-        double right = Math.Abs(from.X - intervals.Max(interval => interval.X1));
-        return left <= right;
     }
 
     /// <summary>수평선과 다각형의 교차 x 목록에서 최좌/최우를 구한다.</summary>
