@@ -29,9 +29,14 @@ public sealed record TargetPowerSplitPlan(
 /// 회로 전류는 I = √(P/(rL))로 분할 수와 무관하므로 전류 초과는 분할로 해결되지 않는다.
 /// CurrentExceedsLimit은 그 사실을 숨기지 않고 알리는 계획 단계 표시이며, 호출자는 분할을
 /// 시작하지 않는 근거로 쓴다. 최종 판정은 분할 후 실측 길이로 다시 계산한다.
+/// 자동분할은 한 번에 최대 <see cref="MaxParts"/>개 영역까지 지원하며, 그보다 많이 필요하면
+/// 일부만 분할하지 않고 계획 단계에서 명시적으로 거부한다.
 /// </summary>
 public static class TargetPowerSplitPlanner
 {
+    /// <summary>한 번의 자동분할이 만들 수 있는 영역 수 상한(사용자 확정 2026-11-12).</summary>
+    public const int MaxParts = 4;
+
     public static bool TryPlan(
         double totalTargetPowerW,
         double estimatedLengthMm,
@@ -94,6 +99,17 @@ public static class TargetPowerSplitPlanner
         }
 
         int count = (int)parts;
+        // 상한을 넘으면 일부만 분할하거나 4개로 맞추지 않는다. 계산된 필요 개수를 그대로
+        // 알리고 계획을 실패로 돌려, 호출자가 기존 영역·경로를 유지하게 한다.
+        if (count > MaxParts)
+        {
+            error = string.Format(
+                System.Globalization.CultureInfo.CurrentCulture,
+                "현재 조건에서는 {0}개 분할이 필요하지만 자동분할은 최대 {1}개까지 지원합니다",
+                count, MaxParts);
+            return false;
+        }
+
         double perPower = totalTargetPowerW / count;
         double perLengthMm = estimatedLengthMm / count;
         double perResistance = resistance / count;

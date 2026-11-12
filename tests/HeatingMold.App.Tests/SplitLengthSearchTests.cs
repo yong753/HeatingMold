@@ -269,6 +269,31 @@ public class SplitLengthSearchTests
     }
 
     [Fact]
+    public void Search_RejectsPartCountAboveTheSupportedMaximum()
+    {
+        // 제품 상한은 4개다. 5개 요청은 후보를 만들기 전에 거부하고, 부모와 출력은 그대로 둔다.
+        WorkingArea parent = CreateParent(20, 280);
+        AreaSplitResult initial = AreaSplitter.Split(parent.Region[0], NoExclusions,
+            PatternDirection.FrameX, Margin, Spacing, 5);
+        Assert.True(initial.Succeeded, initial.Failure);
+
+        MainWindow window = UninitializedWindow();
+        bool assigned = window.TryPrepareBalancedSplit(parent, initial, 5, Margin, Spacing,
+            out AreaSplitResult chosen, out List<WorkingArea> children,
+            out Dictionary<WorkingArea, SerpentineResult> patterns,
+            out double balanceRatio, out string failure);
+
+        Assert.False(assigned);
+        Assert.Contains("최대 4개", failure);
+        Assert.Same(initial, chosen);
+        Assert.Empty(children);
+        Assert.Empty(patterns);
+        Assert.True(double.IsPositiveInfinity(balanceRatio));
+        Assert.Equal(20, parent.SelectedStartExit!.Value.Point.Y, 6);
+        Assert.Equal(280, parent.SelectedEndExit!.Value.Point.Y, 6);
+    }
+
+    [Fact]
     public void Evaluate_ReportsSameTotalsAsDirectGeneration()
     {
         WorkingArea parent = CreateParent(20, 280);

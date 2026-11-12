@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using HeatingMold.Core.Electrical;
 using HeatingMold.Core.Geometry;
 using HeatingMold.Core.Model;
 
@@ -18,7 +19,7 @@ namespace HeatingMold.App;
 /// </summary>
 public partial class MainWindow
 {
-    /// <summary>분할 후보 2D 평가의 전체 상한. 영역 수가 많으면 이보다 작아진다.</summary>
+    /// <summary>분할 후보 2D 평가의 전체 상한. 자동분할 상한 4개에서는 96회를 쓴다.</summary>
     private const int SplitSearchMaxEvaluations = 192;
 
     /// <summary>인출점 배치 후보까지 평가할 상위 절단 후보 수.</summary>
@@ -86,6 +87,15 @@ public partial class MainWindow
             failure = "분할 영역 수가 올바르지 않습니다.";
             return false;
         }
+        // 제품 상한은 계산 단계에서 이미 거부되지만, 내부 탐색을 직접 호출하는 경로도
+        // 같은 상한을 지킨다. 상한을 넘는 요청은 후보를 만들기 전에 실패한다.
+        if (partCount > TargetPowerSplitPlanner.MaxParts)
+        {
+            failure = string.Format(CultureInfo.CurrentCulture,
+                "자동분할은 최대 {0}개 영역까지 지원합니다 — 요청 {1}개.",
+                TargetPowerSplitPlanner.MaxParts, partCount);
+            return false;
+        }
         if (!SplitExitPointPlanner.HasAssignablePair(parent))
         {
             failure = "부모 영역의 시작/종료 인출점이 준비되지 않았습니다.";
@@ -97,12 +107,9 @@ public partial class MainWindow
             return false;
         }
 
-        // 후보 하나를 평가할 때마다 자식 수만큼 경계·인출점·2D 경로를 만든다. 영역 수가
-        // 많을수록 후보 수를 줄여, 큰 분할이 탐색 때문에 폭주하지 않게 한다. 이 값은
+        // 자동분할 상한이 4개이므로 2~4분할 모두 같은 평가 예산(96회)을 쓴다. 이 값은
         // 생성기의 레인/조각 상한이 아니라 후보 평가 횟수 상한이다.
-        int budget = partCount <= 4
-            ? Math.Min(SplitSearchMaxEvaluations, Math.Max(96, 24 * partCount))
-            : partCount <= 8 ? 48 : 8;
+        int budget = Math.Min(SplitSearchMaxEvaluations, Math.Max(96, 24 * partCount));
         int evaluations = 0;
         var visited = new HashSet<string>(StringComparer.Ordinal);
         var starts = new List<double[]>();

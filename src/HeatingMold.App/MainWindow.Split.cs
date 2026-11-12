@@ -12,7 +12,9 @@ namespace HeatingMold.App;
 
 /// <summary>
 /// 적용영역 자체를 여러 독립 영역으로 나눈다. 분할 결과는 영구적인 부모/자식 관계가 없는
-/// 일반 작업영역이며, 영역마다 회로 하나를 생성한다. 분할은 다음 순서를 지킨다.
+/// 일반 작업영역이며, 영역마다 회로 하나를 생성한다. 한 번의 자동분할은 최대
+/// <see cref="TargetPowerSplitPlanner.MaxParts"/>개 영역까지이며, 그보다 많이 필요하면
+/// 일부만 분할하지 않고 기존 영역과 경로를 유지한 채 오류로 보고한다. 분할은 다음 순서를 지킨다.
 /// 1) 이 영역이 배분받은 발열 전력·허용치·마진/간격으로 필요한 영역 수를 계산한다.
 /// 2) 예상 배치 길이가 균등해지도록 절단선을 정하고 자식 영역을 준비한다.
 /// 3) 부모의 시작/종료 인출점이 있으면 그 측면을 따라 새 영역의 인출점을 자동으로 정한다.
@@ -22,12 +24,6 @@ namespace HeatingMold.App;
 /// </summary>
 public partial class MainWindow
 {
-    /// <summary>
-    /// 한 번의 분할이 만들 수 있는 영역 수 상한. 의미상 2분할 제한이 아니라 폭주 입력을
-    /// 명시적으로 거부하기 위한 자원 상한이며, 초과하면 오류로 보고한다.
-    /// </summary>
-    private const int MaxSplitParts = 256;
-
     private void SplitArea_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -102,7 +98,8 @@ public partial class MainWindow
         if (!TargetPowerSplitPlanner.TryPlan(totalPower, parentEstimate.Bands[0].EstimatedLengthMm,
                 settings.Wire, settings.Limits, out TargetPowerSplitPlan plan, out string planError))
         {
-            SetSplitStatus("분할 수를 계산할 수 없습니다 — " + planError);
+            // 상한 초과도 여기서 거부된다. 이 시점까지는 영역·경로·선택점을 바꾸지 않았다.
+            SetSplitStatus("분할 계획을 세울 수 없습니다 — " + planError + ". 기존 영역과 경로는 그대로 유지합니다.");
             return;
         }
         if (plan.CurrentExceedsLimit)
@@ -115,12 +112,6 @@ public partial class MainWindow
             SetSplitStatus(string.Format(CultureInfo.CurrentCulture,
                 "현재 한도 이내이므로 분할이 필요하지 않습니다 (예상 길이 {0:F1} mm, 예상 전류 {1:F2} A).",
                 plan.TotalLengthMm, plan.PerCircuitCurrentA));
-            return;
-        }
-        if (plan.Parts > MaxSplitParts)
-        {
-            SetSplitStatus(string.Format(CultureInfo.CurrentCulture,
-                "필요한 분할 수가 너무 큽니다 — {0}개. 이 영역에 배분된 발열 전력과 허용 전압/전류를 확인하세요.", plan.Parts));
             return;
         }
 

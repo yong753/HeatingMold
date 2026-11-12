@@ -24,6 +24,34 @@ public class TargetPowerSplitPlannerTests
     }
 
     [Fact]
+    public void FourParts_IsTheSupportedMaximum()
+    {
+        // 20 m, 6.4 kW, Case1: R=80Ω, V=715.54V. 220V 기준 3.25 → 4분할이 필요하고,
+        // 상한과 같으므로 계획이 성립한다.
+        Assert.True(TargetPowerSplitPlanner.TryPlan(
+            6400, 20_000, HeatingWireSpec.Case1, Limits(), out TargetPowerSplitPlan plan, out string error));
+
+        Assert.True(string.IsNullOrEmpty(error));
+        Assert.Equal(4, TargetPowerSplitPlanner.MaxParts);
+        Assert.Equal(TargetPowerSplitPlanner.MaxParts, plan.Parts);
+        Assert.Equal(715.5417 / 4, plan.PerCircuitVoltageV, 3);
+    }
+
+    [Theory]
+    [InlineData(10_000, 5)] // V=894.43V → 5분할이 필요하다.
+    [InlineData(40_000, 9)] // V=1788.85V → 9분할이 필요하다(전류 초과보다 상한 거부가 먼저다).
+    public void AboveMaximumParts_IsRejectedWithoutAPlan(double power, int expectedParts)
+    {
+        Assert.False(TargetPowerSplitPlanner.TryPlan(
+            power, 20_000, HeatingWireSpec.Case1, Limits(), out TargetPowerSplitPlan plan, out string error));
+
+        // 일부만 분할하거나 4개로 낮춰 계획하지 않는다.
+        Assert.Null(plan);
+        Assert.Contains(expectedParts + "개", error);
+        Assert.Contains("최대 " + TargetPowerSplitPlanner.MaxParts + "개", error);
+    }
+
+    [Fact]
     public void PowerOverCircuitLimit_DoesNotAddParts()
     {
         // 1 m, 7 kW, Case1: R=4Ω, V=167.33V로 허용 전압 이하다. 회로별 전력이 3.5 kW를 넘어도
