@@ -213,6 +213,23 @@ namespace step_export_geometry
                 failure = "verify-color";
                 return false;
             }
+            // FreeCAD resolves the part colour from the referred shape label
+            // after removing the assembly location, so this must also be set.
+            TDF_Label referred;
+            if (!XCAFDoc_ShapeTool::GetReferredShape(label, referred) ||
+                referred.IsNull())
+            {
+                failure = "verify-color";
+                return false;
+            }
+            Quantity_Color partColor;
+            if ((!colors->GetColor(referred, XCAFDoc_ColorSurf, partColor) &&
+                 !colors->GetColor(referred, XCAFDoc_ColorGen, partColor)) ||
+                !ColorMatches(partColor, area.r, area.g, area.b))
+            {
+                failure = "verify-color";
+                return false;
+            }
         }
         return true;
     }
@@ -254,6 +271,22 @@ namespace step_export_geometry
             Quantity_Color color;
             if (!ReadComponentColor(colors, label, color) ||
                 !ColorMatches(color, area.r, area.g, area.b))
+            {
+                failure = "verify-color";
+                return false;
+            }
+            // Edge-only parts need a curve colour on the referred shape label;
+            // otherwise FreeCAD paints them with its dark default line colour.
+            TDF_Label referred;
+            if (!XCAFDoc_ShapeTool::GetReferredShape(label, referred) ||
+                referred.IsNull())
+            {
+                failure = "verify-color";
+                return false;
+            }
+            Quantity_Color partColor;
+            if (!colors->GetColor(referred, XCAFDoc_ColorCurv, partColor) ||
+                !ColorMatches(partColor, area.r, area.g, area.b))
             {
                 failure = "verify-color";
                 return false;
@@ -450,18 +483,40 @@ namespace step_export_geometry
                 const TDF_Label wireLabel =
                     shapes->AddComponent(wireAssembly, wirePieces[cursor].wire,
                                          Standard_False);
-                TDataStd_Name::Set(wireLabel,
-                                   TCollection_ExtendedString(wirePieces[cursor].name.c_str()));
+                const TCollection_ExtendedString wireName(
+                    wirePieces[cursor].name.c_str());
+                TDataStd_Name::Set(wireLabel, wireName);
                 colors->SetColor(wireLabel, color, XCAFDoc_ColorGen);
+                // FreeCAD resolves a part's colour through the referred shape
+                // label after removing the assembly location, not through the
+                // occurrence label. Put the colour on both, and give the
+                // edge-only centreline a curve colour so FreeCAD does not
+                // fall back to its dark default line colour.
+                TDF_Label wireShape;
+                if (XCAFDoc_ShapeTool::GetReferredShape(wireLabel, wireShape) &&
+                    !wireShape.IsNull())
+                {
+                    TDataStd_Name::Set(wireShape, wireName);
+                    colors->SetColor(wireShape, color, XCAFDoc_ColorGen);
+                    colors->SetColor(wireShape, color, XCAFDoc_ColorSurf);
+                    colors->SetColor(wireShape, color, XCAFDoc_ColorCurv);
+                }
 
                 const TDF_Label routeLabel =
                     shapes->AddComponent(routeAssembly, routePieces[cursor].centreline,
                                          Standard_False);
-                TDataStd_Name::Set(
-                    routeLabel,
-                    TCollection_ExtendedString(
-                        (routePieces[cursor].name + L" 경로").c_str()));
+                const TCollection_ExtendedString routeName(
+                    (routePieces[cursor].name + L" 경로").c_str());
+                TDataStd_Name::Set(routeLabel, routeName);
                 colors->SetColor(routeLabel, color, XCAFDoc_ColorGen);
+                TDF_Label routeShape;
+                if (XCAFDoc_ShapeTool::GetReferredShape(routeLabel, routeShape) &&
+                    !routeShape.IsNull())
+                {
+                    TDataStd_Name::Set(routeShape, routeName);
+                    colors->SetColor(routeShape, color, XCAFDoc_ColorGen);
+                    colors->SetColor(routeShape, color, XCAFDoc_ColorCurv);
+                }
                 ++cursor;
             }
         }
