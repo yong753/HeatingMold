@@ -153,6 +153,20 @@ public partial class MainWindow
                 _nextAreaId = Math.Max(_nextAreaId, _areas.Count == 0 ? 1 : _areas.Max(a => a.AreaId) + 1);
 
                 ApplyAreaColors();
+                // 인출점 마커는 커밋 경로의 표시 대상과 같은 방식으로 복원한다.
+                // 마커 표시 실패는 복원된 기하를 되돌리는 이유가 아니므로 경고로만 남긴다.
+                try
+                {
+                    var endpointValues = new List<double>();
+                    foreach (WorkingArea area in _areas)
+                        PrepareCommittedRoutePresentation(area, endpointValues, out _, out _);
+                    if (!Bridge.SetRouteEndpointsNoRedraw(endpointValues.ToArray()))
+                        _routePresentationWarning = "인출점 마커를 표시하지 못했습니다.";
+                }
+                catch (Exception markerException)
+                {
+                    _routePresentationWarning = "인출점 마커 표시 실패: " + markerException.Message;
+                }
                 // 길이 라벨은 복원된 확정 체인에서 다시 만든다. 라벨 표시 실패는
                 // 이미 커밋된 경로 복원을 되돌리는 이유가 아니므로 경고로만 남긴다.
                 try
