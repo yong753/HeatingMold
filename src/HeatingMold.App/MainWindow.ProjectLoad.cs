@@ -255,6 +255,10 @@ public partial class MainWindow
         if (document.WorkingSide?.Frame == null)
             throw new InvalidDataException("저장된 작업평면 프레임이 없습니다.");
 
+        // 전기 제원은 네이티브 모델을 교체하기 전에 검증한다. 손상되었거나 프리셋과
+        // 맞지 않는 값은 조용히 Case 1로 바꾸지 않고 프로젝트 열기를 거부한다.
+        ProjectElectricalValidator.Validate(document.Electrical);
+
         var areaIds = new HashSet<int>();
         foreach (ProjectAreaDocument area in document.Areas ?? new List<ProjectAreaDocument>())
         {
@@ -927,9 +931,7 @@ public partial class MainWindow
             try
             {
                 if (WirePresetBox != null)
-                    WirePresetBox.SelectedIndex = electrical.WirePresetIndex == ElectricalSettingsResolver.Case2PresetIndex
-                        ? ElectricalSettingsResolver.Case2PresetIndex
-                        : ElectricalSettingsResolver.Case1PresetIndex;
+                    WirePresetBox.SelectedIndex = electrical.WirePresetIndex;
                 // 저장된 직경·단위 저항은 화면에 다시 채우지 않고 프리셋 이름으로만 표시한다.
                 if (AllowedVoltageBox != null)
                     AllowedVoltageBox.Text = electrical.AllowedVoltageText ?? "";
