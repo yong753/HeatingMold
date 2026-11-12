@@ -419,6 +419,33 @@ namespace step_export_geometry
         return props.Mass();
     }
 
+    // Sweeps the circular profile along the piece centreline.  The corrected
+    // frame is the normal path; a long, gently curved lane can make that frame
+    // numerically fail even though the geometry is smooth (observed: a 642 mm
+    // lane whose maximum sample-to-sample turn is 0.086 deg).  Frenet is tried
+    // once as a frame-only fallback: the centreline, profile radius and solid
+    // acceptance checks are unchanged.
+    inline bool MakeSweptSolidNative(const TopoDS_Wire& spine,
+                                     const TopoDS_Wire& profile,
+                                     const Standard_Boolean frenet,
+                                     TopoDS_Shape& wire)
+    {
+        BRepOffsetAPI_MakePipeShell shell(spine);
+        shell.SetMode(frenet);
+        shell.SetTolerance(1e-4, 1e-4, 1e-2);
+        shell.SetMaxDegree(8);
+        shell.SetMaxSegments(32);
+        shell.Add(profile, Standard_False, Standard_False);
+        shell.Build();
+        if (!shell.IsDone())
+        {
+            return false;
+        }
+        shell.MakeSolid();
+        wire = shell.Shape();
+        return !wire.IsNull();
+    }
+
     // Builds the centreline edge and its swept wire solid.  The result must be
     // exactly one valid closed solid; a compound fallback is deliberately not
     // provided, because it would hide a failed sweep.
@@ -490,20 +517,14 @@ namespace step_export_geometry
             return false;
         }
 
-        BRepOffsetAPI_MakePipeShell shell(spine);
-        shell.SetMode(Standard_False);
-        shell.SetTolerance(1e-4, 1e-4, 1e-2);
-        shell.SetMaxDegree(8);
-        shell.SetMaxSegments(32);
-        shell.Add(profileWireMaker.Wire(), Standard_False, Standard_False);
-        shell.Build();
-        if (!shell.IsDone())
+        TopoDS_Shape swept;
+        if (!MakeSweptSolidNative(spine, profileWireMaker.Wire(), Standard_False, swept) &&
+            !MakeSweptSolidNative(spine, profileWireMaker.Wire(), Standard_True, swept))
         {
             reason = "sweep";
             return false;
         }
-        shell.MakeSolid();
-        wire = shell.Shape();
+        wire = swept;
 
         if (CountSubShapes(wire, TopAbs_SOLID) != 1)
         {

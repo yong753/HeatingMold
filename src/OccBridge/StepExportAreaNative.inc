@@ -435,6 +435,35 @@ namespace step_export_geometry
             const double originalArea = originalProps.Mass();
             double pieceArea = 0.0;
             int pieceCount = 0;
+            // 제외영역이 면을 가로지르면 면의 일부는 어느 영역에도 속하지 않으므로
+            // 조각 합이 원본 면적보다 작은 것이 정상이다. 이때만 동등성 검사를
+            // 완화하고, 영역들이 면을 나눠 갖는 경우(분할 영역)에는 합집합이 면
+            // 전체를 덮어야 하므로 엄격한 동등성을 그대로 유지한다.
+            // 표본은 이 면을 공유하는 영역의 작업 프레임으로 투영한다. 같은 STEP
+            // 내보내기의 영역은 하나의 확정 작업면을 공유한다.
+            bool clipped = false;
+            {
+                std::vector<double> faceSamples;
+                std::vector<double> faceInterior;
+                CollectAreaFaceSamples(modelFaces[id], frames[faceAreas[id].front()],
+                                       faceSamples, faceInterior);
+                for (size_t s = 0; s + 1 < faceSamples.size() && !clipped; s += 2)
+                {
+                    const double sampleU = faceSamples[s];
+                    const double sampleV = faceSamples[s + 1];
+                    bool coveredByAnyArea = false;
+                    for (int a : faceAreas[id])
+                    {
+                        if (AreaRingBoundaryDistance(rings[a], sampleU, sampleV) <= AreaRegionBoundaryTolerance ||
+                            AreaRingContains(rings[a], sampleU, sampleV))
+                        {
+                            coveredByAnyArea = true;
+                            break;
+                        }
+                    }
+                    if (!coveredByAnyArea) clipped = true;
+                }
+            }
             for (int a : faceAreas[id])
             {
                 BRepAlgoAPI_Common common(modelFaces[id], prisms[a]);
@@ -468,8 +497,31 @@ namespace step_export_geometry
                 return false;
             }
             const double areaTolerance = (std::max)(1.0, originalArea * 1.0e-4);
-            if (std::abs(pieceArea - originalArea) > areaTolerance)
+            if (clipped)
             {
+                // 제외영역으로 잘린 면: 조각이 원본 면적을 넘을 수는 없다.
+                // (조각이 없으면 위에서 이미 실패했고, 영역별 조각 유무는 아래에서 검사한다.)
+                if (pieceArea > originalArea + areaTolerance)
+                {
+                    LogStepAreaNative("face-excess " + std::to_string(id) +
+                                      " pieces=" + std::to_string(pieceCount) +
+                                      " pieceArea=" + std::to_string(pieceArea) +
+                                      " originalArea=" + std::to_string(originalArea));
+                    failure = "area-face-area:" + NativeStepAreaIndexToken(faceAreas[id].front()) +
+                              ":" + std::to_string(id);
+                    return false;
+                }
+                LogStepAreaNative("face-clip " + std::to_string(id) +
+                                  " pieces=" + std::to_string(pieceCount) +
+                                  " pieceArea=" + std::to_string(pieceArea) +
+                                  " originalArea=" + std::to_string(originalArea));
+            }
+            else if (std::abs(pieceArea - originalArea) > areaTolerance)
+            {
+                LogStepAreaNative("face-area " + std::to_string(id) + " pieces=" + std::to_string(pieceCount) +
+                                  " pieceArea=" + std::to_string(pieceArea) +
+                                  " originalArea=" + std::to_string(originalArea) +
+                                  " area=" + NativeStepAreaIndexToken(faceAreas[id].front()));
                 failure = "area-face-area:" + NativeStepAreaIndexToken(faceAreas[id].front()) +
                           ":" + std::to_string(id);
                 return false;
