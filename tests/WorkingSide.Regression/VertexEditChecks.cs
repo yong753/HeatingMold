@@ -149,19 +149,17 @@ static class VertexEditChecks
             new CadRegionBoundary2D(side.Id.Value, side.Revision.Value, regionLoops[0].EdgeReferences)));
         ((IList)Field<object>(window, "_areas")).Add(area.Value);
 
-        areaType.GetProperty("ExitFaceId")!.SetValue(area.Value, rightSide.FaceId);
-        areaType.GetProperty("ExitFaceRevision")!.SetValue(area.Value, Bridge.GetModelRevision());
         ((List<Vec2>)areaType.GetProperty("ExitChain")!.GetValue(area.Value)!).AddRange(
             new[] { new Vec2(-10, -20), new Vec2(-10, 20) });
         ((List<Vec3>)areaType.GetProperty("ExitChain3D")!.GetValue(area.Value)!).AddRange(
             new[] { new Vec3(70, -20, 20), new Vec3(70, 20, 20) });
-        ((List<int>)areaType.GetProperty("ExitChainFaceIds")!.GetValue(area.Value)!).Add(rightSide.FaceId);
         var references = new List<ExitEdgeReference>();
         foreach (var reference in rightSide.EdgeReferences)
             references.Add(CadExitBoundary2D.CopyReference(reference));
         areaType.GetProperty("ExitEdgeRefs")!.SetValue(area.Value, references);
         var boundary = new CadExitBoundary2D(side.Id.Value, side.Revision.Value, references);
         areaType.GetProperty("ExitBoundary")!.SetValue(area.Value, boundary);
+        areaType.GetProperty("RegionExitBoundary")!.SetValue(area.Value, boundary);
 
         // 실제 원본 모서리에서 두 인출점의 binding을 직접 얻는다.
         ExitBoundaryResolution startRes = boundary.Project(new Vec2(-10, -10), 0.05);
@@ -169,6 +167,8 @@ static class VertexEditChecks
         Check(startRes.Succeeded && endRes.Succeeded &&
               startRes.Point!.Value.Binding.HasValue && endRes.Point!.Value.Binding.HasValue,
             "both synthetic exits bind to the original right edge");
+        areaType.GetProperty("SelectedStartExit")!.SetValue(area.Value, startRes.Point!.Value);
+        areaType.GetProperty("SelectedEndExit")!.SetValue(area.Value, endRes.Point!.Value);
 
         var marginBox = (TextBox)window.FindName("MarginBox");
         var spacingBox = (TextBox)window.FindName("SpacingBox");

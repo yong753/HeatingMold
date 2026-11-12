@@ -15,16 +15,6 @@ internal sealed class VisualScenario
     public string Description { get; set; } = "";
     public VisualModelSpec Model { get; set; }
 
-    // ---- schemaVersion 1: 고정 7단계 ----
-    public VisualAreaSpec Area { get; set; }
-    public VisualExitSpec Exit { get; set; }
-    public VisualAnchorSpec Anchor { get; set; }
-    /// <summary>구 schemaVersion 1의 회로 분할 단계. 더 이상 지원하지 않으며,
-    /// 기존 시나리오 파일이 조용히 분할 없이 실행되지 않도록 명시적으로 거부한다.</summary>
-    public JsonElement? Split { get; set; }
-    public VisualElectricalSpec Electrical { get; set; }
-    public VisualExpectSpec Expect { get; set; }
-
     // ---- schemaVersion 2: 영역 목록 + 순차 행동 ----
     public VisualAreaDefinition[] Areas { get; set; }
     public VisualActionSpec[] Steps { get; set; }
@@ -48,8 +38,8 @@ internal sealed class VisualScenario
             if (scenario == null) throw new ArgumentException("시나리오 JSON이 비어 있습니다.");
             scenario.ScenarioPath = Path.GetFullPath(path);
 
-            if (scenario.SchemaVersion != 1 && scenario.SchemaVersion != 2)
-                throw new ArgumentException("지원하지 않는 schemaVersion입니다. 현재 지원 값은 1, 2입니다.");
+            if (scenario.SchemaVersion != 2)
+                throw new ArgumentException("지원하지 않는 schemaVersion입니다. 현재 지원 값은 2입니다.");
             if (scenario.Model == null) throw new ArgumentException("model 섹션이 없습니다.");
 
             if (string.IsNullOrWhiteSpace(scenario.Model.Path))
@@ -70,10 +60,7 @@ internal sealed class VisualScenario
             if (scenario.Model.FaceCount <= 0 || scenario.Model.SolidCount < 0)
                 throw new ArgumentException("model.faceCount는 0보다 커야 하고 solidCount는 0 이상이어야 합니다.");
 
-            if (scenario.SchemaVersion == 1)
-                scenario.ValidateLegacy();
-            else
-                scenario.ValidateActions();
+            scenario.ValidateActions();
 
             return scenario;
         }
@@ -82,38 +69,6 @@ internal sealed class VisualScenario
             error = ex.Message;
             return null;
         }
-    }
-
-    private void ValidateLegacy()
-    {
-        if (Area == null) throw new ArgumentException("area 섹션이 없습니다.");
-        if (Exit == null) throw new ArgumentException("exit 섹션이 없습니다.");
-        if (Split.HasValue && Split.Value.ValueKind != JsonValueKind.Null)
-            throw new ArgumentException("schemaVersion 1의 split 단계는 더 이상 지원하지 않습니다. "
-                + "회로 분할 없이 영역별 단일 회로를 사용하는 schemaVersion 2 시나리오로 변환하세요.");
-        if (Electrical == null) throw new ArgumentException("electrical 섹션이 없습니다.");
-
-        ValidateFaceIds(Area.FaceIds, "area.faceIds");
-        ValidatePatternInputs(Area.MarginMm, Area.SpacingMm, Area.Direction, "area");
-        ValidateExit(Exit, "exit");
-
-        if (Anchor != null && Anchor.Index < 0)
-            throw new ArgumentException("anchor.index는 0 이상이어야 합니다.");
-        if (Electrical.PresetIndex < 0 || Electrical.PresetIndex > 2)
-            throw new ArgumentException("electrical.presetIndex는 0, 1, 2 중 하나여야 합니다.");
-        if (!double.IsFinite(Electrical.VoltageV) || Electrical.VoltageV < 0)
-            throw new ArgumentException("electrical.voltageV는 0 이상의 숫자여야 합니다.");
-        if (Electrical.ReviewScope < 0 || Electrical.ReviewScope > 1)
-            throw new ArgumentException("electrical.reviewScope는 0(전체) 또는 1(현재 영역)이어야 합니다.");
-        if (Electrical.PresetIndex == 2
-            && (!double.IsFinite(Electrical.DiameterMm) || !(Electrical.DiameterMm > 0)
-                || !double.IsFinite(Electrical.ResistanceOhmPerMeter)
-                || !(Electrical.ResistanceOhmPerMeter > 0)))
-            throw new ArgumentException("presetIndex=2일 때 diameterMm/resistanceOhmPerMeter가 필요합니다.");
-        if (!double.IsFinite(Electrical.AllowedCurrentA) || !(Electrical.AllowedCurrentA > 0))
-            throw new ArgumentException("electrical.allowedCurrentA는 0보다 큰 숫자여야 합니다.");
-        if (!double.IsFinite(Electrical.AllowedPowerKw) || !(Electrical.AllowedPowerKw > 0))
-            throw new ArgumentException("electrical.allowedPowerKw는 0보다 큰 숫자여야 합니다.");
     }
 
     private void ValidateActions()
@@ -133,9 +88,6 @@ internal sealed class VisualScenario
                 throw new ArgumentException("area.alias가 중복되었습니다: " + area.Alias);
             ValidateFaceIds(area.FaceIds, "area[" + area.Alias + "].faceIds");
             ValidatePatternInputs(area.MarginMm, area.SpacingMm, area.Direction, "area[" + area.Alias + "]");
-            if (area.Exit != null) ValidateExit(area.Exit, "area[" + area.Alias + "].exit");
-            if (area.Anchor != null && area.Anchor.Index < 0)
-                throw new ArgumentException("area[" + area.Alias + "].anchor.index는 0 이상이어야 합니다.");
             ValidateExpect(area.Expect, "area[" + area.Alias + "].expect");
         }
 
@@ -169,22 +121,11 @@ internal sealed class VisualScenario
                 case "confirmArea":
                 case "activateArea":
                 case "deleteArea":
-                case "pickExit":
-                case "cancelExitPick":
                 case "generate":
                 case "checkArea":
                     RequireAlias(step.Area, aliases, i);
                     if (action == "generate" || action == "checkArea")
                         ValidateExpect(step.Expect, "steps[" + i + "].expect");
-                    if (action == "pickExit")
-                    {
-                        VisualAreaDefinition target = Areas.First(a => a.Alias == step.Area);
-                        if (target.Exit == null && step.Exit == null)
-                            throw new ArgumentException("steps[" + i + "]가 참조하는 영역에 exit 정의가 없습니다: " + step.Area);
-                        if (step.Exit != null) ValidateExit(step.Exit, "steps[" + i + "].exit");
-                        if (step.Anchor != null && step.Anchor.Index < 0)
-                            throw new ArgumentException("steps[" + i + "].anchor.index는 0 이상이어야 합니다.");
-                    }
                     break;
                 case "setAreaInputs":
                     RequireAlias(step.Area, aliases, i);
@@ -399,18 +340,6 @@ internal sealed class VisualScenario
             throw new ArgumentException(section + ".direction은 0(자동), 1(Frame X), 2(Frame Y) 중 하나여야 합니다.");
     }
 
-    private static void ValidateExit(VisualExitSpec exit, string section)
-    {
-        if (exit.FaceId < 0)
-            throw new ArgumentException(section + ".faceId는 0 이상이어야 합니다.");
-        if (exit.ToleranceMm <= 0) exit.ToleranceMm = 1.0;
-        if (exit.StartPoint3D != null && exit.StartPoint3D.Length != 3)
-            throw new ArgumentException(section + ".startPoint3D는 [x,y,z] 3개 값이어야 합니다.");
-        if (exit.EndPoint3D != null && exit.EndPoint3D.Length != 3)
-            throw new ArgumentException(section + ".endPoint3D는 [x,y,z] 3개 값이어야 합니다.");
-        if ((exit.StartPoint3D == null) != (exit.EndPoint3D == null))
-            throw new ArgumentException(section + ".startPoint3D와 endPoint3D는 함께 지정해야 합니다.");
-    }
 
     internal static string ComputeSha256(string path)
     {
@@ -429,14 +358,6 @@ internal sealed class VisualModelSpec
     public int SolidCount { get; set; }
 }
 
-internal sealed class VisualAreaSpec
-{
-    public int[] FaceIds { get; set; } = Array.Empty<int>();
-    public double MarginMm { get; set; } = 5;
-    public double SpacingMm { get; set; } = 50;
-    public int Direction { get; set; }
-}
-
 internal sealed class VisualAreaDefinition
 {
     public string Alias { get; set; } = "";
@@ -444,26 +365,7 @@ internal sealed class VisualAreaDefinition
     public double MarginMm { get; set; } = 5;
     public double SpacingMm { get; set; } = 50;
     public int Direction { get; set; }
-    public VisualExitSpec Exit { get; set; }
-    public VisualAnchorSpec Anchor { get; set; }
     public VisualAreaExpect Expect { get; set; }
-}
-
-internal sealed class VisualExitSpec
-{
-    public int FaceId { get; set; } = -1;
-    public double[] StartPoint3D { get; set; }
-    public double[] EndPoint3D { get; set; }
-    public double ToleranceMm { get; set; } = 1.0;
-}
-
-internal sealed class VisualAnchorSpec
-{
-    public int Index { get; set; }
-    /// <summary>작업평면 2D 시작점 지문. 후보 인덱스가 바뀌어도 동일 앵커를 찾는다.</summary>
-    public double[] StartUv { get; set; }
-    public double[] EndUv { get; set; }
-    public double ToleranceMm { get; set; } = 0.5;
 }
 
 /// <summary>현재 제품의 직접 인출점 선택. 작업평면 2D 좌표로 영역 외곽/절단선/제외 변에 투영한다.</summary>
@@ -490,20 +392,12 @@ internal sealed class VisualElectricalSpec
     public bool? ExpectedWithinLimits { get; set; }
 }
 
-internal sealed class VisualExpectSpec
-{
-    public int? AreaCount { get; set; }
-    public int? PieceCount { get; set; }
-    public int? TurnCount { get; set; }
-}
-
 /// <summary>영역 하나의 최종 기대 상태. 선언된 값만 검사한다.</summary>
 internal sealed class VisualAreaExpect
 {
     public int? Pieces { get; set; }
     public int? Turns { get; set; }
     public int? Circuits { get; set; }
-    public int? ExitFaceId { get; set; }
     public double? LengthMm { get; set; }
     public double LengthToleranceMm { get; set; } = 0.5;
     /// <summary>생성 당시 적용된 마진. 선언한 경우에만 검사한다.</summary>
@@ -534,8 +428,6 @@ internal sealed class VisualActionSpec
     public string FileName { get; set; }
     public string Outcome { get; set; } = "success";
     public string FailureContains { get; set; }
-    public VisualExitSpec Exit { get; set; }
-    public VisualAnchorSpec Anchor { get; set; }
     public VisualExitPointSpec ExitPoint { get; set; }
     public VisualElectricalSpec Electrical { get; set; }
     public int? PartCount { get; set; }

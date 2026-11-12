@@ -290,7 +290,6 @@ public:
     static RoutePieceResult^ StageProjectedWorkingPolyline(long long id, long long revision, int stageId,
         System::String^ kind, array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);
     /// <summary>3D polylines of the CAD edges shared by the exit face and the heating faces (empty when not adjacent).</summary>
-    static array<array<double>^>^ GetSharedBoundaryEdges(int exitFaceId, array<int>^ heatingFaceIds, double deflection);
     static bool CommitWorkingRouteGeometry(long long id, long long revision, array<int>^ stagedRouteIds,
         array<int>^ finalRouteIds, array<int>^ stagedPolylineIds);
     /// <summary>Atomic context-owned retain/replace/delete commit. Does not redraw.</summary>
@@ -368,14 +367,8 @@ public:
     /// <summary>인출 측면 후보를 임시 강조 표시한다 (이전 강조는 지운다).</summary>
     static void ShowExitCandidates(array<array<double>^>^ polylines);
     static void ClearExitCandidates();
-    /// <summary>화면 픽셀 거리 기준으로 가장 가까운 인출 측면 후보 인덱스를 반환한다. 없으면 -1.</summary>
-    static int PickExitCandidate(array<array<double>^>^ polylines, int x, int y, double pixelTolerance);
-    /// <summary>후보 하나만 강조한다 (호버). index &lt; 0 이면 모든 후보를 기본 표시로 되돌린다.</summary>
-    static void HighlightExitCandidate(int index);
     /// <summary>인출면 선택 모드에서 후보 면 하나를 호버색으로 강조한다. faceId &lt; 0 이면 해제.</summary>
     static void HighlightExitFace(int faceId);
-    /// <summary>Pick the nearest visible point on the selected faces only when it is on their trim boundary.</summary>
-    static array<double>^ PickSelectedBoundaryPoint(array<int>^ faceIds, int x, int y);
     /// <summary>Toggle connector presentation; disabled connectors are shown as dashed guides.</summary>
     /// <summary>redraw=false면 호출측이 여러 커넥터를 갱신한 뒤 한 번만 Redraw한다.</summary>
     static bool SetConnectorEnabled(int pieceId, bool enabled, double r, double g, double b, bool redraw);

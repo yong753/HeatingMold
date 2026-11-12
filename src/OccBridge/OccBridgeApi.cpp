@@ -437,8 +437,7 @@ namespace
     const Quantity_Color kExitCandidateHoverColor(0.10, 0.90, 1.00, Quantity_TOC_RGB);
     const Standard_Real kExitCandidateWidth = 2.0;
     const Standard_Real kExitCandidateHoverWidth = 4.0;
-    int g_exitCandidateHighlighted = -1;
-    // 인출면 선택 모드에서 커서 아래 후보 면이 받는 호버 색 override (-1 = 없음).
+        // 인출면 선택 모드에서 커서 아래 후보 면이 받는 호버 색 override (-1 = 없음).
     // g_hoverColorFace와 분리해 W5 호버/선택 색과 서로 덮어쓰지 않게 한다.
     int g_exitFaceHover = -1;
     // 활성 작업영역의 인출면 지속 강조 (-1 = 없음). 영역 전환 시 교체된다.
@@ -2360,7 +2359,6 @@ namespace
             for (const auto& overlay : g_exitCandidateOverlays)
                 if (!overlay.IsNull()) g_ctx->Remove(overlay, Standard_False);
         g_exitCandidateOverlays.clear();
-        g_exitCandidateHighlighted = -1;
         DropExitFaceHoverNative();
         if (!g_view.IsNull()) g_view->Redraw();
     }
@@ -2400,77 +2398,9 @@ namespace
                 g_ctx->Deactivate(overlay, Standard_False);
                 g_exitCandidateOverlays.push_back(overlay);
             }
-            g_exitCandidateHighlighted = -1;
             g_view->Redraw();
         }
         catch (const Standard_Failure&) { }
-    }
-
-    /// <summary>호버한 후보만 강조하고 나머지는 기본 표시로 되돌린다.</summary>
-    void HighlightExitCandidateNative(int index)
-    {
-        if (g_ctx.IsNull() || g_view.IsNull()) return;
-        if (index < 0 || index >= static_cast<int>(g_exitCandidateOverlays.size())) index = -1;
-        if (index == g_exitCandidateHighlighted) return;
-        g_exitCandidateHighlighted = index;
-        for (size_t i = 0; i < g_exitCandidateOverlays.size(); ++i)
-        {
-            if (g_exitCandidateOverlays[i].IsNull()) continue;
-            const bool hovered = static_cast<int>(i) == index;
-            g_ctx->SetColor(g_exitCandidateOverlays[i],
-                            hovered ? kExitCandidateHoverColor : kExitCandidateColor, Standard_False);
-            g_ctx->SetWidth(g_exitCandidateOverlays[i],
-                            hovered ? kExitCandidateHoverWidth : kExitCandidateWidth, Standard_False);
-        }
-        g_view->Redraw();
-    }
-
-    double ScreenDistanceToSegment(double px, double py, double ax, double ay, double bx, double by)
-    {
-        const double dx = bx - ax, dy = by - ay;
-        const double lengthSquared = dx * dx + dy * dy;
-        double t = 0.0;
-        if (lengthSquared > 1e-12) t = ((px - ax) * dx + (py - ay) * dy) / lengthSquared;
-        t = std::max(0.0, std::min(1.0, t));
-        const double qx = ax + t * dx - px, qy = ay + t * dy - py;
-        return std::sqrt(qx * qx + qy * qy);
-    }
-
-    int PickExitCandidateNative(const std::vector<std::vector<double>>& polylines, int x, int y,
-                                double pixelTolerance)
-    {
-        if (g_view.IsNull() || polylines.empty()) return -1;
-        if (!std::isfinite(pixelTolerance) || pixelTolerance <= 0.0) pixelTolerance = 12.0;
-        int bestIndex = -1;
-        double bestDistance = pixelTolerance;
-        try
-        {
-            for (size_t i = 0; i < polylines.size(); ++i)
-            {
-                const std::vector<double>& pts = polylines[i];
-                if (pts.size() < 6) continue;
-                std::vector<std::pair<double, double>> screen;
-                screen.reserve(pts.size() / 3);
-                bool valid = true;
-                for (size_t k = 0; k + 2 < pts.size(); k += 3)
-                {
-                    if (!std::isfinite(pts[k]) || !std::isfinite(pts[k + 1]) || !std::isfinite(pts[k + 2]))
-                    { valid = false; break; }
-                    Standard_Integer sx = 0, sy = 0;
-                    g_view->Convert(pts[k], pts[k + 1], pts[k + 2], sx, sy);
-                    screen.emplace_back(static_cast<double>(sx), static_cast<double>(sy));
-                }
-                if (!valid || screen.size() < 2) continue;
-                for (size_t k = 1; k < screen.size(); ++k)
-                {
-                    const double d = ScreenDistanceToSegment(x, y, screen[k - 1].first, screen[k - 1].second,
-                                                             screen[k].first, screen[k].second);
-                    if (d < bestDistance) { bestDistance = d; bestIndex = static_cast<int>(i); }
-                }
-            }
-        }
-        catch (const Standard_Failure&) { return -1; }
-        return bestIndex;
     }
 
     bool SamplePoint(int faceIndex, double u, double v, double* out)
@@ -3381,100 +3311,6 @@ namespace
         return true;
     }
 
-    bool PickSelectedBoundaryPointNative(const std::vector<int>& faces, int x, int y, double* out)
-    {
-        if (g_view.IsNull() || g_shape.IsNull() || faces.empty() || out == nullptr) return false;
-        try {
-            std::set<int> unique;
-            BRepBuilderAPI_Sewing sewing(0.01, Standard_True, Standard_True, Standard_True, Standard_True);
-            for (int id : faces) {
-                if (id < 0 || id >= static_cast<int>(g_faces.size())) return false;
-                if (unique.insert(id).second) sewing.Add(g_faces[id]);
-            }
-            sewing.Perform();
-            const TopoDS_Shape united = sewing.SewedShape();
-            if (united.IsNull()) return false;
-
-            // Classify the boundary on the sewn working faces, not source faces:
-            // separately represented coincident seams otherwise appear twice.
-            TopTools_IndexedMapOfShape edgeMap;
-            std::vector<int> uses;
-            for (TopExp_Explorer fx(united, TopAbs_FACE); fx.More(); fx.Next())
-                for (TopExp_Explorer ex(fx.Current(), TopAbs_EDGE); ex.More(); ex.Next()) {
-                    const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
-                    int index = edgeMap.FindIndex(edge);
-                    if (!index) { edgeMap.Add(edge); uses.push_back(0); index = edgeMap.Extent(); }
-                    ++uses[index - 1];
-                }
-            std::vector<TopoDS_Edge> edges;
-            for (int i = 1; i <= edgeMap.Extent(); ++i) {
-                if (uses[i - 1] > 2) return false;
-                if (uses[i - 1] == 1) edges.push_back(TopoDS::Edge(edgeMap(i)));
-            }
-            if (edges.empty()) return false;
-
-            double best2 = 100.0; // practical 10 px aperture
-            gp_Pnt bestPoint;
-            for (const TopoDS_Edge& edge : edges) {
-                BRepAdaptor_Curve curve(edge);
-                GCPnts_QuasiUniformDeflection samples(curve, 0.05);
-                if (!samples.IsDone() || samples.NbPoints() < 2 || samples.NbPoints() > 20000) continue;
-                for (int i = 1; i < samples.NbPoints(); ++i) {
-                    gp_Pnt a = samples.Value(i), b = samples.Value(i + 1);
-                    Standard_Integer ax, ay, bx, by;
-                    g_view->Convert(a.X(), a.Y(), a.Z(), ax, ay);
-                    g_view->Convert(b.X(), b.Y(), b.Z(), bx, by);
-                    const double dx = static_cast<double>(bx - ax), dy = static_cast<double>(by - ay);
-                    const double len2 = dx * dx + dy * dy;
-                    const double rawT = len2 > 1e-12 ? ((x-ax)*dx + (y-ay)*dy)/len2 : 0.0;
-                    const double t = std::max(0.0, std::min(1.0, rawT));
-                    const double px = ax + t*dx, py = ay + t*dy;
-                    const double d2 = (x-px)*(x-px) + (y-py)*(y-py);
-                    if (d2 >= best2) continue;
-                    best2 = d2;
-                    // Interpolation is only a screen-space coarse estimate; refine
-                    // on the actual OCCT curve with a 1-D bounded minimization.
-                    const double u0 = samples.Parameter(i), u1 = samples.Parameter(i + 1);
-                    double lo = std::min(u0, u1), hi = std::max(u0, u1);
-                    for (int k = 0; k < 24; ++k) {
-                        const double m1 = lo + (hi-lo)/3.0, m2 = hi - (hi-lo)/3.0;
-                        gp_Pnt p1, p2; curve.D0(m1, p1); curve.D0(m2, p2);
-                        Standard_Integer sx1, sy1, sx2, sy2;
-                        g_view->Convert(p1.X(), p1.Y(), p1.Z(), sx1, sy1);
-                        g_view->Convert(p2.X(), p2.Y(), p2.Z(), sx2, sy2);
-                        const double d1=(x-sx1)*(x-sx1)+(y-sy1)*(y-sy1), d2=(x-sx2)*(x-sx2)+(y-sy2)*(y-sy2);
-                        if (d1 < d2) hi=m2; else lo=m1;
-                    }
-                    curve.D0((lo+hi)*0.5, bestPoint);
-                }
-            }
-            if (best2 >= 100.0) return false;
-
-            // Test visibility at the candidate itself, not at the cursor: the
-            // 10px aperture intentionally permits the cursor to miss the edge.
-            Standard_Integer candidateX, candidateY;
-            g_view->Convert(bestPoint.X(), bestPoint.Y(), bestPoint.Z(), candidateX, candidateY);
-            Standard_Real rx, ry, rz, vx, vy, vz;
-            g_view->ConvertWithProj(candidateX, candidateY, rx, ry, rz, vx, vy, vz);
-            gp_Vec direction(vx, vy, vz);
-            if (direction.SquareMagnitude() < 1e-18) return false;
-            direction.Normalize();
-            IntCurvesFace_ShapeIntersector visibility;
-            visibility.Load(g_shape, 1e-7);
-            visibility.Perform(gp_Lin(gp_Pnt(rx, ry, rz), gp_Dir(direction)), 0.0, 1e100);
-            if (!visibility.IsDone() || visibility.NbPnt() == 0) return false;
-            const gp_Pnt front = visibility.Pnt(1);
-            Standard_Integer frontX, frontY;
-            g_view->Convert(front.X(), front.Y(), front.Z(), frontX, frontY);
-            if (front.Distance(bestPoint) > 0.05 &&
-                (frontX-candidateX)*(frontX-candidateX)+(frontY-candidateY)*(frontY-candidateY) > 1) return false;
-            out[0] = bestPoint.X(); out[1] = bestPoint.Y(); out[2] = bestPoint.Z();
-            out[3] = front.Distance(gp_Pnt(rx, ry, rz));
-            return true;
-        }
-        catch (const Standard_Failure&) { return false; }
-    }
-
     // ================= HLR 기하 (M4 DXF 뷰) =================
 
     struct NativeHlrLine { bool visible; std::vector<double> pts; };
@@ -3860,22 +3696,6 @@ RoutePieceResult^ Bridge::StageProjectedWorkingPolyline(long long id,long long r
     try {std::vector<double> xyz;std::vector<int> faces;xyz.reserve(static_cast<size_t>(flat->Length));faces.reserve(static_cast<size_t>(faceIds->Length));for each(double v in flat)xyz.push_back(v);for each(int v in faceIds)faces.push_back(v);
         double data[7]={};if(!StageProjectedWorkingPolylineNative(id,revision,stageId,msclr::interop::marshal_as<std::string>(kind),xyz,faces,gp_Dir(dx,dy,dz),data))return nullptr;
         auto r=gcnew RoutePieceResult();r->Length=data[0];r->Start=gcnew array<double>{data[1],data[2],data[3]};r->End=gcnew array<double>{data[4],data[5],data[6]};return r;}catch(...){return nullptr;}
-}
-array<array<double>^>^ Bridge::GetSharedBoundaryEdges(int exitFaceId, array<int>^ heatingFaceIds, double deflection)
-{
-    if (heatingFaceIds == nullptr || heatingFaceIds->Length == 0) return nullptr;
-    try {
-        std::vector<int> ids; for each (int v in heatingFaceIds) ids.push_back(v);
-        std::vector<std::vector<double>> loops;
-        if (!SharedBoundaryNative(exitFaceId, ids, deflection, loops)) return nullptr;
-        auto result = gcnew array<array<double>^>(static_cast<int>(loops.size()));
-        for (int i = 0; i < static_cast<int>(loops.size()); ++i) {
-            auto flat = gcnew array<double>(static_cast<int>(loops[i].size()));
-            for (int k = 0; k < static_cast<int>(loops[i].size()); ++k) flat[k] = loops[i][k];
-            result[i] = flat;
-        }
-        return result;
-    } catch (...) { return nullptr; }
 }
 bool Bridge::CommitWorkingRouteGeometry(long long id,long long revision,array<int>^ stagedRouteIds,array<int>^ finalRouteIds,array<int>^ stagedPolylineIds)
 {
@@ -4307,48 +4127,10 @@ void Bridge::ClearExitCandidates()
     catch (const Standard_Failure&) { }
 }
 
-void Bridge::HighlightExitCandidate(int index)
-{
-    try { HighlightExitCandidateNative(index); }
-    catch (const Standard_Failure&) { }
-}
-
 void Bridge::HighlightExitFace(int faceId)
 {
     try { HighlightExitFaceNative(faceId); }
     catch (const Standard_Failure&) { }
-}
-
-int Bridge::PickExitCandidate(array<array<double>^>^ polylines, int x, int y, double pixelTolerance)
-{
-    std::vector<std::vector<double>> native;
-    if (polylines != nullptr)
-    {
-        native.reserve((size_t)polylines->Length);
-        for (int i = 0; i < polylines->Length; ++i)
-        {
-            array<double>^ flat = polylines[i];
-            if (flat == nullptr || flat->Length < 6) { native.emplace_back(); continue; }
-            std::vector<double> points((size_t)flat->Length);
-            for (int k = 0; k < flat->Length; ++k) points[(size_t)k] = flat[k];
-            native.push_back(std::move(points));
-        }
-    }
-    if (native.empty()) return -1;
-    try { return PickExitCandidateNative(native, x, y, pixelTolerance); }
-    catch (const Standard_Failure&) { return -1; }
-}
-
-array<double>^ Bridge::PickSelectedBoundaryPoint(array<int>^ faceIds, int x, int y)
-{
-    if (faceIds == nullptr || faceIds->Length == 0) return nullptr;
-    std::vector<int> ids(faceIds->Length);
-    for (int i = 0; i < faceIds->Length; ++i) ids[(size_t)i] = faceIds[i];
-    double p[4];
-    if (!PickSelectedBoundaryPointNative(ids, x, y, p)) return nullptr;
-    array<double>^ result = gcnew array<double>(4);
-    for (int i = 0; i < 4; ++i) result[i] = p[i];
-    return result;
 }
 
 bool Bridge::SetConnectorEnabled(int pieceId, bool enabled, double r, double g, double b, bool redraw)

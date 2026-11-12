@@ -20,11 +20,6 @@ internal sealed record AreaRouteSnapshot(
     string LastExitFailure,
     Vec2? StartAnchor,
     Vec2? EndAnchor,
-    List<AnchoredCandidate> AnchorCandidates,
-    List<ExcludedAnchorCandidate> ExcludedCandidates,
-    ExcludedAnchorCandidate ExcludedPlan,
-    SerpentineComponentsFailureReason? ExcludedCandidateFailure,
-    string ExcludedPlanKey,
     List<CircuitRoute> Circuits,
     List<List<int>> CircuitPieceIndices,
     List<ExitEdgeReference> ExitEdgeRefs,
@@ -35,5 +30,4 @@ internal sealed record AreaRouteSnapshot(
     CadExitBoundary2D RegionCadBoundary,
     ExitBoundaryPoint? SelectedStartExit,
     ExitBoundaryPoint? SelectedEndExit,
-    AnchoredCandidate SelectedAnchorCandidate,
     bool RouteEdited);

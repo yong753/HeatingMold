@@ -128,8 +128,6 @@ static class PatternStateChecks
         areaType.GetProperty("Name")!.SetValue(value, name);
         areaType.GetProperty("Frame")!.SetValue(value, side.Frame);
         areaType.GetProperty("AreaId")!.SetValue(value, id);
-        areaType.GetProperty("ExitFaceId")!.SetValue(value, 0);
-        areaType.GetProperty("ExitFaceRevision")!.SetValue(value, Bridge.GetModelRevision());
         ((List<Vec2>)areaType.GetProperty("ExitChain")!.GetValue(value)!).AddRange(
             new[] { new Vec2(-10, 0), new Vec2(10, 0) });
         ((List<List<Vec2>>)areaType.GetProperty("Region")!.GetValue(value)!).Add(new()

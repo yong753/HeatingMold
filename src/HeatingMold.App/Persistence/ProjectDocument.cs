@@ -86,17 +86,13 @@ namespace HeatingMold.App.Persistence
         public string MarginText { get; set; }
         public string SpacingText { get; set; }
 
-        public int ExitFaceId { get; set; } = -1;
-        public long ExitFaceRevision { get; set; }
         public List<ProjectVec2> ExitChain { get; set; } = new();
         public List<ProjectVec3> ExitChain3D { get; set; } = new();
-        public List<int> ExitChainFaceIds { get; set; } = new();
         public ProjectVec2 StartAnchor { get; set; }
         public ProjectVec2 EndAnchor { get; set; }
         public List<ProjectExitEdgeReference> ExitEdgeRefs { get; set; } = new();
         public ProjectExitBoundaryPoint SelectedStartExit { get; set; }
         public ProjectExitBoundaryPoint SelectedEndExit { get; set; }
-        public ProjectAnchoredCandidate SelectedAnchorCandidate { get; set; }
 
         /// <summary>
         /// 분할로 생긴 새 절단선(작업평면 2D 전체 직선). 스키마 4부터 저장하며,
@@ -215,22 +211,17 @@ namespace HeatingMold.App.Persistence
     public sealed class ProjectCommittedContextDocument
     {
         public int[] FaceIds { get; set; } = Array.Empty<int>();
-        public int ExitFaceId { get; set; } = -1;
         public List<ProjectVec2> ExitChain { get; set; } = new();
         public List<ProjectVec3> ExitChain3D { get; set; } = new();
-        public List<int> ExitChainFaceIds { get; set; } = new();
         public ProjectVec2 StartAnchor { get; set; }
         public ProjectVec2 EndAnchor { get; set; }
         public List<ProjectExitEdgeReference> ExitEdgeRefs { get; set; } = new();
         public ProjectExitBoundaryPoint SelectedStartExit { get; set; }
         public ProjectExitBoundaryPoint SelectedEndExit { get; set; }
-        public ProjectAnchoredCandidate SelectedAnchorCandidate { get; set; }
         public List<ProjectExitPoint> StartExits { get; set; } = new();
         public List<ProjectExitPoint> EndExits { get; set; } = new();
         public List<ProjectVec2> CircuitStarts { get; set; } = new();
         public List<ProjectVec2> CircuitEnds { get; set; } = new();
-        /// <summary>확정 경로가 적용영역 선택 인출점 경계를 썼는지. 이전 파일에는 없을 수 있다.</summary>
-        public bool? RegionMode { get; set; }
     }
 
     public sealed class ProjectExitPoint
@@ -315,17 +306,6 @@ namespace HeatingMold.App.Persistence
         public bool Reversed { get; set; }
         public int StartIndex { get; set; }
         public int EndIndex { get; set; }
-    }
-
-    public sealed class ProjectAnchoredCandidate
-    {
-        public ProjectVec2 Start { get; set; }
-        public ProjectVec2 End { get; set; }
-        public double AngleDeg { get; set; }
-        public string CandidateId { get; set; }
-        public ProjectExitEdgeBinding StartBinding { get; set; }
-        public ProjectExitEdgeBinding EndBinding { get; set; }
-        public bool? StartLeftToRight { get; set; }
     }
 
     public sealed class ProjectVec2

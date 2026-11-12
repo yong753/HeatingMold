@@ -59,8 +59,8 @@ public partial class MainWindow
         if (area == null) { RejectVertexEdit("작업영역을 먼저 선택하세요"); return; }
         if (area.Pattern == null || area.Pattern.RoutePieces.Count == 0)
         { RejectVertexEdit("먼저 발열 경로를 생성하세요"); return; }
-        if (area.Pattern == null || (!area.HasSelectedExits && !area.HasExitFace))
-        { RejectVertexEdit("시작/종료 인출점 또는 인출면의 시작/종료점을 먼저 지정하세요"); return; }
+        if (area.Pattern == null || !area.HasSelectedExits)
+        { RejectVertexEdit("시작/종료 인출점을 먼저 지정하세요"); return; }
         if (area.Paths.Count > 0)
         { RejectVertexEdit("제외영역 경로는 발열경로 편집을 지원하지 않습니다 — 제외영역을 지우고 다시 생성하세요"); return; }
         if (IsPatternInputStale(area))
@@ -171,7 +171,7 @@ public partial class MainWindow
     private static bool IsAnchorGroup(WorkingArea area, RouteVertexGroup group, out bool isStart)
     {
         isStart = false;
-        if (area.Pattern == null || (!area.HasSelectedExits && !area.HasExitFace)) return false;
+        if (area.Pattern == null || !area.HasSelectedExits) return false;
         var pattern = area.Pattern;
         IReadOnlyList<SerpentineRoutePiece> pieces = pattern.RoutePieces;
         if (pieces.Count == 0) return false;
@@ -599,10 +599,10 @@ public partial class MainWindow
             StatusText.Text = RouteEndpointEditMessage;
             return;
         }
-        if (!area.HasSelectedExits && !area.HasExitFace)
+        if (!area.HasSelectedExits)
         {
             ExitVertexEdit();
-            StatusText.Text = "시작/종료 인출점 또는 인출면의 시작/종료점이 지정되지 않아 편집을 적용할 수 없습니다";
+            StatusText.Text = "시작/종료 인출점이 지정되지 않아 편집을 적용할 수 없습니다";
             return;
         }
         // 미리보기 중 초안/인출면/앵커가 바뀌어 표시 결과의 원본 조건이 달라졌다면
@@ -658,15 +658,6 @@ public partial class MainWindow
             };
             if (isStart) edited.SelectedStartExit = updatedExit;
             else edited.SelectedEndExit = updatedExit;
-            if (edited.SelectedAnchorCandidate != null)
-            {
-                if (movedBinding.HasValue)
-                    edited.SelectedAnchorCandidate = isStart
-                        ? edited.SelectedAnchorCandidate with { Start = applied, StartBinding = movedBinding }
-                        : edited.SelectedAnchorCandidate with { End = applied, EndBinding = movedBinding };
-                else
-                    edited.SelectedAnchorCandidate = null;
-            }
         }
         edited.RouteEdited = true;
         // 후보 검증에서 만든 표본을 같은 트랜잭션의 스테이징에 공급해 중복 매핑을 없앤다.

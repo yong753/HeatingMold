@@ -15,24 +15,14 @@ internal sealed class VisualPlanStep
 /// <summary>시나리오를 실행 가능한 단계 목록으로 컴파일한 결과.</summary>
 internal sealed class VisualTestPlan
 {
-    public bool IsLegacy { get; init; }
     public IReadOnlyList<VisualPlanStep> Steps { get; init; } = Array.Empty<VisualPlanStep>();
 }
 
 internal static class VisualScenarioCompiler
 {
-    public static VisualTestPlan Compile(VisualScenario scenario, IReadOnlyList<string> legacyStepNames)
+    public static VisualTestPlan Compile(VisualScenario scenario)
     {
         if (scenario == null) throw new ArgumentNullException(nameof(scenario));
-
-        if (scenario.SchemaVersion == 1)
-        {
-            return new VisualTestPlan
-            {
-                IsLegacy = true,
-                Steps = legacyStepNames.Select(name => new VisualPlanStep { Name = name }).ToArray()
-            };
-        }
 
         var steps = new List<VisualPlanStep>
         {

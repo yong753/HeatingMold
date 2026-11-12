@@ -189,7 +189,6 @@ static class Program
             "boundary diagnostic canvas removed; axis selector removed because working direction is fixed to +Z");
         SidebarTabChecks.Run(window);
         AreaHighlightChecks.Run(window);
-        RunGroup("ExclusionExitChecks", () => ExclusionExitChecks.Run(window, args[0]));
         RunGroup("SelectedExitChecks", () => SelectedExitChecks.Run(window, args[0]));
         RunGroup("VertexEditChecks", () => VertexEditChecks.Run(window, args[0]));
         RunGroup("ElectricalRefreshChecks", () => ElectricalRefreshChecks.Run(window));

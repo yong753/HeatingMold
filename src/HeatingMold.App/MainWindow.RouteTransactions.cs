@@ -45,11 +45,8 @@ public partial class MainWindow
             MarginText = source.MarginText,
             SpacingText = source.SpacingText,
             Exclusions = source.Exclusions.ToList(),
-            ExitFaceId = source.ExitFaceId,
-            ExitFaceRevision = source.ExitFaceRevision,
             ExitChain = source.ExitChain.ToList(),
             ExitChain3D = source.ExitChain3D.ToList(),
-            ExitChainFaceIds = source.ExitChainFaceIds.ToList(),
             StartAnchor = source.StartAnchor,
             EndAnchor = source.EndAnchor,
             ExitEdgeRefs = source.ExitEdgeRefs.Select(CadExitBoundary2D.CopyReference).ToList(),
@@ -59,17 +56,11 @@ public partial class MainWindow
             SelectedStartExit = source.SelectedStartExit,
             SelectedEndExit = source.SelectedEndExit,
             RegionBoundary = source.RegionBoundary,
-            SelectedAnchorCandidate = source.SelectedAnchorCandidate,
             Circuits = source.Circuits.Select(route => route with
             {
                 Pieces = route.Pieces.Select(CopyRoutePiece).ToList()
             }).ToList(),
             CircuitPieceIndices = source.CircuitPieceIndices.Select(indices => indices.ToList()).ToList(),
-            AnchorCandidates = source.AnchorCandidates.ToList(),
-            ExcludedCandidates = source.ExcludedCandidates.Select(CopyExcludedCandidate).ToList(),
-            ExcludedPlan = CopyExcludedCandidate(source.ExcludedPlan),
-            ExcludedCandidateFailure = source.ExcludedCandidateFailure,
-            ExcludedPlanKey = source.ExcludedPlanKey,
             LastExitFailure = source.LastExitFailure,
             Pattern = CopyRoutePattern(source.Pattern),
             ProjectedPieces = source.ProjectedPieces.Select(piece => piece == null ? null : new RoutePieceResult
@@ -112,22 +103,12 @@ public partial class MainWindow
         CandidateId = pattern.CandidateId
     };
 
-    private static ExcludedAnchorCandidate CopyExcludedCandidate(ExcludedAnchorCandidate candidate) =>
-        candidate == null ? null : candidate with
-        {
-            Nodes = candidate.Nodes.ToList(),
-            Order = candidate.Order.ToList(),
-            EnterLow = candidate.EnterLow.ToList()
-        };
-
     private static CommittedRouteContext CopyCommittedRouteContext(CommittedRouteContext context) =>
         context == null ? null : new()
         {
             FaceIds = context.FaceIds.ToArray(),
-            ExitFaceId = context.ExitFaceId,
             ExitChain = context.ExitChain.ToList(),
             ExitChain3D = context.ExitChain3D.ToList(),
-            ExitChainFaceIds = context.ExitChainFaceIds.ToList(),
             StartAnchor = context.StartAnchor,
             EndAnchor = context.EndAnchor,
             ExitEdgeRefs = context.ExitEdgeRefs.Select(CadExitBoundary2D.CopyReference).ToList(),
@@ -135,7 +116,6 @@ public partial class MainWindow
             RegionBoundary = context.RegionBoundary,
             SelectedStartExit = context.SelectedStartExit,
             SelectedEndExit = context.SelectedEndExit,
-            SelectedAnchorCandidate = context.SelectedAnchorCandidate,
             StartExits = context.StartExits.ToList(),
             EndExits = context.EndExits.ToList(),
             CircuitStarts = context.CircuitStarts.ToList(),
@@ -574,11 +554,8 @@ public partial class MainWindow
         target.MarginText = candidate.MarginText;
         target.SpacingText = candidate.SpacingText;
         target.Exclusions = candidate.Exclusions;
-        target.ExitFaceId = candidate.ExitFaceId;
-        target.ExitFaceRevision = candidate.ExitFaceRevision;
         target.ExitChain = candidate.ExitChain;
         target.ExitChain3D = candidate.ExitChain3D;
-        target.ExitChainFaceIds = candidate.ExitChainFaceIds;
         target.StartAnchor = candidate.StartAnchor;
         target.EndAnchor = candidate.EndAnchor;
         target.ExitEdgeRefs = candidate.ExitEdgeRefs;
@@ -587,14 +564,8 @@ public partial class MainWindow
         target.RegionCadBoundary = candidate.RegionCadBoundary;
         target.SelectedStartExit = candidate.SelectedStartExit;
         target.SelectedEndExit = candidate.SelectedEndExit;
-        target.SelectedAnchorCandidate = candidate.SelectedAnchorCandidate;
         target.Circuits = candidate.Circuits;
         target.CircuitPieceIndices = candidate.CircuitPieceIndices;
-        target.AnchorCandidates = candidate.AnchorCandidates;
-        target.ExcludedCandidates = candidate.ExcludedCandidates;
-        target.ExcludedPlan = candidate.ExcludedPlan;
-        target.ExcludedCandidateFailure = candidate.ExcludedCandidateFailure;
-        target.ExcludedPlanKey = candidate.ExcludedPlanKey;
         target.LastExitFailure = candidate.LastExitFailure;
         target.Pattern = candidate.Pattern;
         target.ProjectedPieces = candidate.ProjectedPieces;
@@ -700,21 +671,12 @@ public partial class MainWindow
         key.Append('|').Append(BuildRouteContextKey(area)).Append('|').Append(area.Direction).Append('|');
         key.Append(context.FaceIds.Length).Append(':');
         foreach (int faceId in context.FaceIds) key.Append(faceId).Append(',');
-        key.Append('|').Append(context.ExitFaceId).Append('|').Append(area.ExitFaceRevision).Append('|');
-        key.Append(context.ExitEdgeRefs.Count).Append(':');
+        key.Append('|').Append(context.ExitEdgeRefs.Count).Append(':');
         foreach (ExitEdgeReference edge in context.ExitEdgeRefs)
         {
             key.Append(edge.Revision).Append(',').Append(edge.EdgeKey).Append(',').Append(edge.FaceId).Append(',');
             Number(edge.FirstParameter); Number(edge.LastParameter);
             key.Append(edge.Reversed).Append(',').Append(edge.StartIndex).Append(',').Append(edge.EndIndex).Append(';');
-        }
-        AnchoredCandidate selected = context.SelectedAnchorCandidate;
-        key.Append('|').Append(selected?.CandidateId.Length ?? -1).Append(':').Append(selected?.CandidateId).Append('|');
-        if (selected != null)
-        {
-            Point(selected.Start); Point(selected.End); Number(selected.AngleDeg);
-            key.Append(selected.StartLeftToRight).Append('|');
-            Binding(selected.StartBinding); Binding(selected.EndBinding);
         }
         Exits(context.StartExits); Exits(context.EndExits);
         key.Append('|').Append(area.Pattern?.CandidateId?.Length ?? -1).Append(':').Append(area.Pattern?.CandidateId);

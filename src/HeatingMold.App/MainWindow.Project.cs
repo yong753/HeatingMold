@@ -267,11 +267,8 @@ namespace HeatingMold.App
                 Direction = area.Direction.ToString(),
                 MarginText = area.MarginText,
                 SpacingText = area.SpacingText,
-                ExitFaceId = area.ExitFaceId,
-                ExitFaceRevision = area.ExitFaceRevision,
                 ExitChain = area.ExitChain.Select(ToProjectVec2).ToList(),
                 ExitChain3D = area.ExitChain3D.Select(ToProjectVec3).ToList(),
-                ExitChainFaceIds = area.ExitChainFaceIds.ToList(),
                 StartAnchor = area.StartAnchor.HasValue ? ToProjectVec2(area.StartAnchor.Value) : null,
                 EndAnchor = area.EndAnchor.HasValue ? ToProjectVec2(area.EndAnchor.Value) : null,
                 ExitEdgeRefs = area.ExitEdgeRefs.Select(ToProjectExitEdgeReference).ToList(),
@@ -279,8 +276,6 @@ namespace HeatingMold.App
                     ? ToProjectExitBoundaryPoint(area.SelectedStartExit.Value) : null,
                 SelectedEndExit = area.SelectedEndExit.HasValue
                     ? ToProjectExitBoundaryPoint(area.SelectedEndExit.Value) : null,
-                SelectedAnchorCandidate = area.SelectedAnchorCandidate == null
-                    ? null : ToProjectAnchoredCandidate(area.SelectedAnchorCandidate),
                 SplitCutLines = area.SplitCutLines.Select(cut => new ProjectSplitCutLine
                 {
                     AX = cut.A.X,
@@ -579,33 +574,15 @@ namespace HeatingMold.App
             };
         }
 
-        private static ProjectAnchoredCandidate ToProjectAnchoredCandidate(AnchoredCandidate candidate)
-        {
-            return new ProjectAnchoredCandidate
-            {
-                Start = ToProjectVec2(candidate.Start),
-                End = ToProjectVec2(candidate.End),
-                AngleDeg = candidate.AngleDeg,
-                CandidateId = candidate.CandidateId,
-                StartBinding = candidate.StartBinding.HasValue
-                    ? ToProjectExitEdgeBinding(candidate.StartBinding.Value) : null,
-                EndBinding = candidate.EndBinding.HasValue
-                    ? ToProjectExitEdgeBinding(candidate.EndBinding.Value) : null,
-                StartLeftToRight = candidate.StartLeftToRight
-            };
-        }
-
         private static ProjectCommittedContextDocument ToProjectCommittedContext(CommittedRouteContext context)
         {
             return new ProjectCommittedContextDocument
             {
                 FaceIds = context.FaceIds?.ToArray() ?? Array.Empty<int>(),
-                ExitFaceId = context.ExitFaceId,
                 ExitChain = context.ExitChain == null
                     ? new List<ProjectVec2>() : context.ExitChain.Select(ToProjectVec2).ToList(),
                 ExitChain3D = context.ExitChain3D == null
                     ? new List<ProjectVec3>() : context.ExitChain3D.Select(ToProjectVec3).ToList(),
-                ExitChainFaceIds = context.ExitChainFaceIds?.ToList() ?? new List<int>(),
                 StartAnchor = context.StartAnchor.HasValue ? ToProjectVec2(context.StartAnchor.Value) : null,
                 EndAnchor = context.EndAnchor.HasValue ? ToProjectVec2(context.EndAnchor.Value) : null,
                 ExitEdgeRefs = context.ExitEdgeRefs == null
@@ -615,8 +592,6 @@ namespace HeatingMold.App
                     ? ToProjectExitBoundaryPoint(context.SelectedStartExit.Value) : null,
                 SelectedEndExit = context.SelectedEndExit.HasValue
                     ? ToProjectExitBoundaryPoint(context.SelectedEndExit.Value) : null,
-                SelectedAnchorCandidate = context.SelectedAnchorCandidate == null
-                    ? null : ToProjectAnchoredCandidate(context.SelectedAnchorCandidate),
                 StartExits = context.StartExits == null
                     ? new List<ProjectExitPoint>() : context.StartExits.Select(ToProjectExitPoint).ToList(),
                 EndExits = context.EndExits == null
@@ -624,11 +599,7 @@ namespace HeatingMold.App
                 CircuitStarts = context.CircuitStarts == null
                     ? new List<ProjectVec2>() : context.CircuitStarts.Select(ToProjectVec2).ToList(),
                 CircuitEnds = context.CircuitEnds == null
-                    ? new List<ProjectVec2>() : context.CircuitEnds.Select(ToProjectVec2).ToList(),
-                // 확정 경로가 실제로 사용한 경계를 저장한다. 다음 로드에서 현재 초안
-                // 선택점 상태로 모드를 다시 추론하면 save-load-save-load에서 뒤집힌다.
-                RegionMode = context.Boundary != null &&
-                    ReferenceEquals(context.Boundary, context.RegionBoundary)
+                    ? new List<ProjectVec2>() : context.CircuitEnds.Select(ToProjectVec2).ToList()
             };
         }
 

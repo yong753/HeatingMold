@@ -27,36 +27,28 @@
 
 ### 2.1 스키마 버전
 
-- `schemaVersion: 1`은 고정 단계 순서로 실행하고 시나리오는 그 단계의 입력값만 지정합니다.
-  - 단계: 모델 로드 → 작업영역 선택·확정 → 인출면·시작/종료점 선택 → 발열경로 생성 →
-    전기 사양 확인 → DXF 저장·재읽기
-- `schemaVersion: 2`는 `areas`와 `steps`를 사용합니다.
-- 그 밖의 `schemaVersion`은 실행 전에 거부됩니다.
+- 현재 지원 버전은 `schemaVersion: 2` 하나입니다. `areas`와 `steps`를 사용합니다.
+- 다른 버전은 실행 전에 거부됩니다.
 
-### 2.2 공통 필드 (v1·v2)
+### 2.2 공통 필드
 
 - `model`: 저장소 기준 상대 경로, SHA-256, 면 수, 솔리드 수
-- `area`: 선택 면 번호, 마진/간격(mm), 방향(0=자동)
-- `exit`: 인출면 ID와 시작/종료 3D 좌표(후보 식별용, 기존 인출면 후보 경로)
-- `exitPoint`: 작업평면 2D 좌표와 허용 오차로 영역 외곽을 직접 지정하는 현재 제품 경로
-- `anchor`: 시작/종료점 후보 인덱스(기존 경로)
+- `exitPoint`: 작업평면 2D 좌표와 허용 오차로 영역 외곽을 직접 지정하는 제품 경로
 - `electrical`: 와이어 프리셋(0/1), 허용 전압·전류, 전체 발열전력(kW), 검토 범위, 기대 판정
 
-모델 해시, 면 수, 후보 지문이 맞지 않거나 후보가 모호하면 다른 모델이나 다른 후보로
-자동 대체하지 않고 실패합니다.
+모델 해시, 면 수, 경계 지문이 맞지 않으면 다른 모델이나 다른 경계로 자동 대체하지
+않고 실패합니다.
 
-### 2.3 v2 규칙
+### 2.3 실행 규칙
 
 - 영역은 화면 표시 이름이 아니라 테스트 식별자(alias)로 추적합니다.
-- 영역은 면 집합·마진·간격·방향·인출면·앵커·최종 기대값을 선언합니다.
+- 영역은 면 집합·마진·간격·방향·최종 기대값을 선언합니다.
 - 단계는 허용된 행동 이름만 사용합니다. 알 수 없는 행동·중복 alias·잘못된 참조는
   실행 전에 거부합니다.
 - 좌표 기반 행동은 작업평면 좌표를 저장하되 실제 좌표 변환과 핸들러를 통과합니다.
 - 현재 제품의 직접 인출점 선택은 `pickExitPoint`로 검증합니다. 작업평면 2D 좌표를
   `BeginExitPointPick` → 영역 경계 투영 → 3D 표면 평가 → 선택점 적용의 실제 제품
   경로에 넣고, 적용된 원본 CAD edge/parameter, artificial·split provenance를 기록합니다.
-- `pickExit`·`anchor`는 기존 인출면 후보 경로의 호환 계약이며, 새 시나리오의 기본
-  인출점 선택에는 사용하지 않습니다.
 - `splitArea`는 `childAliases`로 분할 결과 영역을 추적합니다. 부모 alias는 제거되고
   자식 alias가 추가되며, 이후 `checkArea`·`activateArea`가 자식 alias를 참조합니다.
 
@@ -68,7 +60,7 @@
 
 `loadModel`(암묵), `selectFaces`, `toggleFaces`, `clearSelection`,
 `expectSelection`, `confirmArea`, `activateArea`, `deleteArea`, `setAreaInputs`,
-`expectAreaInputs`, `pickExit`, `cancelExitPick`, `generate`,
+`expectAreaInputs`, `generate`,
 `checkArea`, `checkAllAreas`, `addExclusion`, `removeExclusion`, `expectNoPattern`,
 `checkExclusion`, `moveVertex`, `exportDxf`
 
@@ -95,8 +87,8 @@
 
 | 파일 | 내용 |
 |---|---|
-| `src/HeatingMold.App/VisualTesting/VisualScenario.cs` | v1/v2 영역·단계 계약과 검증 |
-| `src/HeatingMold.App/VisualTesting/VisualScenarioCompiler.cs` | v1/v2 → 실행 단계 목록, alias 참조 검증 |
+| `src/HeatingMold.App/VisualTesting/VisualScenario.cs` | v2 영역·단계 계약과 검증 |
+| `src/HeatingMold.App/VisualTesting/VisualScenarioCompiler.cs` | v2 → 실행 단계 목록, alias 참조 검증 |
 | `src/HeatingMold.App/MainWindow.VisualTest.cs` | 행동 실행·중간 검사·최종 검사 |
 | `src/HeatingMold.App/VisualTesting/VisualTestReport.cs` | 실행 기록과 실제 생성 DXF 파일 목록 |
 | `src/HeatingMold.App/VisualTestLauncherWindow.xaml(.cs)` | 앱에서 새 프로세스로 실행하는 UI |

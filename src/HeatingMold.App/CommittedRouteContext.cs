@@ -14,10 +14,8 @@ namespace HeatingMold.App;
 internal sealed class CommittedRouteContext
 {
     public int[] FaceIds { get; init; } = Array.Empty<int>();
-    public int ExitFaceId { get; init; } = -1;
     public List<Vec2> ExitChain { get; init; } = new();
     public List<Vec3> ExitChain3D { get; init; } = new();
-    public List<int> ExitChainFaceIds { get; init; } = new();
     public Vec2? StartAnchor { get; init; }
     public Vec2? EndAnchor { get; init; }
     public List<ExitEdgeReference> ExitEdgeRefs { get; init; } = new();
@@ -25,7 +23,6 @@ internal sealed class CommittedRouteContext
     public IExitBoundary2D RegionBoundary { get; init; }
     public ExitBoundaryPoint? SelectedStartExit { get; init; }
     public ExitBoundaryPoint? SelectedEndExit { get; init; }
-    public AnchoredCandidate SelectedAnchorCandidate { get; init; }
     public List<CircuitExitPoint> StartExits { get; init; } = new();
     public List<CircuitExitPoint> EndExits { get; init; } = new();
     /// <summary>분할된 회로별 인출점. 매핑 시 역할 기반 꼭지점 override에 쓴다.</summary>
@@ -33,21 +30,16 @@ internal sealed class CommittedRouteContext
     public List<Vec2> CircuitEnds { get; init; } = new();
 
     public static CommittedRouteContext Capture(WorkingArea area) =>
-        Capture(area, area.HasSelectedExits ? area.RegionExitBoundary : area.ExitBoundary);
+        Capture(area, area.RegionExitBoundary);
 
     /// <summary>적용영역 전체 외곽(선택 인출점 방식)을 기준으로 캡처한다.</summary>
     public static CommittedRouteContext CaptureRegion(WorkingArea area) => Capture(area, area.RegionExitBoundary);
 
-    /// <summary>별도 인출면/앵커 방식의 확정 경계를 기준으로 캡처한다.</summary>
-    public static CommittedRouteContext CaptureExit(WorkingArea area) => Capture(area, area.ExitBoundary);
-
     private static CommittedRouteContext Capture(WorkingArea area, IExitBoundary2D boundary) => new()
     {
         FaceIds = area.FaceIdSet.OrderBy(id => id).ToArray(),
-        ExitFaceId = area.ExitFaceId,
         ExitChain = area.ExitChain.ToList(),
         ExitChain3D = area.ExitChain3D.ToList(),
-        ExitChainFaceIds = area.ExitChainFaceIds.ToList(),
         StartAnchor = area.StartAnchor,
         EndAnchor = area.EndAnchor,
         ExitEdgeRefs = area.ExitEdgeRefs.Select(CadExitBoundary2D.CopyReference).ToList(),
@@ -55,7 +47,6 @@ internal sealed class CommittedRouteContext
         RegionBoundary = area.RegionExitBoundary,
         SelectedStartExit = area.SelectedStartExit,
         SelectedEndExit = area.SelectedEndExit,
-        SelectedAnchorCandidate = area.SelectedAnchorCandidate,
         StartExits = area.Circuits.Select(c => c.StartExit).ToList(),
         EndExits = area.Circuits.Select(c => c.EndExit).ToList(),
         CircuitStarts = area.Circuits.Select(c => c.StartExit.Point).ToList(),

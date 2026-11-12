@@ -17,8 +17,6 @@ public class SelectedExitStateTests
         var boundary = new RecordingBoundary();
         var area = new WorkingArea
         {
-            ExitFaceId = 3,
-            ExitFaceRevision = 7,
             ExitChain = new() { new(20, 2), new(20, 12) },
             ExitChain3D = new() { new(20, 2, 0), new(20, 12, 0) },
             ExitBoundary = boundary,
@@ -46,16 +44,6 @@ public class SelectedExitStateTests
         area.SelectedEndExit = hasEnd ? area.SelectedEndExit : null;
 
         Assert.Equal(hasStart && hasEnd, area.HasSelectedExits);
-    }
-
-    [Fact]
-    public void LegacyFaceOnlyAreaIsNotReadyForDirectPointSelection()
-    {
-        var area = Area();
-        area.RegionExitBoundary = null;
-
-        Assert.True(area.HasExitFace);
-        Assert.False(area.HasSelectedExits);
     }
 
     [Fact]

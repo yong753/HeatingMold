@@ -36,16 +36,6 @@ namespace HeatingMold.App
         private readonly Dictionary<string, Dictionary<string, int>> _visualProjectAliasIds =
             new(StringComparer.OrdinalIgnoreCase);
 
-        private static readonly string[] VisualTestStepNames =
-        {
-            "모델 로드",
-            "작업영역 선택·확정",
-            "인출면·시작/종료점 선택",
-            "발열경로 생성",
-            "전기 사양 확인",
-            "DXF 저장·재읽기"
-        };
-
         private void VisualTest_Click(object sender, RoutedEventArgs e)
         {
             if (_visualTestInputLocked || VisualTestSession.Current != null) return;
@@ -62,7 +52,7 @@ namespace HeatingMold.App
             if (session == null) return;
             _visualTestStarted = true;
 
-            _visualTestPlan = VisualScenarioCompiler.Compile(session.Scenario, VisualTestStepNames);
+            _visualTestPlan = VisualScenarioCompiler.Compile(session.Scenario);
             _visualAreaAliases.Clear();
 
             _visualTestInputLocked = true;
@@ -191,8 +181,8 @@ namespace HeatingMold.App
             try
             {
                 token.ThrowIfCancellationRequested();
-                if (_visualTestPlan == null || _visualTestPlan.IsLegacy)
-                    return await ExecuteLegacyVisualStepAsync(index);
+                if (_visualTestPlan == null)
+                    return VisualStepOutcome.Fail("시각테스트 계획이 없습니다.");
 
                 Require(index >= 0 && index < _visualTestPlan.Steps.Count,
                     "알 수 없는 단계 번호입니다: " + index);
@@ -205,20 +195,6 @@ namespace HeatingMold.App
             catch (Exception ex)
             {
                 return VisualStepOutcome.Fail(ex.Message);
-            }
-        }
-
-        private Task<VisualStepOutcome> ExecuteLegacyVisualStepAsync(int index)
-        {
-            switch (index)
-            {
-                case 0: return Task.FromResult(StepLoadModel());
-                case 1: return Task.FromResult(StepSelectArea());
-                case 2: return Task.FromResult(StepSelectExitAndAnchor());
-                case 3: return Task.FromResult(StepGeneratePattern());
-                case 4: return Task.FromResult(StepCheckElectrical());
-                case 5: return StepExportDxfAsync();
-                default: return Task.FromResult(VisualStepOutcome.Fail("알 수 없는 단계 번호입니다: " + index));
             }
         }
 
@@ -239,9 +215,7 @@ namespace HeatingMold.App
                 case "deleteArea": return VisualDeleteArea(step.Spec);
                 case "setAreaInputs": return VisualSetAreaInputs(step.Spec, scenario);
                 case "expectAreaInputs": return VisualExpectAreaInputs(step.Spec, scenario);
-                case "pickExit": return VisualPickExit(step.Spec, scenario);
                 case "pickExitPoint": return VisualPickExitPoint(step.Spec);
-                case "cancelExitPick": return VisualCancelExitPick(step.Spec);
                 case "generate": return VisualGenerate(step.Spec, scenario);
                 case "checkArea": return VisualCheckArea(step.Spec, scenario);
                 case "checkElectrical": return VisualCheckElectrical(step.Spec);
@@ -444,23 +418,6 @@ namespace HeatingMold.App
             return VisualStepOutcome.Ok("영역 조건 입력", data);
         }
 
-        private VisualStepOutcome VisualPickExit(VisualActionSpec spec, VisualScenario scenario)
-        {
-            VisualAreaDefinition definition = RequireAreaDefinition(scenario, spec.Area);
-            WorkingArea area = ResolveVisualArea(spec.Area);
-            ActivateArea(area);
-            RefreshAreaList();
-            SidebarTabs.SelectedIndex = PatternTabIndex;
-            // 사용자가 현재 화면에 입력해 둔 마진/간격으로 인출면을 고른다.
-            // 시나리오 정의값이 아니라 초안을 쓰므로, 조건 변경 후 재선택도 같은 흐름을 검증한다.
-            Require(TryGetParams(out double margin, out double spacing, out string error),
-                "마진/간격 입력을 읽지 못했습니다: " + error);
-            return ApplyExitAndAnchor(area, margin, spacing,
-                (int)area.Direction, spec.Exit ?? definition.Exit, spec.Anchor ?? definition.Anchor, "인출면·시작/종료점 적용");
-        }
-
-        /// <summary>영역을 활성화한 뒤 화면 입력 초안이 기대값으로 복원됐는지 검사한다.
-        /// 생성 결과와 입력이 다르면 stale이어야 한다.</summary>
         private VisualStepOutcome VisualExpectAreaInputs(VisualActionSpec spec, VisualScenario scenario)
         {
             VisualAreaDefinition definition = RequireAreaDefinition(scenario, spec.Area);
@@ -519,40 +476,6 @@ namespace HeatingMold.App
                 ["appliedSpacingMm"] = area.AppliedInputs?.Spacing.ToString("0.###", CultureInfo.InvariantCulture) ?? ""
             };
             return VisualStepOutcome.Ok("영역 입력 초안·stale 상태 확인", data);
-        }
-
-        private VisualStepOutcome VisualCancelExitPick(VisualActionSpec spec)
-        {
-            WorkingArea area = ResolveVisualArea(spec.Area);
-            ActivateArea(area);
-            RefreshAreaList();
-            SidebarTabs.SelectedIndex = PatternTabIndex;
-
-            int exitFace = area.ExitFaceId;
-            int chainCount = area.ExitChain.Count;
-            bool hadAnchors = area.HasExitAnchors;
-            Vec2? start = area.StartAnchor;
-            Vec2? end = area.EndAnchor;
-
-            PickExitFace_Click(this, new RoutedEventArgs());
-            Require(_exitCandidates.Count > 0, "취소할 인출면 후보가 생성되지 않았습니다.");
-            CancelExitFacePick();
-
-            Require(_exitCandidates.Count == 0, "인출면 후보 목록이 남아 있습니다.");
-            Require(area.ExitFaceId == exitFace, "인출면 취소 후 Face가 바뀌었습니다.");
-            Require(area.ExitChain.Count == chainCount, "인출면 취소 후 경계선이 바뀌었습니다.");
-            Require(area.HasExitAnchors == hadAnchors, "인출면 취소 후 앵커 상태가 바뀌었습니다.");
-            Require(Nullable.Equals(area.StartAnchor, start) && Nullable.Equals(area.EndAnchor, end),
-                "인출면 취소 후 앵커 좌표가 바뀌었습니다.");
-
-            var data = new Dictionary<string, string>
-            {
-                ["alias"] = spec.Area,
-                ["exitFaceId"] = exitFace.ToString(CultureInfo.InvariantCulture),
-                ["exitChainPoints"] = chainCount.ToString(CultureInfo.InvariantCulture),
-                ["hasAnchors"] = hadAnchors.ToString()
-            };
-            return VisualStepOutcome.Ok("인출면 선택 취소·기존 상태 보존", data);
         }
 
         private VisualStepOutcome VisualGenerate(VisualActionSpec spec, VisualScenario scenario)
@@ -785,8 +708,7 @@ namespace HeatingMold.App
                     .Select(e => e.Area.Name + "=" + e.State)));
             Require(global.CanExport, "전체 검토 결과를 내보낼 수 없습니다: " + global.BlockReason);
             Require(global.Circuits.Count > 0, "검토할 발열회로가 없습니다.");
-            Require(global.Table != null && global.Table.IsTargetPowerMode,
-                "전기 사양표가 공유 발열전력 배분 모드가 아닙니다.");
+            Require(global.Table != null, "전기 사양표가 없습니다.");
             Require(global.Table.Rows.Count == global.Circuits.Count,
                 "전기 사양표 행 수가 회로 수와 다릅니다.");
             Require(Near(global.Table.TotalTargetPowerW, limits.PowerLimitW, 1e-6),
@@ -1628,8 +1550,6 @@ namespace HeatingMold.App
             data["routeEdited"] = area.RouteEdited.ToString();
             data["circuits"] = circuits.ToString(CultureInfo.InvariantCulture);
             data["totalLengthMm"] = length.ToString("0.###", CultureInfo.InvariantCulture);
-            data["exitFaceId"] = area.ExitFaceId.ToString(CultureInfo.InvariantCulture);
-            data["hasAnchors"] = area.HasExitAnchors.ToString();
             data["appliedMarginMm"] = area.AppliedInputs.Margin.ToString("0.###", CultureInfo.InvariantCulture);
             data["appliedSpacingMm"] = area.AppliedInputs.Spacing.ToString("0.###", CultureInfo.InvariantCulture);
             if (area.StartAnchor.HasValue && area.EndAnchor.HasValue)
@@ -1656,9 +1576,6 @@ namespace HeatingMold.App
             if (expect.SpacingMm != null && Math.Abs(area.AppliedInputs.Spacing - expect.SpacingMm.Value) > 1e-9)
                 return string.Format("적용 간격이 기대와 다릅니다: {0} 기대 {1} 실제 {2}",
                     area.Name, expect.SpacingMm.Value, area.AppliedInputs.Spacing);
-            if (expect.ExitFaceId != null && area.ExitFaceId != expect.ExitFaceId.Value)
-                return string.Format("인출면이 기대와 다릅니다: {0} 기대 {1} 실제 {2}",
-                    area.Name, expect.ExitFaceId.Value, area.ExitFaceId);
             if (expect.LengthMm != null)
             {
                 double tolerance = expect.LengthToleranceMm > 0 ? expect.LengthToleranceMm : 0.5;
@@ -1667,97 +1584,6 @@ namespace HeatingMold.App
                         area.Name, expect.LengthMm.Value, length, tolerance);
             }
             return null;
-        }
-
-        private VisualStepOutcome ApplyExitAndAnchor(
-            WorkingArea area, double marginMm, double spacingMm, int direction,
-            VisualExitSpec exit, VisualAnchorSpec anchorSpec, string detail)
-        {
-            Require(exit != null, "인출면 정의가 없습니다.");
-            SidebarTabs.SelectedIndex = PatternTabIndex;
-
-            DirectionBox.SelectedIndex = IndexFromDirection((PatternDirection)direction);
-            MarginBox.Text = marginMm.ToString("0.###", CultureInfo.CurrentCulture);
-            SpacingBox.Text = spacingMm.ToString("0.###", CultureInfo.CurrentCulture);
-            Require(TryGetParams(out double margin, out double spacing, out string parameterError),
-                "마진/간격 입력을 읽지 못했습니다: " + parameterError);
-            Require(Math.Abs(margin - marginMm) < 1e-9, "적용된 마진이 요청과 다릅니다.");
-            Require(Math.Abs(spacing - spacingMm) < 1e-9, "적용된 간격이 요청과 다릅니다.");
-
-            PickExitFace_Click(this, new RoutedEventArgs());
-            int exitCandidateCount = _exitCandidates.Count;
-            Require(exitCandidateCount > 0, "인출면 후보가 없습니다.");
-
-            int exitIndex = FindExitCandidate(exit);
-            Require(exitIndex >= 0, "시나리오의 인출면 후보를 찾지 못했습니다.");
-            if (!ApplyExitCandidate(exitIndex, out string exitError))
-                return VisualStepOutcome.Fail(exitError);
-
-            Require(area.ExitFaceId == exit.FaceId,
-                string.Format("적용된 인출면 Face가 다릅니다. 기대 {0}, 실제 {1}", exit.FaceId, area.ExitFaceId));
-            Require(area.HasExitFace, "인출면 상태가 적용되지 않았습니다.");
-
-            AnchoredCandidate anchor;
-            string anchorSource;
-            if (anchorSpec != null && anchorSpec.StartUv != null && anchorSpec.EndUv != null)
-            {
-                var matches = area.AnchorCandidates.Where(c => AnchorMatches(c, anchorSpec)).ToList();
-                Require(matches.Count == 1,
-                    string.Format("좌표 지문과 일치하는 앵커 후보가 정확히 1개가 아닙니다: {0}개 (전체 후보 {1}개, 사유 {2}, 후보 {3})",
-                        matches.Count, area.AnchorCandidates.Count, area.LastExitFailure ?? "없음",
-                        string.Join("; ", area.AnchorCandidates.Select(c => string.Format(CultureInfo.InvariantCulture,
-                            "({0:0.###},{1:0.###})->({2:0.###},{3:0.###})",
-                            c.Start.X, c.Start.Y, c.End.X, c.End.Y)))));
-                anchor = matches[0];
-                anchorSource = "uv";
-            }
-            else if (anchorSpec != null)
-            {
-                Require(area.AnchorCandidates.Count > 0,
-                    "시작/종료점 후보가 없습니다. " + (area.LastExitFailure ?? "") +
-                    " (인출 후보 " + exitCandidateCount + "개)");
-                Require(anchorSpec.Index < area.AnchorCandidates.Count,
-                    string.Format("앵커 후보 인덱스가 범위를 벗어났습니다. 후보 {0}개, 요청 {1}",
-                        area.AnchorCandidates.Count, anchorSpec.Index));
-                anchor = area.AnchorCandidates[anchorSpec.Index];
-                anchorSource = "index";
-            }
-            else
-            {
-                Require(area.AnchorCandidates.Count == 1,
-                    "앵커가 자동 선택되지 않았습니다. 시나리오에 anchor를 지정하세요.");
-                anchor = area.AnchorCandidates[0];
-                anchorSource = "auto";
-            }
-
-            if (!ApplyAnchorCandidate(anchor, out string anchorError))
-                return VisualStepOutcome.Fail(anchorError);
-
-            Require(area.HasExitAnchors, "시작/종료점이 적용되지 않았습니다.");
-            Require(ReferenceEquals(area.SelectedAnchorCandidate, anchor) &&
-                area.SelectedAnchorCandidate.StartBinding == anchor.StartBinding &&
-                area.SelectedAnchorCandidate.EndBinding == anchor.EndBinding,
-                "선택한 후보 identity/원본 edge binding이 보존되지 않았습니다.");
-            Require(string.IsNullOrEmpty(area.LastExitFailure), "인출면 처리 실패 사유가 남아 있습니다: " + area.LastExitFailure);
-            Require(area.ExitChain.Count >= 2, "인출 경계선이 유효하지 않습니다.");
-
-            double exitLength = 0;
-            for (int i = 1; i < area.ExitChain.Count; i++) exitLength += Dist(area.ExitChain[i - 1], area.ExitChain[i]);
-            var data = new Dictionary<string, string>
-            {
-                ["alias"] = area.Name,
-                ["exitFaceId"] = area.ExitFaceId.ToString(CultureInfo.InvariantCulture),
-                ["exitCandidates"] = exitCandidateCount.ToString(CultureInfo.InvariantCulture),
-                ["exitChainPoints"] = area.ExitChain.Count.ToString(CultureInfo.InvariantCulture),
-                ["exitLengthMm"] = exitLength.ToString("0.###", CultureInfo.InvariantCulture),
-                ["anchorSource"] = anchorSource,
-                ["candidateId"] = anchor.CandidateId,
-                ["startEdgeKey"] = anchor.StartBinding.Value.EdgeKey.ToString(CultureInfo.InvariantCulture),
-                ["endEdgeKey"] = anchor.EndBinding.Value.EdgeKey.ToString(CultureInfo.InvariantCulture),
-                ["anchor"] = string.Format(CultureInfo.InvariantCulture, "({0:0.###},{1:0.###})->({2:0.###},{3:0.###})",
-                    anchor.Start.X, anchor.Start.Y, anchor.End.X, anchor.End.Y)
-            };
-            return VisualStepOutcome.Ok(detail, data);
         }
 
         private void ConfigurePatternInputs(VisualAreaDefinition definition, VisualActionSpec spec)
@@ -1789,21 +1615,6 @@ namespace HeatingMold.App
             return definition;
         }
 
-        private static bool AnchorMatches(AnchoredCandidate candidate, VisualAnchorSpec spec)
-        {
-            double tolerance = spec.ToleranceMm > 0 ? spec.ToleranceMm : 0.5;
-            return (Dist2(candidate.Start, spec.StartUv) <= tolerance && Dist2(candidate.End, spec.EndUv) <= tolerance)
-                || (Dist2(candidate.Start, spec.EndUv) <= tolerance && Dist2(candidate.End, spec.StartUv) <= tolerance);
-        }
-
-        private static double Dist2(Vec2 point, double[] uv)
-        {
-            if (uv == null || uv.Length != 2) return double.MaxValue;
-            double dx = point.X - uv[0];
-            double dy = point.Y - uv[1];
-            return Math.Sqrt(dx * dx + dy * dy);
-        }
-
         private static Dictionary<string, int> ParseDisplayDiagnostic(string text)
         {
             var result = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -1823,8 +1634,6 @@ namespace HeatingMold.App
             Require(diagnostic.TryGetValue(key, out int value), "네이티브 표시 진단에 " + key + " 값이 없습니다.");
             return value;
         }
-
-        // ---- v1: 기존 고정 7단계 ----
 
         private VisualStepOutcome StepLoadModel()
         {
@@ -1856,222 +1665,6 @@ namespace HeatingMold.App
                 ["workingSideId"] = _workingSide.Confirmed.Id.Value.ToString(CultureInfo.InvariantCulture)
             };
             return VisualStepOutcome.Ok("모델 로드·작업방향 확인", data);
-        }
-
-        private VisualStepOutcome StepSelectArea()
-        {
-            VisualScenario scenario = RequireScenario();
-            SidebarTabs.SelectedIndex = AreaTabIndex;
-            ClearFaceSelectionOnly();
-            foreach (int faceId in scenario.Area.FaceIds)
-                OnFacePicked(faceId, true);
-
-            var expected = new HashSet<int>(scenario.Area.FaceIds);
-            Require(_selectedFaceIds.SetEquals(expected), "선택한 면 집합이 시나리오와 다릅니다.");
-
-            ConfirmWorkingArea();
-            Require(_areas.Count == 1, "작업영역이 정확히 1개 생성되지 않았습니다.");
-            WorkingArea area = _activeArea;
-            Require(area != null, "활성 작업영역이 없습니다.");
-            Require(area.FaceIdSet.SetEquals(expected), "확정된 작업영역의 면 집합이 다릅니다.");
-            Require(area.Region.Count == 1, "작업영역 경계 루프가 1개가 아닙니다.");
-            Require(scenario.Expect == null || scenario.Expect.AreaCount == null
-                || scenario.Expect.AreaCount.Value == _areas.Count,
-                "작업영역 수가 시나리오 기대값과 다릅니다.");
-
-            var data = new Dictionary<string, string>
-            {
-                ["areaName"] = area.Name,
-                ["faceIds"] = string.Join(",", area.FaceIdSet.OrderBy(v => v)),
-                ["regionLoops"] = area.Region.Count.ToString(CultureInfo.InvariantCulture)
-            };
-            return VisualStepOutcome.Ok("영역 1개 확정", data);
-        }
-
-        private VisualStepOutcome StepSelectExitAndAnchor()
-        {
-            VisualScenario scenario = RequireScenario();
-            WorkingArea area = RequireActiveArea();
-            return ApplyExitAndAnchor(area, scenario.Area.MarginMm, scenario.Area.SpacingMm,
-                scenario.Area.Direction, scenario.Exit, scenario.Anchor, "인출면과 시작/종료점 적용");
-        }
-
-        private VisualStepOutcome StepGeneratePattern()
-        {
-            VisualScenario scenario = RequireScenario();
-            WorkingArea area = RequireActiveArea();
-            SidebarTabs.SelectedIndex = PatternTabIndex;
-
-            Generate_Click(this, new RoutedEventArgs());
-            Require(area.Pattern != null, "발열경로 패턴이 생성되지 않았습니다: " + StatusText.Text);
-            Require(area.Pattern.RoutePieces.Count > 0, "패턴 조각이 없습니다.");
-            Require(area.PatternDisplayed, "패턴이 화면에 표시된 상태가 아닙니다.");
-            Require(area.AppliedInputs != null, "생성 입력 스냅샷이 없습니다.");
-            Require(!IsPatternInputStale(area), "생성 직후 패턴이 stale 상태입니다.");
-            Require(area.NativePieceIds.Length == area.Pattern.RoutePieces.Count,
-                "네이티브 조각 ID 수가 패턴 조각 수와 다릅니다.");
-            Require(area.RoutePieceLengths.Length == area.Pattern.RoutePieces.Count,
-                "조각 길이 수가 패턴 조각 수와 다릅니다.");
-
-            int turnCount = area.Pattern.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector);
-            if (scenario.Expect?.PieceCount != null)
-                Require(area.Pattern.RoutePieces.Count == scenario.Expect.PieceCount.Value,
-                    string.Format("조각 수가 기대값과 다릅니다. 기대 {0}, 실제 {1}",
-                        scenario.Expect.PieceCount.Value, area.Pattern.RoutePieces.Count));
-            if (scenario.Expect?.TurnCount != null)
-                Require(turnCount == scenario.Expect.TurnCount.Value,
-                    string.Format("연결구간 수가 기대값과 다릅니다. 기대 {0}, 실제 {1}",
-                        scenario.Expect.TurnCount.Value, turnCount));
-
-            ReviewSnapshot snapshot = BuildReviewSnapshot();
-            Require(snapshot.Circuits.Count == 1, "생성 직후 회로 수가 1이 아닙니다.");
-
-            var data = new Dictionary<string, string>
-            {
-                ["pieces"] = area.Pattern.RoutePieces.Count.ToString(CultureInfo.InvariantCulture),
-                ["turns"] = turnCount.ToString(CultureInfo.InvariantCulture),
-                ["lanes"] = area.Pattern.LaneCount.ToString(CultureInfo.InvariantCulture),
-                ["totalLengthMm"] = area.RoutePieceLengths.Sum().ToString("0.###", CultureInfo.InvariantCulture),
-                ["circuits"] = snapshot.Circuits.Count.ToString(CultureInfo.InvariantCulture)
-            };
-            return VisualStepOutcome.Ok("발열경로 생성·화면 표시 확인", data);
-        }
-
-        private VisualStepOutcome StepCheckElectrical()
-        {
-            VisualScenario scenario = RequireScenario();
-            WorkingArea area = RequireActiveArea();
-            SidebarTabs.SelectedIndex = ReviewTabIndex;
-
-            ReviewScopeBox.SelectedIndex = scenario.Electrical.ReviewScope;
-            Require(scenario.Electrical.PresetIndex != 2,
-                "직접 입력 발열사 프리셋은 더 이상 지원하지 않습니다. Case 1 또는 Case 2를 사용하세요.");
-            WirePresetBox.SelectedIndex = scenario.Electrical.PresetIndex;
-            AllowedVoltageBox.Text = scenario.Electrical.VoltageV.ToString("0.###", CultureInfo.CurrentCulture);
-            AllowedCurrentBox.Text = scenario.Electrical.AllowedCurrentA.ToString("0.###", CultureInfo.CurrentCulture);
-            AllowedPowerBox.Text = scenario.Electrical.AllowedPowerKw.ToString("0.###", CultureInfo.CurrentCulture);
-
-            Require(TryReadElectricalLimits(out TargetPowerElectricalSettings settings, out string settingsError),
-                "전기 입력을 읽지 못했습니다: " + settingsError);
-            HeatingWireSpec wire = settings.Wire;
-
-            ReviewSnapshot snapshot = BuildReviewSnapshot();
-            Require(snapshot.CanExport, "전기 검토 결과가 내보내기 가능 상태가 아닙니다: " + snapshot.BlockReason);
-            Require(snapshot.Entries.All(entry => entry.State == ReviewAreaState.Ready),
-                "준비되지 않은 작업영역이 있습니다.");
-            Require(snapshot.Table.Rows.Count == snapshot.Circuits.Count,
-                "전기 사양표 행 수가 회로 수와 다릅니다.");
-            Require(ElectricalSpecGrid.Items.Count == snapshot.Table.Rows.Count + 1,
-                "화면 전기 사양표 행 수가 예상과 다릅니다.");
-
-            foreach (ElectricalSpecRow row in snapshot.Table.Rows)
-            {
-                CircuitLengthInfo circuit = snapshot.Circuits.FirstOrDefault(c => c.CircuitId == row.CircuitId);
-                Require(circuit != null, "전기표 회로 ID에 대응하는 회로가 없습니다: " + row.CircuitId);
-                Require(circuit.TargetPowerW.HasValue,
-                    "회로에 배분된 발열전력이 없습니다: " + row.CircuitId);
-                ElectricalResult expected = ElectricalCalculator.ComputeFromTargetPower(
-                    circuit.HeatingLengthMm, wire, circuit.TargetPowerW.Value);
-                Require(expected.IsValid, "회로 계산이 유효하지 않습니다: " + row.CircuitId);
-                Require(Math.Abs(row.LengthM - expected.LengthM) < 1e-6, "회로 길이가 계산값과 다릅니다: " + row.CircuitId);
-                Require(Math.Abs(row.ResistanceOhm - expected.ResistanceOhm) < 1e-6, "저항이 계산값과 다릅니다: " + row.CircuitId);
-                Require(Math.Abs(row.VoltageV - expected.VoltageV) < 1e-6, "필요 전압이 계산값과 다릅니다: " + row.CircuitId);
-                Require(Math.Abs(row.CurrentA - expected.CurrentA) < 1e-6, "전류가 계산값과 다릅니다: " + row.CircuitId);
-                Require(Math.Abs(row.PowerW - expected.PowerW) < 1e-3, "전력이 계산값과 다릅니다: " + row.CircuitId);
-                Require(row.Assessment != null, "회로 허용치 판정이 없습니다: " + row.CircuitId);
-                if (scenario.Electrical.ExpectedWithinLimits is bool expectWithin)
-                    Require(row.Assessment.IsWithinLimits == expectWithin,
-                        string.Format(CultureInfo.InvariantCulture,
-                            "회로 판정이 시나리오 기대와 다릅니다: {0} (기대 {1}, 사유 {2})",
-                            row.CircuitId, expectWithin ? "OK" : "NG", row.Assessment.Note));
-            }
-
-            var data = new Dictionary<string, string>
-            {
-                ["circuits"] = snapshot.Circuits.Count.ToString(CultureInfo.InvariantCulture),
-                ["totalCurrentA"] = snapshot.Table.TotalCurrentA.ToString("0.######", CultureInfo.InvariantCulture),
-                ["totalPowerW"] = snapshot.Table.TotalPowerW.ToString("0.###", CultureInfo.InvariantCulture),
-                ["wireDiameterMm"] = wire.DiameterMm.ToString("0.###", CultureInfo.InvariantCulture),
-                ["wireResistanceOhmPerM"] = wire.ResistanceOhmPerMeter.ToString("0.###", CultureInfo.InvariantCulture),
-                ["targetPowerW"] = snapshot.Table.TotalTargetPowerW.ToString("0.###", CultureInfo.InvariantCulture),
-                ["allowedCurrentA"] = snapshot.Limits.CurrentLimitA.ToString("0.###", CultureInfo.InvariantCulture),
-                ["allowedPowerW"] = snapshot.Limits.PowerLimitW.ToString("0.###", CultureInfo.InvariantCulture),
-                ["okCircuits"] = snapshot.Table.WithinLimitCount.ToString(CultureInfo.InvariantCulture),
-                ["ngCircuits"] = snapshot.Table.OverLimitCount.ToString(CultureInfo.InvariantCulture)
-            };
-            return VisualStepOutcome.Ok("전기 사양표·계산 일치 확인", data);
-        }
-
-        private async Task<VisualStepOutcome> StepExportDxfAsync()
-        {
-            VisualTestSession session = VisualTestSession.Current;
-            Require(session != null, "시각 테스트 세션이 없습니다.");
-            SidebarTabs.SelectedIndex = ExportTabIndex;
-
-            ExportDxfResult result = ExportDxfCore(session.Report.DxfPath, out string exportError);
-            Require(result == ExportDxfResult.Success, "DXF 저장이 성공하지 않았습니다: " + exportError);
-            Require(File.Exists(session.Report.DxfPath), "DXF 파일이 생성되지 않았습니다.");
-            Require(new FileInfo(session.Report.DxfPath).Length > 0, "DXF 파일이 비어 있습니다.");
-            session.Report.RegisterDxf(session.Report.DxfPath);
-
-            await Task.Yield();
-            DxfDocument document = DxfDocument.Load(session.Report.DxfPath);
-            Require(document != null, "DXF 파일을 다시 읽지 못했습니다.");
-            var texts = document.Entities.All.OfType<Text>().Select(t => t.Value ?? "").ToList();
-            Require(texts.Contains("전기 사양표"), "DXF에 전기 사양표 제목이 없습니다.");
-            Require(document.Layers.Contains(DxfExporter.ElectricalSpecLayer), "DXF에 전기 사양 레이어가 없습니다.");
-            Require(document.Layers.Contains("HEAT_WIRE"), "DXF에 발열경로 레이어가 없습니다.");
-            Require(document.Entities.All.OfType<Polyline2D>()
-                    .Any(p => string.Equals(p.Layer.Name, "HEAT_WIRE", StringComparison.OrdinalIgnoreCase)),
-                "DXF에 발열경로 형상이 없습니다.");
-
-            ReviewSnapshot snapshot = BuildReviewSnapshot();
-            foreach (CircuitLengthInfo circuit in snapshot.Circuits)
-                Require(texts.Any(t => t.Contains(circuit.CircuitId)), "DXF 전기표에 회로 ID가 없습니다: " + circuit.CircuitId);
-
-            var data = new Dictionary<string, string>
-            {
-                ["dxf"] = session.Report.DxfPath,
-                ["bytes"] = new FileInfo(session.Report.DxfPath).Length.ToString(CultureInfo.InvariantCulture),
-                ["circuitRows"] = snapshot.Circuits.Count.ToString(CultureInfo.InvariantCulture),
-                ["textEntities"] = texts.Count.ToString(CultureInfo.InvariantCulture)
-            };
-            return VisualStepOutcome.Ok("DXF 저장·재읽기·전기표 확인", data);
-        }
-
-        private int FindExitCandidate(VisualExitSpec exit)
-        {
-            var matches = new List<int>();
-            for (int i = 0; i < _exitCandidates.Count; i++)
-            {
-                ExitSideCandidate candidate = _exitCandidates[i];
-                if (candidate.FaceId != exit.FaceId) continue;
-                if (exit.StartPoint3D == null)
-                {
-                    matches.Add(i);
-                    continue;
-                }
-
-                int count = candidate.Points.Length / 3;
-                if (count < 2) continue;
-                bool forward = Point3Near(candidate.Points, 0, exit.StartPoint3D, exit.ToleranceMm)
-                    && Point3Near(candidate.Points, count - 1, exit.EndPoint3D, exit.ToleranceMm);
-                bool reverse = Point3Near(candidate.Points, 0, exit.EndPoint3D, exit.ToleranceMm)
-                    && Point3Near(candidate.Points, count - 1, exit.StartPoint3D, exit.ToleranceMm);
-                if (forward || reverse) matches.Add(i);
-            }
-            return matches.Count == 1 ? matches[0] : -1;
-        }
-
-        private static bool Point3Near(double[] flat, int index, double[] expected, double tolerance)
-        {
-            if (flat == null || expected == null || expected.Length != 3) return false;
-            int offset = index * 3;
-            if (offset + 2 >= flat.Length) return false;
-            double dx = flat[offset] - expected[0];
-            double dy = flat[offset + 1] - expected[1];
-            double dz = flat[offset + 2] - expected[2];
-            return Math.Sqrt(dx * dx + dy * dy + dz * dz) <= tolerance;
         }
 
         private VisualScenario RequireScenario()

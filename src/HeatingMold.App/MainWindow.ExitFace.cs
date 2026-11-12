@@ -21,9 +21,6 @@ namespace HeatingMold.App;
 public partial class MainWindow
 {
     private bool _suppressDirectionChange;
-    private readonly List<ExitSideCandidate> _exitCandidates = new();
-    private double[][] _exitCandidatePolylines = Array.Empty<double[]>();
-    private int _exitCandidateHover = -1;
 
     /// <summary>현재 인출점 픽 역할. 0=시작, 1=종료, -1=없음.</summary>
     private int _exitPointPickRole = -1;
@@ -32,10 +29,6 @@ public partial class MainWindow
     private bool _exitPointPresentationHeld;
     /// <summary>커서 픽 허용 거리(mm, 작업 평면). 정확 CAD 판정 tolerance와 별개다.</summary>
     private const double ExitPointPickTolerance = 5.0;
-
-    /// <summary>표시 좌표가 같아도 원본 edge/경로가 다를 수 있으므로 후보 DTO 자체를 보관한다.</summary>
-    private sealed record AnchorCandidateRow(int Index, string Label, AnchoredCandidate Candidate);
-    private bool _suppressAnchorSelection;
 
     private static double Dist(Vec2 a, Vec2 b)
     {
@@ -67,7 +60,6 @@ public partial class MainWindow
             ClearExitFaceButton.IsEnabled = area != null
                 && (area.SelectedStartExit.HasValue || area.SelectedEndExit.HasValue);
         if (ExitFaceStatusText != null) ExitFaceStatusText.Text = DescribeExitState(area);
-        SyncAnchorCandidateList(area);
         if (_exitPointPickRole < 0) UpdateSelectedExitMarkers(area);
     }
 
@@ -84,14 +76,11 @@ public partial class MainWindow
             return;
         }
         IReadOnlyList<Vec3> source = null;
-        // 인출면 방식(legacy)은 그 면의 경계를, 선택 인출점 방식은 적용영역 전체
-        // 경계를 보여 준다. 선택점이 하나라도 있거나 선택 중이면 영역 경계가 정본이다.
-        bool showRegionOutline = area.ExitFaceId < 0 || _exitPointPickRole >= 0 ||
-            area.SelectedStartExit.HasValue || area.SelectedEndExit.HasValue;
-        if (showRegionOutline && area.RegionExitBoundary is SplitRegionBoundary2D split &&
+        // 선택 인출점 방식은 적용영역 전체 경계를 보여 준다.
+        if (area.RegionExitBoundary is SplitRegionBoundary2D split &&
             split.Segments.Count > 0 && area.FaceIdSet.Count > 0)
             source = BuildSplitOutline3D(area, split);
-        else if (showRegionOutline && area.RegionExitBoundary is EffectiveRegionBoundary2D effective &&
+        else if (area.RegionExitBoundary is EffectiveRegionBoundary2D effective &&
             effective.Segments.Count > 0 && area.FaceIdSet.Count > 0)
             source = BuildEffectiveOutline3D(area, effective);
         else if (area.ExitBoundary != null && area.ExitChain3D != null && area.ExitChain3D.Count >= 2)
@@ -284,40 +273,6 @@ public partial class MainWindow
     }
 
     /// <summary>시작/종료점 후보 목록을 현재 영역 후보와 선택 상태에 맞춰 다시 만든다.</summary>
-    private void SyncAnchorCandidateList(WorkingArea area)
-    {
-        if (AnchorCandidateList == null) return;
-        _suppressAnchorSelection = true;
-        try
-        {
-            AnchorCandidateList.Items.Clear();
-            AnchorCandidateList.IsEnabled = area != null && area.AnchorCandidates.Count > 0;
-            if (area == null) return;
-            for (int i = 0; i < area.AnchorCandidates.Count; i++)
-            {
-                var c = area.AnchorCandidates[i];
-                AnchorCandidateList.Items.Add(new AnchorCandidateRow(i,
-                    string.Format("후보 {0}: ({1:F1}, {2:F1}) → ({3:F1}, {4:F1}) · 각도 {5:F0}°",
-                        i + 1, c.Start.X, c.Start.Y, c.End.X, c.End.Y, c.AngleDeg),
-                    c));
-            }
-            string selectedId = area.SelectedAnchorCandidate?.CandidateId;
-            if (string.IsNullOrEmpty(selectedId)) return;
-            var selected = AnchorCandidateList.Items.Cast<AnchorCandidateRow>()
-                .Where(row => string.Equals(row.Candidate.CandidateId, selectedId, StringComparison.Ordinal)).ToList();
-            if (selected.Count == 1) AnchorCandidateList.SelectedItem = selected[0];
-        }
-        finally { _suppressAnchorSelection = false; }
-    }
-
-    private void AnchorCandidateList_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppressAnchorSelection) return;
-        if (AnchorCandidateList?.SelectedItem is not AnchorCandidateRow row) return;
-        if (!ApplyAnchorCandidate(row.Candidate, out string error))
-            StatusText.Text = error;
-    }
-
     private string DescribeExitState(WorkingArea area)
     {
         if (area == null) return "작업영역을 먼저 선택하세요";
@@ -356,14 +311,7 @@ public partial class MainWindow
         ExitVertexEdit();
         CancelExitFacePick();
         area.Direction = direction;
-        // 방향은 몸통 경로만 바꾼다. 사용자가 고른 두 인출점은 유지하고,
-        // 그 점을 전제로 만든 후보/계획만 무효화한다.
-        area.AnchorCandidates.Clear();
-        area.SelectedAnchorCandidate = null;
-        area.ExcludedCandidates.Clear();
-        area.ExcludedPlan = null;
-        area.ExcludedCandidateFailure = null;
-        area.ExcludedPlanKey = "";
+        // 방향은 몸통 경로만 바꾼다. 사용자가 고른 두 인출점은 유지한다.
         area.LastExitFailure = null;
         // 기존 결과는 아직 화면에 남아 있다. 수동 편집 표시도 실제 재생성이
         // 성공할 때까지 유지해 '입력 조건 변경'과 '편집됨'을 함께 보여준다.
@@ -422,9 +370,6 @@ public partial class MainWindow
         if (side == null) { StatusText.Text = "작업면이 확정되지 않았습니다"; return; }
 
         _exitPointPickRole = role;
-        _exitCandidates.Clear();
-        _exitCandidatePolylines = Array.Empty<double[]>();
-        _exitCandidateHover = -1;
 
         // 화면 픽은 현재 카메라에서 작업 평면으로 투영한다. 정면으로 전환하면
         // 경사진 작업면에서도 커서와 원본 Edge의 대응이 안정적이다.
@@ -599,13 +544,6 @@ public partial class MainWindow
         else if (role == 1) area.SelectedEndExit = point;
         else return;
         area.LastExitFailure = null;
-        // 후보 쌍/제외 계획은 이전 점 기준이므로 무효화한다. 선택한 점 자체는 유지한다.
-        area.AnchorCandidates.Clear();
-        area.SelectedAnchorCandidate = null;
-        area.ExcludedCandidates.Clear();
-        area.ExcludedPlan = null;
-        area.ExcludedCandidateFailure = null;
-        area.ExcludedPlanKey = "";
         // 기존 UI/검증 경로와의 호환을 위해 좌표도 함께 갱신한다.
         area.StartAnchor = area.SelectedStartExit?.Point;
         area.EndAnchor = area.SelectedEndExit?.Point;
@@ -620,47 +558,6 @@ public partial class MainWindow
                 : "종료 인출점이 지정되었습니다 — 시작점을 선택하세요";
     }
 
-    private void PickExitFace_Click(object sender, RoutedEventArgs e)
-    {
-        var area = _activeArea;
-        if (area == null) { StatusText.Text = "작업영역을 먼저 선택하세요"; return; }
-        if (area.Region.Count != 1)
-        {
-            StatusText.Text = "하나로 연결된 적용영역에서만 인출면을 지정할 수 있습니다";
-            return;
-        }
-        if (!ConfirmDiscardRouteEdits(area, "인출면 변경")) return;
-        ExitVertexEdit();
-        if (Viewport == null || !Viewport.IsReady) return;
-        CancelExitFacePick();
-
-        // 인출면은 확정 영역 외곽선의 반대편 면에서만 고른다 (근접 면 클릭 방식 대체).
-        var frameNormal = area.Frame.Normal;
-        var sides = Bridge.GetBoundaryExitSides(SortedFaceIds(area), GeometryTolerancePolicy.DistanceTolerance,
-            frameNormal.X, frameNormal.Y, frameNormal.Z);
-        if (sides == null || sides.Length == 0)
-        {
-            StatusText.Text = "인출 측면 후보가 없습니다 — 적용영역 외곽선에 인접한 면이 없거나 경계 매칭에 실패했습니다";
-            return;
-        }
-        foreach (var side in sides)
-        {
-            if (side == null || side.FaceId < 0 || side.Points == null || side.Points.Length < 6) continue;
-            _exitCandidates.Add(side);
-        }
-        if (_exitCandidates.Count == 0)
-        {
-            StatusText.Text = "인출 측면 후보가 없습니다 — 적용영역 외곽선에 인접한 면이 없거나 경계 매칭에 실패했습니다";
-            return;
-        }
-
-        Bridge.ShowExitCandidates(_exitCandidatePolylines = _exitCandidates.Select(c => c.Points).ToArray());
-        Viewport.ExitFacePickMode = true;
-        Viewport.ViewLocked = true;
-        StatusText.Text = string.Format("외곽선을 따라 표시된 인출 측면 후보 {0}개 — 후보 위로 마우스를 올리면 강조됩니다. 클릭하세요 (Esc 취소)",
-            _exitCandidates.Count);
-    }
-
     private void CancelExitFacePick()
     {
         _exitPointPickRole = -1;
@@ -669,11 +566,7 @@ public partial class MainWindow
             Viewport.ExitFacePickMode = false;
             Viewport.ViewLocked = false;
         }
-        Bridge.ClearExitCandidates();
         Bridge.HighlightExitFace(-1);
-        _exitCandidates.Clear();
-        _exitCandidatePolylines = Array.Empty<double[]>();
-        _exitCandidateHover = -1;
         if (_exitPointPresentationHeld && _exitPointPresentation != null)
         {
             Bridge.RestoreWorkingPresentation(_exitPointPresentation.Id);
@@ -687,258 +580,12 @@ public partial class MainWindow
     /// <summary>인출점 선택 중 커서 이동 — 커서 아래 원본 Edge 위치를 미리 보여준다.</summary>
     private void OnExitFacePickMoved(int x, int y)
     {
-        if (_exitPointPickRole >= 0)
-        {
-            OnExitPointPickMoved(x, y);
-            return;
-        }
-
-        if (_exitCandidatePolylines.Length == 0) return;
-        int index = x < 0 || y < 0
-            ? -1
-            : Bridge.PickExitCandidate(_exitCandidatePolylines, x, y, 12.0);
-        if (index != _exitCandidateHover)
-        {
-            _exitCandidateHover = index;
-            Bridge.HighlightExitCandidate(index);
-        }
+        if (_exitPointPickRole >= 0) OnExitPointPickMoved(x, y);
     }
 
     private void OnExitFacePicked(int x, int y)
     {
-        if (_exitPointPickRole >= 0)
-        {
-            OnExitPointPicked(x, y);
-            return;
-        }
-
-        var area = _activeArea;
-        if (area == null || _exitCandidates.Count == 0)
-        {
-            CancelExitFacePick();
-            return;
-        }
-
-        // 후보 목록은 CancelExitFacePick에서 비워지므로 픽을 먼저 수행한다.
-        int index = Bridge.PickExitCandidate(_exitCandidatePolylines, x, y, 12.0);
-        if (index < 0)
-        {
-            StatusText.Text = "인출 측면 후보 위에서 클릭하세요 — Esc로 취소할 수 있습니다";
-            return; // 선택 모드 유지
-        }
-
-        if (!ApplyExitCandidate(index, out string error))
-        {
-            StatusText.Text = error;
-            return;
-        }
-
-        double length = 0;
-        for (int i = 1; i < area.ExitChain.Count; i++) length += Dist(area.ExitChain[i - 1], area.ExitChain[i]);
-        if (area.HasExitAnchors)
-            StatusText.Text = string.Format("{0} 영역 인출면 Face {1} · 길이 {2:F1}mm — 시작/종료점 후보가 목록에 표시됩니다",
-                area.Name, area.ExitFaceId, length);
-        else
-            StatusText.Text = area.LastExitFailure ?? "인출면은 지정됐지만 사용 가능한 시작/종료점 후보가 없습니다";
-    }
-
-    /// <summary>
-    /// 후보 목록의 인덱스를 실제 인출면 상태에 적용한다. UI는 좌표 픽으로,
-    /// 시각 테스트는 FaceId/좌표 지문으로 인덱스를 찾은 뒤 이 공통 경로를 호출한다.
-    /// </summary>
-    private bool ApplyExitCandidate(int index, out string error)
-    {
-        error = null;
-        var area = _activeArea;
-        if (area == null || index < 0 || index >= _exitCandidates.Count)
-        {
-            error = "선택한 인출면 후보를 찾을 수 없습니다";
-            return false;
-        }
-
-        var chosen = _exitCandidates[index];
-        long modelRevision = Bridge.GetModelRevision();
-        var side = _workingSide?.Confirmed;
-        if (side == null || side.Revision.Value != modelRevision || area.Frame == null)
-        {
-            error = "작업 방향 또는 모델이 변경되었습니다 — 인출면 후보를 다시 선택하세요";
-            return false;
-        }
-        if (!TryValidateExitCandidateCoverage(chosen, modelRevision, out error)) return false;
-
-        // Native의 원본 점/구간 인덱스를 그대로 보관한다. 표시용 중복점을 이유로
-        // edge 범위를 합치거나 remap하지 않으며 설계 질의는 이 체인을 사용하지 않는다.
-        var chain = new List<Vec2>();
-        var chain3D = new List<Vec3>();
-        for (int k = 0; k < chosen.Points.Length; k += 3)
-        {
-            var point = new Vec3(chosen.Points[k], chosen.Points[k + 1], chosen.Points[k + 2]);
-            Vec2 datum = area.Frame.Project(point);
-            if (!double.IsFinite(datum.X) || !double.IsFinite(datum.Y))
-            {
-                error = "선택한 인출 경계를 작업 평면에 투영하지 못했습니다";
-                return false;
-            }
-            chain.Add(datum);
-            chain3D.Add(point);
-        }
-        var references = chosen.EdgeReferences.Select(CadExitBoundary2D.CopyReference).ToList();
-        var boundary = new CadExitBoundary2D(side.Id.Value, side.Revision.Value, references);
-        foreach (ExitEdgeReference reference in references)
-        {
-            var binding = new ExitEdgeBinding(reference.Revision, side.Id.Value, side.Revision.Value,
-                reference.EdgeKey, reference.FirstParameter, reference.LastParameter,
-                reference.FirstParameter, reference.Reversed);
-            ExitBoundaryResolution first = boundary.Evaluate(binding);
-            ExitBoundaryResolution last = boundary.Evaluate(binding with { Parameter = reference.LastParameter });
-            if (!first.Succeeded || !last.Succeeded)
-            {
-                error = ExplainExitBoundaryFailure(!first.Succeeded ? first.Failure : last.Failure);
-                return false;
-            }
-        }
-
-        CancelExitFacePick();
-        area.ExitFaceId = chosen.FaceId;
-        area.ExitFaceRevision = modelRevision;
-        area.ExitChain = chain;
-        area.ExitChain3D = chain3D;
-        area.ExitChainFaceIds = chosen.SegmentFaceIds.ToList();
-        area.ExitEdgeRefs = references;
-        area.ExitBoundary = boundary;
-        area.SelectedAnchorCandidate = null;
-        // 표시 중인 경로의 수동 인출점은 실제 재생성 후보에서만 지운다.
-        RecomputeAnchorCandidates(area);
-        // 피킹 취소 시에는 아무것도 바꾸지 않는다. 실제 인출면이 바뀐 경우에도
-        // 기존 결과가 화면에 남아 있으므로 재생성 성공 전에는 편집 표시를 지우지 않는다.
-        SyncExitFaceUi(area);
-        ApplyActiveExitEdgeHighlight();
-        UpdateActionStates();
-        return true;
-    }
-
-    /// <summary>원본 polyline의 모든 구간에 현재 모델의 유효한 CAD 참조가 정확히 하나씩 있어야 한다.</summary>
-    private static bool TryValidateExitCandidateCoverage(ExitSideCandidate candidate, long modelRevision,
-        out string error)
-    {
-        error = null;
-        if (candidate?.Points == null || candidate.Points.Length < 6 || candidate.Points.Length % 3 != 0 ||
-            candidate.Points.Any(value => !double.IsFinite(value)))
-        {
-            error = "선택한 인출 경계의 표시 좌표가 올바르지 않습니다";
-            return false;
-        }
-        int pointCount = candidate.Points.Length / 3;
-        if (candidate.FaceId < 0 || candidate.SegmentFaceIds == null ||
-            candidate.SegmentFaceIds.Length != pointCount - 1 || candidate.SegmentFaceIds.Any(id => id < 0) ||
-            candidate.EdgeReferences == null || candidate.EdgeReferences.Length == 0)
-        {
-            error = "인출 경계의 원본 edge/구간 면 참조가 빠져 있습니다 — 다른 후보를 선택하세요";
-            return false;
-        }
-        var covered = new bool[pointCount - 1];
-        foreach (ExitEdgeReference reference in candidate.EdgeReferences)
-        {
-            if (reference == null || reference.Revision != modelRevision || reference.EdgeKey <= 0 ||
-                reference.FaceId < 0 || !double.IsFinite(reference.FirstParameter) ||
-                !double.IsFinite(reference.LastParameter) || reference.LastParameter <= reference.FirstParameter ||
-                reference.StartIndex < 0 || reference.EndIndex <= reference.StartIndex || reference.EndIndex >= pointCount)
-            {
-                error = "인출 경계의 원본 edge 참조/trim 범위가 유효하지 않거나 오래되었습니다";
-                return false;
-            }
-            for (int segment = reference.StartIndex; segment < reference.EndIndex; segment++)
-            {
-                if (covered[segment] || candidate.SegmentFaceIds[segment] != reference.FaceId)
-                {
-                    error = "인출 경계의 원본 edge 참조가 겹치거나 구간 면 정보와 일치하지 않습니다";
-                    return false;
-                }
-                covered[segment] = true;
-            }
-        }
-        if (covered.Any(value => !value))
-        {
-            error = "원본 CAD edge에 연결되지 않은 인출 경계 구간이 있습니다 — 선택을 적용하지 않았습니다";
-            return false;
-        }
-        return true;
-    }
-
-    /// <summary>UI와 자동 선택은 현재 목록의 DTO identity 및 저장된 원본 parameter를 적용한다.</summary>
-    private bool ApplyAnchorCandidate(AnchoredCandidate candidate, out string error)
-    {
-        var area = _activeArea;
-        if (!TrySelectAnchorCandidate(area, candidate, out error)) return false;
-        SyncExitFaceUi(area);
-        UpdateActionStates();
-        StatusText.Text = string.Format("시작 ({0:F1}, {1:F1}) → 종료 ({2:F1}, {3:F1}) · 각도 {4:F0}° — 반대쪽 끝은 레인 위상으로 결정됩니다",
-            candidate.Start.X, candidate.Start.Y, candidate.End.X, candidate.End.Y, candidate.AngleDeg);
-        return true;
-    }
-
-    private static bool TrySelectAnchorCandidate(WorkingArea area, AnchoredCandidate candidate, out string error)
-    {
-        error = null;
-        if (area == null || !area.HasExitFace)
-        {
-            error = "활성 작업영역의 인출면이 지정되지 않았습니다";
-            return false;
-        }
-        if (candidate == null || string.IsNullOrEmpty(candidate.CandidateId) ||
-            !area.AnchorCandidates.Any(current => ReferenceEquals(current, candidate)) ||
-            area.AnchorCandidates.Count(current => string.Equals(current.CandidateId,
-                candidate.CandidateId, StringComparison.Ordinal)) != 1)
-        {
-            error = "선택한 시작/종료점 후보 identity가 현재 목록에 없거나 중복되었습니다 — 다시 선택하세요";
-            return false;
-        }
-        if (!candidate.StartBinding.HasValue || !candidate.EndBinding.HasValue)
-        {
-            error = "선택한 후보의 원본 edge binding이 없습니다 — 인출면을 다시 선택하세요";
-            return false;
-        }
-        if (!double.IsFinite(candidate.Start.X) || !double.IsFinite(candidate.Start.Y) ||
-            !double.IsFinite(candidate.End.X) || !double.IsFinite(candidate.End.Y))
-        {
-            error = "선택한 후보의 작업 평면 좌표가 유효하지 않습니다";
-            return false;
-        }
-        ExitBoundaryResolution start = area.ExitBoundary.Evaluate(candidate.StartBinding.Value);
-        ExitBoundaryResolution end = area.ExitBoundary.Evaluate(candidate.EndBinding.Value);
-        if (!start.Succeeded || start.Failure.HasValue || !end.Succeeded || end.Failure.HasValue)
-        {
-            error = ExplainExitBoundaryFailure(!start.Succeeded || start.Failure.HasValue ? start.Failure : end.Failure);
-            return false;
-        }
-        if (!double.IsFinite(start.Point.Value.Point.X) || !double.IsFinite(start.Point.Value.Point.Y) ||
-            !double.IsFinite(end.Point.Value.Point.X) || !double.IsFinite(end.Point.Value.Point.Y) ||
-            start.Point.Value.Binding != candidate.StartBinding || end.Point.Value.Binding != candidate.EndBinding ||
-            start.Point.Value.Point.DistanceTo(candidate.Start) > ExitBoundaryConstraint.Tolerance ||
-            end.Point.Value.Point.DistanceTo(candidate.End) > ExitBoundaryConstraint.Tolerance)
-        {
-            error = "선택한 후보의 원본 parameter와 작업 평면 좌표가 일치하지 않습니다";
-            return false;
-        }
-        ExcludedAnchorCandidate plan = null;
-        if (area.Exclusions.Count > 0)
-        {
-            var plans = area.ExcludedCandidates.Where(current => string.Equals(current.CandidateId,
-                candidate.CandidateId, StringComparison.Ordinal)).ToList();
-            if (plans.Count != 1 || plans[0].StartBinding != candidate.StartBinding ||
-                plans[0].EndBinding != candidate.EndBinding)
-            {
-                error = "선택한 후보 identity에 대응하는 제외영역 경로 계획이 유일하지 않습니다";
-                return false;
-            }
-            plan = plans[0];
-        }
-        area.SelectedAnchorCandidate = candidate;
-        area.StartAnchor = candidate.Start;
-        area.EndAnchor = candidate.End;
-        area.LastExitFailure = null;
-        area.ExcludedPlan = plan;
-        return true;
+        if (_exitPointPickRole >= 0) OnExitPointPicked(x, y);
     }
 
     private void ClearExitFace_Click(object sender, RoutedEventArgs e)
@@ -950,232 +597,12 @@ public partial class MainWindow
         CancelExitFacePick();
         area.SelectedStartExit = null;
         area.SelectedEndExit = null;
-        area.SelectedAnchorCandidate = null;
         area.StartAnchor = null;
         area.EndAnchor = null;
-        area.AnchorCandidates.Clear();
-        area.ExcludedCandidates.Clear();
-        area.ExcludedPlan = null;
-        area.ExcludedCandidateFailure = null;
-        area.ExcludedPlanKey = "";
         area.LastExitFailure = null;
-        // 새 방식에서는 적용영역 외곽 경계를 유지하고 선택점만 지운다.
-        // 예전 인출면 방식으로 만든 영역이면 기존 필드까지 초기화한다.
-        if (area.RegionExitBoundary == null)
-        {
-            area.ExitFaceId = -1;
-            area.ExitFaceRevision = 0;
-            area.ExitChain = new List<Vec2>();
-            area.ExitChain3D = new List<Vec3>();
-            area.ExitChainFaceIds = new List<int>();
-            area.ExitEdgeRefs = new List<ExitEdgeReference>();
-            area.ExitBoundary = null;
-        }
         SyncExitFaceUi(area);
         UpdateActionStates();
         StatusText.Text = "인출점을 초기화했습니다 — 패턴은 다시 생성해야 합니다";
-    }
-
-    /// <summary>현재 마진/간격/방향에서 인출면 위에 놓을 수 있는 시작·종료점 쌍을 다시 계산한다.</summary>
-    private void RecomputeAnchorCandidates(WorkingArea area)
-    {
-        if (area == null) return;
-        area.AnchorCandidates.Clear();
-        area.ExcludedCandidates.Clear();
-        area.ExcludedPlan = null;
-        area.ExcludedCandidateFailure = null;
-        area.ExcludedPlanKey = "";
-        area.StartAnchor = null;
-        area.EndAnchor = null;
-        area.SelectedAnchorCandidate = null;
-        area.LastExitFailure = null;
-        if (!area.HasExitFace || area.Region.Count != 1) return;
-        if (!TryGetParams(out double margin, out double spacing, out string parameterError))
-        {
-            area.LastExitFailure = parameterError;
-            return;
-        }
-        var parameters = new PatternParams { Margin = margin, Spacing = spacing, Direction = area.Direction };
-        if (area.Exclusions.Count > 0)
-        {
-            ExcludedCandidatesResult excluded;
-            try
-            {
-                excluded = Serpentine.ComputeCandidatesComponents(area.Region[0], area.Exclusions,
-                    parameters, area.ExitChain, area.Direction, boundary: area.ExitBoundary);
-            }
-            catch (Exception ex)
-            {
-                area.LastExitFailure = "시작/종료점 후보 계산 실패: " + ex.Message;
-                ErrorReporter.ShowWarning("시작/종료점 후보 계산 실패", ex);
-                return;
-            }
-
-            area.ExcludedCandidates = excluded.Candidates.ToList();
-            area.ExcludedCandidateFailure = excluded.Failure;
-            area.ExcludedPlanKey = BuildExcludedPlanKey(area, margin, spacing);
-            foreach (var candidate in excluded.Candidates)
-                area.AnchorCandidates.Add(candidate.ToAnchoredCandidate());
-            if (excluded.Candidates.Count == 0)
-            {
-                area.LastExitFailure = ExplainComponentsFailure(excluded.Failure, excluded.BoundaryFailure);
-                return;
-            }
-            if (excluded.Candidates.Count == 1)
-            {
-                if (!TrySelectAnchorCandidate(area, area.AnchorCandidates[0], out string selectionFailure))
-                    area.LastExitFailure = selectionFailure;
-            }
-            return;
-        }
-
-        IReadOnlyList<AnchoredCandidate> candidates;
-        try
-        {
-            candidates = Serpentine.ComputeCandidates(area.Region[0], null,
-                parameters, area.ExitChain, area.Direction, boundary: area.ExitBoundary);
-        }
-        catch (Exception ex)
-        {
-            area.LastExitFailure = "시작/종료점 후보 계산 실패: " + ex.Message;
-            ErrorReporter.ShowWarning("시작/종료점 후보 계산 실패", ex);
-            return;
-        }
-
-        area.AnchorCandidates.AddRange(candidates);
-        if (candidates.Count == 0)
-        {
-            area.LastExitFailure = ExplainNoCandidate(area, margin, spacing);
-            return;
-        }
-        // 후보가 한 쌍뿐이면 그 쌍이 유일해다. 여러 쌍이면 사용자가 패턴 탭의 후보 목록에서 고른다.
-        if (candidates.Count == 1)
-        {
-            if (!TrySelectAnchorCandidate(area, candidates[0], out string selectionFailure))
-                area.LastExitFailure = selectionFailure;
-        }
-    }
-
-    /// <summary>제외영역 경로 계획을 만든 입력이 그대로인지 비교할 지문.</summary>
-    private string BuildExcludedPlanKey(WorkingArea area, double margin, double spacing)
-    {
-        var inv = CultureInfo.InvariantCulture;
-        var sb = new StringBuilder();
-        sb.Append(area.ExitFaceId).Append('|').Append(area.ExitFaceRevision).Append('|');
-        sb.Append((int)area.Direction).Append('|');
-        sb.Append(margin.ToString("R", inv)).Append('|').Append(spacing.ToString("R", inv)).Append('|');
-        sb.Append(Bridge.GetModelRevision()).Append('|');
-        var side = _workingSide?.Confirmed;
-        sb.Append(side?.Id.Value ?? -1).Append('|').Append(side?.Revision.Value ?? -1).Append('|');
-        foreach (var e in area.Exclusions)
-            sb.Append(e.MinX.ToString("R", inv)).Append(',')
-              .Append(e.MinY.ToString("R", inv)).Append(',')
-              .Append(e.MaxX.ToString("R", inv)).Append(',')
-              .Append(e.MaxY.ToString("R", inv)).Append(';');
-        sb.Append('|');
-        foreach (var point in area.ExitChain)
-            sb.Append(point.X.ToString("R", inv)).Append(',').Append(point.Y.ToString("R", inv)).Append(';');
-        sb.Append("|ER:");
-        AppendExitReferences(sb, area.ExitEdgeRefs, inv);
-        sb.Append("|R:");
-        foreach (var ring in area.Region)
-        {
-            sb.Append('[');
-            foreach (Vec2 point in ring)
-                sb.Append(point.X.ToString("R", inv)).Append(',').Append(point.Y.ToString("R", inv)).Append(';');
-            sb.Append(']');
-        }
-        sb.Append("|EBP:cad-original-edge-v2,").Append(ExitBoundaryConstraint.Tolerance.ToString("R", inv))
-          .Append(',').Append(ExitBoundaryConstraint.AcceptanceTolerance.ToString("R", inv))
-          .Append(',').Append(GeometryTolerancePolicy.Version);
-        return sb.ToString();
-    }
-
-    /// <summary>제외영역 후보 계산이 실패한 이유를 사용자 문구로 바꾼다.</summary>
-    private static string ExplainComponentsFailure(SerpentineComponentsFailureReason? failure,
-        ExitBoundaryFailureReason? boundaryFailure = null) => failure switch
-    {
-        SerpentineComponentsFailureReason.InvalidInput =>
-            "인출면/영역 입력이 올바르지 않습니다",
-        SerpentineComponentsFailureReason.NoLanes =>
-            "마진/간격 조건에서 생성되는 레인이 없습니다 — 간격을 줄이거나 영역을 넓히세요",
-        SerpentineComponentsFailureReason.SplitByExclusion =>
-            "제외영역이 작업영역을 완전히 가로질러 발열영역이 분리되었습니다 — 제외영역을 줄이거나 방향을 바꾸세요",
-        SerpentineComponentsFailureReason.TooComplex =>
-            "제외영역으로 레인 조각 조합이 너무 많아 경로 탐색 계산 한도를 넘었습니다 — 제외영역을 줄이거나 간격을 조정하세요",
-        SerpentineComponentsFailureReason.NoCompletePath =>
-            "제외영역 배치로 모든 레인을 한 번씩 잇는 경로가 없습니다 — 제외영역을 줄이거나 방향을 바꾸세요",
-        SerpentineComponentsFailureReason.ExitBoundaryConflict => ExplainExitBoundaryFailure(boundaryFailure),
-        _ => "인출면이 제외영역을 고려한 사행 경로의 양 끝을 지나지 않습니다 — 반대쪽 모서리나 다른 인출면을 선택하세요"
-    };
-
-    /// <summary>현재 입력으로 제외영역 경로 계획을 확보한다. 마진/간격이 바뀌었으면 후보를 다시 계산한다.</summary>
-    private ExcludedAnchorCandidate TryPrepareExcludedPlan(WorkingArea area, out string failure)
-    {
-        failure = null;
-        if (area == null || !area.HasExitFace)
-        {
-            failure = area?.LastExitFailure ?? "인출면이 지정되지 않았습니다";
-            return null;
-        }
-
-        if (!TryGetParams(out double margin, out double spacing, out string parameterError))
-        {
-            failure = parameterError;
-            return null;
-        }
-        string key = BuildExcludedPlanKey(area, margin, spacing);
-        if (!string.Equals(area.ExcludedPlanKey, key, StringComparison.Ordinal))
-            RecomputeAnchorCandidates(area);
-
-        if (area.ExcludedCandidates.Count == 0)
-        {
-            failure = area.LastExitFailure ?? ExplainComponentsFailure(area.ExcludedCandidateFailure);
-            return null;
-        }
-        if (!area.HasExitAnchors)
-        {
-            failure = "후보 목록에서 시작/종료점 쌍을 선택하세요";
-            return null;
-        }
-
-        string candidateId = area.SelectedAnchorCandidate?.CandidateId;
-        var plans = area.ExcludedCandidates.Where(candidate => !string.IsNullOrEmpty(candidateId) &&
-            string.Equals(candidate.CandidateId, candidateId, StringComparison.Ordinal)).ToList();
-        if (plans.Count != 1)
-        {
-            failure = "선택한 후보 identity에 대응하는 제외영역 경로 계획이 유일하지 않습니다 — 다시 선택하세요";
-            return null;
-        }
-        var plan = plans[0];
-        if (plan.StartBinding != area.SelectedAnchorCandidate.StartBinding ||
-            plan.EndBinding != area.SelectedAnchorCandidate.EndBinding)
-        {
-            failure = "선택한 후보와 제외영역 경로 계획의 원본 edge binding이 일치하지 않습니다";
-            return null;
-        }
-        area.ExcludedPlan = plan;
-        return plan;
-    }
-
-    private string ExplainNoCandidate(WorkingArea area, double margin, double spacing)
-    {
-        try
-        {
-            var plain = Serpentine.Generate(area.Region[0], null,
-                new PatternParams { Margin = margin, Spacing = spacing, Direction = area.Direction });
-            // 짝수 레인은 시스템이 자동으로 맞추므로, 여기서 남는 사유는 "2레인조차 확보 불가" 또는 "인출면이 양 끝을 지나지 않음"뿐이다.
-            if (plain.LaneCount < 2)
-                return string.Format(
-                    "간격 {0:F1}mm로는 레인 2개도 확보되지 않습니다 — 간격을 줄이거나 영역을 넓히세요",
-                    spacing);
-            return "인출면이 사행 경로의 양 끝을 지나지 않습니다 — 반대쪽 모서리나 다른 인출면을 선택하세요";
-        }
-        catch (Exception ex)
-        {
-            ErrorReporter.ShowWarning("시작/종료점 후보 없음 — 진단 중 오류", ex);
-            return "시작/종료점 후보 없음: " + ex.Message;
-        }
     }
 
     private static string LaneNote(SerpentineResult pattern) =>
