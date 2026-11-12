@@ -17,6 +17,16 @@ public partial class MainWindow
 
     private Dictionary<ValidatedRouteSampleKey, SurfaceMappedSample[]> _validatedRouteSamples = new();
 
+    /// <summary>편집 후보 검증에서 이미 계산한 엄격 표본. 스테이징이 같은 검증 키로
+    /// 요청할 때만 재사용하며, 키가 다르면 기존 경로로 다시 매핑한다.</summary>
+    private Dictionary<ValidatedRouteSampleKey, SurfaceMappedSample[]> _pendingValidatedSamples;
+
+    /// <summary>진단용: 마지막 트랜잭션에서 후보 검증 표본을 실제로 재사용한 조각 수.
+    /// 제품 판정에는 쓰지 않고, 자동화가 재사용 발동 여부만 확인한다.</summary>
+    internal int RoutePendingSampleReuseCount { get; private set; }
+
+    internal void ResetRoutePendingSampleReuseCount() => RoutePendingSampleReuseCount = 0;
+
     /// <summary>마지막 경로 트랜잭션의 표시 갱신 경고. 커밋 이후 실패는 형상을 되돌리지 않으므로
     /// 호출자가 완료 문구에 경고를 보존할 수 있게 남긴다. 다음 트랜잭션 시작 시 지운다.</summary>
     private string _routePresentationWarning;
@@ -193,6 +203,14 @@ public partial class MainWindow
             var reservedIds = new HashSet<int>(oldIdSet);
             preparedSamples = publications.Length == 0 ? _validatedRouteSamples :
                 new Dictionary<ValidatedRouteSampleKey, SurfaceMappedSample[]>(_validatedRouteSamples);
+            // 편집 후보 검증에서 만든 표본을 같은 트랜잭션의 스테이징에만 공급한다.
+            // 키는 좌표·binding·검증 정책 전체를 포함하므로 다른 입력에는 적중하지 않는다.
+            if (_pendingValidatedSamples is { Count: > 0 } pending)
+            {
+                if (ReferenceEquals(preparedSamples, _validatedRouteSamples))
+                    preparedSamples = new Dictionary<ValidatedRouteSampleKey, SurfaceMappedSample[]>(preparedSamples);
+                foreach (var entry in pending) preparedSamples[entry.Key] = entry.Value;
+            }
 
             foreach (var entry in publications)
             {
@@ -623,7 +641,14 @@ public partial class MainWindow
     private ValidatedRouteSampleKeyPrefix BuildValidatedRouteSampleKeyPrefix(WorkingArea area,
         WorkingSideDefinition side, CommittedRouteContext context)
     {
-        var key = new StringBuilder("strict-v2|gap=0.1|chord=0.05|max-probes=100000|support=0.1|datum=0.1|selected-global|")
+        var key = new StringBuilder("strict-v3|")
+            .Append(RouteSurfaceValidationPolicy.Version).Append('|')
+            .Append("gap=").Append(RouteSurfaceValidationPolicy.GapSpacing.ToString("R", CultureInfo.InvariantCulture))
+            .Append("|chord=").Append(RouteSurfaceValidationPolicy.ChordError.ToString("R", CultureInfo.InvariantCulture))
+            .Append("|max-probes=").Append(RouteSurfaceValidationPolicy.MaxProbes.ToString(CultureInfo.InvariantCulture))
+            .Append("|support=").Append(GeometryTolerancePolicy.DistanceTolerance.ToString("R", CultureInfo.InvariantCulture))
+            .Append("|datum=").Append(GeometryTolerancePolicy.DistanceTolerance.ToString("R", CultureInfo.InvariantCulture))
+            .Append("|selected-global|")
             .Append(GeometryTolerancePolicy.Version).Append('|');
         void Number(double value) => key.Append(value.ToString("R", CultureInfo.InvariantCulture)).Append(',');
         void Point(Vec2 point) { Number(point.X); Number(point.Y); }
@@ -709,16 +734,22 @@ public partial class MainWindow
         }
 
         internal ValidatedRouteSampleKey Build(SerpentineRoutePiece piece,
-            IReadOnlyDictionary<int, SurfaceMappedSample> overrides)
+            IReadOnlyDictionary<int, SurfaceMappedSample> overrides) =>
+            Build(piece.Kind, piece.LaneIndex, piece.Points, overrides);
+
+        /// <summary>인출점 보정으로 실제 스테이징 좌표와 다른 표시 경로를 검증한 경우,
+        /// 그 좌표 그대로의 키를 만든다. 좌표가 다르면 스테이징 키와 일치하지 않아 재사용되지 않는다.</summary>
+        internal ValidatedRouteSampleKey Build(SerpentineRoutePieceKind kind, int laneIndex,
+            IReadOnlyList<Vec2> points, IReadOnlyDictionary<int, SurfaceMappedSample> overrides)
         {
             var key = new StringBuilder(_prefix);
             void Number(double value) => key.Append(value.ToString("R", CultureInfo.InvariantCulture)).Append(',');
             void Point(Vec2 point) { Number(point.X); Number(point.Y); }
             void Point3(Vec3 point) { Number(point.X); Number(point.Y); Number(point.Z); }
 
-            key.Append('|').Append(piece.Kind).Append(',').Append(piece.LaneIndex).Append(',')
-                .Append(piece.Points.Count).Append(':');
-            foreach (Vec2 point in piece.Points) Point(point);
+            key.Append('|').Append(kind).Append(',').Append(laneIndex).Append(',')
+                .Append(points.Count).Append(':');
+            foreach (Vec2 point in points) Point(point);
             key.Append('|').Append(overrides?.Count ?? 0).Append(':');
             if (overrides != null)
                 foreach (var entry in overrides.OrderBy(pair => pair.Key))

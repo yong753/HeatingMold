@@ -433,13 +433,16 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 확정용 후보 패턴을 만들고 보강 표본(0.1mm 간격)으로 검증한다. 미리보기는
-    /// 별도 <see cref="TryBuildVertexPreview"/>가 경량 매핑으로 처리한다. 매핑에 성공한
-    /// 조각의 3D 표본은 mappedPieces로 반환해 호출측이 스테이징에 재사용한다.
+    /// 확정용 후보 패턴을 만들고 보강 표본(<see cref="RouteSurfaceValidationPolicy.GapSpacing"/> 간격)으로
+    /// 검증한다. 미리보기는 별도 <see cref="TryBuildVertexPreview"/>가 경량 매핑으로 처리한다.
+    /// 매핑에 성공한 조각의 3D 표본은 preparedSamples로 반환해, 스테이징의 검증 키가 정확히
+    /// 같을 때 재매핑 없이 재사용한다.
     /// </summary>
     private bool TryBuildVertexCandidate(Vec2 datum, out SerpentineResult candidate, out Vec2 applied,
         out string failure, out bool anchor, out bool isStart,
-        out Dictionary<int, List<SurfaceMappedSample>> mappedPieces, out ExitEdgeBinding? movedBinding,
+        out Dictionary<int, List<SurfaceMappedSample>> mappedPieces,
+        out Dictionary<ValidatedRouteSampleKey, SurfaceMappedSample[]> preparedSamples,
+        out ExitEdgeBinding? movedBinding,
         out ArtificialEdgeBinding? movedArtificialBinding, out SplitLineBinding? movedSplitBinding)
     {
         candidate = null;
@@ -448,6 +451,7 @@ public partial class MainWindow
         anchor = false;
         isStart = false;
         mappedPieces = new Dictionary<int, List<SurfaceMappedSample>>();
+        preparedSamples = new Dictionary<ValidatedRouteSampleKey, SurfaceMappedSample[]>();
         movedBinding = null;
         movedArtificialBinding = null;
         movedSplitBinding = null;
@@ -502,6 +506,7 @@ public partial class MainWindow
         }
 
         var hit = BuildSurfaceMapDelegate(area, side, context: context);
+        ValidatedRouteSampleKeyPrefix sampleKeyPrefix = BuildValidatedRouteSampleKeyPrefix(area, side, context);
         foreach (int pieceIndex in group.Occurrences.Select(o => o.Piece).Distinct())
         {
             SerpentineRoutePiece piece = candidate.RoutePieces[pieceIndex];
@@ -509,9 +514,13 @@ public partial class MainWindow
             if (!PrepareDisplayedEditPiece(area, side, context, group, pieceIndex, piece.Points, anchorSample,
                     out IReadOnlyList<Vec2> displayPoints, out var overrides, out failure)) return false;
             bool ok = SurfacePathMapper.TryMapRouteStrict(displayPoints, hit, overrides, out var samples,
-                out string mapFailure, 0.1);
+                out string mapFailure, RouteSurfaceValidationPolicy.GapSpacing);
             if (!ok) { failure = "모델 표면 매핑 실패 — " + mapFailure; return false; }
             mappedPieces[pieceIndex] = samples;
+            // 스테이징과 같은 좌표/override/정책일 때만 적중하는 키로 보관한다.
+            // 인출점 보정으로 표시 좌표가 달라진 조각은 키가 달라져 재사용되지 않는다.
+            preparedSamples[sampleKeyPrefix.Build(piece.Kind, piece.LaneIndex, displayPoints, overrides)] =
+                samples.ToArray();
         }
         return true;
     }
@@ -624,8 +633,9 @@ public partial class MainWindow
         }
         // 후보를 엄격 검증한다. 스테이징의 캐시는 전체 형상·binding·검증 정책이 같을 때만 재사용한다.
         if (!TryBuildVertexCandidate(datum, out SerpentineResult candidate, out Vec2 applied,
-                out string failure, out bool anchor, out bool isStart,
-                out _, out ExitEdgeBinding? movedBinding, out ArtificialEdgeBinding? movedArtificialBinding,
+                out string failure, out bool anchor, out bool isStart, out _,
+                out Dictionary<ValidatedRouteSampleKey, SurfaceMappedSample[]> preparedSamples,
+                out ExitEdgeBinding? movedBinding, out ArtificialEdgeBinding? movedArtificialBinding,
                 out SplitLineBinding? movedSplitBinding))
         {
             StatusText.Text = "이동할 수 없습니다 — " + failure;
@@ -662,7 +672,13 @@ public partial class MainWindow
             }
         }
         edited.RouteEdited = true;
-        if (!RebuildNativePatternGeometry(area, edited, out _, out _)) return;
+        // 후보 검증에서 만든 표본을 같은 트랜잭션의 스테이징에 공급해 중복 매핑을 없앤다.
+        // 키가 다르면 스테이징이 기존 경로로 다시 매핑하므로 실패 시에도 안전하다.
+        bool committed;
+        _pendingValidatedSamples = preparedSamples;
+        try { committed = RebuildNativePatternGeometry(area, edited, out _, out _); }
+        finally { _pendingValidatedSamples = null; }
+        if (!committed) return;
         try
         {
             _vertexGroups = BuildVertexGroups(area);

@@ -8,11 +8,11 @@ public static class SurfacePathMapper
     // Conservative depth-zero route target. Probes are at quarter intervals within
     // accepted leaves (at most 0.025 mm apart); sub-probe-width features are not guaranteed.
     private const double MaxPlanarSpacing = 0.1;
-    private const double MaxChordError = 0.05;
+    private const double MaxChordError = RouteSurfaceValidationPolicy.ChordError;
     // 요청한 작업평면 좌표와 반환된 datum의 허용 잔차(mm). 샘플링 품질 기준과 분리한다.
     private const double DatumResidualTolerance = GeometryTolerancePolicy.DistanceTolerance;
     private const int MaxDepth = 18;
-    private const int DefaultMaxProbes = 100_000;
+    private const int DefaultMaxProbes = RouteSurfaceValidationPolicy.MaxProbes;
     private const string DenseDepthError =
         "Surface mapping could not resolve a discontinuity or sampling tolerance within depth 18.";
     private const string RouteDepthError =
@@ -88,12 +88,13 @@ public static class SurfacePathMapper
 
     /// <summary>
     /// 편집 검증용 변형: 채택된 리프 구간 내부를 <paramref name="gapSpacing"/>(mm) 간격으로
-    /// 추가 표본화해, 끝점/사분점 사이에 숨은 홀·도메인 이탈을 걸러낸다. 이 간격보다 좁은
+    /// 추가 표본화해, 끝점/사분점 사이에 숨은 홀·도메인 이탈을 걸러낸다. 기본 간격은
+    /// <see cref="RouteSurfaceValidationPolicy.GapSpacing"/>이며, 이 간격보다 좁은
     /// 결함은 여전히 보장하지 않는다(표본 한계). gapSpacing ≤ 0이면 일반 경로와 동일하다.
     /// </summary>
     public static bool TryMapRouteStrict(IReadOnlyList<Vec2> path, Func<Vec2, SurfaceMappedSample?> hit,
         out List<SurfaceMappedSample> mapped, out string failure,
-        double gapSpacing = 0.1, int maxProbes = DefaultMaxProbes)
+        double gapSpacing = RouteSurfaceValidationPolicy.GapSpacing, int maxProbes = DefaultMaxProbes)
     {
         if (!double.IsFinite(gapSpacing) || gapSpacing < 0)
             throw new ArgumentOutOfRangeException(nameof(gapSpacing));
@@ -105,7 +106,7 @@ public static class SurfacePathMapper
     public static bool TryMapRouteStrict(IReadOnlyList<Vec2> path, Func<Vec2, SurfaceMappedSample?> hit,
         IReadOnlyDictionary<int, SurfaceMappedSample>? vertexOverrides,
         out List<SurfaceMappedSample> mapped, out string failure,
-        double gapSpacing = 0.1, int maxProbes = DefaultMaxProbes)
+        double gapSpacing = RouteSurfaceValidationPolicy.GapSpacing, int maxProbes = DefaultMaxProbes)
     {
         if (!double.IsFinite(gapSpacing) || gapSpacing < 0)
             throw new ArgumentOutOfRangeException(nameof(gapSpacing));

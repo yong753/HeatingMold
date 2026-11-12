@@ -339,3 +339,17 @@
 - **FreeCAD edge-only 파트 미지원 (확인 2026-11-12):** FreeCAD는 STEP의 edge-only 파트를 아예 가져오지 않는다. FreeCAD 자신이 내보낸 단일 edge STEP도 다시 가져오면 객체가 0개였다. 따라서 60개 `발열경로` 중심선(EDGE)은 FreeCAD 트리에 나타나지 않고, `발열사` 솔리드만 영역 색으로 표시된다. STEP 파일 자체에는 두 파트가 모두 있고 OCCT 7.9.3 reader로는 읽히므로 파일 구조 오류가 아니라 FreeCAD importer 제약이다. FreeCAD에서 경로 선을 보이게 하려면 별도 solid/ribbon 출력 같은 제품 변경이 필요하며, 현재 범위에서는 하지 않았다.
 - 검증 2026-11-12: 2영역/3조각 probe를 새 writer로 내보내 FreeCAD 1.1.4로 import한 결과 발열사 솔리드의 `ShapeColor`가 (1,0,0)과 (0,0.5,1)로 읽혔고(수정 전에는 기본 회색), 경로 edge 파트는 트리에 없었다. `tests\WorkingSide.Regression` EXIT=0, working-side 183 PASS(한글 경로/80면/STEP 조각 검사 포함).
 - 미검증: 실행 중 앱에서 STEP 버튼 클릭, 외부 CAD에서 레인/턴 단위 객체 선택과 표시, 분할 영역·제외영역 프로젝트의 조각 출력, 저장 프로젝트의 정점 편집 경로, 대형 다중 솔리드 모델의 시간/파일 크기, 조각 간 ≤0.1 mm 틈이 외부 CAD에서 시각적으로 이어져 보이는지, FreeCAD에서 60개 발열사 솔리드가 실제 화면에서 충분히 보이는지.
+
+## 발열경로 표면 검증 간격 1mm와 편집 표본 재사용 (사용자 확정 2026-11-12)
+
+- **사용자 확정 요구:** "1mm 이하의 틈이나 끊김은 그냥 오류로 보는게 맞는 것 같아". 경로 3D 매핑의 보강 표본 간격을 1mm로 두고, 그 폭 이하의 표면 틈·끊김도 오류로 거부한다. 자동 보정·메우기·근사 대체는 없다.
+- 이 값은 **허용 공차가 아니라 조회 간격**이다. `GeometryTolerancePolicy.DistanceTolerance`(0.1mm: 경계 침범 깊이, CAD 평가/투영 잔차, 지지면 거리, 조각 간 실제 3D 간격)와 `RouteSurfaceValidationPolicy.ChordError`(0.05mm)는 그대로 유지한다. 일반 dense 매핑의 `MaxPlanarSpacing`(0.1mm)도 바꾸지 않았다.
+- 신규 `src\HeatingMold.Core\Geometry\RouteSurfaceValidationPolicy.cs`: `Version = "route-surface-v2"`, `GapSpacing = 1.0`, `ChordError = 0.05`, `MaxProbes = 100000`. `SurfacePathMapper.TryMapRouteStrict`의 기본값과 제품 호출부 두 곳(`MainWindow.Areas.cs`의 스테이징, `MainWindow.VertexEdit.cs`의 후보 검증)이 이 값을 쓴다. 보강 표본은 성공 여부 판정에만 쓰이고 확정 경로 좌표에는 추가되지 않는다.
+- **표본 한계:** 1mm 간격 조회로도 조회점 사이의 더 좁은 결함 검출은 보장되지 않는다. "1mm 이하 전부 검출"로 기록하거나 사용자에게 약속하지 않는다. 기존 정확 CAD 경계 검사와 native 지지면 검사는 표본 사이 구간을 대신 검증하지 않는다(2026-11-12 확인).
+- 검증 키 접두부를 `strict-v3`로 올리고 정책 값에서 직접 생성한다(`route-surface-v2`, gap, chord, max-probes, support/datum 0.1, selected-global, `GeometryTolerancePolicy.Version`). 0.1mm 시절 표본과 1mm 표본이 같은 키로 섞이지 않는다.
+- **꼭지점 편집 중복 매핑 제거(2026-11-12 구현):** `TryBuildVertexCandidate`가 후보 검증에 쓴 strict 표본을 `preparedSamples`(검증 키별)로 반환하고, `CommitVertex`가 `_pendingValidatedSamples`에 넣어 `RebuildNativePatternGeometry`를 호출한 뒤 finally에서 비운다. `TryCommitAreaRouteCandidates`는 후보 회로 갱신·커밋 컨텍스트 캡처 전에 이 표본을 트랜잭션 로컬 사전에 병합하고, 스테이징(`StageCurvedRoutePiece`)은 키가 정확히 같을 때만 재매핑을 생략한다. 키가 다르면 기존 strict 매핑으로 폴백하며, 실패 후보의 표본은 확정 캐시에 남지 않는다.
+  - 후보 표본 키는 `PrepareDisplayedEditPiece`가 인출점 보정을 적용한 표시 좌표로 만든다. 따라서 인출점과 인접한 조각(회로 첫/마지막)은 스테이징 키와 달라져 재매핑될 수 있고, 보정이 없는 내부 조각만 재사용된다. 이것은 의도된 안전 폴백이다.
+  - `RoutePendingSampleReuseCount`/`ResetRoutePendingSampleReuseCount`는 진단용이며 제품 판정에 쓰지 않는다.
+- 검증 2026-11-12 (worktree `route-perf`, HEAD `4b6c929` + 이 변경): 네이티브와 솔루션 Release/x64 빌드 0 errors, Core 테스트 271 통과, App 테스트 195 통과, `tests\WorkingSide.Regression` 전 그룹 통과(vertex edit 29건 — 신규: 픽스처 확정 회로 구성, 후보 표본 재사용 발동). 재사용 계측은 처음에 병합 블록이 대기 사전을 먼저 비워 항상 0으로 보였고, 해제를 finally 한 곳으로 옮겨 실제 발동을 확인했다.
+- `docs\VertexEditing.md`도 현재 구현에 맞췄다: Undo/Redo 설명 제거, `_pendingStageSamples`/`_vertexBaselineSamples`(존재하지 않는 캐시) 설명을 위 재사용 규칙으로 교체, 0.1mm 표현을 정책 값으로 교체.
+- 미검증: 실행 중 앱에서 실제 마우스 드래그의 체감 속도, 지정 프로젝트(`바탕화면\발열몰드 저장테스트\Mold_Solids.json`)의 생성·편집 시간 실측과 개선 배율(시간 계측을 실행하지 않았다. 1mm 변경은 보강 조회 횟수를 약 1/10로 줄이는 부분 최적화일 뿐 전체 10배를 의미하지 않는다), 저장/재열기, 곡면·좁은 영역·sliver 모델에서 1mm 간격의 검출 결과, 커밋 후 표시 경고 동작.

@@ -13,7 +13,7 @@ KRRI 협의 내용(“자동 경로의 각 꼭지점 포인트를 이동 가능�
    이동은 발열 진행 방향 성분만 적용되므로(가로 생성=좌우, 세로 생성=상하) 발열사 간격이 유지된다.
    진행 방향과 수직인 이동만 요청하면 아무것도 바뀌지 않고 상태 표시줄에 안내가 나온다.
 5. `Esc`: 진행 중인 드래그 취소. 드래그 중이 아니면 편집 모드 종료(카메라 복원).
-6. `경로 Undo/Redo`로 확정된 편집을 되돌리거나 다시 적용한다.
+   확정된 편집은 즉시 반영되며 경로 Undo/Redo는 제공하지 않는다.
 
 편집 모드에서는 회전·팬·줌·면 선택이 비활성화된다(작업 정면 고정).
 
@@ -49,16 +49,18 @@ KRRI 협의 내용(“자동 경로의 각 꼭지점 포인트를 이동 가능�
 - 미리보기 조각은 모두 갱신한 뒤 Redraw를 한 번만 호출하고, 커넥터 상태도 Rebuild 끝의
   Redraw 한 번으로 반영한다.
 - 같은 핸들 호버는 재색칠/Redraw를 생략하고, 이동 없는 클릭은 재생성·Undo 기록을 만들지 않는다.
-- 확정 표본 재사용: 검증 단계의 strict 매핑 결과를 스테이징에 그대로 넘기고(`_pendingStageSamples`),
-  편집 세션 동안 바뀌지 않은 조각의 표본은 기준 캐시(`_vertexBaselineSamples`)로 재사용한다.
-  전체 재스테이징은 유지되지만 재매핑 비용은 변경 조각과 최초 1회로 줄어든다.
+- 확정 표본 재사용: 후보 검증 단계의 strict 매핑 결과를 스테이징까지 보관하고, 스테이징의
+  검증 키(모델/컨텍스트 리비전, 작업면·영역 프레임, 인출 binding, 조각 좌표, 검사 정책)가
+  정확히 같을 때만 재매핑을 생략한다. 키가 다르면(예: 인출점 보정으로 표본 경로가 달라진 조각)
+  기존 경로로 다시 매핑하며, 실패한 후보의 표본은 확정 캐시에 남기지 않는다.
 
 ## 검증과 한계
 검증:
 - 매핑된 모든 점은 실제 모델 면 위에 있어야 한다(스테이징이 점별 지지면 거리를 확인).
 - 인접 샘플의 면 전이는 별도로 검사하지 않고 매핑 결과를 그대로 스테이징한다. 점별 지지면 거리 검증은 유지된다.
-- 확정 시 변경된 조각은 `SurfacePathMapper.TryMapRouteStrict`(채택 리프 0.1mm 간격 표본)로
-  모델 표면 연속성을 확인한다.
+- 확정 시 변경된 조각은 `SurfacePathMapper.TryMapRouteStrict`로 모델 표면 연속성을 확인한다.
+  보강 표본 간격은 `RouteSurfaceValidationPolicy.GapSpacing`(1mm)이며, 이는 결함 허용 공차가
+  아니라 조회 간격이다. 1mm 이하의 틈·끊김도 오류로 처리하고 자동 보정·메우기는 하지 않는다.
 - 발열영역(2D 외곽/홀) 포함 여부는 생성 기준일 뿐 편집 검증에 쓰지 않는다.
 
 한계(의도적 비범위):
@@ -74,7 +76,7 @@ KRRI 협의 내용(“자동 경로의 각 꼭지점 포인트를 이동 가능�
 - `src/HeatingMold.Core/Geometry/RouteVertexMoveConstraint.cs` — 이동 방향 제약(발열사 간격 유지)
 - `src/HeatingMold.Core/Geometry/SurfacePathMapper.cs` — `TryMapRouteStrict`
 - `src/HeatingMold.Core/Geometry/Serpentine.cs` — `SnapOnChain`, `DistanceToChain` 공개
-- `src/HeatingMold.App/MainWindow.VertexEdit.cs` — 편집 세션/드래그/Undo
+- `src/HeatingMold.App/MainWindow.VertexEdit.cs` — 편집 세션/드래그/후보 검증
 - `src/HeatingMold.App/OccViewport.cs` — `VertexEditMode`와 드래그 이벤트
 - `src/OccBridge/WorkingSideNative.inc` — 핸들/미리보기 오버레이
 - `tests/HeatingMold.Core.Tests/RouteVertexEditTests.cs`

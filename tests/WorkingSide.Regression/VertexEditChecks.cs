@@ -179,6 +179,11 @@ static class VertexEditChecks
 
         var p0 = Pattern3(startRes.Point!.Value.Binding, endRes.Point!.Value.Binding);
         area.Pattern = p0;
+        // 실제 제품처럼 패턴에서 확정 회로를 만들어 둔다. 편집 후보 검증과 스테이징의
+        // 입력 동일성 키가 이 회로 상태를 포함하므로, 이 단계가 없으면 재사용이 발동하지 않는다.
+        object[] circuitArgs = { area.Value, null };
+        Check(Invoke(window, "TryRefreshCircuits", circuitArgs) is true,
+            "vertex edit fixture establishes committed circuit state: " + circuitArgs[1]);
         area.NativePieceIds = new[] { 9001, 9002, 9003 };
         area.RoutePieceLengths = new[] { 50.0, 20.0, 50.0 };
         area.ProjectedPieces = new List<RoutePieceResult>();
@@ -227,6 +232,7 @@ static class VertexEditChecks
 
         // 성공 단계: 원본 binding을 복원한 같은 편집은 실제로 확정된다.
         area.Pattern = p0;
+        Invoke(window, "ResetRoutePendingSampleReuseCount");
         Commit(window, area, 1, new Vec2(-62, -9));
         Check(!ReferenceEquals(area.Pattern, p0), "successful commit applies the edited pattern");
         Check(area.RouteEdited, "successful commit marks the area as manually edited");
@@ -240,6 +246,11 @@ static class VertexEditChecks
         Check(area.ProjectedPieces.Count == 3 &&
               area.RoutePieceLengths.Length == 3 && area.RoutePieceLengths[0] > 0,
             "successful commit refreshes projected pieces and lengths");
+        int reused = (int)typeof(MainWindow)
+            .GetProperty("RoutePendingSampleReuseCount", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(window)!;
+        Check(reused >= 1,
+            "vertex edit commit reuses the candidate strict samples when the verification key matches");
 
         Cleanup(window, fixtureDir);
         Console.WriteLine($"{count} vertex edit checks passed.");

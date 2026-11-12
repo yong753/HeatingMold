@@ -528,12 +528,15 @@ public partial class MainWindow
         SurfaceMappedSample[] cachedSamples = null;
         bool cached = key != null && validatedSamples != null &&
             validatedSamples.TryGetValue(key, out cachedSamples);
+        if (cached && _pendingValidatedSamples != null && _pendingValidatedSamples.ContainsKey(key))
+            ++RoutePendingSampleReuseCount;
         IReadOnlyList<SurfaceMappedSample> samples = cachedSamples;
         if (!cached)
         {
             var hit = BuildSurfaceMapDelegate(area, side, context: mappingContext);
             if (!SurfacePathMapper.TryMapRouteStrict(piece.Points, hit, vertexOverrides,
-                    out List<SurfaceMappedSample> mapped, out string failure, gapSpacing: 0.1))
+                    out List<SurfaceMappedSample> mapped, out string failure,
+                    gapSpacing: RouteSurfaceValidationPolicy.GapSpacing))
                 throw new InvalidOperationException(
                     "영역 " + area.Name + " 경로 조각 " + (index + 1) + "/" + count + " (" + piece.Kind + ") 매핑 실패 — "
                     + failure + " [" + FaceTypesText(area) + "]");
