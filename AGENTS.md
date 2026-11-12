@@ -225,6 +225,19 @@
 - Connector exclusion penetration is not a reason to reclassify a conductor as a dashed guide or to change its length semantics.
 - The legacy compatibility APIs `GenerateComponents`, `ComputeCandidatesComponents`, and `GenerateAnchoredComponents` still use the exact DP/candidate path. Their limits are not the product policy for the selected-exit generation path; do not copy those limits into new generation code.
 
+## 꼭지점 편집의 발열사 간격 유지 (사용자 확정, 2026-11-12 복원)
+
+- **사용자 요구:** 발열경로를 수동으로 수정할 때 미리 설정한 발열사 간격(레인 피치)이 유지되어야 한다.
+- 이력: `0901c5e`가 간격 고정을 추가했고, 자식 커밋 `c12b595`가 이를 전부 되돌렸다(간격 유지가 동작하지 않던 원인). 2026-11-12에 같은 규칙을 복원했다.
+- `RouteVertexMoveConstraint.TryConstrain(Vec2 original, Vec2 requested, double angleDeg, out Vec2 constrained, out string failure)`(Core)가 변위의 진행 방향 성분만 남기고 수직 성분을 버린다. 축 정렬 방향은 `AxisTolerance = 1e-12`로 잠긴 좌표를 그대로 복사하고, 비유한 입력은 한국어 실패 문구로 명시적으로 거부한다. 생성 방향의 정본은 확정된 `SerpentineResult.AngleDeg`이며, 가로 생성이면 X, 세로 생성이면 Y만 움직인다.
+- 앱 경로(`MainWindow.VertexEdit.cs`)는 세 곳에서 같은 제약을 재계산한다: 드래그 미리보기(`UpdateVertexPreview`), 미리보기 조각 생성(`TryBuildVertexPreview`), 후보 생성(`TryBuildVertexCandidate`), 그리고 확정(`CommitVertex`)에서 한 번 더 확인한다. 미리보기와 커밋이 서로 다른 좌표를 쓰지 않도록 하는 것이 목적이며, 확정 단계에서 제약을 생략하지 않는다.
+- 제약 결과가 원래 점과 `VertexMoveEpsilon = 1e-6` 이내면 패턴 재생성도 Undo 기록도 만들지 않고 `VertexSpacingLockedMessage`("발열사 간격 유지 — 생성 방향과 수직인 이동은 적용되지 않았습니다")만 표시한다. 시작점/종료점은 종전대로 전용 선택 버튼으로만 바꾼다(제약 대상이 아님).
+- `SerpentineVertexEdit.ApplyVertexEdits`는 `CandidateId`를 결과에 그대로 넘긴다. 커밋 시 `CaptureAppliedInputs`가 `BuildRouteContextKey`로 입력 동일성을 판정하므로, 이 값을 잃으면 편집 직후 경로가 stale로 오판된다.
+- UI 안내 문구(`MainWindow.xaml`의 `VertexEditModeBox`)와 `docs\VertexEditing.md`는 "발열 진행 방향으로만 이동(가로 생성=좌우, 세로 생성=상하) → 발열사 간격 유지"를 명시한다. 굽힘 반경·자기교차·제조성 검증은 여전히 비범위다.
+- 검증 2026-11-12: Core 테스트 268 통과(신규 `RouteVertexMoveConstraintTests` 7개, `ApplyVertexEdits_PreservesTheCandidateIdentity`), App 테스트 194 통과, App Release/x64 빌드 0 errors(변경 파일 관련 경고 없음). `tests\WorkingSide.Regression` 전 그룹 통과 — 30 sidebar, 30 area highlight, 22 exclusion+exit, 19 direct exit, 27 vertex edit, 3 electrical, 38 pattern state, 64 geometry rollback, 19 project load, 50 project-load exclusion, 181 working-side. 회귀 픽스처는 실제 평행 2레인 경로(피치 20 mm)로 되돌려, 수직 드래그가 no-op이 되는지와 진행 방향 드래그가 이웃 레인 Y를 바꾸지 않는지를 함께 확인한다.
+- 회귀 하네스가 참조하는 `x64\WorkingSideBuild\OccBridge.dll`이 오래되면 한글 경로 STEP 내보내기 검사가 실패한다. 네이티브 변경 후에는 `x64\Release\OccBridge.dll`을 복사한 뒤 회귀 프로젝트를 다시 빌드해야 한다(기존 문서화된 함정과 동일).
+- 미검증: 실행 중 앱에서 실제 마우스 드래그, 화면 안내 문구 렌더링, 시나리오 JSON이 모두 삭제된 상태에서 visual-test `moveVertex` 액션의 종단 실행.
+
 ## DXF export scope (user-confirmed)
 
 - Product DXF output is exactly **one plan view on the confirmed working plane**, plus the confirmed heating routes and the electrical specification table. The previous four orthographic views are not part of the product output.

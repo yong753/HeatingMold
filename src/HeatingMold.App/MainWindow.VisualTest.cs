@@ -864,14 +864,47 @@ namespace HeatingMold.App
             Require(index >= 0 && index < _vertexGroups.Count,
                 string.Format("꼭지점 그룹 인덱스가 범위를 벗어났습니다. 그룹 {0}개, 요청 {1}", _vertexGroups.Count, index));
             Vec2 from = _vertexGroups[index].Datum;
-            var target = new Vec2(from.X + spec.OffsetMm[0], from.Y + spec.OffsetMm[1]);
+            var requested = new Vec2(from.X + spec.OffsetMm[0], from.Y + spec.OffsetMm[1]);
+            // 생성 방향 성분만 적용되므로 기대 좌표를 같은 제약으로 먼저 계산한다.
+            Require(RouteVertexMoveConstraint.TryConstrain(from, requested, area.Pattern!.AngleDeg,
+                    out Vec2 expected, out string constraintFailure),
+                "이동 제약을 계산할 수 없습니다: " + constraintFailure);
+            Require(expected.DistanceTo(from) > 1e-6,
+                "요청한 꼭지점 이동이 생성 방향과 수직이어서 실제로 적용되지 않습니다. "
+                + string.Format(CultureInfo.InvariantCulture, "시작 ({0:0.###},{1:0.###}) → 요청 ({2:0.###},{3:0.###}), 생성 방향 {4:0.###}도",
+                    from.X, from.Y, requested.X, requested.Y, area.Pattern.AngleDeg));
+
+            // 그룹 목록은 확정 후 다시 만들어지므로 이동 대상 점을 미리 보관한다.
+            IReadOnlyList<RouteVertexOccurrence> moving = _vertexGroups[index].Occurrences;
             _vertexDragGroup = index;
-            CommitVertex(target);
+            CommitVertex(requested);
             _vertexDragGroup = -1;
+            string commitStatus = StatusText.Text;
+
+            bool constraintKept = true;
+            string actualText = string.Empty;
+            foreach (RouteVertexOccurrence occurrence in moving)
+            {
+                Vec2 actual = area.Pattern != null && occurrence.Piece >= 0
+                    && occurrence.Piece < area.Pattern.RoutePieces.Count
+                    && occurrence.Point >= 0
+                    && occurrence.Point < area.Pattern.RoutePieces[occurrence.Piece].Points.Count
+                    ? area.Pattern.RoutePieces[occurrence.Piece].Points[occurrence.Point]
+                    : from;
+                if (actual.DistanceTo(expected) <= 1e-6) continue;
+                constraintKept = false;
+                actualText = string.Format(CultureInfo.InvariantCulture, "({0:0.######},{1:0.######})",
+                    actual.X, actual.Y);
+                break;
+            }
             RefreshVertexHandles();
             ExitVertexEdit();
+            Require(constraintKept,
+                string.Format(CultureInfo.InvariantCulture,
+                    "꼭지점 이동이 생성 방향 제약을 지키지 않았습니다: 기대 ({0:0.######},{1:0.######}), 실제 {2} — {3}",
+                    expected.X, expected.Y, actualText, commitStatus));
 
-            Require(area.RouteEdited, "꼭지점 이동이 적용되지 않았습니다: " + StatusText.Text);
+            Require(area.RouteEdited, "꼭지점 이동이 적용되지 않았습니다: " + commitStatus);
             Require(area.Pattern != null && area.Pattern.RoutePieces.Count > 0, "편집 후 경로가 없습니다.");
             Require(!IsPatternInputStale(area), "편집 후 경로가 stale 상태입니다.");
 
@@ -880,7 +913,9 @@ namespace HeatingMold.App
                 ["area"] = area.Name,
                 ["vertexIndex"] = index.ToString(CultureInfo.InvariantCulture),
                 ["from"] = string.Format(CultureInfo.InvariantCulture, "({0:0.###},{1:0.###})", from.X, from.Y),
-                ["to"] = string.Format(CultureInfo.InvariantCulture, "({0:0.###},{1:0.###})", target.X, target.Y),
+                ["requested"] = string.Format(CultureInfo.InvariantCulture, "({0:0.###},{1:0.###})", requested.X, requested.Y),
+                ["to"] = string.Format(CultureInfo.InvariantCulture, "({0:0.###},{1:0.###})", expected.X, expected.Y),
+                ["angleDeg"] = area.Pattern.AngleDeg.ToString(CultureInfo.InvariantCulture),
                 ["routeEdited"] = area.RouteEdited.ToString()
             };
             return VisualStepOutcome.Ok("꼭지점 이동·수동 편집 적용 확인", data);

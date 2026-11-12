@@ -8,7 +8,7 @@ public class RouteVertexEditTests
     private static SerpentineRoutePiece Piece(SerpentineRoutePieceKind kind, int lane, params Vec2[] points) =>
         new(kind, lane, points);
 
-    private static SerpentineResult TwoLaneRoute()
+    private static SerpentineResult TwoLaneRoute(string? candidateId = null)
     {
         var pieces = new List<SerpentineRoutePiece>
         {
@@ -28,6 +28,7 @@ public class RouteVertexEditTests
             AngleDeg = 0,
             TotalLength = 24,
             RoutePieces = pieces,
+            CandidateId = candidateId,
         };
     }
 
@@ -97,6 +98,22 @@ public class RouteVertexEditTests
                           + new Vec2(11, 0).DistanceTo(new Vec2(10, 2))
                           + new Vec2(10, 2).DistanceTo(new Vec2(0, 2));
         Assert.Equal(expected, edited.TotalLength, 9);
+    }
+
+    [Fact]
+    public void ApplyVertexEdits_PreservesTheCandidateIdentity()
+    {
+        var source = TwoLaneRoute("candidate-1");
+        var edits = new List<(RouteVertexOccurrence At, Vec2 Value)>
+        {
+            (new RouteVertexOccurrence(0, 1), new Vec2(11, 0)),
+            (new RouteVertexOccurrence(1, 0), new Vec2(11, 0)),
+        };
+
+        var edited = SerpentineVertexEdit.ApplyVertexEdits(source, edits);
+
+        // 편집 후에도 같은 생성 후보로 남아야 입력 조건(stale) 판정이 뒤집히지 않는다.
+        Assert.Equal("candidate-1", edited.CandidateId);
     }
 
     [Fact]
