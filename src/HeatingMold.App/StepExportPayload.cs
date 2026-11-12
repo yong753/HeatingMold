@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using HeatingMold.Core.Geometry;
 using HeatingMold.OccBridge;
 
@@ -13,11 +14,24 @@ namespace HeatingMold.App;
 /// </summary>
 internal static class StepExportPayload
 {
-    internal static StepExportArea[] Build(IReadOnlyList<MainWindow.RouteExportCircuit> circuits)
+    internal static StepExportArea[] Build(
+        IReadOnlyList<MainWindow.RouteExportCircuit> circuits,
+        IReadOnlyList<WorkingArea> areaList)
     {
         if (circuits == null || circuits.Count == 0)
         {
             throw new IOException("확정된 발열경로가 없습니다.");
+        }
+        if (areaList == null || areaList.Count == 0)
+        {
+            throw new IOException("내보낼 작업 영역이 없습니다.");
+        }
+
+        var byName = new Dictionary<string, WorkingArea>(StringComparer.Ordinal);
+        foreach (WorkingArea candidate in areaList)
+        {
+            if (candidate == null || string.IsNullOrEmpty(candidate.Name)) continue;
+            if (!byName.ContainsKey(candidate.Name)) byName.Add(candidate.Name, candidate);
         }
 
         var areas = new StepExportArea[circuits.Count];
@@ -56,10 +70,81 @@ internal static class StepExportPayload
                 pieces[p] = new StepExportPiece(name, points);
             }
 
+            if (!byName.TryGetValue(areaName, out WorkingArea source) || source == null)
+            {
+                throw new IOException("영역 " + areaName
+                    + "의 작업 정보를 찾지 못했습니다. 경로를 다시 생성한 뒤 내보내세요.");
+            }
+            BuildRegion(source, out int[] faceIds, out double[] frame, out double[] ring);
+
             areas[i] = new StepExportArea(areaName, areaName,
-                first.ColorR, first.ColorG, first.ColorB, pieces);
+                first.ColorR, first.ColorG, first.ColorB, pieces, faceIds, frame, ring);
         }
         return areas;
+    }
+
+    /// <summary>
+    /// 영역 색을 칠할 원본 CAD 면과 작업평면, 유효 발열영역 외곽(적용영역 − 제외영역,
+    /// 마진 적용 전)을 모은다. 표시용 mesh나 마진 적용 영역을 설계 경계로 쓰지 않는다.
+    /// </summary>
+    private static void BuildRegion(WorkingArea area,
+        out int[] faceIds, out double[] frame, out double[] ring)
+    {
+        string name = area.Name;
+        if (area.FaceIdSet == null || area.FaceIdSet.Count == 0)
+        {
+            throw new IOException("영역 " + name + "에 선택된 CAD 면이 없어 발열영역 색을 표시할 수 없습니다.");
+        }
+        ProjectionFrame projection = area.Frame;
+        if (projection == null)
+        {
+            throw new IOException("영역 " + name + "의 작업평면 좌표계가 없어 발열영역 색을 표시할 수 없습니다.");
+        }
+        frame = new[]
+        {
+            projection.Origin.X, projection.Origin.Y, projection.Origin.Z,
+            projection.AxisX.X, projection.AxisX.Y, projection.AxisX.Z,
+            projection.AxisY.X, projection.AxisY.Y, projection.AxisY.Z
+        };
+        for (int i = 0; i < frame.Length; i++)
+        {
+            if (!double.IsFinite(frame[i]))
+            {
+                throw new IOException("영역 " + name + "의 작업평면 좌표계가 유한하지 않습니다.");
+            }
+        }
+
+        List<List<Vec2>> effective = area.EffectiveRegion();
+        if (effective == null || effective.Count == 0)
+        {
+            throw new IOException("영역 " + name + "의 유효 발열영역이 비어 있어 색을 표시할 수 없습니다.");
+        }
+        if (effective.Count > 1)
+        {
+            throw new IOException("영역 " + name + "의 유효 발열영역이 " + effective.Count
+                + "개 외곽으로 나뉘어 있어 STEP 영역 색을 표시할 수 없습니다.");
+        }
+        List<Vec2> outline = effective[0];
+        if (outline == null || outline.Count < 3)
+        {
+            throw new IOException("영역 " + name + "의 유효 발열영역 외곽 점이 부족합니다.");
+        }
+        ring = new double[outline.Count * 2];
+        for (int i = 0; i < outline.Count; i++)
+        {
+            Vec2 point = outline[i];
+            if (!double.IsFinite(point.X) || !double.IsFinite(point.Y))
+            {
+                throw new IOException("영역 " + name + "의 유효 발열영역 외곽 좌표가 유한하지 않습니다.");
+            }
+            ring[i * 2] = point.X;
+            ring[i * 2 + 1] = point.Y;
+        }
+        faceIds = area.FaceIdSet.OrderBy(id => id).ToArray();
+        if (faceIds.Length == 0 || faceIds.Any(id => id < 0))
+        {
+            throw new IOException("영역 " + name + "의 CAD 면 ID가 유효하지 않습니다.");
+        }
     }
 
     private static void ValidateJoin(MainWindow.RouteExportCircuit circuit, int index)

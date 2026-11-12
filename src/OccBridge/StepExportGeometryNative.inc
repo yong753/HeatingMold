@@ -83,6 +83,17 @@ namespace step_export_geometry
         int g = 0;
         int b = 0;
         std::vector<NativeStepExportPiece> pieces;
+
+        // 발열영역 표시 정보. faceIds/frame/ring 중 하나라도 비어 있으면 표시
+        // 정보가 없는 영역이며 면 색만 적용하지 않는다.
+        std::vector<int> faceIds;
+        std::vector<double> frame;  // origin(3), axisX(3), axisY(3)
+        std::vector<double> ring;   // u,v 쌍 flat
+
+        bool HasRegion() const
+        {
+            return !faceIds.empty() && frame.size() == 9 && ring.size() >= 6;
+        }
     };
 
     struct NativeStepExportBuiltPiece

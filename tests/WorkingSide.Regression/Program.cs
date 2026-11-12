@@ -762,6 +762,58 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
                             "STEP piece export file is non-empty");
                     }
                     finally { try { if(File.Exists(piecePath)) File.Delete(piecePath); } catch { } }
+                    // 발열영역 색상: 작업 프레임 2D 링으로 모델 사본 표면을 구획하고
+                    // 면별 STEP 색을 기록한다. 영역 밖 링은 전체 실패로 거부되어야 한다.
+                    string areaPath=Path.Combine(Path.GetTempPath(),
+                        "heatingmold_step_area_"+Guid.NewGuid().ToString("N")+".step");
+                    try
+                    {
+                        double[] areaFrame=exampleContext.Frame;
+                        double minU=double.MaxValue,minV=double.MaxValue;
+                        double maxU=double.MinValue,maxV=double.MinValue;
+                        double[] mesh=exampleContext.Triangles;
+                        for(int i=0;i+2<mesh.Length;i+=3)
+                        {
+                            double dx=mesh[i]-areaFrame[0];
+                            double dy=mesh[i+1]-areaFrame[1];
+                            double dz=mesh[i+2]-areaFrame[2];
+                            double u=dx*areaFrame[3]+dy*areaFrame[4]+dz*areaFrame[5];
+                            double v=dx*areaFrame[6]+dy*areaFrame[7]+dz*areaFrame[8];
+                            if(u<minU) minU=u;
+                            if(u>maxU) maxU=u;
+                            if(v<minV) minV=v;
+                            if(v>maxV) maxV=v;
+                        }
+                        Check(maxU>minU && maxV>minV,"working mesh projects to a non-degenerate area");
+                        double pad=1.0;
+                        double[] areaFrameValues={
+                            areaFrame[0],areaFrame[1],areaFrame[2],
+                            areaFrame[3],areaFrame[4],areaFrame[5],
+                            areaFrame[6],areaFrame[7],areaFrame[8]};
+                        var areaWire=new StepExportPiece("영역 A 레인 1",
+                            new double[]{0,0,0, 15,0.4,0, 30,0.6,0, 45,0.4,0, 60,0,0});
+                        var coveredArea=new StepExportArea("영역 A","영역 A",255,0,0,
+                            new[]{areaWire},allFaces,areaFrameValues,
+                            new double[]{
+                                minU-pad,minV-pad, maxU+pad,minV-pad,
+                                maxU+pad,maxV+pad, minU-pad,maxV+pad});
+                        bool areaExported=Bridge.ExportStepWithRoutes(areaPath,"Mold_Cover_Trim",0.30,
+                            new[]{coveredArea},out string areaFailure);
+                        Check(areaExported,
+                            "STEP area export paints the selected surface ("+areaFailure+")");
+                        Check(File.Exists(areaPath)&&new FileInfo(areaPath).Length>0,
+                            "STEP area export file is non-empty");
+                        var outsideArea=new StepExportArea("영역 B","영역 B",0,128,255,
+                            new[]{areaWire},allFaces,areaFrameValues,
+                            new double[]{
+                                maxU+50,minV-pad, maxU+60,minV-pad,
+                                maxU+60,maxV+pad, maxU+50,maxV+pad});
+                        bool outsideExported=Bridge.ExportStepWithRoutes(areaPath,"Mold_Cover_Trim",0.30,
+                            new[]{outsideArea},out string outsideFailure);
+                        Check(!outsideExported&&outsideFailure=="area-nofaces:0",
+                            "STEP area export rejects a region that covers no face ("+outsideFailure+")");
+                    }
+                    finally { try { if(File.Exists(areaPath)) File.Delete(areaPath); } catch { } }
                     // 한글 경로: 관리→네이티브 경로 변환이 ACP가 아니라 UTF-8이어야
                     // OCCT가 파일을 만들 수 있다(사용자 기본 파일명이 한글이다).
                     string koreanDir=Path.Combine(Path.GetTempPath(),"발열몰드 경로 검증");

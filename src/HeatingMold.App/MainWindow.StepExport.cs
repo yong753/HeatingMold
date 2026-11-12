@@ -114,7 +114,7 @@ public partial class MainWindow
             if (currentCircuits == null)
                 throw new IOException("내보내기 조건이 바뀌었습니다 — " + currentError);
 
-            var payload = BuildStepPayload(currentCircuits);
+            var payload = BuildStepPayload(currentCircuits, currentAreas);
             string modelName = string.IsNullOrEmpty(_modelFileName)
                 ? "3D 모델"
                 : Path.GetFileNameWithoutExtension(_modelFileName);
@@ -216,9 +216,10 @@ public partial class MainWindow
         return areas;
     }
 
-    private static StepExportArea[] BuildStepPayload(IReadOnlyList<RouteExportCircuit> circuits)
+    private static StepExportArea[] BuildStepPayload(
+        IReadOnlyList<RouteExportCircuit> circuits, IReadOnlyList<WorkingArea> areas)
     {
-        return StepExportPayload.Build(circuits);
+        return StepExportPayload.Build(circuits, areas);
     }
 
     private static string DescribeStepFailure(
@@ -263,8 +264,68 @@ public partial class MainWindow
             }
             return "발열사·발열경로 형상을 만들지 못했습니다.";
         }
+        if (token == "xde-face")
+            return "STEP 문서에 발열영역 면을 등록하지 못했습니다.";
+        if (token == "verify-facecolor")
+            return "작성한 STEP 파일의 발열영역 색을 다시 읽어 확인하지 못했습니다.";
+        if (token.StartsWith("area-", StringComparison.Ordinal))
+            return DescribeAreaStepFailure(token, circuits);
         if (token.StartsWith("verify-", StringComparison.Ordinal))
             return "작성한 STEP 파일을 다시 읽어 검증하지 못했습니다. 다른 저장 위치에서 다시 시도하세요.";
         return "STEP 내보내기에 실패했습니다 (" + token + ").";
+    }
+
+    /// <summary>영역 색 처리 실패 토큰을 영역명이 포함된 한국어 문구로 바꾼다.</summary>
+    private static string DescribeAreaStepFailure(
+        string token, IReadOnlyList<RouteExportCircuit> circuits)
+    {
+        string[] parts = token.Split(':');
+        string kind = parts.Length > 0 ? parts[0] : token;
+        string first = parts.Length >= 2 ? StepExportAreaLabel(circuits, parts[1]) : null;
+        string second = parts.Length >= 3 ? StepExportAreaLabel(circuits, parts[2]) : null;
+        switch (kind)
+        {
+            case "area-bounds":
+                return "3D 모델의 경계 상자를 읽지 못해 발열영역 색을 표시할 수 없습니다.";
+            case "area-face":
+                return first == null
+                    ? "3D 모델의 CAD 면 정보가 현재 모델과 일치하지 않아 발열영역 색을 표시할 수 없습니다."
+                    : "영역 " + first
+                        + "의 CAD 면이 현재 3D 모델과 일치하지 않아 발열영역 색을 표시할 수 없습니다.";
+            case "area-split":
+                return "3D 모델 표면을 발열영역 경계로 나누지 못했습니다. 경로를 다시 생성한 뒤 내보내세요.";
+            case "area-section":
+                return first == null
+                    ? "발열영역 경계선을 3D 모델 표면에 만들지 못했습니다."
+                    : "영역 " + first + "의 경계선을 3D 모델 표면에 만들지 못했습니다.";
+            case "area-frame":
+                return "영역 " + (first ?? "?") + "의 작업평면 좌표계를 해석하지 못했습니다.";
+            case "area-ring":
+                return "영역 " + (first ?? "?") + "의 유효 발열영역 외곽선이 올바르지 않습니다.";
+            case "area-prism":
+                return "영역 " + (first ?? "?") + "의 발열영역 경계 형상을 만들지 못했습니다.";
+            case "area-partial":
+                return "영역 " + (first ?? "?")
+                    + "의 경계가 CAD 면을 완전히 나누지 못했습니다. 제외영역과 분할 경계를 확인하세요.";
+            case "area-overlap":
+                return second == null
+                    ? "두 발열영역이 같은 CAD 면에서 겹칩니다."
+                    : "영역 " + first + "와 " + second
+                        + "가 같은 CAD 면에서 겹칩니다. 영역 경계를 겹치지 않게 조정하세요.";
+            case "area-nofaces":
+                return "영역 " + (first ?? "?") + "의 유효 발열영역에 해당하는 CAD 면이 없습니다.";
+            default:
+                return "발열영역 색을 표시하지 못했습니다 (" + token + ").";
+        }
+    }
+
+    private static string StepExportAreaLabel(
+        IReadOnlyList<RouteExportCircuit> circuits, string indexText)
+    {
+        if (!int.TryParse(indexText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int index))
+            return null;
+        if (circuits == null || index < 0 || index >= circuits.Count) return null;
+        IReadOnlyList<RouteExportPiece> pieces = circuits[index].Pieces;
+        return pieces.Count == 0 ? null : pieces[0].AreaName;
     }
 }
