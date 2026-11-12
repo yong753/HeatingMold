@@ -141,6 +141,47 @@ public:
     property array<double>^ Points;
 };
 
+/// <summary>
+/// STEP 조각 내보내기용 조각 하나(레인 또는 턴커넥터). Points는 확정된 3D 점 체인이며,
+/// 네이티브는 조각마다 중심선 1개와 발열사 솔리드 1개를 만든다.
+/// </summary>
+public ref class StepExportPiece
+{
+public:
+    StepExportPiece(System::String^ name, array<double>^ points)
+    {
+        Name = name;
+        Points = points;
+    }
+    property System::String^ Name;
+    property array<double>^ Points;
+};
+
+/// <summary>
+/// STEP 조각 내보내기용 영역 하나. 영역마다 발열사/발열경로 assembly 두 개가 생기고
+/// 조각 수만큼 컴포넌트가 들어간다.
+/// </summary>
+public ref class StepExportArea
+{
+public:
+    StepExportArea(System::String^ name, System::String^ areaName,
+        int colorR, int colorG, int colorB, array<StepExportPiece^>^ pieces)
+    {
+        Name = name;
+        AreaName = areaName;
+        ColorR = colorR;
+        ColorG = colorG;
+        ColorB = colorB;
+        Pieces = pieces;
+    }
+    property System::String^ Name;
+    property System::String^ AreaName;
+    property int ColorR;
+    property int ColorG;
+    property int ColorB;
+    property array<StepExportPiece^>^ Pieces;
+};
+
 /// <summary>격리된 STEP 복원 후보의 Face/Edge 토폴로지 지문.</summary>
 public ref class ProjectRestoreCandidateInfo
 {
@@ -233,6 +274,13 @@ public:
     /// </summary>
     static bool ExportStepWithRoutes(System::String^ targetPath, System::String^ modelName,
         double wireDiameterMm, array<StepExportCircuit^>^ circuits,
+        [System::Runtime::InteropServices::Out] System::String^% failureReason);
+    /// <summary>
+    /// 조각 단위 STEP 내보내기. 영역마다 발열사/발열경로 assembly를 만들고 각 조각을
+    /// 하나의 솔리드/중심선 컴포넌트로 기록한 뒤, 다시 읽어 트리와 형상을 검증한다.
+    /// </summary>
+    static bool ExportStepWithRoutes(System::String^ targetPath, System::String^ modelName,
+        double wireDiameterMm, array<StepExportArea^>^ areas,
         [System::Runtime::InteropServices::Out] System::String^% failureReason);
     static bool StageWorkingPolyline(long long id, long long revision, int stageId, array<double>^ xyzFlat);
     static RoutePieceResult^ StageProjectedWorkingRoutePiece(long long id, long long revision, int stageId,

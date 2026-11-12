@@ -15,6 +15,36 @@
 
 #include <msclr/marshal_cppstd.h>
 
+#include <algorithm>
+#include <cmath>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <AppDef_MultiLine.hxx>
+#include <AppDef_Variational.hxx>
+#include <AppParCurves_Constraint.hxx>
+#include <AppParCurves_ConstraintCouple.hxx>
+#include <AppParCurves_HArray1OfConstraintCouple.hxx>
+#include <AppParCurves_MultiBSpCurve.hxx>
+#include <Geom_BSplineCurve.hxx>
+#include <Geom_Line.hxx>
+#include <Geom_TrimmedCurve.hxx>
+#include <GeomAdaptor_Curve.hxx>
+#include <GeomAPI_ProjectPointOnCurve.hxx>
+#include <gp_Circ.hxx>
+#include <gp_Ax2.hxx>
+#include <BRepOffsetAPI_MakePipeShell.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
+#include <XCAFApp_Application.hxx>
+#include <XCAFDoc_DocumentTool.hxx>
+#include <STEPCAFControl_Reader.hxx>
+#include <STEPCAFControl_Writer.hxx>
+#include <TDataStd_Name.hxx>
+#include <Quantity_Color.hxx>
+
 #include <STEPControl_Reader.hxx>
 #include <IFSelect_ReturnStatus.hxx>
 #include <OSD_OpenFile.hxx>
@@ -3865,6 +3895,8 @@ namespace
 
 #include "ExitEdgeQueriesNative.inc"
 #include "ProjectRestoreNative.inc"
+#define STEP_EXPORT_INCLUDES_DONE
+#include "StepExportGeometryNative.inc"
 #include "StepExportNative.inc"
 }
 #pragma managed(pop)
@@ -4041,28 +4073,77 @@ bool Bridge::ExportStepWithRoutes(String^ targetPath, String^ modelName, double 
     failureReason = nullptr;
     if (String::IsNullOrWhiteSpace(targetPath)) { failureReason = "invalid-path"; return false; }
     if (circuits == nullptr || circuits->Length == 0) { failureReason = "no-circuits"; return false; }
+    array<StepExportArea^>^ areas = gcnew array<StepExportArea^>(circuits->Length);
+    for (int i = 0; i < circuits->Length; ++i)
+    {
+        StepExportCircuit^ circuit = circuits[i];
+        if (circuit == nullptr || circuit->Points == nullptr || circuit->Points->Length == 0)
+        {
+            failureReason = "invalid-points";
+            return false;
+        }
+        array<StepExportPiece^>^ pieces = gcnew array<StepExportPiece^>(1);
+        pieces[0] = gcnew StepExportPiece(circuit->Name, circuit->Points);
+        areas[i] = gcnew StepExportArea(circuit->Name, circuit->AreaName,
+            circuit->ColorR, circuit->ColorG, circuit->ColorB, pieces);
+    }
+    if (!Bridge::ExportStepWithRoutes(targetPath, modelName, wireDiameterMm, areas, failureReason))
+    {
+        // Legacy callers (and their regression check) expect the previous
+        // wire-build token when a single synthetic piece cannot be built.
+        String^ failure = failureReason;
+        if (failure != nullptr &&
+            failure->StartsWith("piece-build:0:0:", System::StringComparison::Ordinal))
+        {
+            failureReason = "wire-build:0";
+        }
+        return false;
+    }
+    return true;
+}
+bool Bridge::ExportStepWithRoutes(String^ targetPath, String^ modelName, double wireDiameterMm,
+    array<StepExportArea^>^ areas,
+    [System::Runtime::InteropServices::Out] String^% failureReason)
+{
+    failureReason = nullptr;
+    if (String::IsNullOrWhiteSpace(targetPath)) { failureReason = "invalid-path"; return false; }
+    if (areas == nullptr || areas->Length == 0) { failureReason = "no-circuits"; return false; }
     try
     {
-        std::vector<NativeStepExportCircuit> nativeCircuits;
-        nativeCircuits.reserve(static_cast<size_t>(circuits->Length));
-        for each (StepExportCircuit^ circuit in circuits)
+        std::vector<step_export_geometry::NativeStepExportArea> nativeAreas;
+        nativeAreas.reserve(static_cast<size_t>(areas->Length));
+        for each (StepExportArea^ area in areas)
         {
-            if (circuit == nullptr || circuit->Points == nullptr || circuit->Points->Length == 0)
+            if (area == nullptr || area->Pieces == nullptr || area->Pieces->Length == 0)
             {
-                failureReason = "invalid-points";
+                failureReason = "no-circuits";
                 return false;
             }
-            NativeStepExportCircuit native;
+            const std::wstring areaName = msclr::interop::marshal_as<std::wstring>(
+                area->AreaName == nullptr ? String::Empty : area->AreaName);
+            step_export_geometry::NativeStepExportArea native;
             native.name = msclr::interop::marshal_as<std::wstring>(
-                circuit->Name == nullptr ? String::Empty : circuit->Name);
-            native.areaName = msclr::interop::marshal_as<std::wstring>(
-                circuit->AreaName == nullptr ? String::Empty : circuit->AreaName);
-            native.r = circuit->ColorR;
-            native.g = circuit->ColorG;
-            native.b = circuit->ColorB;
-            native.points.reserve(static_cast<size_t>(circuit->Points->Length));
-            for each (double value in circuit->Points) native.points.push_back(value);
-            nativeCircuits.push_back(native);
+                area->Name == nullptr ? String::Empty : area->Name);
+            native.areaName = areaName;
+            native.r = area->ColorR;
+            native.g = area->ColorG;
+            native.b = area->ColorB;
+            native.pieces.reserve(static_cast<size_t>(area->Pieces->Length));
+            for each (StepExportPiece^ piece in area->Pieces)
+            {
+                if (piece == nullptr || piece->Points == nullptr || piece->Points->Length == 0)
+                {
+                    failureReason = "invalid-points";
+                    return false;
+                }
+                step_export_geometry::NativeStepExportPiece nativePiece;
+                nativePiece.name = msclr::interop::marshal_as<std::wstring>(
+                    piece->Name == nullptr ? String::Empty : piece->Name);
+                nativePiece.points.reserve(static_cast<size_t>(piece->Points->Length));
+                for each (double value in piece->Points) nativePiece.points.push_back(value);
+                native.pieces.push_back(std::move(nativePiece));
+            }
+            nativeAreas.push_back(std::move(native));
         }
 
         std::string failure;
@@ -4070,7 +4151,7 @@ bool Bridge::ExportStepWithRoutes(String^ targetPath, String^ modelName, double 
             ? std::wstring(L"model")
             : msclr::interop::marshal_as<std::wstring>(modelName);
         if (!ExportStepWithRoutesNative(ToUtf8Path(msclr::interop::marshal_as<std::wstring>(targetPath)),
-                name, wireDiameterMm, nativeCircuits, failure))
+                name, wireDiameterMm, nativeAreas, failure))
         {
             failureReason = gcnew String(failure.c_str());
             return false;

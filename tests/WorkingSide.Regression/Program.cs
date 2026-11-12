@@ -734,14 +734,34 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
                 try
                 {
                     var straightWire=new StepExportCircuit("테스트 A 발열경로","테스트 A",255,0,0,
-                        new double[]{0,0,0, 50,0,0, 50,30,0, 0,30,0});
+                        new double[]{0,0,0, 15,0.4,0, 30,0.6,0, 45,0.4,0, 60,0,0});
                     var turnedWire=new StepExportCircuit("테스트 B 발열경로","테스트 B",0,128,255,
-                        new double[]{0,0,10, 40,0,10, 40,25,10});
+                        new double[]{0,0,10, 12,0.3,10.2, 24,0.5,10.6, 36,0.3,10.8, 48,0,11});
                     bool exported=Bridge.ExportStepWithRoutes(stepPath,"Mold_Cover_Trim",0.30,
                         new[]{straightWire,turnedWire},out string stepFailure);
                     Check(exported,"STEP export writes model plus two wire parts ("+stepFailure+")");
                     Check(File.Exists(stepPath)&&new FileInfo(stepPath).Length>0,
                         "STEP export file is non-empty");
+                    // 조각 단위 API: 조각마다 중심선 1개 + 발열사 솔리드 1개를 만들고
+                    // 다시 읽어 컴포넌트 수/형상을 검증한다.
+                    string piecePath=Path.Combine(Path.GetTempPath(),
+                        "heatingmold_step_piece_"+Guid.NewGuid().ToString("N")+".step");
+                    try
+                    {
+                        var lanePiece=new StepExportPiece("테스트 A 레인 1",
+                            new double[]{0,0,0, 15,0.4,0, 30,0.6,0, 45,0.4,0, 60,0,0});
+                        var turnPiece=new StepExportPiece("테스트 A 턴 1",
+                            new double[]{60,0,0, 62,0.2,1, 64,0.3,2, 66,0.2,3, 68,0,4});
+                        var pieceArea=new StepExportArea("테스트 A","테스트 A",255,0,0,
+                            new[]{lanePiece,turnPiece});
+                        bool pieceExported=Bridge.ExportStepWithRoutes(piecePath,"Mold_Cover_Trim",0.30,
+                            new[]{pieceArea},out string pieceFailure);
+                        Check(pieceExported,
+                            "STEP piece export writes one solid per piece ("+pieceFailure+")");
+                        Check(File.Exists(piecePath)&&new FileInfo(piecePath).Length>0,
+                            "STEP piece export file is non-empty");
+                    }
+                    finally { try { if(File.Exists(piecePath)) File.Delete(piecePath); } catch { } }
                     // 한글 경로: 관리→네이티브 경로 변환이 ACP가 아니라 UTF-8이어야
                     // OCCT가 파일을 만들 수 있다(사용자 기본 파일명이 한글이다).
                     string koreanDir=Path.Combine(Path.GetTempPath(),"발열몰드 경로 검증");

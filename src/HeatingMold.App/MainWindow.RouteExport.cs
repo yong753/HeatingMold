@@ -8,13 +8,13 @@ namespace HeatingMold.App;
 public partial class MainWindow
 {
     /// <summary>내보내기용 확정 조각 하나. 좌표는 확정된 실제 3D 체인이다.</summary>
-    private sealed record RouteExportPiece(
+    internal sealed record RouteExportPiece(
         string AreaName, int PieceIndex, int NativePieceId,
         SerpentineRoutePieceKind Kind, int LaneIndex, double LengthMm,
         IReadOnlyList<Vec3> Points, byte ColorR, byte ColorG, byte ColorB);
 
     /// <summary>내보내기용 확정 회로 하나. 조각 순서는 회로 정본과 같다.</summary>
-    private sealed record RouteExportCircuit(
+    internal sealed record RouteExportCircuit(
         string CircuitId, IReadOnlyList<RouteExportPiece> Pieces);
 
     /// <summary>
