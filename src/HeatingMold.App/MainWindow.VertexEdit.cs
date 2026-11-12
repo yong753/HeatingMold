@@ -239,12 +239,22 @@ public partial class MainWindow
     {
         if (!Viewport.VertexEditMode || handle < 0 || handle >= _vertexHandleGroupMap.Count) return;
         int groupIndex = _vertexHandleGroupMap[handle];
+        if (!TryViewportPointOnFrame(x, y, out Vec2 pressUv, out _)) return;
+        BeginVertexDrag(groupIndex, pressUv, x, y);
+    }
+
+    /// <summary>
+    /// 드래그 시작 상태 전이. UI는 화면 좌표에서 구한 작업면 datum을, 자동 검증은
+    /// 승인된 재생 datum을 넘긴다. 이후 미리보기·확정·취소는 같은 함수들을 공유한다.
+    /// </summary>
+    private bool BeginVertexDrag(int groupIndex, Vec2 pressUv, int x, int y)
+    {
+        if (!Viewport.VertexEditMode || groupIndex < 0 || groupIndex >= _vertexGroups.Count) return false;
         if (IsRouteEndpointGroup(groupIndex))
         {
             StatusText.Text = RouteEndpointEditMessage;
-            return;
+            return false;
         }
-        if (!TryViewportPointOnFrame(x, y, out Vec2 pressUv, out _)) return;
         _vertexDragGroup = groupIndex;
         _vertexDragOriginDatum = _vertexGroups[_vertexDragGroup].Datum;
         _vertexDragPressUv = pressUv;
@@ -252,7 +262,8 @@ public partial class MainWindow
         _vertexLastMoveX = x;
         _vertexLastMoveY = y;
         Bridge.ClearRoutePreview();
-        Bridge.HighlightVertexHandle(handle);
+        Bridge.HighlightVertexHandle(-1);
+        return true;
     }
 
     private void OnVertexDragMoved(int x, int y)
@@ -268,28 +279,38 @@ public partial class MainWindow
     private void OnVertexDragCompleted(int x, int y)
     {
         if (!_vertexDragging) return;
+        if (!TryViewportPointOnFrame(x, y, out Vec2 uv, out _))
+        {
+            OnVertexDragCancelled();
+            RefreshVertexHandles();
+            return;
+        }
+        CompleteVertexDrag(CandidateDatum(uv));
+    }
+
+    /// <summary>
+    /// 미리보기 상태를 확정한다. 이동이 없으면 제품과 동일하게 재생성을 생략한다.
+    /// 자동 검증도 이 함수를 호출해 UI와 같은 커밋 경로를 사용한다.
+    /// </summary>
+    private bool CompleteVertexDrag(Vec2 datum)
+    {
+        if (!_vertexDragging) return false;
         _vertexDragging = false;
         int group = _vertexDragGroup;
         _vertexDragGroup = -1;
         Bridge.ClearRoutePreview();
         Bridge.HighlightVertexHandle(-1);
-        if (group < 0 || group >= _vertexGroups.Count) return;
-        // 이동 없는 클릭은 전체 재생성을 무시한다.
-        if (!TryViewportPointOnFrame(x, y, out Vec2 uv, out _))
-        {
-            RefreshVertexHandles();
-            return;
-        }
-        Vec2 datum = CandidateDatum(uv);
+        if (group < 0 || group >= _vertexGroups.Count) return false;
         if ((datum - _vertexDragOriginDatum).Length <= 1e-6)
         {
             StatusText.Text = "꼭지점 위치가 변경되지 않았습니다";
-            return;
+            return false;
         }
         _vertexDragGroup = group;
         CommitVertex(datum);
         _vertexDragGroup = -1;
         RefreshVertexHandles();
+        return true;
     }
 
     private void OnVertexDragCancelled()

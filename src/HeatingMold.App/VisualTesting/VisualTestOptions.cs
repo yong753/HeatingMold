@@ -15,7 +15,7 @@ internal sealed class VisualTestOptions
     public bool Enabled { get; private set; }
     public string ScenarioPath { get; private set; } = "";
     public string RunDirectory { get; private set; } = "";
-    public double HoldSeconds { get; private set; } = 3;
+    public double HoldSeconds { get; private set; } = 1;
     public bool StepMode { get; private set; }
     public string RepositoryRoot { get; private set; } = "";
     public string Error { get; private set; }

@@ -28,7 +28,7 @@ namespace HeatingMold.App
             ScenarioPathBox.Text = "";
             RunDirectoryBox.Text = Path.Combine(_repositoryRoot, "artifacts", "visual-test",
                 "ui-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture));
-            HoldSecondsBox.Text = "3";
+            HoldSecondsBox.Text = "1";
             StatusText.Text = "";
         }
 

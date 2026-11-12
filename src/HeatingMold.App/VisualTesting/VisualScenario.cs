@@ -232,13 +232,17 @@ internal sealed class VisualScenario
                         || !double.IsFinite(step.OffsetMm[0]) || !double.IsFinite(step.OffsetMm[1])
                         || (Math.Abs(step.OffsetMm[0]) < 1e-9 && Math.Abs(step.OffsetMm[1]) < 1e-9))
                         throw new ArgumentException("steps[" + i + "].offsetMm는 0이 아닌 [dx, dy]여야 합니다.");
+                    ValidateOutcome(step, i);
                     break;
                 case "pickExitPoint":
                     RequireAlias(step.Area, aliases, i);
                     ValidateExitPoint(step.ExitPoint, i);
                     break;
+                case "setElectrical":
+                    ValidateElectricalStep(step.Electrical, i, aliases, required: true);
+                    break;
                 case "checkElectrical":
-                    ValidateElectricalStep(step.Electrical, i);
+                    ValidateElectricalStep(step.Electrical, i, aliases, required: false);
                     break;
                 case "splitArea":
                     RequireAlias(step.Area, aliases, i);
@@ -336,10 +340,15 @@ internal sealed class VisualScenario
             throw new ArgumentException("steps[" + index + "].exitPoint.toleranceMm은 0보다 커야 합니다.");
     }
 
-    private static void ValidateElectricalStep(VisualElectricalSpec electrical, int index)
+    private static void ValidateElectricalStep(
+        VisualElectricalSpec electrical, int index, HashSet<string> aliases, bool required)
     {
         if (electrical == null)
-            throw new ArgumentException("steps[" + index + "].electrical이 필요합니다.");
+        {
+            if (required)
+                throw new ArgumentException("steps[" + index + "].electrical이 필요합니다.");
+            return;
+        }
         if (electrical.PresetIndex < 0 || electrical.PresetIndex > 1)
             throw new ArgumentException("steps[" + index + "].electrical.presetIndex는 0 또는 1이어야 합니다(직접 입력은 지원하지 않습니다).");
         if (!double.IsFinite(electrical.VoltageV) || !(electrical.VoltageV > 0))
@@ -350,6 +359,16 @@ internal sealed class VisualScenario
             throw new ArgumentException("steps[" + index + "].electrical.allowedPowerKw는 0보다 커야 합니다.");
         if (electrical.ReviewScope < 0 || electrical.ReviewScope > 1)
             throw new ArgumentException("steps[" + index + "].electrical.reviewScope는 0 또는 1이어야 합니다.");
+        if (electrical.CircuitVerdicts == null) return;
+        foreach (VisualCircuitVerdict verdict in electrical.CircuitVerdicts)
+        {
+            if (verdict == null)
+                throw new ArgumentException("steps[" + index + "].electrical.circuitVerdicts에 null 항목이 있습니다.");
+            if (!aliases.Contains(verdict.Area))
+                throw new ArgumentException("steps[" + index + "].electrical.circuitVerdicts가 알 수 없는 area를 참조합니다: " + verdict.Area);
+            if (verdict.Verdict != "OK" && verdict.Verdict != "NG")
+                throw new ArgumentException("steps[" + index + "].electrical.circuitVerdicts.verdict는 OK 또는 NG여야 합니다.");
+        }
     }
 
     private static void ValidateFileName(string fileName, int index)
@@ -488,6 +507,17 @@ internal sealed class VisualElectricalSpec
     public double AllowedPowerKw { get; set; } = 3.5;
     /// <summary>지정하면 모든 회로의 판정이 이 값과 일치해야 한다. 생략하면 판정 자체를 검사하지 않는다.</summary>
     public bool? ExpectedWithinLimits { get; set; }
+    /// <summary>false면 검사 단계에서 입력값을 다시 적용하지 않고 현재 값을 읽기만 한다.</summary>
+    public bool Apply { get; set; } = true;
+    /// <summary>영역별 회로 판정 기대. 지정한 영역의 모든 회로가 해당 판정이어야 한다.</summary>
+    public VisualCircuitVerdict[] CircuitVerdicts { get; set; }
+}
+
+/// <summary>영역 하나에 속한 모든 회로의 기대 판정.</summary>
+internal sealed class VisualCircuitVerdict
+{
+    public string Area { get; set; }
+    public string Verdict { get; set; }
 }
 
 internal sealed class VisualExpectSpec
@@ -534,6 +564,8 @@ internal sealed class VisualActionSpec
     public string FileName { get; set; }
     public string Outcome { get; set; } = "success";
     public string FailureContains { get; set; }
+    /// <summary>true면 꼭지점 편집을 미리보기까지만 하고 취소한다.</summary>
+    public bool Cancel { get; set; }
     public VisualExitSpec Exit { get; set; }
     public VisualAnchorSpec Anchor { get; set; }
     public VisualExitPointSpec ExitPoint { get; set; }

@@ -58,6 +58,8 @@ internal sealed class VisualTestRunResult
     public string DxfPath { get; set; } = "";
     /// <summary>이번 실행에서 실제로 생성에 성공한 DXF 파일 목록.</summary>
     public List<string> DxfFiles { get; set; } = new();
+    /// <summary>종류별 산출물 경로(step/project/dxf 등). 실제 존재하는 파일만 기록한다.</summary>
+    public Dictionary<string, List<string>> Artifacts { get; set; } = new();
     public List<VisualStepRecord> Steps { get; set; } = new();
 }
 
@@ -93,6 +95,8 @@ internal sealed class VisualTestReport
     private readonly VisualScenario _scenario;
     private readonly List<VisualStepRecord> _steps = new();
     private readonly List<string> _dxfFiles = new();
+    private readonly Dictionary<string, List<string>> _artifacts =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public string RunDirectory { get; }
     public string ResultPath => Path.Combine(RunDirectory, "result.json");
@@ -108,6 +112,22 @@ internal sealed class VisualTestReport
         string full = Path.GetFullPath(path);
         if (!_dxfFiles.Any(p => string.Equals(p, full, StringComparison.OrdinalIgnoreCase)))
             _dxfFiles.Add(full);
+        RegisterArtifact("dxf", full);
+    }
+
+    /// <summary>STEP·프로젝트·화면 캡처 등 검증 산출물을 종류별로 기록한다.</summary>
+    public void RegisterArtifact(string kind, string path)
+    {
+        if (string.IsNullOrWhiteSpace(kind) || string.IsNullOrWhiteSpace(path)) return;
+        if (!File.Exists(path)) return;
+        string full = Path.GetFullPath(path);
+        if (!_artifacts.TryGetValue(kind, out List<string> list))
+        {
+            list = new List<string>();
+            _artifacts[kind] = list;
+        }
+        if (!list.Any(p => string.Equals(p, full, StringComparison.OrdinalIgnoreCase)))
+            list.Add(full);
     }
 
     public VisualTestReport(string runDirectory, VisualScenario scenario)
@@ -164,6 +184,10 @@ internal sealed class VisualTestReport
     {
         result.Steps = new List<VisualStepRecord>(_steps);
         result.DxfFiles = new List<string>(_dxfFiles);
+        result.Artifacts = _artifacts.ToDictionary(
+            pair => pair.Key,
+            pair => new List<string>(pair.Value),
+            StringComparer.OrdinalIgnoreCase);
         result.StartedAt = StartedAt;
         result.FinishedAt = DateTimeOffset.Now;
         if (File.Exists(ResultPath))

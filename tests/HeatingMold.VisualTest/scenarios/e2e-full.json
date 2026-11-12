@@ -1,0 +1,413 @@
+{
+    "schemaVersion":  2,
+    "name":  "E2E 전체 기능",
+    "model":  {
+                  "path":  "resource/Mold_Cover_Trim.step",
+                  "sha256":  "8CB03405817606D1917FEF55B46A60011FFB5E93075EECDEF5A8651D4359FCED",
+                  "faceCount":  80,
+                  "solidCount":  0
+              },
+    "areas":  [
+                  {
+                      "alias":  "A",
+                      "faceIds":  [
+                                      44,
+                                      56,
+                                      69
+                                  ],
+                      "marginMm":  5,
+                      "spacingMm":  15,
+                      "direction":  0
+                  }
+              ],
+    "steps":  [
+                  {
+                      "id":  "full-0",
+                      "name":  "발열면 선택",
+                      "action":  "selectFaces",
+                      "faces":  [
+                                    44,
+                                    56,
+                                    69
+                                ]
+                  },
+                  {
+                      "id":  "full-1",
+                      "name":  "영역 A 확정",
+                      "action":  "confirmArea",
+                      "area":  "A"
+                  },
+                  {
+                      "id":  "full-2",
+                      "name":  "시작 인출점 직접 선택",
+                      "action":  "pickExitPoint",
+                      "area":  "A",
+                      "exitPoint":  {
+                                        "role":  "start",
+                                        "uv":  [
+                                                   295.91262149879026,
+                                                   133.36749353890832
+                                               ],
+                                        "toleranceMm":  0.5
+                                    }
+                  },
+                  {
+                      "id":  "full-3",
+                      "name":  "종료 인출점 직접 선택",
+                      "action":  "pickExitPoint",
+                      "area":  "A",
+                      "exitPoint":  {
+                                        "role":  "end",
+                                        "uv":  [
+                                                   295.9106395319768,
+                                                   -291.6634555349192
+                                               ],
+                                        "toleranceMm":  0.5
+                                    }
+                  },
+                  {
+                      "id":  "full-4",
+                      "name":  "영역 A 가로 경로 생성",
+                      "action":  "generate",
+                      "area":  "A",
+                      "marginMm":  5,
+                      "spacingMm":  15,
+                      "direction":  0
+                  },
+                  {
+                      "id":  "full-5",
+                      "name":  "영역 A 구조 확인",
+                      "action":  "checkArea",
+                      "area":  "A",
+                      "expect":  {
+                                     "pieces":  60,
+                                     "turns":  29,
+                                     "circuits":  1,
+                                     "lengthMm":  18015.505,
+                                     "lengthToleranceMm":  0.5
+                                 }
+                  },
+                  {
+                      "id":  "full-6",
+                      "name":  "제외영역 추가",
+                      "action":  "addExclusion",
+                      "area":  "A",
+                      "rect":  [
+                                   -400,
+                                   -400,
+                                   -340,
+                                   -334
+                               ]
+                  },
+                  {
+                      "id":  "full-7",
+                      "name":  "제외 후 경로 초기화 확인",
+                      "action":  "expectNoPattern",
+                      "area":  "A"
+                  },
+                  {
+                      "id":  "full-8",
+                      "name":  "제외영역 반영 재생성",
+                      "action":  "generate",
+                      "area":  "A"
+                  },
+                  {
+                      "id":  "full-9",
+                      "name":  "제외영역 침범 확인",
+                      "action":  "checkExclusion",
+                      "area":  "A",
+                      "rect":  [
+                                   -400,
+                                   -400,
+                                   -340,
+                                   -334
+                               ]
+                  },
+                  {
+                      "id":  "full-10",
+                      "name":  "제외영역 경로 구조 확인",
+                      "action":  "checkArea",
+                      "area":  "A",
+                      "expect":  {
+                                     "pieces":  60,
+                                     "turns":  29,
+                                     "circuits":  1,
+                                     "lengthMm":  18015.505,
+                                     "lengthToleranceMm":  0.5,
+                                     "marginMm":  5,
+                                     "spacingMm":  15
+                                 }
+                  },
+                  {
+                      "id":  "full-11",
+                      "name":  "제외영역 초기화",
+                      "action":  "removeExclusion",
+                      "area":  "A"
+                  },
+                  {
+                      "id":  "full-12",
+                      "name":  "초기화 후 경로 없음 확인",
+                      "action":  "expectNoPattern",
+                      "area":  "A"
+                  },
+                  {
+                      "id":  "full-13",
+                      "name":  "초기화 후 재생성",
+                      "action":  "generate",
+                      "area":  "A"
+                  },
+                  {
+                      "id":  "full-14",
+                      "name":  "영역 A 구조 확인",
+                      "action":  "checkArea",
+                      "area":  "A",
+                      "expect":  {
+                                     "pieces":  60,
+                                     "turns":  29,
+                                     "circuits":  1,
+                                     "lengthMm":  18015.505,
+                                     "lengthToleranceMm":  0.5
+                                 }
+                  },
+                  {
+                      "id":  "full-15",
+                      "name":  "꼭지점 이동 확정",
+                      "action":  "moveVertex",
+                      "area":  "A",
+                      "vertexIndex":  2,
+                      "offsetMm":  [
+                                       20,
+                                       0
+                                   ]
+                  },
+                  {
+                      "id":  "full-16",
+                      "name":  "편집 후 경로 확인",
+                      "action":  "checkArea",
+                      "area":  "A",
+                      "expect":  {
+                                     "pieces":  60,
+                                     "turns":  29,
+                                     "circuits":  1,
+                                     "lengthMm":  17979.067,
+                                     "lengthToleranceMm":  0.5,
+                                     "routeEdited":  true
+                                 }
+                  },
+                  {
+                      "id":  "full-17",
+                      "name":  "편집 상태 DXF 내보내기",
+                      "action":  "exportDxf",
+                      "fileName":  "before-split.dxf",
+                      "scope":  0
+                  },
+                  {
+                      "id":  "full-18",
+                      "name":  "편집 상태 STEP 내보내기",
+                      "action":  "exportStep",
+                      "fileName":  "before-split.step",
+                      "scope":  0
+                  },
+                  {
+                      "id":  "full-19",
+                      "name":  "편집 상태 저장",
+                      "action":  "saveProject",
+                      "fileName":  "before-split.json"
+                  },
+                  {
+                      "id":  "full-20",
+                      "name":  "전기 입력 적용",
+                      "action":  "setElectrical",
+                      "electrical":  {
+                                         "presetIndex":  0,
+                                         "voltageV":  220,
+                                         "allowedCurrentA":  16,
+                                         "allowedPowerKw":  3.5,
+                                         "reviewScope":  0
+                                     }
+                  },
+                  {
+                      "id":  "full-21",
+                      "name":  "편집 상태 전기 판정 확인",
+                      "action":  "checkElectrical",
+                      "electrical":  {
+                                         "presetIndex":  0,
+                                         "voltageV":  220,
+                                         "allowedCurrentA":  16,
+                                         "allowedPowerKw":  3.5,
+                                         "reviewScope":  0,
+                                         "apply":  false,
+                                         "expectedWithinLimits":  false,
+                                         "circuitVerdicts":  [
+                                                                 {
+                                                                     "area":  "A",
+                                                                     "verdict":  "NG"
+                                                                 }
+                                                             ]
+                                     }
+                  },
+                  {
+                      "id":  "full-22",
+                      "name":  "영역 A 자동 3분할",
+                      "action":  "splitArea",
+                      "area":  "A",
+                      "partCount":  3,
+                      "childAliases":  [
+                                           "A1",
+                                           "A2",
+                                           "A3"
+                                       ],
+                      "confirm":  "yes",
+                      "confirmAction":  "영역 분할"
+                  },
+                  {
+                      "id":  "full-23",
+                      "name":  "분할 영역 A1 확인",
+                      "action":  "checkArea",
+                      "area":  "A1",
+                      "expect":  {
+                                     "pieces":  16,
+                                     "turns":  7,
+                                     "circuits":  1,
+                                     "lengthMm":  5323.82,
+                                     "routeEdited":  false
+                                 }
+                  },
+                  {
+                      "id":  "full-24",
+                      "name":  "분할 영역 A2 확인",
+                      "action":  "checkArea",
+                      "area":  "A2",
+                      "expect":  {
+                                     "pieces":  16,
+                                     "turns":  7,
+                                     "circuits":  1,
+                                     "lengthMm":  5343.181,
+                                     "routeEdited":  false
+                                 }
+                  },
+                  {
+                      "id":  "full-25",
+                      "name":  "분할 영역 A3 확인",
+                      "action":  "checkArea",
+                      "area":  "A3",
+                      "expect":  {
+                                     "pieces":  24,
+                                     "turns":  11,
+                                     "circuits":  1,
+                                     "lengthMm":  6009.727,
+                                     "routeEdited":  false
+                                 }
+                  },
+                  {
+                      "id":  "full-26",
+                      "name":  "분할 후 전기 판정 확인",
+                      "action":  "checkElectrical",
+                      "electrical":  {
+                                         "presetIndex":  0,
+                                         "voltageV":  220,
+                                         "allowedCurrentA":  16,
+                                         "allowedPowerKw":  3.5,
+                                         "reviewScope":  0,
+                                         "apply":  false,
+                                         "expectedWithinLimits":  true,
+                                         "circuitVerdicts":  [
+                                                                 {
+                                                                     "area":  "A1",
+                                                                     "verdict":  "OK"
+                                                                 },
+                                                                 {
+                                                                     "area":  "A2",
+                                                                     "verdict":  "OK"
+                                                                 },
+                                                                 {
+                                                                     "area":  "A3",
+                                                                     "verdict":  "OK"
+                                                                 }
+                                                             ]
+                                     }
+                  },
+                  {
+                      "id":  "full-27",
+                      "name":  "분할 후 DXF 내보내기",
+                      "action":  "exportDxf",
+                      "fileName":  "after-split.dxf",
+                      "scope":  0
+                  },
+                  {
+                      "id":  "full-28",
+                      "name":  "분할 후 STEP 내보내기",
+                      "action":  "exportStep",
+                      "fileName":  "after-split.step",
+                      "scope":  0
+                  },
+                  {
+                      "id":  "full-29",
+                      "name":  "분할 상태 저장",
+                      "action":  "saveProject",
+                      "fileName":  "after-split.json"
+                  },
+                  {
+                      "id":  "full-30",
+                      "name":  "분할 프로젝트 다시 열기·상태 비교",
+                      "action":  "loadProject",
+                      "fileName":  "after-split.json",
+                      "compareProject":  true
+                  },
+                  {
+                      "id":  "full-31",
+                      "name":  "복원 영역 A1 확인",
+                      "action":  "checkArea",
+                      "area":  "A1",
+                      "expect":  {
+                                     "pieces":  16,
+                                     "turns":  7,
+                                     "circuits":  1,
+                                     "lengthMm":  5323.82,
+                                     "routeEdited":  false
+                                 }
+                  },
+                  {
+                      "id":  "full-32",
+                      "name":  "복원 후 전기 판정 확인",
+                      "action":  "checkElectrical",
+                      "electrical":  {
+                                         "presetIndex":  0,
+                                         "voltageV":  220,
+                                         "allowedCurrentA":  16,
+                                         "allowedPowerKw":  3.5,
+                                         "reviewScope":  0,
+                                         "apply":  false,
+                                         "expectedWithinLimits":  true,
+                                         "circuitVerdicts":  [
+                                                                 {
+                                                                     "area":  "A1",
+                                                                     "verdict":  "OK"
+                                                                 },
+                                                                 {
+                                                                     "area":  "A2",
+                                                                     "verdict":  "OK"
+                                                                 },
+                                                                 {
+                                                                     "area":  "A3",
+                                                                     "verdict":  "OK"
+                                                                 }
+                                                             ]
+                                     }
+                  },
+                  {
+                      "id":  "full-33",
+                      "name":  "복원 후 DXF 재출력",
+                      "action":  "exportDxf",
+                      "fileName":  "reloaded.dxf",
+                      "scope":  0
+                  },
+                  {
+                      "id":  "full-34",
+                      "name":  "복원 후 STEP 재출력",
+                      "action":  "exportStep",
+                      "fileName":  "reloaded.step",
+                      "scope":  0
+                  }
+              ]
+}

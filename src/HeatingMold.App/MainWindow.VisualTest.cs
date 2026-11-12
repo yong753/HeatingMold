@@ -8,6 +8,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using HeatingMold.App.Persistence;
 using HeatingMold.App.VisualTesting;
 using HeatingMold.Core.Electrical;
 using HeatingMold.Core.Geometry;
@@ -245,6 +246,7 @@ namespace HeatingMold.App
                 case "generate": return VisualGenerate(step.Spec, scenario);
                 case "checkArea": return VisualCheckArea(step.Spec, scenario);
                 case "checkElectrical": return VisualCheckElectrical(step.Spec);
+                case "setElectrical": return VisualSetElectrical(step.Spec);
                 case "splitArea": return VisualSplitArea(step.Spec, scenario);
                 case "checkAllAreas": return VisualCheckAllAreas(step.Spec, scenario);
                 case "addExclusion": return VisualAddExclusion(step.Spec, scenario);
@@ -751,18 +753,12 @@ namespace HeatingMold.App
             return VisualStepOutcome.Ok("직접 인출점 선택", data);
         }
 
-        private VisualStepOutcome VisualCheckElectrical(VisualActionSpec spec)
+        private VisualStepOutcome VisualSetElectrical(VisualActionSpec spec)
         {
             VisualElectricalSpec requested = spec.Electrical;
             Require(requested != null, "electrical 정의가 없습니다.");
             SidebarTabs.SelectedIndex = ReviewTabIndex;
-            WirePresetBox.SelectedIndex = requested.PresetIndex;
-            AllowedVoltageBox.Text = requested.VoltageV.ToString("0.###", CultureInfo.InvariantCulture);
-            AllowedCurrentBox.Text = requested.AllowedCurrentA.ToString("0.###", CultureInfo.InvariantCulture);
-            AllowedPowerBox.Text = requested.AllowedPowerKw.ToString("0.###", CultureInfo.InvariantCulture);
-            ReviewScopeBox.SelectedIndex = 0;
-            _reviewCurrentAreaOnly = false;
-            RefreshElectricalTable();
+            ApplyElectricalInputs(requested);
 
             Require(TryReadElectricalLimits(out TargetPowerElectricalSettings settings, out string settingsError),
                 "전기 입력을 읽지 못했습니다: " + settingsError);
@@ -775,6 +771,51 @@ namespace HeatingMold.App
                 "제품에 적용된 허용 전압이 시나리오와 다릅니다.");
             Require(Near(limits.CurrentLimitA, requested.AllowedCurrentA, 1e-9),
                 "제품에 적용된 허용 전류가 시나리오와 다릅니다.");
+
+            var data = new Dictionary<string, string>
+            {
+                ["preset"] = requested.PresetIndex.ToString(CultureInfo.InvariantCulture),
+                ["voltageLimitV"] = limits.VoltageLimitV.ToString("0.###", CultureInfo.InvariantCulture),
+                ["currentLimitA"] = limits.CurrentLimitA.ToString("0.###", CultureInfo.InvariantCulture),
+                ["powerLimitW"] = limits.PowerLimitW.ToString("0.###", CultureInfo.InvariantCulture),
+                ["resistanceOhmPerM"] = wire.ResistanceOhmPerMeter.ToString("0.###", CultureInfo.InvariantCulture),
+                ["reviewScope"] = requested.ReviewScope.ToString(CultureInfo.InvariantCulture)
+            };
+            return VisualStepOutcome.Ok("전기 입력 적용", data);
+        }
+
+        private void ApplyElectricalInputs(VisualElectricalSpec requested)
+        {
+            WirePresetBox.SelectedIndex = requested.PresetIndex;
+            AllowedVoltageBox.Text = requested.VoltageV.ToString("0.###", CultureInfo.InvariantCulture);
+            AllowedCurrentBox.Text = requested.AllowedCurrentA.ToString("0.###", CultureInfo.InvariantCulture);
+            AllowedPowerBox.Text = requested.AllowedPowerKw.ToString("0.###", CultureInfo.InvariantCulture);
+            ReviewScopeBox.SelectedIndex = 0;
+            _reviewCurrentAreaOnly = false;
+            RefreshElectricalTable();
+        }
+
+        private VisualStepOutcome VisualCheckElectrical(VisualActionSpec spec)
+        {
+            VisualElectricalSpec requested = spec.Electrical;
+            SidebarTabs.SelectedIndex = ReviewTabIndex;
+            if (requested != null && requested.Apply)
+                ApplyElectricalInputs(requested);
+
+            Require(TryReadElectricalLimits(out TargetPowerElectricalSettings settings, out string settingsError),
+                "전기 입력을 읽지 못했습니다: " + settingsError);
+            HeatingWireSpec wire = settings.Wire;
+            ElectricalLimits limits = settings.Limits;
+            Require(limits != null, "전기 허용치를 읽지 못했습니다.");
+            if (requested != null)
+            {
+                Require(Near(limits.PowerLimitW, requested.AllowedPowerKw * 1000.0, 1e-6),
+                    "제품에 적용된 전체 발열전력이 시나리오와 다릅니다.");
+                Require(Near(limits.VoltageLimitV, requested.VoltageV, 1e-9),
+                    "제품에 적용된 허용 전압이 시나리오와 다릅니다.");
+                Require(Near(limits.CurrentLimitA, requested.AllowedCurrentA, 1e-9),
+                    "제품에 적용된 허용 전류가 시나리오와 다릅니다.");
+            }
 
             ReviewSnapshot global = BuildReviewSnapshot();
             Require(global.ElectricalError == null, "전기 입력 오류: " + global.ElectricalError);
@@ -834,13 +875,37 @@ namespace HeatingMold.App
                 Require(row.Assessment != null, "회로 판정이 없습니다: " + circuit.CircuitId);
                 Require(row.Assessment.IsWithinLimits == within,
                     "회로 판정이 독립 계산과 다릅니다: " + circuit.CircuitId);
-                if (requested.ExpectedWithinLimits.HasValue)
+                if (requested?.ExpectedWithinLimits != null)
                 {
-                    Require(within == requested.ExpectedWithinLimits.Value,
+                    Require(within == requested!.ExpectedWithinLimits!.Value,
                         string.Format(CultureInfo.InvariantCulture,
                             "회로 {0} 판정이 기대와 다릅니다. 필요 전압 {1:0.###} V / 허용 {2:0.###} V, 전류 {3:0.####} A / 허용 {4:0.####} A",
                             circuit.CircuitId, independentVoltage, limits.VoltageLimitV,
                             independentCurrent, limits.CurrentLimitA));
+                }
+            }
+            if (requested?.CircuitVerdicts != null)
+            {
+                foreach (VisualCircuitVerdict expectation in requested.CircuitVerdicts)
+                {
+                    WorkingArea target = ResolveVisualArea(expectation.Area);
+                    string prefix = string.IsNullOrEmpty(target.Name) ? "A-" : target.Name + "-";
+                    List<ElectricalSpecRow> areaRows = global.Table.Rows
+                        .Where(row => row.CircuitId.StartsWith(prefix, StringComparison.Ordinal))
+                        .ToList();
+                    Require(areaRows.Count > 0,
+                        "회로 판정을 확인할 발열회로가 없습니다: " + expectation.Area);
+                    bool expectedOk = expectation.Verdict == "OK";
+                    foreach (ElectricalSpecRow row in areaRows)
+                    {
+                        Require(row.Assessment != null,
+                            "회로 판정이 없습니다: " + row.CircuitId);
+                        Require(row.Assessment.IsWithinLimits == expectedOk,
+                            string.Format(CultureInfo.InvariantCulture,
+                                "회로 {0} 판정이 시나리오와 다릅니다: 기대 {1}, 실제 {2}",
+                                row.CircuitId, expectation.Verdict,
+                                row.Assessment.IsWithinLimits ? "OK" : "NG"));
+                    }
                 }
             }
             Require(Near(global.Table.TotalTargetPowerW, allocated, 1e-6),
@@ -849,15 +914,16 @@ namespace HeatingMold.App
                 "총 발열전력이 배분 합계와 다릅니다.");
 
             bool anyNg = global.Table.Rows.Any(row => row.IsOverLimit);
-            if (requested.ExpectedWithinLimits == false)
+            if (requested?.ExpectedWithinLimits == false)
                 Require(anyNg, "NG를 기대했지만 모든 회로가 한도 이내입니다.");
 
-            ReviewScopeBox.SelectedIndex = requested.ReviewScope;
-            _reviewCurrentAreaOnly = requested.ReviewScope == 1;
+            int reviewScope = requested?.ReviewScope ?? (_reviewCurrentAreaOnly ? 1 : 0);
+            ReviewScopeBox.SelectedIndex = reviewScope;
+            _reviewCurrentAreaOnly = reviewScope == 1;
             RefreshElectricalTable();
             ReviewSnapshot scoped = BuildReviewSnapshot();
             Require(scoped.ElectricalError == null, "범위 전환 후 전기 입력 오류: " + scoped.ElectricalError);
-            if (requested.ReviewScope == 1)
+            if (reviewScope == 1)
             {
                 Require(scoped.RequestedAreas.Count == 1 && ReferenceEquals(scoped.RequestedAreas[0], _activeArea),
                     "현재 영역 검토 범위가 활성 영역 하나로 제한되지 않았습니다.");
@@ -883,7 +949,7 @@ namespace HeatingMold.App
                 ["allocatedW"] = allocated.ToString("0.###", CultureInfo.InvariantCulture),
                 ["limitW"] = limits.PowerLimitW.ToString("0.###", CultureInfo.InvariantCulture),
                 ["overLimitCircuits"] = global.Table.OverLimitCount.ToString(CultureInfo.InvariantCulture),
-                ["reviewScope"] = requested.ReviewScope.ToString(CultureInfo.InvariantCulture),
+                ["reviewScope"] = reviewScope.ToString(CultureInfo.InvariantCulture),
                 ["wireResistanceOhmPerM"] = wire.ResistanceOhmPerMeter.ToString("0.###", CultureInfo.InvariantCulture)
             };
             return VisualStepOutcome.Ok("전기 판정·공유 전력 배분 확인", data);
@@ -1011,6 +1077,7 @@ namespace HeatingMold.App
             Require(File.Exists(path), "STEP 결과 파일이 없습니다: " + path);
             var info = new FileInfo(path);
             Require(info.Length > 0, "STEP 결과 파일이 비어 있습니다.");
+            VisualTestSession.Current?.Report.RegisterArtifact("step", path);
             var data = new Dictionary<string, string>
             {
                 ["path"] = path,
@@ -1041,6 +1108,7 @@ namespace HeatingMold.App
             Require(File.Exists(path), "프로젝트 파일이 없습니다: " + path);
             var info = new FileInfo(path);
             Require(info.Length > 0, "프로젝트 파일이 비어 있습니다.");
+            VisualTestSession.Current?.Report.RegisterArtifact("project", path);
             _visualProjectCheckpoints[path] = File.ReadAllText(path);
             _visualProjectAliasIds[path] = _visualAreaAliases.ToDictionary(
                 pair => pair.Key, pair => pair.Value.AreaId, StringComparer.Ordinal);
@@ -1096,18 +1164,11 @@ namespace HeatingMold.App
             string checkpointDiff = null;
             if (spec.CompareProject == true && _visualProjectCheckpoints.TryGetValue(path, out string expectedJson))
             {
-                string tempPath = Path.Combine(VisualTestSession.Current.Report.RunDirectory,
-                    "reload-check-" + Guid.NewGuid().ToString("N") + ".json");
-                try
-                {
-                    Require(SaveProjectTo(tempPath),
-                        "복원 상태를 임시 프로젝트로 저장하지 못했습니다: " + StatusText.Text);
-                    checkpointDiff = CompareProjectJson(expectedJson, File.ReadAllText(tempPath));
-                }
-                finally
-                {
-                    TryDeleteFile(tempPath);
-                }
+                // 현재 상태를 메모리에서 직렬화한다. 저장 경로/변경 플래그를 바꾸지 않으므로
+                // 복원 검증이 제품의 프로젝트 경로나 dirty 상태에 부작용을 남기지 않는다.
+                ProjectDocument current = BuildProjectDocument(path);
+                string actualJson = System.Text.Encoding.UTF8.GetString(ProjectJsonStore.Serialize(current));
+                checkpointDiff = CompareProjectJson(expectedJson, actualJson);
             }
             if (checkpointDiff != null)
                 return VisualStepOutcome.Fail("저장 시점과 복원 상태가 다릅니다: " + checkpointDiff);
@@ -1384,9 +1445,20 @@ namespace HeatingMold.App
             Require(area.Pattern != null, "제외영역 적용 결과를 검사할 경로가 없습니다.");
             double[] rect = spec.Rect;
             Require(rect != null && rect.Length == 4, "검사할 제외 사각형이 없습니다.");
-            // 경계 접촉은 정상이며, 원본 제외 사각형 대비 허용 거리(0.1mm)를 넘는
-            // 침범만 위반으로 센다. 침범 깊이는 구간 전체에서 계산한다.
-            var exclusion = (rect[0], rect[1], rect[2], rect[3]);
+            // 발열선은 마진이 적용된 제외영역 밖에 있어야 한다. 원본 사각형만 보면
+            // 마진 경계에 붙은 발열 구간을 통과시킬 수 있다. 커넥터의 통과는 허용한다.
+            double margin = area.AppliedInputs?.Margin ?? 0;
+            var exclusion = (
+                rect[0] - margin, rect[1] - margin,
+                rect[2] + margin, rect[3] + margin);
+            Require(area.SelectedStartExit == null || area.SelectedStartExit.Value.Binding != null
+                || area.SelectedStartExit.Value.ArtificialBinding != null
+                || area.SelectedStartExit.Value.SplitBinding != null,
+                "시작 인출점의 경계 연결 정보가 사라졌습니다: " + area.Name);
+            Require(area.SelectedEndExit == null || area.SelectedEndExit.Value.Binding != null
+                || area.SelectedEndExit.Value.ArtificialBinding != null
+                || area.SelectedEndExit.Value.SplitBinding != null,
+                "종료 인출점의 경계 연결 정보가 사라졌습니다: " + area.Name);
 
             // 인출면이 있는 제외영역 생성은 editablePattern 경로를 쓰므로 ExclusionPieces가
             // null이고, 최종 조각은 Pattern.RoutePieces에 들어 있다. 둘 다 지원한다.
@@ -1439,6 +1511,9 @@ namespace HeatingMold.App
                 ["heatingPieces"] = checkedPieces.ToString(CultureInfo.InvariantCulture),
                 ["heatingViolations"] = heatingViolations.ToString(CultureInfo.InvariantCulture),
                 ["connectorViolations"] = connectorViolations.ToString(CultureInfo.InvariantCulture),
+                ["marginMm"] = margin.ToString("0.###", CultureInfo.InvariantCulture),
+                ["expandedRect"] = string.Format(CultureInfo.InvariantCulture, "({0:0.###},{1:0.###})-({2:0.###},{3:0.###})",
+                    exclusion.Item1, exclusion.Item2, exclusion.Item3, exclusion.Item4),
                 ["rect"] = string.Format(CultureInfo.InvariantCulture, "({0:0.###},{1:0.###})-({2:0.###},{3:0.###})",
                     rect[0], rect[1], rect[2], rect[3])
             };
@@ -1455,6 +1530,10 @@ namespace HeatingMold.App
             Require(!IsPatternInputStale(area), "입력 조건이 변경되어 꼭지점을 편집할 수 없습니다.");
             Require(spec.VertexIndex != null, "이동할 꼭지점 인덱스가 없습니다.");
 
+            double[] beforeLengths = area.RoutePieceLengths.ToArray();
+            bool beforeEdited = area.RouteEdited;
+            int beforePieces = area.Pattern.RoutePieces.Count;
+
             EnterVertexEdit();
             Require(Viewport.VertexEditMode, "꼭지점 편집 모드가 켜지지 않았습니다.");
             int index = spec.VertexIndex.Value;
@@ -1466,16 +1545,58 @@ namespace HeatingMold.App
             Require(RouteVertexMoveConstraint.TryConstrain(from, requested, area.Pattern!.AngleDeg,
                     out Vec2 expected, out string constraintFailure),
                 "이동 제약을 계산할 수 없습니다: " + constraintFailure);
+            IReadOnlyList<RouteVertexOccurrence> moving = _vertexGroups[index].Occurrences;
+
+            bool begin = BeginVertexDrag(index, from, 0, 0);
+            Require(begin, "꼭지점 드래그를 시작하지 못했습니다: " + StatusText.Text);
+
+            if (spec.Outcome == "rejected")
+            {
+                Require(expected.DistanceTo(from) <= 1e-6,
+                    string.Format(CultureInfo.InvariantCulture,
+                        "이동 거부를 기대했지만 요청 변위가 생성 방향 성분을 가집니다: 시작 ({0:0.###},{1:0.###}) → 기대 ({2:0.###},{3:0.###})",
+                        from.X, from.Y, expected.X, expected.Y));
+                UpdateVertexPreview(requested);
+                RequireStatusContains(spec.FailureContains);
+                OnVertexDragCancelled();
+                ExitVertexEdit();
+                RequireVertexEditExited();
+                RequirePatternUnchanged(area, beforePieces, beforeLengths, beforeEdited, "이동 거부 후");
+                var rejected = new Dictionary<string, string>
+                {
+                    ["area"] = area.Name,
+                    ["from"] = string.Format(CultureInfo.InvariantCulture, "({0:0.###},{1:0.###})", from.X, from.Y),
+                    ["requested"] = string.Format(CultureInfo.InvariantCulture, "({0:0.###},{1:0.###})", requested.X, requested.Y),
+                    ["reason"] = StatusText.Text
+                };
+                return VisualStepOutcome.Ok("꼭지점 이동 제한 확인", rejected);
+            }
+
             Require(expected.DistanceTo(from) > 1e-6,
                 "요청한 꼭지점 이동이 생성 방향과 수직이어서 실제로 적용되지 않습니다. "
                 + string.Format(CultureInfo.InvariantCulture, "시작 ({0:0.###},{1:0.###}) → 요청 ({2:0.###},{3:0.###}), 생성 방향 {4:0.###}도",
                     from.X, from.Y, requested.X, requested.Y, area.Pattern.AngleDeg));
 
-            // 그룹 목록은 확정 후 다시 만들어지므로 이동 대상 점을 미리 보관한다.
-            IReadOnlyList<RouteVertexOccurrence> moving = _vertexGroups[index].Occurrences;
-            _vertexDragGroup = index;
-            CommitVertex(requested);
-            _vertexDragGroup = -1;
+            UpdateVertexPreview(expected);
+            if (spec.Cancel)
+            {
+                OnVertexDragCancelled();
+                ExitVertexEdit();
+                RequireVertexEditExited();
+                RequirePatternUnchanged(area, beforePieces, beforeLengths, beforeEdited, "미리보기 취소 후");
+                var cancelled = new Dictionary<string, string>
+                {
+                    ["area"] = area.Name,
+                    ["vertexIndex"] = index.ToString(CultureInfo.InvariantCulture),
+                    ["expected"] = string.Format(CultureInfo.InvariantCulture, "({0:0.###},{1:0.###})", expected.X, expected.Y),
+                    ["pieces"] = area.Pattern.RoutePieces.Count.ToString(CultureInfo.InvariantCulture),
+                    ["totalLengthMm"] = area.RoutePieceLengths.Sum().ToString("0.###", CultureInfo.InvariantCulture)
+                };
+                return VisualStepOutcome.Ok("꼭지점 미리보기 취소 — 확정 경로 보존", cancelled);
+            }
+
+            bool committed = CompleteVertexDrag(expected);
+            Require(committed, "꼭지점 이동 확정이 완료되지 않았습니다: " + StatusText.Text);
             string commitStatus = StatusText.Text;
 
             bool constraintKept = true;
@@ -1494,7 +1615,6 @@ namespace HeatingMold.App
                     actual.X, actual.Y);
                 break;
             }
-            RefreshVertexHandles();
             ExitVertexEdit();
             Require(constraintKept,
                 string.Format(CultureInfo.InvariantCulture,
@@ -1516,6 +1636,33 @@ namespace HeatingMold.App
                 ["routeEdited"] = area.RouteEdited.ToString()
             };
             return VisualStepOutcome.Ok("꼭지점 이동·수동 편집 적용 확인", data);
+        }
+
+        private void RequireStatusContains(string fragment)
+        {
+            if (string.IsNullOrWhiteSpace(fragment)) return;
+            Require((StatusText.Text ?? "").Contains(fragment, StringComparison.Ordinal),
+                "상태 문구가 기대를 포함하지 않습니다: " + StatusText.Text);
+        }
+
+        private void RequireVertexEditExited()
+        {
+            Require(!_vertexDragging && _vertexDragGroup < 0 && !Viewport.VertexEditMode,
+                "꼭지점 편집 상태가 종료되지 않았습니다.");
+        }
+
+        private static void RequirePatternUnchanged(
+            WorkingArea area, int pieces, double[] lengths, bool edited, string label)
+        {
+            Require(area.Pattern != null && area.Pattern.RoutePieces.Count == pieces,
+                label + " 패턴 조각 수가 달라졌습니다.");
+            Require(area.RoutePieceLengths.Length == lengths.Length,
+                label + " 조각 길이 배열 수가 달라졌습니다.");
+            for (int i = 0; i < lengths.Length; i++)
+                Require(Near(area.RoutePieceLengths[i], lengths[i], 1e-9),
+                    label + " 조각 길이가 달라졌습니다: index " + i);
+            Require(area.RouteEdited == edited,
+                label + " 편집 상태가 달라졌습니다.");
         }
 
         // ---- 확인 대화상자 응답 큐 ----
@@ -1551,7 +1698,7 @@ namespace HeatingMold.App
             ReviewScopeBox.SelectedIndex = spec.Scope ?? 0;
 
             string fileName = string.IsNullOrWhiteSpace(spec.FileName) ? "result.dxf" : spec.FileName;
-            string path = Path.Combine(session.Report.RunDirectory, fileName);
+            string path = VisualArtifactPath(fileName, "result.dxf");
             if (File.Exists(path) && !string.Equals(spec.Outcome, "rejected", StringComparison.OrdinalIgnoreCase))
                 return VisualStepOutcome.Fail("이미 존재하는 DXF 경로입니다: " + path);
 

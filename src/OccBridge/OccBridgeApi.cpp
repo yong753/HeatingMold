@@ -111,6 +111,11 @@
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Section.hxx>
+#include <BRepAlgoAPI_Common.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
 #include <BRepFeat_SplitShape.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <TopTools_ListIteratorOfListOfShape.hxx>

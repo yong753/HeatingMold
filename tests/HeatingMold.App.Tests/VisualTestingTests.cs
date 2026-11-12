@@ -248,7 +248,7 @@ namespace HeatingMold.App.Tests
         }
 
         [Fact]
-        public void Load_RejectsElectricalStepWithoutSettings()
+        public void Load_AcceptsReadOnlyElectricalCheckWithoutSettings()
         {
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
@@ -263,8 +263,68 @@ namespace HeatingMold.App.Tests
 
             VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
 
+            Assert.NotNull(scenario);
+            Assert.Null(error);
+        }
+
+        [Fact]
+        public void Load_RejectsSetElectricalWithoutSettings()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string json = "{" +
+                "\"schemaVersion\":2," +
+                "\"name\":\"electrical\"," +
+                "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1]}]," +
+                "\"steps\":[{\"id\":\"1\",\"action\":\"setElectrical\"}]" +
+                "}";
+            string scenarioPath = temp.WriteFile("scenario.json", json);
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
             Assert.Null(scenario);
             Assert.Contains("electrical", error);
+        }
+
+        [Fact]
+        public void Load_RejectsCircuitVerdictForUnknownArea()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string json = "{" +
+                "\"schemaVersion\":2," +
+                "\"name\":\"electrical\"," +
+                "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1]}]," +
+                "\"steps\":[{\"id\":\"1\",\"action\":\"checkElectrical\",\"electrical\":{\"presetIndex\":0,\"voltageV\":220,\"apply\":false,\"circuitVerdicts\":[{\"area\":\"B\",\"verdict\":\"OK\"}]}}]" +
+                "}";
+            string scenarioPath = temp.WriteFile("scenario.json", json);
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(scenario);
+            Assert.Contains("circuitVerdicts", error);
+        }
+
+        [Fact]
+        public void Load_RejectsInvalidCircuitVerdict()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string json = "{" +
+                "\"schemaVersion\":2," +
+                "\"name\":\"electrical\"," +
+                "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1]}]," +
+                "\"steps\":[{\"id\":\"1\",\"action\":\"checkElectrical\",\"electrical\":{\"presetIndex\":0,\"voltageV\":220,\"apply\":false,\"circuitVerdicts\":[{\"area\":\"A\",\"verdict\":\"MAYBE\"}]}}]" +
+                "}";
+            string scenarioPath = temp.WriteFile("scenario.json", json);
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(scenario);
+            Assert.Contains("OK 또는 NG", error);
         }
 
         [Fact]
@@ -353,7 +413,7 @@ namespace HeatingMold.App.Tests
             Assert.True(options.Enabled);
             Assert.Null(options.Error);
             Assert.Equal(Path.GetFullPath(run), options.RunDirectory);
-            Assert.Equal(3, options.HoldSeconds);
+            Assert.Equal(1, options.HoldSeconds);
             Assert.False(options.StepMode);
         }
 

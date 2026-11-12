@@ -8,6 +8,11 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Section.hxx>
+#include <BRepAlgoAPI_Common.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
@@ -216,6 +221,50 @@ namespace step_export_geometry
     // the outline with a floating-point sign that flips between pieces
     // (-2.3e-13 on one side, +0 on the other), and counting a negative epsilon
     // as "inside" made both sides of one cut look like one spanning face.
+    inline std::string AreaRingBoundsToken(const std::vector<double>& ring)
+    {
+        double minU = ring[0], maxU = ring[0], minV = ring[1], maxV = ring[1];
+        for (size_t i = 0; i + 1 < ring.size(); i += 2)
+        {
+            minU = (std::min)(minU, ring[i]); maxU = (std::max)(maxU, ring[i]);
+            minV = (std::min)(minV, ring[i + 1]); maxV = (std::max)(maxV, ring[i + 1]);
+        }
+        std::ostringstream out;
+        out << "pts=" << ring.size() / 2
+            << " u=[" << minU << "," << maxU << "] v=[" << minV << "," << maxV << "]";
+        return out.str();
+    }
+
+    inline void LogStepAreaNative(const std::string& message)
+    {
+        char path[MAX_PATH] = { 0 };
+        const DWORD length = ::GetEnvironmentVariableA("HEATINGMOLD_OCC_LOG", path, MAX_PATH);
+        if (length == 0 || length >= MAX_PATH) return;
+        std::ofstream log(path, std::ios::app);
+        if (!log) return;
+        log << "step-area: " << message << "\n";
+    }
+
+    inline std::string AreaSamplesBoundsToken(const std::vector<double>& boundary,
+                                              const std::vector<double>& interior)
+    {
+        if (boundary.size() < 2 && interior.size() < 2) return "empty";
+        double minU = 1e300, maxU = -1e300, minV = 1e300, maxV = -1e300;
+        for (size_t i = 0; i + 1 < boundary.size(); i += 2)
+        {
+            minU = (std::min)(minU, boundary[i]); maxU = (std::max)(maxU, boundary[i]);
+            minV = (std::min)(minV, boundary[i + 1]); maxV = (std::max)(maxV, boundary[i + 1]);
+        }
+        for (size_t i = 0; i + 1 < interior.size(); i += 2)
+        {
+            minU = (std::min)(minU, interior[i]); maxU = (std::max)(maxU, interior[i]);
+            minV = (std::min)(minV, interior[i + 1]); maxV = (std::max)(maxV, interior[i + 1]);
+        }
+        std::ostringstream out;
+        out << "u=[" << minU << "," << maxU << "] v=[" << minV << "," << maxV << "]";
+        return out.str();
+    }
+
     inline NativeStepAreaCoverage EvaluateAreaCoverage(const std::vector<double>& ring,
                                                        const std::vector<double>& boundary,
                                                        const std::vector<double>& interior)
@@ -317,6 +366,7 @@ namespace step_export_geometry
         {
             if (!usable[a]) continue;
             NormalizeAreaRing(areas[a].ring, rings[a]);
+            LogStepAreaNative("area " + NativeStepAreaIndexToken(a) + " ring " + AreaRingBoundsToken(rings[a]));
             if (rings[a].size() < 6)
             {
                 failure = "area-ring:" + NativeStepAreaIndexToken(a);
@@ -339,28 +389,6 @@ namespace step_export_geometry
             }
         }
 
-        std::vector<bool> needsCut(areaCount, false);
-        for (size_t a = 0; a < areaCount; ++a)
-        {
-            if (!usable[a]) continue;
-            for (int faceId : areas[a].faceIds)
-            {
-                std::vector<double> boundary;
-                std::vector<double> interior;
-                CollectAreaFaceSamples(modelFaces[faceId], frames[a], boundary, interior);
-                if (EvaluateAreaCoverage(rings[a], boundary, interior) == NativeStepAreaPartial)
-                {
-                    needsCut[a] = true;
-                    break;
-                }
-            }
-        }
-        bool anyCut = false;
-        for (size_t a = 0; a < areaCount; ++a)
-        {
-            if (needsCut[a]) anyCut = true;
-        }
-
         Bnd_Box box;
         BRepBndLib::Add(model, box, Standard_False);
         if (box.IsVoid())
@@ -375,126 +403,90 @@ namespace step_export_geometry
                                           (zMax - zMin) * (zMax - zMin));
         const double halfDepth = (diagonal > 0.0 ? diagonal : 1.0) * AreaRegionPrismDepthFactor;
 
-        TopoDS_Shape working = model;
-        TopTools_DataMapOfShapeInteger owners;
-        if (anyCut)
+        std::vector<TopoDS_Shape> prisms(areaCount);
+        for (size_t a = 0; a < areaCount; ++a)
         {
-            TopTools_SequenceOfShape splitEdges;
-            for (size_t a = 0; a < areaCount; ++a)
+            if (!usable[a]) continue;
+            if (!BuildAreaRegionPrism(rings[a], frames[a], halfDepth, prisms[a]))
             {
-                if (!needsCut[a]) continue;
-                TopoDS_Shape prism;
-                if (!BuildAreaRegionPrism(rings[a], frames[a], halfDepth, prism))
-                {
-                    failure = "area-prism:" + NativeStepAreaIndexToken(a);
-                    return false;
-                }
-                BRepAlgoAPI_Section section;
-                section.Init1(model);
-                section.Init2(prism);
-                section.ComputePCurveOn1(Standard_True);
-                section.Approximation(Standard_False);
-                section.Build();
-                if (!section.IsDone())
-                {
-                    failure = "area-section:" + NativeStepAreaIndexToken(a);
-                    return false;
-                }
-                for (TopExp_Explorer explorer(section.Shape(), TopAbs_EDGE); explorer.More();
-                     explorer.Next())
-                {
-                    splitEdges.Append(explorer.Current());
-                }
-            }
-            if (splitEdges.IsEmpty())
-            {
-                failure = "area-section";
+                failure = "area-prism:" + NativeStepAreaIndexToken(a);
                 return false;
-            }
-            BRepFeat_SplitShape splitter(model);
-            if (!splitter.Add(splitEdges))
-            {
-                failure = "area-split";
-                return false;
-            }
-            splitter.Build();
-            if (!splitter.IsDone() || splitter.Shape().IsNull())
-            {
-                failure = "area-split";
-                return false;
-            }
-            working = splitter.Shape();
-            for (size_t id = 0; id < modelFaces.size(); ++id)
-            {
-                if (faceAreas[id].empty()) continue;
-                const TopTools_ListOfShape& modified = splitter.Modified(modelFaces[id]);
-                if (modified.IsEmpty())
-                {
-                    owners.Bind(modelFaces[id], static_cast<int>(id));
-                    continue;
-                }
-                for (TopTools_ListIteratorOfListOfShape it(modified); it.More(); it.Next())
-                {
-                    if (it.Value().ShapeType() != TopAbs_FACE) continue;
-                    owners.Bind(it.Value(), static_cast<int>(id));
-                }
-            }
-        }
-        else
-        {
-            for (size_t id = 0; id < modelFaces.size(); ++id)
-            {
-                if (faceAreas[id].empty()) continue;
-                owners.Bind(modelFaces[id], static_cast<int>(id));
             }
         }
 
+        // 평면 절단(BRepFeat_SplitShape)은 곡면이 접히거나 주기적인 면에서
+        // 절단선이 면을 완전히 분리하지 못한다(분할 영역 A-1 area-nofaces 재현).
+        // 대신 선택 면을 영역 프리즘과 3D 공통 연산해 정확한 조각으로 교체한다.
+        // 선택되지 않은 면은 원본 그대로 유지하고, 조각 합의 면적이 원본과
+        // 일치하지 않으면 색을 생략하지 않고 명시적으로 실패한다.
+        TopoDS_Compound compound;
+        BRep_Builder compoundBuilder;
+        compoundBuilder.MakeCompound(compound);
         std::vector<int> covered(areaCount, 0);
-        for (TopExp_Explorer explorer(working, TopAbs_FACE); explorer.More(); explorer.Next())
+        for (size_t id = 0; id < modelFaces.size(); ++id)
         {
-            const TopoDS_Face face = TopoDS::Face(explorer.Current());
-            Standard_Integer faceId = -1;
-            if (!owners.Find(face, faceId)) continue;
-            const std::vector<int>& candidates = faceAreas[faceId];
-            int chosen = -1;
-            for (int a : candidates)
+            if (faceAreas[id].empty())
             {
-                std::vector<double> boundary;
-                std::vector<double> interior;
-                CollectAreaFaceSamples(face, frames[a], boundary, interior);
-                const NativeStepAreaCoverage state =
-                    EvaluateAreaCoverage(rings[a], boundary, interior);
-                if (state == NativeStepAreaPartial)
-                {
-                    failure = "area-partial:" + NativeStepAreaIndexToken(a);
-                    return false;
-                }
-                if (state != NativeStepAreaCovered) continue;
-                if (chosen >= 0)
-                {
-                    failure = "area-overlap:" + NativeStepAreaIndexToken(chosen) + ":" +
-                              NativeStepAreaIndexToken(a);
-                    return false;
-                }
-                chosen = a;
+                compoundBuilder.Add(compound, modelFaces[id]);
+                continue;
             }
-            if (chosen < 0) continue;
-            NativeStepAreaFaceColor entry;
-            entry.face = face;
-            entry.areaIndex = chosen;
-            faceColors.push_back(entry);
-            ++covered[chosen];
+            GProp_GProps originalProps;
+            BRepGProp::SurfaceProperties(modelFaces[id], originalProps);
+            const double originalArea = originalProps.Mass();
+            double pieceArea = 0.0;
+            int pieceCount = 0;
+            for (int a : faceAreas[id])
+            {
+                BRepAlgoAPI_Common common(modelFaces[id], prisms[a]);
+                common.Build();
+                if (!common.IsDone() || common.Shape().IsNull())
+                {
+                    failure = "area-common:" + NativeStepAreaIndexToken(a);
+                    return false;
+                }
+                for (TopExp_Explorer explorer(common.Shape(), TopAbs_FACE); explorer.More();
+                     explorer.Next())
+                {
+                    const TopoDS_Face piece = TopoDS::Face(explorer.Current());
+                    GProp_GProps props;
+                    BRepGProp::SurfaceProperties(piece, props);
+                    const double area = props.Mass();
+                    if (!(area > 0.0)) continue;
+                    compoundBuilder.Add(compound, piece);
+                    NativeStepAreaFaceColor entry;
+                    entry.face = piece;
+                    entry.areaIndex = a;
+                    faceColors.push_back(entry);
+                    ++covered[a];
+                    ++pieceCount;
+                    pieceArea += area;
+                }
+            }
+            if (pieceCount == 0)
+            {
+                failure = "area-nofaces:" + NativeStepAreaIndexToken(faceAreas[id].front());
+                return false;
+            }
+            const double areaTolerance = (std::max)(1.0, originalArea * 1.0e-4);
+            if (std::abs(pieceArea - originalArea) > areaTolerance)
+            {
+                failure = "area-face-area:" + NativeStepAreaIndexToken(faceAreas[id].front()) +
+                          ":" + std::to_string(id);
+                return false;
+            }
         }
         for (size_t a = 0; a < areaCount; ++a)
         {
             if (!usable[a]) continue;
+            LogStepAreaNative("area " + NativeStepAreaIndexToken(a) +
+                              " covered=" + std::to_string(covered[a]));
             if (covered[a] == 0)
             {
                 failure = "area-nofaces:" + NativeStepAreaIndexToken(a);
                 return false;
             }
         }
-        result = working;
+        result = compound;
         return true;
     }
 }

@@ -1,4 +1,4 @@
-# HeatingMold project instructions
+﻿# HeatingMold project instructions
 
 ## 응답 언어 (사용자 확정)
 
@@ -194,7 +194,7 @@
 - Verified 2026-11-11: `HeatingMold.App` builds (Release/x64, isolated `OutDir` because the running app locks the normal output), App tests 175 pass with the OCCT/third-party DLL directories on `PATH`, and running `Run.ps1` without `-Scenario` stops with the explicit message before creating anything. Builds and tests must be redirected to an isolated `-p:OutDir=` while the app is open; the earlier 72 failures were missing OCCT DLLs on `PATH`, not a code regression.
 - Not verified: a real click-through of the launcher window in the running app, and running a newly authored scenario end-to-end.
 
-## 대표 시각테스트 `e2e-main.json` (구현·검증 2026-11-12)
+## 대표 시각테스트 (2026-11-12: `e2e-full.json`로 대체)
 
 - **사용자 확정: 시각테스트 전용 제품 로직·다른 방식은 제거하고 실제 제품 로직을 그대로 사용한다.** 테스트는 조작 순서·입력·기대 결과 검증·기록만 담당한다. 실제 마우스/키보드/파일 대화상자 조작은 수동 체크로 분리한다.
 - `VisualScenario` v2에 `pickExitPoint`, `checkElectrical`, `splitArea`, `exportStep`, `saveProject`, `loadProject`를 추가했다. `pickExitPoint`는 `exitPoint{role,uv,toleranceMm}`를 쓰고, `splitArea`는 `partCount`(2..4)·`childAliases`·확인 응답을 쓴다.
@@ -204,9 +204,13 @@
 - 모델 계약의 `solidCount` 하한을 0으로 완화했다(`faceCount > 0`, `solidCount >= 0`). 기본 예제는 80면/0솔리드이며 솔리드 수를 위조하지 않는다.
 - 대표 시나리오 기준: `resource/Mold_Cover_Trim.step`(sha256 `8CB03405…FCED`), 영역 A faceIds `[44,56,69]`, margin 5/spacing 15/FrameX, 시작 uv `(295.91262149879026,133.36749353890832)`, 종료 uv `(295.9106395319768,-291.6634555349192)`, Case1 3.5 kW/220 V/16 A. 생성 결과 60조각/29턴/1회로/18,015.505 mm, 전기 NG(overLimit 1). 자동 3분할 결과 A1 16조각/5,323.82 mm, A2 16/5,343.181, A3 24/6,009.727, 2D 비율 1.1288, 분할 후 3회로/16.677 m/3,500 W로 OK. 저장→같은 프로세스 재로드 비교 `checkpoint=equal`, 복원 A1 16조각/5,323.82 mm.
 - 프로젝트 복원 비교는 저장 시점 JSON과 복원 후 다시 저장한 JSON을 깊은 비교하되, 재가져오기에서 바뀌는 런타임 식별자 `*Utc`, `routeContextKey`, `edgeKey`, `revision`, `modelRevision`, `workingContextId`, `workingContextRevision`, `nativePieceId(s)`는 제외한다. durable `areaId`, `faceId(s)`, topology signature, 경계 parameter, 확정 3D 길이, 전기 입력은 비교한다.
-- 검증 2026-11-12: 시각테스트 22단계 전부 통과(`Automation=Completed`, `VisualReview=NotRecorded`, 실패 0) — 최종 코드에서 `visual-e2e-5`로 재실행해 22/22 확인. App 테스트 197(신규 6건 포함), Core 테스트 271 통과. WorkingSide 회귀는 `x64\Release\OccBridge.dll`을 `x64\WorkingSideBuild\OccBridge.dll`로 복사한 뒤 EXIT=0, 187 working-side를 포함한 전 그룹 통과.
-- **발견된 실제 한계(미해결):** 분할 후 STEP 출력은 영역이 여러 CAD 면에 걸쳐 있어 `area-nofaces:0`(`영역 A-1이 유효 발열영역에 해당하는 CAD 면을 찾지 못했습니다`)로 거부된다. `e2e-main.json`은 분할 전 STEP만 검증한다. 제품 결함인지 설계 한계인지 아직 확정하지 않았고, 수정하지 않았다.
-- 미검증: 실제 마우스 클릭·드래그·Shift/Ctrl/Enter/Esc·파일 대화상자, 앱 화면 육안 판정, 외부 CAD에서 DXF/STEP 열기, 분할 영역 STEP 출력, 런처 창 실제 클릭.
+- 검증 2026-11-12: 시각테스트 22단계 e2e-main 통과에 이어, 제외영역·꼭지점 편집·전기 설정/검사 분리·분할 후 STEP·저장/재로드를 포함한 `e2e-full.json` 36단계가 전부 통과했다(`Automation=Completed`, 실패 0). App 테스트 200, Core 테스트 271 통과. WorkingSide 회귀는 EXIT=0으로 전 그룹 통과.
+- **분할 후 STEP `area-nofaces:0` 원인 확인·수정(2026-11-12):** 원인은 `BRepFeat_SplitShape`가 주기적/곡면 면을 평면 절단선으로 완전히 분리하지 못해, 한 조각이 두 영역에 걸치는데 경계 표본이 영역 외곽과 일치해 Outside로 오판된 것이다. `BuildAreaColoredModelNative`를 선택 면별 `BRepAlgoAPI_Common(face, areaPrism)`으로 교체해 영역별 정확한 조각을 만들고, 선택되지 않은 면은 원본 그대로 두며, 조각 면적 합이 원본과 1 mm² 또는 1e-4 비율을 넘게 다르면 `area-face-area`로 명시 실패한다. 이 조각들을 compound로 반환한다. 분할 후 STEP과 복원 후 STEP이 모두 성공했고 native read-back 검증도 통과했다. 모델 위상은 셸이 아니라 면 compound가 된다.
+- `e2e-full.json` 기준: 초기 60조각/29턴/1회로/18,015.505 mm, NG(overLimit 1). 외곽 코너 제외영역 추가 후 재생성도 동일 60/29/1/18,015.505 mm, 마진 확장 제외영역 침범 0. 초기화 후 재생성도 동일. 꼭지점 그룹 2를 +X 20 mm 이동해 60/29/1/17,979.067 mm, `RouteEdited=true`. 3분할 A1 16/7/1/5,323.82, A2 16/7/1/5,343.181, A3 24/11/1/6,009.727 mm, 분할 후 3회로 OK. 저장→같은 프로세스 재로드 비교 `checkpoint=equal`, 복원 A1 16/7/1/5,323.82 mm.
+- 시나리오 계약 추가: `setElectrical`(설정 전용), `checkElectrical` + `electrical.apply=false`(읽기 전용), `electrical.circuitVerdicts[{area,verdict}]`(영역별 회로 판정), `moveVertex.cancel`(미리보기 취소 보존). 프로젝트 복원 비교는 임시 저장 없이 메모리 직렬화로 수행해 제품 경로·dirty 상태를 바꾸지 않는다. 제외영역 검사는 마진 확장 사각형을 기준으로 한다. STEP·프로젝트 산출물은 `Artifacts`에 종류별로 등록된다.
+- 꼭지점 편집은 `BeginVertexDrag`/`UpdateVertexPreview`/`CompleteVertexDrag`/`OnVertexDragCancelled`의 제품 공통 경로를 UI와 시각테스트가 함께 쓴다. `_vertexDragGroup` 직접 주입은 제거했다.
+- 시각테스트 기본 관찰 시간은 3초에서 **1초**로 변경했다(`VisualTestOptions.HoldSeconds`, 런처 입력란).
+- 미검증: 실제 마우스 클릭·드래그·Shift/Ctrl/Enter/Esc·파일 대화상자, 앱 화면 육안 판정, 외부 CAD에서 DXF/STEP 열기, 런처 창 실제 클릭, 새 프로세스에서의 복원, 선택 면/제외 위치가 다른 두 번째 시나리오.
 
 ## Standard view menu removed (user-confirmed 2026-11-11)
 
@@ -225,6 +229,7 @@
   - `src\HeatingMold.App\HeatingMold.App.csproj` and `tests\HeatingMold.App.Tests\HeatingMold.App.Tests.csproj` declare `<Platforms>x64</Platforms>` → map to `Release|x64`.
   - `src\HeatingMold.Core`, `src\HeatingMold.Export`, `tests\HeatingMold.Core.Tests` declare no `<Platforms>` → map to `Release|Any CPU`.
 - A mapping to a configuration the project does not expose produces VS's "unknown project configuration mapping" dialog; `dotnet build`/`msbuild` on the solution can still succeed, so only reopening in VS validates this.
+- **Native output trap (verified 2026-11-12):** building `src\OccBridge\OccBridge.vcxproj` without `OutDir` writes `src\OccBridge\x64\Release\OccBridge.dll`, but `HeatingMold.App.csproj` references `x64\Release\OccBridge.dll`. Building only the native project therefore leaves the app and visual tests on the previous DLL; the split-after STEP check then fails with `area-nofaces:0` even though the fix is present. Always build native with `/p:OutDir=x64\Release\` (as `Run.ps1` does) and rebuild/copy to the app's `bin\x64\Release\net8.0-windows` output before running the app or launcher.
 
 ## Project persistence (save + load implemented)
 
