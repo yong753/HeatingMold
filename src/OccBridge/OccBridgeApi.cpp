@@ -108,9 +108,14 @@
 // STEP 내보내기 (3D 모델 + 발열사 + 발열경로) — TKPrim/TKBool/TKXCAF
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Section.hxx>
+#include <BRepFeat_SplitShape.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <TopTools_ListIteratorOfListOfShape.hxx>
+#include <TopTools_SequenceOfShape.hxx>
+#include <TopTools_DataMapOfShapeInteger.hxx>
 #include <XCAFApp_Application.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
@@ -3897,6 +3902,7 @@ namespace
 #include "ProjectRestoreNative.inc"
 #define STEP_EXPORT_INCLUDES_DONE
 #include "StepExportGeometryNative.inc"
+#include "StepExportAreaNative.inc"
 #include "StepExportNative.inc"
 }
 #pragma managed(pop)
@@ -4128,6 +4134,21 @@ bool Bridge::ExportStepWithRoutes(String^ targetPath, String^ modelName, double 
             native.r = area->ColorR;
             native.g = area->ColorG;
             native.b = area->ColorB;
+            if (area->FaceIds != nullptr)
+            {
+                native.faceIds.reserve(static_cast<size_t>(area->FaceIds->Length));
+                for each (int faceId in area->FaceIds) native.faceIds.push_back(faceId);
+            }
+            if (area->Frame != nullptr)
+            {
+                native.frame.reserve(static_cast<size_t>(area->Frame->Length));
+                for each (double value in area->Frame) native.frame.push_back(value);
+            }
+            if (area->Ring != nullptr)
+            {
+                native.ring.reserve(static_cast<size_t>(area->Ring->Length));
+                for each (double value in area->Ring) native.ring.push_back(value);
+            }
             native.pieces.reserve(static_cast<size_t>(area->Pieces->Length));
             for each (StepExportPiece^ piece in area->Pieces)
             {

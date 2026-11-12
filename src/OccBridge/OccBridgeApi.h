@@ -174,12 +174,36 @@ public:
         ColorB = colorB;
         Pieces = pieces;
     }
+
+    /// <summary>
+    /// 발열영역 표시 정보를 함께 넘기는 생성자. faceIds는 이 영역이 덮는 모델 면,
+    /// frame은 작업평면(origin, axisX, axisY 각 3개, 모두 9개), ring은 마진 적용 전
+    /// 유효 외곽(제외영역 반영)의 2D 점(u,v 쌍)이다. 링이 하나가 아니면 내보내기를
+    /// 거부하며, 면 전체가 영역 안이면 면 색만 바꾸고 경계가 걸친 면만 구획한다.
+    /// </summary>
+    StepExportArea(System::String^ name, System::String^ areaName,
+        int colorR, int colorG, int colorB, array<StepExportPiece^>^ pieces,
+        array<int>^ faceIds, array<double>^ frame, array<double>^ ring)
+    {
+        Name = name;
+        AreaName = areaName;
+        ColorR = colorR;
+        ColorG = colorG;
+        ColorB = colorB;
+        Pieces = pieces;
+        FaceIds = faceIds;
+        Frame = frame;
+        Ring = ring;
+    }
     property System::String^ Name;
     property System::String^ AreaName;
     property int ColorR;
     property int ColorG;
     property int ColorB;
     property array<StepExportPiece^>^ Pieces;
+    property array<int>^ FaceIds;
+    property array<double>^ Frame;
+    property array<double>^ Ring;
 };
 
 /// <summary>격리된 STEP 복원 후보의 Face/Edge 토폴로지 지문.</summary>

@@ -112,7 +112,10 @@ namespace step_export_geometry
         NativeStepVerification result;
         if (shape.IsNull()) return result;
         Bnd_Box box;
-        BRepBndLib::Add(shape, box);
+        // Geometry only: the loaded model carries a cached working mesh, and
+        // comparing a mesh-influenced box with a re-read exact box would report
+        // a false change.
+        BRepBndLib::Add(shape, box, Standard_False);
         if (box.IsVoid()) return result;
         box.Get(result.xMin, result.yMin, result.zMin,
                 result.xMax, result.yMax, result.zMax);
@@ -298,7 +301,9 @@ namespace step_export_geometry
     inline bool VerifyStepDocumentNative(const std::string& path,
                                          const std::wstring& modelName,
                                          const TopoDS_Shape& model,
+                                         const TopoDS_Shape& referenceModel,
                                          const std::vector<step_export_geometry::NativeStepExportArea>& areas,
+                                         const std::vector<step_export_geometry::NativeStepAreaFaceColor>& faceColors,
                                          std::string& failure)
     {
         // Non-empty file probe: OCCT treats char* paths as UTF-8, while MSVC's
@@ -369,8 +374,14 @@ namespace step_export_geometry
             return false;
         }
 
-        // Bounding box: the model must be exported unchanged.
-        const NativeStepVerification expected = BoundsOf(model);
+        // Bounding box: the exported model must keep the original model extent.
+        // Comparing against the split shape itself reports a false change: the
+        // section edges introduced by BRepFeat_SplitShape carry conservative
+        // BSpline pole bounds, so the in-memory box is a few hundredths of a
+        // millimetre wider than the trimmed geometry that STEP actually writes.
+        // Cuts never add material, so the pre-split shape is the reference.
+        const NativeStepVerification expected =
+            BoundsOf(referenceModel.IsNull() ? model : referenceModel);
         TopoDS_Shape readModel;
         if (!expected.valid || !shapes->GetShape(modelLabel, readModel) ||
             readModel.IsNull())
@@ -398,6 +409,51 @@ namespace step_export_geometry
         {
             failure = "verify-bounds";
             return false;
+        }
+
+        if (!faceColors.empty())
+        {
+            Standard_Integer painted = 0;
+            std::vector<Standard_Integer> perArea(areas.size(), 0);
+            for (TopExp_Explorer explorer(readModel, TopAbs_FACE); explorer.More();
+                 explorer.Next())
+            {
+                Quantity_Color faceColor;
+                if (!colors->GetColor(explorer.Current(), XCAFDoc_ColorSurf,
+                                      faceColor))
+                {
+                    continue;
+                }
+                ++painted;
+                bool matched = false;
+                for (size_t a = 0; a < areas.size(); ++a)
+                {
+                    if (ColorMatches(faceColor, areas[a].r, areas[a].g, areas[a].b))
+                    {
+                        ++perArea[a];
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched)
+                {
+                    failure = "verify-facecolor";
+                    return false;
+                }
+            }
+            if (painted != static_cast<Standard_Integer>(faceColors.size()))
+            {
+                failure = "verify-facecolor";
+                return false;
+            }
+            for (size_t a = 0; a < areas.size(); ++a)
+            {
+                if (areas[a].HasRegion() && perArea[a] <= 0)
+                {
+                    failure = "verify-facecolor";
+                    return false;
+                }
+            }
         }
 
         for (const step_export_geometry::NativeStepExportArea& area : areas)
@@ -429,9 +485,11 @@ namespace step_export_geometry
         const std::string& path,
         const std::wstring& modelName,
         const TopoDS_Shape& model,
+        const TopoDS_Shape& referenceModel,
         const std::vector<step_export_geometry::NativeStepExportBuiltPiece>& wirePieces,
         const std::vector<step_export_geometry::NativeStepExportBuiltPiece>& routePieces,
         const std::vector<step_export_geometry::NativeStepExportArea>& areas,
+        const std::vector<step_export_geometry::NativeStepAreaFaceColor>& faceColors,
         std::string& failure)
     {
         const Handle(XCAFApp_Application) app =
@@ -461,6 +519,32 @@ namespace step_export_geometry
         const TDF_Label modelLabel = shapes->AddShape(model, Standard_False,
                                                       Standard_False);
         TDataStd_Name::Set(modelLabel, TCollection_ExtendedString(modelName.c_str()));
+
+        // Heating-area colour: the painted faces are labelled sub-shapes of the
+        // single model free shape, so the area fill belongs to the model part
+        // instead of being a second, coincident copy of the surface.
+        for (const step_export_geometry::NativeStepAreaFaceColor& entry : faceColors)
+        {
+            if (entry.areaIndex < 0 ||
+                static_cast<size_t>(entry.areaIndex) >= areas.size() ||
+                entry.face.IsNull())
+            {
+                failure = "xde-face";
+                return false;
+            }
+            TDF_Label faceLabel;
+            shapes->AddSubShape(modelLabel, entry.face, faceLabel);
+            if (faceLabel.IsNull())
+            {
+                failure = "xde-face";
+                return false;
+            }
+            const step_export_geometry::NativeStepExportArea& area =
+                areas[static_cast<size_t>(entry.areaIndex)];
+            const Quantity_Color faceColor(area.r / 255.0, area.g / 255.0,
+                                           area.b / 255.0, Quantity_TOC_sRGB);
+            colors->SetColor(faceLabel, faceColor, XCAFDoc_ColorSurf);
+        }
 
         size_t cursor = 0;
         for (const step_export_geometry::NativeStepExportArea& area : areas)
@@ -538,7 +622,8 @@ namespace step_export_geometry
             return false;
         }
 
-        return VerifyStepDocumentNative(path, modelName, model, areas, failure);
+        return VerifyStepDocumentNative(path, modelName, model, referenceModel, areas,
+                                        faceColors, failure);
     }
 
     inline bool ExportStepWithRoutesNative(
@@ -565,13 +650,46 @@ namespace step_export_geometry
             return false;
         }
 
-        BRepBuilderAPI_Copy copy(g_shape, Standard_True, Standard_False);
-        if (!copy.IsDone() || copy.Shape().IsNull())
+        bool paintAreas = false;
+        for (size_t a = 0; a < areas.size(); ++a)
         {
-            failure = "model-copy";
-            return false;
+            if (areas[a].HasRegion())
+            {
+                paintAreas = true;
+                break;
+            }
         }
-        const TopoDS_Shape model = copy.Shape();
+
+        // Heating-area colour needs the exact face identity that the area's face
+        // ids refer to, so the painted path works on the loaded model itself.
+        // BRepBuilderAPI_Copy is not guaranteed to keep the face order, and a
+        // silent reordering would paint the wrong surface. The split/section
+        // tools do not mutate their input, and the XDE document only references
+        // the shapes it is given, so g_shape stays unchanged.
+        TopoDS_Shape model;
+        std::vector<step_export_geometry::NativeStepAreaFaceColor> faceColors;
+        if (paintAreas)
+        {
+            std::vector<TopoDS_Face> modelFaces = g_faces;
+            TopoDS_Shape painted;
+            if (!step_export_geometry::BuildAreaColoredModelNative(
+                    g_shape, modelFaces, areas, painted, faceColors, failure))
+            {
+                return false;
+            }
+            model = painted;
+        }
+        else
+        {
+            BRepBuilderAPI_Copy copy(g_shape, Standard_True, Standard_False);
+            if (!copy.IsDone() || copy.Shape().IsNull())
+            {
+                failure = "model-copy";
+                return false;
+            }
+            model = copy.Shape();
+        }
+
         const Standard_Real radius = diameterMm * 0.5;
 
         std::vector<step_export_geometry::NativeStepExportBuiltPiece> wirePieces;
@@ -609,7 +727,7 @@ namespace step_export_geometry
             }
         }
 
-        return WriteStepDocumentNative(path, modelName, model, wirePieces,
-                                       routePieces, areas, failure);
+        return WriteStepDocumentNative(path, modelName, model, g_shape, wirePieces,
+                                       routePieces, areas, faceColors, failure);
     }
 }
