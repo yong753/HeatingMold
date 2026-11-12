@@ -338,6 +338,10 @@ internal sealed class VisualScenario
             throw new ArgumentException(section + ".lengthMm는 0 이상의 유한 숫자여야 합니다.");
         if (!double.IsFinite(expect.LengthToleranceMm) || expect.LengthToleranceMm < 0)
             throw new ArgumentException(section + ".lengthToleranceMm는 0 이상이어야 합니다.");
+        if (expect.HeatingPieces != null && expect.HeatingPieces.Value < 0)
+            throw new ArgumentException(section + ".heatingPieces는 0 이상이어야 합니다.");
+        if (expect.HeatingLengthMm != null && (!double.IsFinite(expect.HeatingLengthMm.Value) || expect.HeatingLengthMm.Value < 0))
+            throw new ArgumentException(section + ".heatingLengthMm는 0 이상의 유한 숫자여야 합니다.");
     }
 
     private static void ValidateFaceIds(int[] faceIds, string section, bool allowEmpty = false)
@@ -436,6 +440,10 @@ internal sealed class VisualAreaExpect
     public double? SpacingMm { get; set; }
     /// <summary>수동 편집 흔적. 선언한 경우에만 검사한다.</summary>
     public bool? RouteEdited { get; set; }
+    /// <summary>발열선(HeatingRun) 조각 수. 연결선은 세지 않는다.</summary>
+    public int? HeatingPieces { get; set; }
+    /// <summary>발열선(HeatingRun) 조각의 확정 3D 길이 합. 제외영역이 실제 발열 구간을 바꿨는지 본다.</summary>
+    public double? HeatingLengthMm { get; set; }
 }
 
 /// <summary>schemaVersion 2의 순차 행동 하나.</summary>

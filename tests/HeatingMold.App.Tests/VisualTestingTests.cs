@@ -615,6 +615,36 @@ namespace HeatingMold.App.Tests
             Assert.Equal("Completed", document.RootElement.GetProperty("Status").GetString());
             Assert.Equal("second", document.RootElement.GetProperty("LastCompletedStep").GetString());
         }
+
+        [Fact]
+        public async Task ConfirmationPolicy_UsesQueueOnlyWhileTheRunIsActive()
+        {
+            using var temp = new TempDirectory();
+            var report = new VisualTestReport(temp.Path, new VisualScenario { Name = "test" });
+            var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var runner = new VisualTestRunner(
+                new[] { "first" },
+                async (index, token) =>
+                {
+                    await gate.Task;
+                    return VisualStepOutcome.Ok("ok");
+                },
+                report, holdSeconds: 0, stepMode: false, takeReportedError: () => null);
+
+            // 세션이 없거나 실행기가 아직 만들어지지 않았으면 자동 응답을 쓰지 않는다.
+            Assert.False(VisualTestConfirmationPolicy.UsesQueuedResponses(false, runner));
+            Assert.False(VisualTestConfirmationPolicy.UsesQueuedResponses(true, null));
+
+            runner.Start();
+            Assert.True(VisualTestConfirmationPolicy.UsesQueuedResponses(true, runner));
+
+            gate.SetResult(true);
+            await runner.Completion;
+
+            // 실행이 끝나면 큐는 비어 있으므로 제품 대화상자로 돌아가야 한다.
+            Assert.Equal(VisualTestRunnerState.Completed, runner.State);
+            Assert.False(VisualTestConfirmationPolicy.UsesQueuedResponses(true, runner));
+        }
     }
 
     internal sealed class TempDirectory : IDisposable

@@ -37,6 +37,10 @@ public partial class MainWindow
     private const string VertexSpacingLockedMessage =
         "발열사 간격 유지 — 생성 방향과 수직인 이동은 적용되지 않았습니다";
 
+    /// <summary>표시 전용 2D 미리보기가 실제로 그려졌을 때 상태 문구에 들어가는 조각.
+    /// 자동화가 '미리보기 실패 후에도 취소만 하면 통과'하는 것을 막기 위해 함께 쓴다.</summary>
+    private const string VertexPreviewShownFragment = "표시용 2D 미리보기";
+
     /// <summary>시작/종료 인출점은 발열경로 편집에서 고정한다.
     /// 이 점들은 전용 '시작점 선택'/'종료점 선택' 버튼으로만 변경한다.</summary>
     private bool IsRouteEndpointGroup(int groupIndex)
@@ -376,8 +380,8 @@ public partial class MainWindow
             return;
         }
         if (ShowVertexPreview2D(pieces))
-            StatusText.Text = string.Format("꼭지점 이동 ({0:F2}, {1:F2})mm — 표시용 2D 미리보기",
-                applied.X, applied.Y);
+            StatusText.Text = string.Format("꼭지점 이동 ({0:F2}, {1:F2})mm — {2}",
+                applied.X, applied.Y, VertexPreviewShownFragment);
         else
         {
             Bridge.ClearVertexPreview2D();
@@ -664,7 +668,7 @@ public partial class MainWindow
     private bool ConfirmDiscardRouteEdits(WorkingArea area, string action)
     {
         if (area == null || !area.RouteEdited) return true;
-        if (VisualTestSession.Current != null) return ResolveVisualTestConfirm(action);
+        if (VisualTestAutomationActive) return ResolveVisualTestConfirm(action);
         MessageBoxResult result = MessageBox.Show(this,
             action + " 작업을 계속하면 " + area.Name + " 영역의 발열경로 편집 내용이 삭제됩니다."
             + Environment.NewLine + "계속할까요?",
@@ -682,7 +686,7 @@ public partial class MainWindow
     private bool ConfirmDiscardSession(string action)
     {
         if (!HasUnsavedProjectChanges()) return true;
-        if (VisualTestSession.Current != null) return ResolveVisualTestConfirm(action);
+        if (VisualTestAutomationActive) return ResolveVisualTestConfirm(action);
         MessageBoxResult result = MessageBox.Show(this,
             action + " 작업을 계속하면 저장하지 않은 현재 작업이 사라집니다." + Environment.NewLine
             + "저장할까요?",

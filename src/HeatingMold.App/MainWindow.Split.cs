@@ -46,7 +46,7 @@ public partial class MainWindow
         string exitNote = autoExits
             ? "분할이 확정되면 기존 경로는 폐기되고, 새 영역의 시작/종료점은 원래 범위 안에서 자동으로 지정되며 경로도 같은 분할에서 자동 생성됩니다. 필요하면 다시 선택할 수 있습니다."
             : "분할이 확정되면 경로·인출점은 각 새 영역에서 다시 선택합니다.";
-        if (VisualTestSession.Current != null)
+        if (VisualTestAutomationActive)
         {
             return ResolveVisualTestConfirm("영역 분할")
                 ? MessageBoxResult.OK

@@ -143,6 +143,8 @@ namespace HeatingMold.App
             _visualTestInputLocked = false;
             Viewport.InputLocked = false;
             VisualTestInputShield.Visibility = Visibility.Collapsed;
+            // 실행이 끝나면 응답 큐는 비워지므로 이후 확인 요청은 제품 대화상자로 처리한다.
+            // (VisualTestAutomationActive 참고)
             _visualTestConfirmResponses.Clear();
             StateChanged -= OnVisualTestWindowStateChanged;
             ErrorReporter.Reported -= OnVisualTestErrorReported;
@@ -342,9 +344,11 @@ namespace HeatingMold.App
         private VisualStepOutcome VisualActivateArea(VisualActionSpec spec)
         {
             WorkingArea area = ResolveVisualArea(spec.Area);
+            Require(TryCaptureAllAreaRoutes(out var routesBefore, out string captureError), captureError);
             ActivateArea(area);
             RefreshAreaList();
             Require(ReferenceEquals(_activeArea, area), "영역 전환이 적용되지 않았습니다.");
+            RequireAllRoutesPreserved(routesBefore, "영역 전환");
             var data = new Dictionary<string, string>
             {
                 ["alias"] = spec.Area,
@@ -360,12 +364,15 @@ namespace HeatingMold.App
             ActivateArea(area);
             RefreshAreaList();
             int areasBefore = _areas.Count;
+            Require(TryCaptureAllAreaRoutes(out var routesBefore, out string captureError),
+                "영역 삭제 전 확정 경로를 읽지 못했습니다: " + captureError);
             DeleteSelectedArea_Click(this, new RoutedEventArgs());
             Require(_areas.Count == areasBefore - 1, "작업영역이 삭제되지 않았습니다.");
             Require(!_areas.Contains(area), "삭제한 영역이 목록에 남아 있습니다.");
             Require(!_areas.Contains(_activeArea) == false || _activeArea == null || _areas.Contains(_activeArea),
                 "활성 영역이 목록 밖을 가리킵니다.");
             _visualAreaAliases.Remove(spec.Area);
+            RequireSiblingRoutesPreserved(routesBefore, area, "영역 삭제");
 
             int remainingPieces = _areas.Where(a => a.Pattern != null).Sum(a => a.Pattern.RoutePieces.Count);
             int expectedMarkers = 2 * _areas.Count(a => a.Pattern != null && a.Pattern.RoutePieces.Count > 0);
@@ -424,6 +431,7 @@ namespace HeatingMold.App
         {
             VisualAreaDefinition definition = RequireAreaDefinition(scenario, spec.Area);
             WorkingArea area = ResolveVisualArea(spec.Area);
+            Require(TryCaptureAllAreaRoutes(out var routesBefore, out string captureError), captureError);
             ActivateArea(area);
             RefreshAreaList();
 
@@ -477,6 +485,7 @@ namespace HeatingMold.App
                 ["appliedMarginMm"] = area.AppliedInputs?.Margin.ToString("0.###", CultureInfo.InvariantCulture) ?? "",
                 ["appliedSpacingMm"] = area.AppliedInputs?.Spacing.ToString("0.###", CultureInfo.InvariantCulture) ?? ""
             };
+            RequireAllRoutesPreserved(routesBefore, "영역 입력 초안 복원");
             return VisualStepOutcome.Ok("영역 입력 초안·stale 상태 확인", data);
         }
 
@@ -493,6 +502,8 @@ namespace HeatingMold.App
 
             AppliedGenerationInputs appliedBefore = area.AppliedInputs;
             string statusBefore = StatusText.Text;
+            Require(TryCaptureAllAreaRoutes(out var routesBefore, out string captureError),
+                "생성 전 확정 경로를 읽지 못했습니다: " + captureError);
             QueueVisualTestConfirm(spec);
             Generate_Click(this, new RoutedEventArgs());
             RequireNoPendingVisualTestConfirms();
@@ -508,6 +519,8 @@ namespace HeatingMold.App
                 Require(!success, "거부를 기대했지만 생성이 성공했습니다.");
                 Require(ReferenceEquals(appliedBefore, area.AppliedInputs),
                     "거부된 생성이 적용 조건을 바꿨습니다.");
+                string rejectedPreservation = RequireAreaRoutesUnchanged(routesBefore, null, "거부된 생성");
+                Require(rejectedPreservation == null, rejectedPreservation);
                 if (!string.IsNullOrEmpty(spec.FailureContains))
                     Require((StatusText.Text ?? "").Contains(spec.FailureContains),
                         "거부 사유가 기대 문구를 포함하지 않습니다: " + StatusText.Text);
@@ -522,6 +535,7 @@ namespace HeatingMold.App
             }
 
             Require(success, "발열경로 생성이 완료되지 않았습니다: " + StatusText.Text);
+            RequireSiblingRoutesPreserved(routesBefore, area, "발열경로 생성");
             VisualAreaExpect expect = spec.Expect ?? definition.Expect;
             string error = CheckAreaState(area, expect, out Dictionary<string, string> data);
             if (error != null) return VisualStepOutcome.Fail(error);
@@ -532,8 +546,10 @@ namespace HeatingMold.App
         {
             VisualAreaDefinition definition = scenario.Areas.FirstOrDefault(a => a.Alias == spec.Area);
             WorkingArea area = ResolveVisualArea(spec.Area);
+            Require(TryCaptureAllAreaRoutes(out var routesBefore, out string captureError), captureError);
             string error = CheckAreaState(area, spec.Expect ?? definition?.Expect, out Dictionary<string, string> data);
             if (error != null) return VisualStepOutcome.Fail(error);
+            RequireAllRoutesPreserved(routesBefore, "영역 상태 확인");
             data["alias"] = spec.Area;
             return VisualStepOutcome.Ok("영역 상태 확인", data);
         }
@@ -541,7 +557,8 @@ namespace HeatingMold.App
         private VisualStepOutcome VisualCheckAllAreas(VisualActionSpec spec, VisualScenario scenario)
         {
             SidebarTabs.SelectedIndex = ReviewTabIndex;
-            ReviewScopeBox.SelectedIndex = 0;
+            SetVisualReviewScope(0);
+            Require(TryCaptureAllAreaRoutes(out var routesBefore, out string captureError), captureError);
             Require(TryReadElectricalLimits(out TargetPowerElectricalSettings settings, out string settingsError),
                 "전기 입력을 읽지 못했습니다: " + settingsError);
             HeatingWireSpec wire = settings.Wire;
@@ -613,6 +630,7 @@ namespace HeatingMold.App
                 ["totalLengthMm"] = lengthTotal.ToString("0.###", CultureInfo.InvariantCulture),
                 ["native"] = Bridge.GetDisplayDiagnostic() ?? ""
             };
+            RequireAllRoutesPreserved(routesBefore, "전체 영역 검사");
             return VisualStepOutcome.Ok("전체 영역·전기 내보내기 가능 확인", data);
         }
 
@@ -624,6 +642,8 @@ namespace HeatingMold.App
             WorkingArea area = ResolveVisualArea(spec.Area);
             ActivateArea(area);
             SidebarTabs.SelectedIndex = PatternTabIndex;
+            Require(TryCaptureAllAreaRoutes(out var routesBefore, out string captureError),
+                "인출점 선택 전 확정 경로를 읽지 못했습니다: " + captureError);
 
             BeginExitPointPick(role);
             Require(_exitPointPickRole == role,
@@ -660,6 +680,7 @@ namespace HeatingMold.App
                 && applied.Value.SegmentIndex == point.SegmentIndex
                 && Math.Abs(applied.Value.SegmentParameter - point.SegmentParameter) <= 1e-9,
                 "저장된 인출점이 투영 결과와 다릅니다.");
+            RequireSiblingRoutesPreserved(routesBefore, area, "인출점 선택");
 
             var data = new Dictionary<string, string>
             {
@@ -720,6 +741,34 @@ namespace HeatingMold.App
 
         private VisualStepOutcome VisualCheckElectrical(VisualActionSpec spec)
         {
+            int entryScope = _reviewCurrentAreaOnly ? 1 : 0;
+            Require(TryCaptureAllAreaRoutes(out var routesBefore, out string captureError), captureError);
+            VisualStepOutcome outcome;
+            try
+            {
+                outcome = CheckElectricalCore(spec, entryScope);
+            }
+            catch
+            {
+                // 실패해도 전기 배분은 되돌리지 않는다. 다만 검토 범위만 검사 전 상태로 돌려
+                // 다음 단계가 예상하지 않은 범위를 물려받지 않게 한다.
+                SetVisualReviewScope(entryScope);
+                throw;
+            }
+            RequireAllRoutesPreserved(routesBefore, "전기 검사");
+            return outcome;
+        }
+
+        /// <summary>제품의 검토 범위 전환 경로로 표시 범위를 바꾼다. 배분 자체는 바꾸지 않는다.</summary>
+        private void SetVisualReviewScope(int scope)
+        {
+            ReviewScopeBox.SelectedIndex = scope == 1 ? 1 : 0;
+            _reviewCurrentAreaOnly = ReviewScopeBox.SelectedIndex == 1;
+            RefreshElectricalTable();
+        }
+
+        private VisualStepOutcome CheckElectricalCore(VisualActionSpec spec, int entryScope)
+        {
             VisualElectricalSpec requested = spec.Electrical;
             SidebarTabs.SelectedIndex = ReviewTabIndex;
             if (requested != null && requested.Apply)
@@ -740,6 +789,9 @@ namespace HeatingMold.App
                     "제품에 적용된 허용 전류가 시나리오와 다릅니다.");
             }
 
+            // 공유 전력 배분은 검토 범위와 무관하게 모든 확정 영역을 대상으로 한다.
+            // 현재 영역 결과를 전체 결과로 오인하면 배분 합계를 전체 한도와 비교할 수 없다.
+            SetVisualReviewScope(0);
             ReviewSnapshot global = BuildReviewSnapshot();
             Require(global.ElectricalError == null, "전기 입력 오류: " + global.ElectricalError);
             Require(global.Entries.Count > 0, "검토할 작업영역이 없습니다.");
@@ -839,10 +891,8 @@ namespace HeatingMold.App
             if (requested?.ExpectedWithinLimits == false)
                 Require(anyNg, "NG를 기대했지만 모든 회로가 한도 이내입니다.");
 
-            int reviewScope = requested?.ReviewScope ?? (_reviewCurrentAreaOnly ? 1 : 0);
-            ReviewScopeBox.SelectedIndex = reviewScope;
-            _reviewCurrentAreaOnly = reviewScope == 1;
-            RefreshElectricalTable();
+            int reviewScope = requested?.ReviewScope ?? entryScope;
+            SetVisualReviewScope(reviewScope);
             ReviewSnapshot scoped = BuildReviewSnapshot();
             Require(scoped.ElectricalError == null, "범위 전환 후 전기 입력 오류: " + scoped.ElectricalError);
             if (reviewScope == 1)
@@ -974,9 +1024,14 @@ namespace HeatingMold.App
         private VisualStepOutcome VisualExportStep(VisualActionSpec spec)
         {
             SidebarTabs.SelectedIndex = ExportTabIndex;
-            ReviewScopeBox.SelectedIndex = spec.Scope ?? 0;
-            _reviewCurrentAreaOnly = (spec.Scope ?? 0) == 1;
-            RefreshElectricalTable();
+            Require(TryCaptureAllAreaRoutes(out var routesBefore, out string captureError), captureError);
+            // 전체/현재 영역 범위를 제품 경로로 전환한 뒤, 기대 대상 영역과 조각 수를
+            // 확정 상태에서 독립적으로 계산한다. 실제 파일 검증은 제품의 XDE 재읽기가 맡는다.
+            SetVisualReviewScope(0);
+            ReviewSnapshot allSnapshot = BuildReviewSnapshot();
+            int outputScope = spec.Scope ?? 0;
+            SetVisualReviewScope(outputScope);
+            ReviewSnapshot expectedSnapshot = BuildReviewSnapshot();
             string path = VisualArtifactPath(spec.FileName, "result.step");
             if (File.Exists(path))
                 return VisualStepOutcome.Fail("STEP 결과 파일이 이미 있습니다: " + path);
@@ -992,6 +1047,7 @@ namespace HeatingMold.App
                         "STEP 거부 사유가 기대와 다릅니다: " + error);
                 Require(!File.Exists(path), "STEP 출력이 거부되었는데 파일이 생성되었습니다.");
                 var rejectedData = new Dictionary<string, string> { ["reason"] = error };
+                RequireAllRoutesPreserved(routesBefore, "STEP 출력 거부");
                 return VisualStepOutcome.Ok("STEP 출력 거부 확인", rejectedData);
             }
 
@@ -1004,9 +1060,65 @@ namespace HeatingMold.App
             {
                 ["path"] = path,
                 ["bytes"] = info.Length.ToString(CultureInfo.InvariantCulture),
-                ["scope"] = (spec.Scope ?? 0).ToString(CultureInfo.InvariantCulture)
+                ["scope"] = outputScope.ToString(CultureInfo.InvariantCulture)
             };
-            return VisualStepOutcome.Ok("STEP 출력·네이티브 자기검증 확인", data);
+            foreach (KeyValuePair<string, string> metric in DescribeStepExportScope(allSnapshot, expectedSnapshot, outputScope))
+                data[metric.Key] = metric.Value;
+            RequireAllRoutesPreserved(routesBefore, "STEP 출력");
+            return VisualStepOutcome.Ok("STEP 출력·네이티브 자기검증·범위 일치 확인", data);
+        }
+
+        /// <summary>
+        /// STEP 출력 대상 영역과 조각 수를 확정 상태에서 계산해 실제 제품 선택 결과와 대조한다.
+        /// 범위 밖 영역이 조용히 섞이지 않았는지는 이 대상 집합으로 확인한다.
+        /// </summary>
+        private Dictionary<string, string> DescribeStepExportScope(
+            ReviewSnapshot allSnapshot, ReviewSnapshot expectedSnapshot, int outputScope)
+        {
+            WorkingSideDefinition side = _workingSide?.Confirmed;
+            Require(side != null, "STEP 범위를 확인할 수 없습니다 — 작업면이 확정되지 않았습니다.");
+            var areas = new List<WorkingArea>(expectedSnapshot.ReadyAreas);
+            Require(areas.Count > 0, "STEP 출력 대상 영역이 없습니다.");
+            if (outputScope == 1)
+            {
+                Require(areas.Count == 1, string.Format(
+                    "현재 영역 STEP 출력인데 대상 영역이 {0}개입니다.", areas.Count));
+                Require(ReferenceEquals(areas[0], _activeArea),
+                    "현재 영역 STEP 출력 대상이 활성 영역이 아닙니다.");
+                Require(allSnapshot.ReadyAreas.Any(a => !ReferenceEquals(a, areas[0])),
+                    "현재 영역 STEP 범위를 검사하려면 범위 밖에 확정 경로 영역이 하나 이상 있어야 합니다.");
+            }
+            else
+            {
+                Require(areas.Count == _areas.Count, string.Format(
+                    "전체 STEP 출력 대상 영역 수({0})가 확정 영역 수({1})와 다릅니다.",
+                    areas.Count, _areas.Count));
+                if (_areas.Count > 1)
+                    Require(allSnapshot.ReadyAreas.Count == _areas.Count,
+                        "전체 STEP 출력인데 검토 상태가 Ready가 아닌 영역이 있습니다.");
+            }
+
+            List<RouteExportCircuit> circuits = CollectExportCircuits(areas, side, out string collectError);
+            Require(circuits != null, "STEP 대상 확정 경로를 읽지 못했습니다 — " + collectError);
+            Require(circuits.Count == areas.Count, string.Format(
+                "STEP 대상 회로 수({0})가 영역 수({1})와 다릅니다.", circuits.Count, areas.Count));
+            int pieces = circuits.Sum(c => c.Pieces.Count);
+            int expectedPieces = areas.Sum(a => a.NativePieceIds.Length);
+            Require(pieces == expectedPieces, string.Format(
+                "STEP 대상 조각 수({0})가 확정 조각 수({1})와 다릅니다.", pieces, expectedPieces));
+            foreach (WorkingArea area in areas)
+            {
+                Require(area.RoutePieceLengths.Length == area.NativePieceIds.Length,
+                    area.Name + " 조각 길이와 확정 조각 수가 다릅니다.");
+                Require(area.PatternDisplayed, area.Name + " 확정 경로가 화면에 표시되지 않았습니다.");
+            }
+
+            return new Dictionary<string, string>
+            {
+                ["areas"] = areas.Count.ToString(CultureInfo.InvariantCulture),
+                ["pieces"] = pieces.ToString(CultureInfo.InvariantCulture),
+                ["areaNames"] = string.Join(",", areas.Select(a => a.Name))
+            };
         }
 
         private VisualStepOutcome VisualSaveProject(VisualActionSpec spec)
@@ -1015,6 +1127,7 @@ namespace HeatingMold.App
             if (File.Exists(path))
                 return VisualStepOutcome.Fail("프로젝트 결과 파일이 이미 있습니다: " + path);
 
+            Require(TryCaptureAllAreaRoutes(out var routesBefore, out string captureError), captureError);
             bool saved = SaveProjectTo(path);
             if (spec.Outcome == "rejected")
             {
@@ -1023,6 +1136,7 @@ namespace HeatingMold.App
                     Require(StatusText.Text.Contains(spec.FailureContains, StringComparison.Ordinal),
                         "프로젝트 저장 거부 사유가 기대와 다릅니다: " + StatusText.Text);
                 Require(!File.Exists(path), "저장이 거부되었는데 프로젝트 파일이 생성되었습니다.");
+                RequireAllRoutesPreserved(routesBefore, "프로젝트 저장 거부");
                 return VisualStepOutcome.Ok("프로젝트 저장 거부 확인");
             }
 
@@ -1042,6 +1156,7 @@ namespace HeatingMold.App
                 ["areas"] = _areas.Count.ToString(CultureInfo.InvariantCulture),
                 ["aliases"] = string.Join(",", _visualAreaAliases.Keys.OrderBy(k => k, StringComparer.Ordinal))
             };
+            RequireAllRoutesPreserved(routesBefore, "프로젝트 저장");
             return VisualStepOutcome.Ok("프로젝트 저장", data);
         }
 
@@ -1271,6 +1386,8 @@ namespace HeatingMold.App
             int before = area.Exclusions.Count;
             var a = new Vec2(spec.Rect[0], spec.Rect[1]);
             var b = new Vec2(spec.Rect[2], spec.Rect[3]);
+            Require(TryCaptureAllAreaRoutes(out var routesBefore, out string captureError),
+                "제외영역 추가 전 확정 경로를 읽지 못했습니다: " + captureError);
             QueueVisualTestConfirm(spec);
             bool added = AddActiveAreaExclusion(a, b, out string error);
             RequireNoPendingVisualTestConfirms();
@@ -1280,6 +1397,7 @@ namespace HeatingMold.App
             Require(!area.PatternDisplayed, "제외영역 추가 후 이전 경로가 표시된 상태입니다.");
             Require(area.NativePieceIds.Length == 0,
                 "제외영역 추가 후 조각 상태가 남아 있습니다.");
+            RequireSiblingRoutesPreserved(routesBefore, area, "제외영역 추가");
 
             string rawDiagnostic = Bridge.GetDisplayDiagnostic() ?? "";
             Dictionary<string, int> diagnostic = ParseDisplayDiagnostic(rawDiagnostic);
@@ -1309,12 +1427,15 @@ namespace HeatingMold.App
             RefreshAreaList();
             Require(area.Exclusions.Count > 0, "제거할 제외영역이 없습니다.");
 
+            Require(TryCaptureAllAreaRoutes(out var routesBefore, out string captureError),
+                "제외영역 제거 전 확정 경로를 읽지 못했습니다: " + captureError);
             QueueVisualTestConfirm(spec);
             bool removed = RemoveActiveAreaExclusions(out string error);
             RequireNoPendingVisualTestConfirms();
             Require(removed, "제외영역을 제거하지 못했습니다: " + error);
             Require(area.Exclusions.Count == 0, "제외영역 목록이 비워지지 않았습니다.");
             Require(area.Pattern == null, "제외영역 제거 후 이전 경로가 남아 있습니다.");
+            RequireSiblingRoutesPreserved(routesBefore, area, "제외영역 제거");
 
             string rawDiagnostic = Bridge.GetDisplayDiagnostic() ?? "";
             Dictionary<string, int> diagnostic = ParseDisplayDiagnostic(rawDiagnostic);
@@ -1455,6 +1576,8 @@ namespace HeatingMold.App
             double[] beforeLengths = area.RoutePieceLengths.ToArray();
             bool beforeEdited = area.RouteEdited;
             int beforePieces = area.Pattern.RoutePieces.Count;
+            Require(TryCaptureAllAreaRoutes(out var routesBefore, out string captureError),
+                "꼭지점 편집 전 확정 경로를 읽지 못했습니다: " + captureError);
 
             EnterVertexEdit();
             Require(Viewport.VertexEditMode, "꼭지점 편집 모드가 켜지지 않았습니다.");
@@ -1484,6 +1607,8 @@ namespace HeatingMold.App
                 ExitVertexEdit();
                 RequireVertexEditExited();
                 RequirePatternUnchanged(area, beforePieces, beforeLengths, beforeEdited, "이동 거부 후");
+                string rejectedPreservation = RequireAreaRoutesUnchanged(routesBefore, null, "이동 거부 후");
+                Require(rejectedPreservation == null, rejectedPreservation);
                 var rejected = new Dictionary<string, string>
                 {
                     ["area"] = area.Name,
@@ -1502,10 +1627,16 @@ namespace HeatingMold.App
             UpdateVertexPreview(expected);
             if (spec.Cancel)
             {
+                // 미리보기 자체가 실패하면 취소 후 보존 검사만으로 통과할 수 있으므로
+                // 표시용 2D 미리보기가 실제로 그려진 상태를 먼저 확인한다.
+                Require((StatusText.Text ?? "").Contains(VertexPreviewShownFragment, StringComparison.Ordinal),
+                    "미리보기가 표시되지 않았습니다: " + StatusText.Text);
                 OnVertexDragCancelled();
                 ExitVertexEdit();
                 RequireVertexEditExited();
                 RequirePatternUnchanged(area, beforePieces, beforeLengths, beforeEdited, "미리보기 취소 후");
+                string cancelPreservation = RequireAreaRoutesUnchanged(routesBefore, null, "미리보기 취소 후");
+                Require(cancelPreservation == null, cancelPreservation);
                 var cancelled = new Dictionary<string, string>
                 {
                     ["area"] = area.Name,
@@ -1546,6 +1677,7 @@ namespace HeatingMold.App
             Require(area.RouteEdited, "꼭지점 이동이 적용되지 않았습니다: " + commitStatus);
             Require(area.Pattern != null && area.Pattern.RoutePieces.Count > 0, "편집 후 경로가 없습니다.");
             Require(!IsPatternInputStale(area), "편집 후 경로가 stale 상태입니다.");
+            RequireSiblingRoutesPreserved(routesBefore, area, "꼭지점 이동 확정");
 
             var data = new Dictionary<string, string>
             {
@@ -1589,6 +1721,11 @@ namespace HeatingMold.App
 
         // ---- 확인 대화상자 응답 큐 ----
 
+        /// <summary>자동 실행 중에만 확인 응답 큐를 쓴다. 완료·실패·중단 뒤에는 제품 대화상자를 쓴다.</summary>
+        private bool VisualTestAutomationActive =>
+            VisualTestConfirmationPolicy.UsesQueuedResponses(
+                VisualTestSession.Current != null, _visualTestRunner);
+
         internal bool ResolveVisualTestConfirm(string action)
         {
             if (_visualTestConfirmResponses.Count == 0)
@@ -1617,7 +1754,12 @@ namespace HeatingMold.App
             VisualTestSession session = VisualTestSession.Current;
             Require(session != null, "시각 테스트 세션이 없습니다.");
             SidebarTabs.SelectedIndex = ExportTabIndex;
-            ReviewScopeBox.SelectedIndex = spec.Scope ?? 0;
+            Require(TryCaptureAllAreaRoutes(out var routesBefore, out string captureError), captureError);
+            SetVisualReviewScope(0);
+            ReviewSnapshot allSnapshot = BuildReviewSnapshot();
+            int outputScope = spec.Scope ?? 0;
+            SetVisualReviewScope(outputScope);
+            ReviewSnapshot expectedSnapshot = BuildReviewSnapshot();
 
             string fileName = string.IsNullOrWhiteSpace(spec.FileName) ? "result.dxf" : spec.FileName;
             string path = VisualArtifactPath(fileName, "result.dxf");
@@ -1638,6 +1780,7 @@ namespace HeatingMold.App
                     ["result"] = result.ToString(),
                     ["reason"] = StatusText.Text ?? ""
                 };
+                RequireAllRoutesPreserved(routesBefore, "DXF 저장 거부");
                 return VisualStepOutcome.Ok("DXF 저장 거부 확인", rejected);
             }
 
@@ -1652,23 +1795,126 @@ namespace HeatingMold.App
             var texts = document.Entities.All.OfType<Text>().Select(t => t.Value ?? "").ToList();
             Require(texts.Contains("전기 사양표"), "DXF에 전기 사양표 제목이 없습니다.");
             Require(document.Layers.Contains(DxfExporter.ElectricalSpecLayer), "DXF에 전기 사양 레이어가 없습니다.");
-            Require(document.Layers.Contains("HEAT_WIRE"), "DXF에 발열경로 레이어가 없습니다.");
-            Require(document.Entities.All.OfType<Polyline2D>()
-                    .Any(p => string.Equals(p.Layer.Name, "HEAT_WIRE", StringComparison.OrdinalIgnoreCase)),
-                "DXF에 발열경로 형상이 없습니다.");
+            Require(document.Layers.Contains(DxfExporter.HeatWireLayer), "DXF에 발열경로 레이어가 없습니다.");
 
-            ReviewSnapshot snapshot = BuildReviewSnapshot();
-            foreach (CircuitLengthInfo circuit in snapshot.Circuits)
-                Require(texts.Any(t => t.Contains(circuit.CircuitId)), "DXF 전기표에 회로 ID가 없습니다: " + circuit.CircuitId);
+            var expectedIds = new HashSet<string>(expectedSnapshot.Circuits.Select(c => c.CircuitId), StringComparer.Ordinal);
+            var outOfScope = allSnapshot.Circuits
+                .Where(c => !expectedIds.Contains(c.CircuitId))
+                .ToList();
+            RequireDxfExportContent(document, expectedSnapshot, outOfScope, out Dictionary<string, string> content);
 
             var data = new Dictionary<string, string>
             {
                 ["dxf"] = path,
                 ["bytes"] = new FileInfo(path).Length.ToString(CultureInfo.InvariantCulture),
-                ["circuitRows"] = snapshot.Circuits.Count.ToString(CultureInfo.InvariantCulture),
+                ["scope"] = outputScope.ToString(CultureInfo.InvariantCulture),
                 ["textEntities"] = texts.Count.ToString(CultureInfo.InvariantCulture)
             };
-            return VisualStepOutcome.Ok("DXF 저장·재읽기·전기표 확인", data);
+            foreach (KeyValuePair<string, string> entry in content) data[entry.Key] = entry.Value;
+            RequireAllRoutesPreserved(routesBefore, "DXF 저장");
+            return VisualStepOutcome.Ok("DXF 저장·재읽기·범위 일치 확인", data);
+        }
+
+        /// <summary>
+        /// DXF 재읽기 내용이 요청 범위와 일치하는지 확인한다. 전기 사양표는 Y 좌표로 묶어
+        /// 회로 한 행의 셀들을 비교하고, 범위 밖 회로 ID·발열경로 폴리라인 수·영역 색도
+        /// 기대 집합과 대조한다. 파일 순서에 의존하지 않는다.
+        /// </summary>
+        private void RequireDxfExportContent(
+            DxfDocument document, ReviewSnapshot expected,
+            IReadOnlyList<CircuitLengthInfo> outOfScopeCircuits,
+            out Dictionary<string, string> metrics)
+        {
+            metrics = new Dictionary<string, string>(StringComparer.Ordinal);
+            IReadOnlyList<WorkingArea> areas = expected.ReadyAreas;
+            Require(areas.Count > 0, "DXF 요청 범위에 확정된 발열영역이 없습니다.");
+            Require(expected.Table != null && expected.Table.Rows.Count > 0, "DXF 요청 범위에 전기 사양 행이 없습니다.");
+
+            WorkingSideDefinition side = _workingSide?.Confirmed;
+            List<RouteExportCircuit> circuits = CollectExportCircuits(areas, side, out string collectError);
+            Require(circuits != null, "DXF 범위 검사용 확정 회로를 읽지 못했습니다 — " + collectError);
+            int expectedPieces = circuits.Sum(c => c.Pieces.Count);
+
+            List<Polyline2D> wires = document.Entities.All.OfType<Polyline2D>()
+                .Where(p => string.Equals(p.Layer?.Name, DxfExporter.HeatWireLayer, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            List<Polyline2D> rings = document.Entities.All.OfType<Polyline2D>()
+                .Where(p => string.Equals(p.Layer?.Name, DxfExporter.HeatAreaLayer, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            Require(wires.Count == expectedPieces, string.Format(CultureInfo.InvariantCulture,
+                "DXF 발열경로 폴리라인 수가 확정 조각 수와 다릅니다: {0} != {1}", wires.Count, expectedPieces));
+            Require(rings.Count == areas.Count, string.Format(CultureInfo.InvariantCulture,
+                "DXF 발열영역 외곽 수가 요청 영역 수와 다릅니다: {0} != {1}", rings.Count, areas.Count));
+
+            var allowed = new HashSet<(byte R, byte G, byte B)>();
+            foreach (WorkingArea area in areas) allowed.Add((area.Color.R, area.Color.G, area.Color.B));
+            var used = new HashSet<(byte R, byte G, byte B)>();
+            foreach (Polyline2D wire in wires)
+            {
+                Require(wire.Color != null, "DXF 발열경로 폴리라인에 색이 없습니다.");
+                var key = (wire.Color.R, wire.Color.G, wire.Color.B);
+                Require(allowed.Contains(key), string.Format(CultureInfo.InvariantCulture,
+                    "DXF 발열경로 색 {0},{1},{2}이 요청 영역 색이 아닙니다.", key.R, key.G, key.B));
+                used.Add(key);
+            }
+            foreach (Polyline2D ring in rings)
+            {
+                Require(ring.Color != null, "DXF 발열영역 외곽에 색이 없습니다.");
+                var key = (ring.Color.R, ring.Color.G, ring.Color.B);
+                Require(allowed.Contains(key), string.Format(CultureInfo.InvariantCulture,
+                    "DXF 발열영역 색 {0},{1},{2}이 요청 영역 색이 아닙니다.", key.R, key.G, key.B));
+                used.Add(key);
+            }
+            Require(used.SetEquals(allowed), "DXF에 요청 영역 색이 모두 나타나지 않았습니다: "
+                + used.Count + " / " + allowed.Count);
+
+            List<Text> specTexts = document.Entities.All.OfType<Text>()
+                .Where(t => string.Equals(t.Layer?.Name, DxfExporter.ElectricalSpecLayer, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            Require(specTexts.Count > 0, "DXF 전기 사양표 텍스트가 없습니다.");
+            var inv = CultureInfo.InvariantCulture;
+            var byRow = specTexts.GroupBy(t => Math.Round(t.Position.Y, 6)).ToList();
+            foreach (ElectricalSpecRow row in expected.Table.Rows)
+            {
+                List<Text> group = byRow.FirstOrDefault(g => g.Any(t =>
+                    string.Equals((t.Value ?? "").Trim(), row.CircuitId, StringComparison.Ordinal)))?.ToList();
+                Require(group != null, "DXF 전기표에 회로 행이 없습니다: " + row.CircuitId);
+                List<string> cells = group.Select(t => (t.Value ?? "").Trim()).ToList();
+                string joined = string.Join(" | ", cells);
+                Require(cells.Contains(row.LengthM.ToString("F2", inv)),
+                    "DXF 회로 " + row.CircuitId + " 길이 셀이 기대와 다릅니다: " + joined);
+                Require(cells.Contains(row.ResistanceOhm.ToString("F2", inv)),
+                    "DXF 회로 " + row.CircuitId + " 저항 셀이 기대와 다릅니다: " + joined);
+                Require(cells.Contains(row.VoltageV.ToString("F1", inv)),
+                    "DXF 회로 " + row.CircuitId + " 전압 셀이 기대와 다릅니다: " + joined);
+                Require(cells.Contains(row.CurrentA.ToString("F2", inv)),
+                    "DXF 회로 " + row.CircuitId + " 전류 셀이 기대와 다릅니다: " + joined);
+                Require(cells.Contains(row.PowerW.ToString("F1", inv)),
+                    "DXF 회로 " + row.CircuitId + " 전력 셀이 기대와 다릅니다: " + joined);
+            }
+            List<Text> totalRow = byRow.FirstOrDefault(g => g.Any(t =>
+                string.Equals((t.Value ?? "").Trim(), "합계", StringComparison.Ordinal)))?.ToList();
+            Require(totalRow != null, "DXF 전기표에 합계 행이 없습니다.");
+            List<string> totalCells = totalRow.Select(t => (t.Value ?? "").Trim()).ToList();
+            Require(totalCells.Contains(expected.Table.TotalCurrentA.ToString("F2", inv)),
+                "DXF 합계 행의 전류가 기대와 다릅니다: " + string.Join(" | ", totalCells));
+            Require(totalCells.Contains(expected.Table.TotalPowerW.ToString("F1", inv)),
+                "DXF 합계 행의 전력이 기대와 다릅니다: " + string.Join(" | ", totalCells));
+
+            if (outOfScopeCircuits != null)
+            {
+                foreach (CircuitLengthInfo other in outOfScopeCircuits)
+                {
+                    Require(!specTexts.Any(t => string.Equals((t.Value ?? "").Trim(), other.CircuitId, StringComparison.Ordinal)),
+                        "DXF 전기표에 요청 범위 밖 회로가 섞였습니다: " + other.CircuitId);
+                }
+            }
+
+            metrics["areas"] = areas.Count.ToString(inv);
+            metrics["circuitRows"] = expected.Table.Rows.Count.ToString(inv);
+            metrics["heatWires"] = wires.Count.ToString(inv);
+            metrics["heatAreaRings"] = rings.Count.ToString(inv);
+            metrics["areaColors"] = used.Count.ToString(inv);
         }
 
         // ---- v2 보조 ----
@@ -1688,12 +1934,22 @@ namespace HeatingMold.App
                 return "조각 길이 수가 패턴 조각 수와 다릅니다: " + area.Name;
 
             int turnCount = area.Pattern.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector);
+            int heatingPieces = 0;
+            double heatingLength = 0;
+            for (int i = 0; i < area.Pattern.RoutePieces.Count; i++)
+            {
+                if (area.Pattern.RoutePieces[i].Kind != SerpentineRoutePieceKind.HeatingRun) continue;
+                heatingPieces++;
+                heatingLength += area.RoutePieceLengths[i];
+            }
             int circuits = GetCircuitLengths(area).Count;
             double length = area.RoutePieceLengths.Sum();
             data["areaName"] = area.Name;
             data["faceIds"] = string.Join(",", area.FaceIdSet.OrderBy(v => v));
             data["pieces"] = area.Pattern.RoutePieces.Count.ToString(CultureInfo.InvariantCulture);
             data["turns"] = turnCount.ToString(CultureInfo.InvariantCulture);
+            data["heatingPieces"] = heatingPieces.ToString(CultureInfo.InvariantCulture);
+            data["heatingLengthMm"] = heatingLength.ToString("0.###", CultureInfo.InvariantCulture);
             data["routeEdited"] = area.RouteEdited.ToString();
             data["circuits"] = circuits.ToString(CultureInfo.InvariantCulture);
             data["totalLengthMm"] = length.ToString("0.###", CultureInfo.InvariantCulture);
@@ -1730,7 +1986,90 @@ namespace HeatingMold.App
                     return string.Format("총 길이가 기대와 다릅니다: {0} 기대 {1:0.###} 실제 {2:0.###} (허용 {3})",
                         area.Name, expect.LengthMm.Value, length, tolerance);
             }
+            if (expect.HeatingPieces != null && heatingPieces != expect.HeatingPieces.Value)
+                return string.Format("발열선 조각 수가 기대와 다릅니다: {0} 기대 {1} 실제 {2}",
+                    area.Name, expect.HeatingPieces.Value, heatingPieces);
+            if (expect.HeatingLengthMm != null)
+            {
+                double tolerance = expect.LengthToleranceMm > 0 ? expect.LengthToleranceMm : 0.5;
+                if (Math.Abs(heatingLength - expect.HeatingLengthMm.Value) > tolerance)
+                    return string.Format("발열선 길이가 기대와 다릅니다: {0} 기대 {1:0.###} 실제 {2:0.###} (허용 {3})",
+                        area.Name, expect.HeatingLengthMm.Value, heatingLength, tolerance);
+            }
             return null;
+        }
+
+        /// <summary>
+        /// 모든 확정 영역의 경로 상태를 실행 전에 캡처한다. 아직 경로가 없는 영역은
+        /// null로 기록해, 실행 후 경로가 생기지 않았는지까지 비교할 수 있게 한다.
+        /// </summary>
+        private bool TryCaptureAllAreaRoutes(out Dictionary<WorkingArea, VisualRouteSnapshot> snapshots, out string error)
+        {
+            snapshots = new Dictionary<WorkingArea, VisualRouteSnapshot>();
+            error = null;
+            WorkingSideDefinition side = _workingSide?.Confirmed;
+            foreach (WorkingArea area in _areas)
+            {
+                if (area.Pattern == null)
+                {
+                    snapshots[area] = null;
+                    continue;
+                }
+                VisualRouteSnapshot snapshot = VisualRouteSnapshotComparer.Capture(area, side, out string captureError);
+                if (snapshot == null)
+                {
+                    error = area.Name + " 확정 경로를 읽지 못했습니다 — " + captureError;
+                    return false;
+                }
+                snapshots[area] = snapshot;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 실행 전에 캡처한 경로 상태와 현재 상태를 비교한다. <paramref name="skip"/>은
+        /// 이번 동작으로 경로가 바뀌는 것이 정상인 영역이며, null이면 모든 영역을 비교한다.
+        /// </summary>
+        private string RequireAreaRoutesUnchanged(Dictionary<WorkingArea, VisualRouteSnapshot> snapshots,
+            WorkingArea skip, string context)
+        {
+            if (snapshots == null) return null;
+            foreach (KeyValuePair<WorkingArea, VisualRouteSnapshot> entry in snapshots)
+            {
+                WorkingArea area = entry.Key;
+                if (ReferenceEquals(area, skip)) continue;
+                if (!_areas.Contains(area))
+                    return context + " — 영역이 목록에서 사라졌습니다: " + area.Name;
+                if (entry.Value == null)
+                {
+                    if (area.Pattern != null) return context + " — 없던 발열경로가 생겼습니다: " + area.Name;
+                    continue;
+                }
+                if (area.Pattern == null)
+                    return context + " — 발열경로가 사라졌습니다: " + area.Name;
+                VisualRouteSnapshot current = VisualRouteSnapshotComparer.Capture(
+                    area, _workingSide?.Confirmed, out string captureError);
+                if (current == null)
+                    return context + " — 확정 경로를 읽지 못했습니다: " + area.Name + " — " + captureError;
+                if (!VisualRouteSnapshotComparer.IsUnchanged(entry.Value, current, out string difference))
+                    return context + " — " + difference;
+            }
+            return null;
+        }
+
+        /// <summary>대상 영역을 제외한 나머지 영역의 보존을 검사한다.</summary>
+        private void RequireSiblingRoutesPreserved(Dictionary<WorkingArea, VisualRouteSnapshot> before,
+            WorkingArea target, string context)
+        {
+            string difference = RequireAreaRoutesUnchanged(before, target, context);
+            Require(difference == null, difference);
+        }
+
+        /// <summary>모든 확정 영역의 경로가 그대로인지 검사한다(읽기·표시 전용 동작용).</summary>
+        private void RequireAllRoutesPreserved(Dictionary<WorkingArea, VisualRouteSnapshot> before, string context)
+        {
+            string difference = RequireAreaRoutesUnchanged(before, null, context);
+            Require(difference == null, difference);
         }
 
         private void ConfigurePatternInputs(VisualAreaDefinition definition, VisualActionSpec spec)

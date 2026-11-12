@@ -1520,6 +1520,14 @@ namespace HeatingMold.App
 
         protected override void OnClosing(CancelEventArgs e)
         {
+            // 자동 실행 중에는 확인 응답 큐를 소비하지 않는다. 단계가 큐에 넣은 응답을 종료 확인이
+            // 가로채면 시나리오가 어긋나고, 큐가 비어 있으면 확인 함수가 예외를 던진다.
+            if (VisualTestAutomationActive)
+            {
+                e.Cancel = true;
+                StatusText.Text = "시각 테스트 실행 중입니다 — 완료된 뒤에 종료할 수 있습니다";
+                return;
+            }
             // 오프스크린 회귀 하네스는 Show 없이 창을 만들고 닫으므로 확인 대화상자를 띄우지 않는다.
             if (IsVisible && !ConfirmDiscardSession("앱 종료"))
             {

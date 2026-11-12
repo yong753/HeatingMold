@@ -1,0 +1,640 @@
+{
+  "schemaVersion": 2,
+  "name": "E2E 조건 변형 — 마진·간격·인출점 (가로 A / 세로 B)",
+  "model": {
+    "path": "resource/Mold_Cover_Trim.step",
+    "sha256": "8CB03405817606D1917FEF55B46A60011FFB5E93075EECDEF5A8651D4359FCED",
+    "faceCount": 80,
+    "solidCount": 0
+  },
+  "areas": [
+    {
+      "alias": "A",
+      "faceIds": [44, 56, 69],
+      "marginMm": 8,
+      "spacingMm": 24,
+      "direction": 1
+    },
+    {
+      "alias": "B",
+      "faceIds": [16, 24, 26],
+      "marginMm": 12,
+      "spacingMm": 28,
+      "direction": 2
+    }
+  ],
+  "steps": [
+    {
+      "id": "m1",
+      "name": "A 면 선택",
+      "action": "selectFaces",
+      "faces": [44, 56, 69]
+    },
+    {
+      "id": "m2",
+      "name": "A 확정",
+      "action": "confirmArea",
+      "area": "A"
+    },
+    {
+      "id": "m3",
+      "name": "A 입력(가로 24mm·마진 8)",
+      "action": "setAreaInputs",
+      "area": "A",
+      "marginMm": 8,
+      "spacingMm": 24,
+      "direction": 1
+    },
+    {
+      "id": "m4",
+      "name": "A 시작 인출점(왼쪽 변)",
+      "action": "pickExitPoint",
+      "area": "A",
+      "exitPoint": {
+        "role": "start",
+        "uv": [-362.7109, -300],
+        "toleranceMm": 0.5
+      }
+    },
+    {
+      "id": "m5",
+      "name": "A 종료 인출점(왼쪽 변)",
+      "action": "pickExitPoint",
+      "area": "A",
+      "exitPoint": {
+        "role": "end",
+        "uv": [-362.7109, -36],
+        "toleranceMm": 0.5
+      }
+    },
+    {
+      "id": "m6",
+      "name": "A 생성",
+      "action": "generate",
+      "area": "A",
+      "marginMm": 8,
+      "spacingMm": 24,
+      "direction": 1,
+      "expect": {
+        "pieces": 24,
+        "turns": 11,
+        "circuits": 1,
+        "lengthMm": 8030.735,
+        "heatingPieces": 12,
+        "heatingLengthMm": 7742.326,
+        "routeEdited": false,
+        "marginMm": 8,
+        "spacingMm": 24
+      }
+    },
+    {
+      "id": "m7",
+      "name": "B 면 선택",
+      "action": "selectFaces",
+      "faces": [16, 24, 26]
+    },
+    {
+      "id": "m8",
+      "name": "B 확정",
+      "action": "confirmArea",
+      "area": "B"
+    },
+    {
+      "id": "m9",
+      "name": "B 입력(세로 28mm·마진 12)",
+      "action": "setAreaInputs",
+      "area": "B",
+      "marginMm": 12,
+      "spacingMm": 28,
+      "direction": 2
+    },
+    {
+      "id": "m10",
+      "name": "B 시작 인출점(위쪽 변)",
+      "action": "pickExitPoint",
+      "area": "B",
+      "exitPoint": {
+        "role": "start",
+        "uv": [600, 252.3764],
+        "toleranceMm": 1.0
+      }
+    },
+    {
+      "id": "m11",
+      "name": "B 종료 인출점(위쪽 경사 변)",
+      "action": "pickExitPoint",
+      "area": "B",
+      "exitPoint": {
+        "role": "end",
+        "uv": [370, 217.95],
+        "toleranceMm": 1.0
+      }
+    },
+    {
+      "id": "m12",
+      "name": "B 생성",
+      "action": "generate",
+      "area": "B",
+      "marginMm": 12,
+      "spacingMm": 28,
+      "direction": 2,
+      "expect": {
+        "pieces": 20,
+        "turns": 9,
+        "circuits": 1,
+        "lengthMm": 5239.919,
+        "heatingPieces": 10,
+        "heatingLengthMm": 4907.115,
+        "routeEdited": false,
+        "marginMm": 12,
+        "spacingMm": 28
+      }
+    },
+    {
+      "id": "m13",
+      "name": "A 보존(생성 후)",
+      "action": "checkArea",
+      "area": "A",
+      "expect": {
+        "pieces": 24,
+        "turns": 11,
+        "circuits": 1,
+        "lengthMm": 8030.735,
+        "heatingPieces": 12,
+        "heatingLengthMm": 7742.326
+      }
+    },
+    {
+      "id": "m14",
+      "name": "B 보존(생성 후)",
+      "action": "checkArea",
+      "area": "B",
+      "expect": {
+        "pieces": 20,
+        "turns": 9,
+        "circuits": 1,
+        "lengthMm": 5239.919,
+        "heatingPieces": 10,
+        "heatingLengthMm": 4907.115
+      }
+    },
+    {
+      "id": "m15",
+      "name": "전체 검사",
+      "action": "checkAllAreas"
+    },
+    {
+      "id": "m16",
+      "name": "표준 전기 설정(Case1·220V·16A·3.5kW)",
+      "action": "setElectrical",
+      "electrical": {
+        "presetIndex": 0,
+        "voltageV": 220,
+        "allowedCurrentA": 16,
+        "allowedPowerKw": 3.5,
+        "reviewScope": 0
+      }
+    },
+    {
+      "id": "m17",
+      "name": "표준 전기검사(혼합 판정)",
+      "action": "checkElectrical",
+      "electrical": {
+        "voltageV": 220,
+        "allowedCurrentA": 16,
+        "allowedPowerKw": 3.5,
+        "reviewScope": 0,
+        "apply": false,
+        "circuitVerdicts": [
+          { "area": "A", "verdict": "NG" },
+          { "area": "B", "verdict": "OK" }
+        ]
+      }
+    },
+    {
+      "id": "m18",
+      "name": "B 하단 홈 추가",
+      "action": "addExclusion",
+      "area": "B",
+      "rect": [520, -200, 590, -166]
+    },
+    {
+      "id": "m19",
+      "name": "B 경로 무효",
+      "action": "expectNoPattern",
+      "area": "B"
+    },
+    {
+      "id": "m20",
+      "name": "B 홈 재생성",
+      "action": "generate",
+      "area": "B",
+      "marginMm": 12,
+      "spacingMm": 28,
+      "direction": 2,
+      "expect": {
+        "pieces": 20,
+        "turns": 9,
+        "circuits": 1,
+        "lengthMm": 5174.13,
+        "heatingPieces": 10,
+        "heatingLengthMm": 4841.326,
+        "routeEdited": false,
+        "marginMm": 12,
+        "spacingMm": 28
+      }
+    },
+    {
+      "id": "m21",
+      "name": "B 홈 침범 검사",
+      "action": "checkExclusion",
+      "area": "B",
+      "rect": [520, -200, 590, -166]
+    },
+    {
+      "id": "m22",
+      "name": "B 홈 후 A 보존",
+      "action": "checkArea",
+      "area": "A",
+      "expect": {
+        "pieces": 24,
+        "turns": 11,
+        "circuits": 1,
+        "lengthMm": 8030.735,
+        "heatingPieces": 12,
+        "heatingLengthMm": 7742.326
+      }
+    },
+    {
+      "id": "m23",
+      "name": "A 간격 방향 이동 거부",
+      "action": "moveVertex",
+      "area": "A",
+      "vertexIndex": 2,
+      "offsetMm": [0, 20],
+      "outcome": "rejected"
+    },
+    {
+      "id": "m24",
+      "name": "A 진행 방향 미리보기 취소",
+      "action": "moveVertex",
+      "area": "A",
+      "vertexIndex": 2,
+      "offsetMm": [15, 0],
+      "cancel": true
+    },
+    {
+      "id": "m25",
+      "name": "꼭지점 후 A 보존",
+      "action": "checkArea",
+      "area": "A",
+      "expect": {
+        "pieces": 24,
+        "turns": 11,
+        "circuits": 1,
+        "lengthMm": 8030.735,
+        "heatingPieces": 12,
+        "heatingLengthMm": 7742.326
+      }
+    },
+    {
+      "id": "m26",
+      "name": "꼭지점 후 B 보존",
+      "action": "checkArea",
+      "area": "B",
+      "expect": {
+        "pieces": 20,
+        "turns": 9,
+        "circuits": 1,
+        "lengthMm": 5174.13,
+        "heatingPieces": 10,
+        "heatingLengthMm": 4841.326
+      }
+    },
+    {
+      "id": "m27",
+      "name": "A 초안 변경(10/30)",
+      "action": "setAreaInputs",
+      "area": "A",
+      "marginMm": 10,
+      "spacingMm": 30,
+      "direction": 1
+    },
+    {
+      "id": "m28",
+      "name": "B 초안 보존",
+      "action": "expectAreaInputs",
+      "area": "B",
+      "marginMm": 12,
+      "spacingMm": 28,
+      "direction": 2
+    },
+    {
+      "id": "m29",
+      "name": "A 초안 확인(10/30)",
+      "action": "expectAreaInputs",
+      "area": "A",
+      "marginMm": 10,
+      "spacingMm": 30,
+      "direction": 1
+    },
+    {
+      "id": "m30",
+      "name": "A 원 조건 재생성",
+      "action": "generate",
+      "area": "A",
+      "marginMm": 8,
+      "spacingMm": 24,
+      "direction": 1,
+      "expect": {
+        "pieces": 24,
+        "turns": 11,
+        "circuits": 1,
+        "lengthMm": 8030.735,
+        "heatingPieces": 12,
+        "heatingLengthMm": 7742.326,
+        "routeEdited": false,
+        "marginMm": 8,
+        "spacingMm": 24
+      }
+    },
+    {
+      "id": "m31",
+      "name": "A 재생성 후 B 보존",
+      "action": "checkArea",
+      "area": "B",
+      "expect": {
+        "pieces": 20,
+        "turns": 9,
+        "circuits": 1,
+        "lengthMm": 5174.13,
+        "heatingPieces": 10,
+        "heatingLengthMm": 4841.326
+      }
+    },
+    {
+      "id": "m32",
+      "name": "전류 한도 5A 설정",
+      "action": "setElectrical",
+      "electrical": {
+        "presetIndex": 0,
+        "voltageV": 220,
+        "allowedCurrentA": 5,
+        "allowedPowerKw": 3.5,
+        "reviewScope": 0
+      }
+    },
+    {
+      "id": "m33",
+      "name": "전류 한도 전체 검사(둘 다 NG)",
+      "action": "checkElectrical",
+      "electrical": {
+        "voltageV": 220,
+        "allowedCurrentA": 5,
+        "allowedPowerKw": 3.5,
+        "reviewScope": 0,
+        "apply": false,
+        "circuitVerdicts": [
+          { "area": "A", "verdict": "NG" },
+          { "area": "B", "verdict": "NG" }
+        ]
+      }
+    },
+    {
+      "id": "m34",
+      "name": "B 활성",
+      "action": "activateArea",
+      "area": "B"
+    },
+    {
+      "id": "m35",
+      "name": "현재 B 전기검사",
+      "action": "checkElectrical",
+      "electrical": {
+        "voltageV": 220,
+        "allowedCurrentA": 5,
+        "allowedPowerKw": 3.5,
+        "reviewScope": 1,
+        "apply": false,
+        "circuitVerdicts": [
+          { "area": "A", "verdict": "NG" },
+          { "area": "B", "verdict": "NG" }
+        ]
+      }
+    },
+    {
+      "id": "m36",
+      "name": "현재 B 반복",
+      "action": "checkElectrical",
+      "electrical": {
+        "voltageV": 220,
+        "allowedCurrentA": 5,
+        "allowedPowerKw": 3.5,
+        "reviewScope": 1,
+        "apply": false,
+        "circuitVerdicts": [
+          { "area": "A", "verdict": "NG" },
+          { "area": "B", "verdict": "NG" }
+        ]
+      }
+    },
+    {
+      "id": "m37",
+      "name": "A 활성",
+      "action": "activateArea",
+      "area": "A"
+    },
+    {
+      "id": "m38",
+      "name": "현재 A 전기검사",
+      "action": "checkElectrical",
+      "electrical": {
+        "voltageV": 220,
+        "allowedCurrentA": 5,
+        "allowedPowerKw": 3.5,
+        "reviewScope": 1,
+        "apply": false,
+        "circuitVerdicts": [
+          { "area": "A", "verdict": "NG" },
+          { "area": "B", "verdict": "NG" }
+        ]
+      }
+    },
+    {
+      "id": "m39",
+      "name": "표준 한도 복원(16A)",
+      "action": "setElectrical",
+      "electrical": {
+        "presetIndex": 0,
+        "voltageV": 220,
+        "allowedCurrentA": 16,
+        "allowedPowerKw": 3.5,
+        "reviewScope": 0
+      }
+    },
+    {
+      "id": "m40",
+      "name": "표준 전체 재검사",
+      "action": "checkElectrical",
+      "electrical": {
+        "voltageV": 220,
+        "allowedCurrentA": 16,
+        "allowedPowerKw": 3.5,
+        "reviewScope": 0,
+        "apply": false,
+        "circuitVerdicts": [
+          { "area": "A", "verdict": "NG" },
+          { "area": "B", "verdict": "OK" }
+        ]
+      }
+    },
+    {
+      "id": "m41",
+      "name": "전체 DXF",
+      "action": "exportDxf",
+      "scope": 0,
+      "fileName": "variant-all.dxf"
+    },
+    {
+      "id": "m42",
+      "name": "전체 STEP",
+      "action": "exportStep",
+      "scope": 0,
+      "fileName": "variant-all.step"
+    },
+    {
+      "id": "m43",
+      "name": "B 활성(현재 출력)",
+      "action": "activateArea",
+      "area": "B"
+    },
+    {
+      "id": "m44",
+      "name": "현재 B DXF",
+      "action": "exportDxf",
+      "scope": 1,
+      "fileName": "variant-current.dxf"
+    },
+    {
+      "id": "m45",
+      "name": "현재 B STEP",
+      "action": "exportStep",
+      "scope": 1,
+      "fileName": "variant-current.step"
+    },
+    {
+      "id": "m46",
+      "name": "두 영역 저장",
+      "action": "saveProject",
+      "fileName": "variant.json"
+    },
+    {
+      "id": "m47",
+      "name": "같은 실행에서 재로드",
+      "action": "loadProject",
+      "fileName": "variant.json",
+      "compareProject": true
+    },
+    {
+      "id": "m48",
+      "name": "복원 전체 검사",
+      "action": "checkAllAreas"
+    },
+    {
+      "id": "m49",
+      "name": "복원 A 보존",
+      "action": "checkArea",
+      "area": "A",
+      "expect": {
+        "pieces": 24,
+        "turns": 11,
+        "circuits": 1,
+        "lengthMm": 8030.735,
+        "heatingPieces": 12,
+        "heatingLengthMm": 7742.326
+      }
+    },
+    {
+      "id": "m50",
+      "name": "복원 B 보존",
+      "action": "checkArea",
+      "area": "B",
+      "expect": {
+        "pieces": 20,
+        "turns": 9,
+        "circuits": 1,
+        "lengthMm": 5174.13,
+        "heatingPieces": 10,
+        "heatingLengthMm": 4841.326
+      }
+    },
+    {
+      "id": "m51",
+      "name": "복원 전체 DXF",
+      "action": "exportDxf",
+      "scope": 0,
+      "fileName": "variant-reload.dxf"
+    },
+    {
+      "id": "m52",
+      "name": "복원 전체 STEP",
+      "action": "exportStep",
+      "scope": 0,
+      "fileName": "variant-reload.step"
+    },
+    {
+      "id": "m53",
+      "name": "A 삭제",
+      "action": "deleteArea",
+      "area": "A"
+    },
+    {
+      "id": "m54",
+      "name": "삭제 후 전체 검사",
+      "action": "checkAllAreas"
+    },
+    {
+      "id": "m55",
+      "name": "삭제 후 B 보존",
+      "action": "checkArea",
+      "area": "B",
+      "expect": {
+        "pieces": 20,
+        "turns": 9,
+        "circuits": 1,
+        "lengthMm": 5174.13,
+        "heatingPieces": 10,
+        "heatingLengthMm": 4841.326
+      }
+    },
+    {
+      "id": "m56",
+      "name": "삭제 후 전기(공유 전력 재배분)",
+      "action": "checkElectrical",
+      "electrical": {
+        "voltageV": 220,
+        "allowedCurrentA": 16,
+        "allowedPowerKw": 3.5,
+        "reviewScope": 0,
+        "apply": false,
+        "circuitVerdicts": [
+          { "area": "B", "verdict": "NG" }
+        ]
+      }
+    },
+    {
+      "id": "m57",
+      "name": "삭제 후 DXF",
+      "action": "exportDxf",
+      "scope": 0,
+      "fileName": "variant-single.dxf"
+    },
+    {
+      "id": "m58",
+      "name": "삭제 후 STEP",
+      "action": "exportStep",
+      "scope": 0,
+      "fileName": "variant-single.step"
+    }
+  ]
+}
