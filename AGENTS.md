@@ -212,6 +212,19 @@
 - 시각테스트 기본 관찰 시간은 3초에서 **1초**로 변경했다(`VisualTestOptions.HoldSeconds`, 런처 입력란).
 - 미검증: 실제 마우스 클릭·드래그·Shift/Ctrl/Enter/Esc·파일 대화상자, 앱 화면 육안 판정, 외부 CAD에서 DXF/STEP 열기, 런처 창 실제 클릭, 새 프로세스에서의 복원, 선택 면/제외 위치가 다른 두 번째 시나리오.
 
+## legacy-cleanup 통합 (2026-11-12)
+
+- **사용자 요청:** 다른 브랜치 `legacy-cleanup`(불필요 코드 삭제)을 지금 병합해도 문제가 없는지 검토하고, 승인 후 구현. 검토 결과 즉시 병합은 보류하고 현재 시각테스트 작업을 먼저 커밋한 뒤 통합 브랜치에서 병합했다.
+- 통합 브랜치 `integration/legacy-cleanup`에서 `legacy-cleanup`(tip `ec72c01`)을 병합했다. 텍스트 충돌은 `src\HeatingMold.App\VisualTesting\VisualScenario.cs` 1개였다. 해결 원칙은 삭제된 구형 `Exit`/`Anchor` 입력은 제거하고 최신 `Cancel`·`ExitPoint`·`Electrical`·`PartCount`·`ChildAliases`·`CompareProject`는 유지하는 것이다.
+- 자동 병합된 `MainWindow.VisualTest.cs`, `MainWindow.VertexEdit.cs`, `OccBridgeApi.cpp`, `VisualTestingTests.cs`는 삭제된 구형 심볼(`_exitCandidates`, `AnchorCandidates`, `StepExportCircuit`, `ProjectElectricalMigration`, 구 generator API 등)을 참조하지 않음을 grep으로 확인했고, 최신 액션·공통 드래그·STEP piece API가 남아 있음을 확인했다.
+- **주의:** 현재 `e2e-full.json` 시나리오가 `before-split.dxf` 등을 두 번 이상 출력하지 않는 것처럼, 저장/출력 대상이 이미 있으면 거부하는 제품 규칙은 그대로다. 새 실행은 항상 새 run 폴더를 쓴다.
+- **전기 제원 검증 복구:** 구형 마이그레이션 삭제로 schema 6 파일의 프리셋/직경/저항 일치 검증이 사라졌으므로 `src\HeatingMold.App\Persistence\ProjectElectricalValidator.cs`를 추가했다. 검증 항목은 전기 설정 존재, `WirePresetIndex` 0/1, 저장된 직경·단위 저항의 양수 파싱과 선택 Case 값 일치다. 손상/불일치는 `ValidateProjectDocument`에서 네이티브 모델 교체 전에 `InvalidDataException`으로 거부한다. 빈 허용 전압/전류/전력 입력은 제품의 입력 오류 상태이므로 채우거나 거부하지 않는다.
+- `ApplyProjectElectrical`은 검증된 `WirePresetIndex`를 그대로 적용한다(더 이상 잘못된 인덱스를 조용히 Case 1로 바꾸지 않는다).
+- **STEP 리소스 줄바꿈 함정:** `core.autocrlf=true` 환경에서 `resource\*.step`을 체크아웃하면 CRLF로 변환되어 SHA-256이 달라진다(예: `Mold_Cover_Trim.step`이 1,612,847 B / `2CE884…`). 시나리오·프로젝트가 고정한 값은 LF 원본 1,581,412 B / `8CB03405…FCED`이므로, `.gitattributes`에 `resource/*.step -text`, `resource/*.stp -text`를 추가해 앞으로의 체크아웃이 원본 바이트를 유지하게 했다. 기존 체크아웃은 파일 삭제 후 `git checkout --`로 다시 받아야 한다.
+- 검증 2026-11-12(통합 트리): 네이티브를 `src\OccBridge\OccBridge.vcxproj`에서 `/p:OutDir=<repo>\x64\Release\` 절대경로로 빌드하고, 솔루션을 `/p:OutDir=<repo>\x64\WorkingSideBuild\`로 빌드해 0 errors. App 테스트 **170 통과**, Core 테스트 **226 통과**(신규 `ProjectElectricalValidatorTests` 포함). `tests\WorkingSide.Regression\Run.ps1`은 EXIT=0으로 전 그룹 통과(30 area highlight, 19 direct exit, 29 vertex edit, 3 electrical, 43 pattern state, 63 geometry rollback, 20 project load, 51 project load exclusion, 187 working-side 등).
+- 통합 앱으로 `e2e-full.json`을 새 run 폴더에서 실행해 **36/36 성공**, `Automation=Completed`, `VisualReview=NotRecorded`, 오류 없음. 초기 60조각/18,015.505 mm, 꼭지점 편집 후 17,979.067 mm, 3분할 A1/A2/A3 5,323.82/5,343.181/6,009.727 mm, 2D 비율 1.1288, 분할 후·복원 후 STEP과 DXF, 프로젝트 `checkpoint=equal`을 확인했다.
+- 미검증: 실제 마우스·키보드·파일 대화상자, 앱 화면 육안 판정, 외부 CAD에서 DXF/STEP 열기, 새 프로세스에서의 복원(현재 `loadProject`는 같은 프로세스), 선택 면/제외 위치가 다른 두 번째 시나리오.
+
 ## Standard view menu removed (user-confirmed 2026-11-11)
 
 - **User requirement:** "표준뷰 항목도 삭제해줘". Scope confirmed with the user: remove the header button and its menu entirely, not just the six direction items.
