@@ -252,6 +252,30 @@ static class VertexEditChecks
         Check(reused >= 1,
             "vertex edit commit reuses the candidate strict samples when the verification key matches");
 
+        // 두 번째 편집: 입력·정책·레이아웃이 그대로인 영역에서 바뀌지 않은 조각은 다시
+        // 스테이징하지 않고 이전 커밋의 네이티브 조각을 그대로 유지해야 한다.
+        int[] keptIds = (int[])area.NativePieceIds.Clone();
+        double keptLength = area.RoutePieceLengths[2];
+        Invoke(window, "ResetRouteRetainedPieceCount");
+        Commit(window, area, 1, new Vec2(-64, -10));
+        int retained = (int)typeof(MainWindow)
+            .GetProperty("RouteRetainedPieceCount", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(window)!;
+        Check(retained >= 1,
+            "vertex edit retains unchanged native route pieces instead of restaging them");
+        Check(area.NativePieceIds[2] == keptIds[2] &&
+              Math.Abs(area.RoutePieceLengths[2] - keptLength) < 1e-12,
+            "retained route piece keeps its native id and committed length");
+
+        // 캐시 수명: 성공한 커밋은 그 트랜잭션이 실제로 요구한 표본만 남기고,
+        // 과거 형상의 표본을 계속 누적하지 않는다(이번 편집은 2조각만 새로 스테이징).
+        object samples = window.GetType()
+            .GetField("_validatedRouteSamples", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(window)!;
+        int cachedSamples = (int)samples.GetType().GetProperty("Count")!.GetValue(samples)!;
+        Check(cachedSamples <= 2,
+            "validated sample cache keeps only the samples used by the last commit");
+
         Cleanup(window, fixtureDir);
         Console.WriteLine($"{count} vertex edit checks passed.");
     }

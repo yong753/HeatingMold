@@ -21,11 +21,21 @@ public partial class MainWindow
     /// 요청할 때만 재사용하며, 키가 다르면 기존 경로로 다시 매핑한다.</summary>
     private Dictionary<ValidatedRouteSampleKey, SurfaceMappedSample[]> _pendingValidatedSamples;
 
+    /// <summary>이번 트랜잭션의 스테이징이 실제로 요청한 검증 키. 성공 커밋 뒤 캐시를 이 키들만
+    /// 남겨, 형상이 바뀔 때마다 과거 표본이 누적되고 다음 편집이 사전 전체를 복사하는 비용을 없앤다.</summary>
+    private HashSet<ValidatedRouteSampleKey> _validatedSamplesUsed = new();
+
     /// <summary>진단용: 마지막 트랜잭션에서 후보 검증 표본을 실제로 재사용한 조각 수.
     /// 제품 판정에는 쓰지 않고, 자동화가 재사용 발동 여부만 확인한다.</summary>
     internal int RoutePendingSampleReuseCount { get; private set; }
 
     internal void ResetRoutePendingSampleReuseCount() => RoutePendingSampleReuseCount = 0;
+
+    /// <summary>진단용: 마지막 커밋 준비에서 다시 스테이징하지 않고 유지한 조각 수.
+    /// 제품 판정에는 쓰지 않고, 자동화가 부분 retain 발동 여부만 확인한다.</summary>
+    internal int RouteRetainedPieceCount { get; private set; }
+
+    internal void ResetRouteRetainedPieceCount() => RouteRetainedPieceCount = 0;
 
     /// <summary>마지막 경로 트랜잭션의 표시 갱신 경고. 커밋 이후 실패는 형상을 되돌리지 않으므로
     /// 호출자가 완료 문구에 경고를 보존할 수 있게 남긴다. 다음 트랜잭션 시작 시 지운다.</summary>
@@ -170,6 +180,7 @@ public partial class MainWindow
         try
         {
             publications = candidates.ToArray();
+            _validatedSamplesUsed.Clear();
             if (areas.Count != areas.Distinct().Count())
                 throw new InvalidOperationException("작업영역 목록에 중복 영역이 있습니다");
             foreach (var entry in publications)
@@ -192,6 +203,8 @@ public partial class MainWindow
                 foreach (var entry in pending) preparedSamples[entry.Key] = entry.Value;
             }
 
+            var retainedIds = new List<int>();
+
             foreach (var entry in publications)
             {
                 WorkingArea candidate = entry.Value;
@@ -208,7 +221,7 @@ public partial class MainWindow
 
                 candidate.CommittedMapping = CommittedRouteContext.Capture(candidate);
                 PrepareCandidateRouteGeometry(entry.Key, candidate, side, preparedSamples,
-                    reservedIds, ref nextStageId, ref nextNativeId, stagedRoutes, finalIds);
+                    reservedIds, ref nextStageId, ref nextNativeId, stagedRoutes, finalIds, retainedIds);
                 candidate.PatternDisplayed = candidate.NativePieceIds.Length > 0;
                 if (candidate.PatternDisplayed)
                 {
@@ -223,7 +236,6 @@ public partial class MainWindow
                 }
             }
 
-            var retainedIds = new List<int>();
             var endpointValues = new List<double>();
             var colorPieceIds = new List<int>();
             var colorValues = new List<double>();
@@ -288,6 +300,17 @@ public partial class MainWindow
         _nextStageId = nextStageId;
         _nextNativePieceId = nextNativeId;
         _validatedRouteSamples = preparedSamples;
+        if (publications.Length > 0)
+        {
+            // 이번 트랜잭션이 실제로 요구한 표본만 남긴다. 과거 형상의 키가 계속 쌓여
+            // 다음 편집이 사전 전체를 복사하고 메모리를 점유하는 것을 막는다.
+            var liveSamples = new Dictionary<ValidatedRouteSampleKey, SurfaceMappedSample[]>(
+                _validatedSamplesUsed.Count);
+            foreach (ValidatedRouteSampleKey used in _validatedSamplesUsed)
+                if (preparedSamples.TryGetValue(used, out SurfaceMappedSample[] value))
+                    liveSamples[used] = value;
+            _validatedRouteSamples = liveSamples;
+        }
         activeLength = preparedActiveLength;
         activeCount = preparedActiveCount;
 
@@ -352,7 +375,7 @@ public partial class MainWindow
     private void PrepareCandidateRouteGeometry(WorkingArea target, WorkingArea candidate,
         WorkingSideDefinition side, Dictionary<ValidatedRouteSampleKey, SurfaceMappedSample[]> samples,
         HashSet<int> reservedIds, ref int nextStageId, ref int nextNativeId,
-        List<int> stagedRoutes, List<int> finalIds)
+        List<int> stagedRoutes, List<int> finalIds, List<int> retainedIds)
     {
         int count = candidate.Pattern?.RoutePieces.Count > 0 ? candidate.Pattern.RoutePieces.Count :
             candidate.ExclusionPieces is { Count: > 0 } ? candidate.ExclusionPieces.Sum(component => component.Count) :
@@ -361,13 +384,18 @@ public partial class MainWindow
         candidate.RoutePieceLengths = new double[count];
         var projected = new RoutePieceResult[count];
         CommittedRouteContext mapping = candidate.CommittedMapping;
+        // retain 증빙은 이번 트랜잭션에서 실제로 스테이징한 조각에 대해서만 다시 기록한다.
+        candidate.RouteRetainContextKey = string.Empty;
 
         if (candidate.Pattern?.RoutePieces.Count > 0)
         {
             // 이 후보의 모든 조각이 공유하는 검증 키 접두부를 한 번만 만든다.
             ValidatedRouteSampleKeyPrefix sampleKeyPrefix =
                 BuildValidatedRouteSampleKeyPrefix(candidate, side, mapping);
-            var stagedIndices = new bool[count];
+            // 직전 커밋이 실제로 스테이징한 조각과 입력·정책·레이아웃이 모두 같으면 네이티브
+            // 조각을 그대로 retain한다. 증빙이 조금이라도 다르면 기존처럼 전체를 스테이징한다.
+            bool canRetain = CanRetainRoutePieces(target, candidate, count, sampleKeyPrefix, mapping);
+            var preparedIndices = new bool[count];
             for (int c = 0; c < candidate.Circuits.Count; c++)
             {
                 CircuitRoute circuit = candidate.Circuits[c];
@@ -376,11 +404,26 @@ public partial class MainWindow
                 for (int j = 0; j < circuit.Pieces.Count; j++)
                 {
                     int index = indices[j];
-                    if (index < 0 || index >= count || stagedIndices[index])
+                    if (index < 0 || index >= count || preparedIndices[index])
                         throw new InvalidOperationException("회로와 원본 경로 조각의 대응이 중복되었거나 유효하지 않습니다");
                     SerpentineRoutePiece piece = circuit.Pieces[j];
                     if (piece.Points.Count < 2)
                         throw new InvalidOperationException("영역 " + candidate.Name + " 경로 조각이 퇴화했습니다");
+                    if (canRetain && IsSameRoutePiece(target.Pattern.RoutePieces[index], piece))
+                    {
+                        // 이전 커밋에서 원본 인출점 보정과 표면 검증을 마친 조각이다. 다시 매핑하거나
+                        // 스테이징하지 않고 확정 3D 값/길이만 옮긴다. 커넥터 상태도 기존 객체 그대로다.
+                        RoutePieceResult retained = CloneRoutePieceResult(target.ProjectedPieces[index]);
+                        projected[index] = retained;
+                        candidate.RoutePieceLengths[index] = target.RoutePieceLengths[index];
+                        preparedIndices[index] = true;
+                        retainedIds.Add(candidate.NativePieceIds[index]);
+                        ++RouteRetainedPieceCount;
+                        if (previous != null && Distance3D(previous.End, retained.Start) > RouteJoinTolerance)
+                            throw new InvalidOperationException("영역 " + candidate.Name + " 회로 " + (c + 1) + " 조각이 연결되지 않습니다");
+                        previous = retained;
+                        continue;
+                    }
                     Dictionary<int, SurfaceMappedSample> overrides = null;
                     if (j == 0)
                         AddExitOverride(ref overrides, 0, circuit.StartExit, piece.Points[0], side, mapping);
@@ -396,7 +439,7 @@ public partial class MainWindow
                     ValidateProjectedRoutePiece(shown);
                     projected[index] = shown;
                     candidate.RoutePieceLengths[index] = shown.Length;
-                    stagedIndices[index] = true;
+                    preparedIndices[index] = true;
                     if (previous != null && Distance3D(previous.End, shown.Start) > RouteJoinTolerance)
                         throw new InvalidOperationException("영역 " + candidate.Name + " 회로 " + (c + 1) + " 조각이 연결되지 않습니다");
                     previous = shown;
@@ -406,9 +449,10 @@ public partial class MainWindow
             // 회로에 포함되지 않은 조각(비활성 턴 등)은 허용하지 않는다. 생성 경로 전체가
             // 하나의 회로이며, 누락된 조각은 조용히 스테이징하지 않고 명시적으로 실패한다.
             for (int i = 0; i < count; i++)
-                if (!stagedIndices[i])
+                if (!preparedIndices[i])
                     throw new InvalidOperationException(
                         "영역 " + candidate.Name + " 조각 " + (i + 1) + "이 회로에 포함되지 않았습니다");
+            candidate.RouteRetainContextKey = sampleKeyPrefix.Value;
         }
         else if (candidate.ExclusionPieces is { Count: > 0 })
         {
@@ -460,6 +504,70 @@ public partial class MainWindow
         }
         candidate.ProjectedPieces = projected.ToList();
     }
+
+    /// <summary>
+    /// 이전 커밋의 조각을 네이티브에서 그대로 유지해도 되는지 판정한다. 검증 키 접두부가 같다는 것은
+    /// 모델/작업면/영역 경계/인출점/제외/정책이 모두 같다는 뜻이고, 레이아웃/ID/확정 3D 값도 유효해야 한다.
+    /// 하나라도 어긋나면 false를 돌려 기존 전체 스테이징 경로로 안전하게 되돌린다.
+    /// </summary>
+    private static bool CanRetainRoutePieces(WorkingArea target, WorkingArea candidate, int count,
+        ValidatedRouteSampleKeyPrefix sampleKeyPrefix, CommittedRouteContext mapping)
+    {
+        if (target.Pattern == null || !target.PatternDisplayed) return false;
+        if (target.Pattern.RoutePieces.Count != count ||
+            target.NativePieceIds.Length != count ||
+            target.ProjectedPieces.Count != count ||
+            target.RoutePieceLengths.Length != count) return false;
+        if (target.RouteRetainContextKey.Length == 0 ||
+            !string.Equals(target.RouteRetainContextKey, sampleKeyPrefix.Value, StringComparison.Ordinal))
+            return false;
+        if (!ReferenceEquals(target.CommittedMapping?.Boundary, mapping?.Boundary)) return false;
+        if (!SameCircuitLayout(target.CircuitPieceIndices, candidate.CircuitPieceIndices)) return false;
+        int[] ids = target.NativePieceIds;
+        if (ids.Any(id => id < 0) || ids.Distinct().Count() != count) return false;
+        for (int i = 0; i < count; i++)
+        {
+            RoutePieceResult piece = target.ProjectedPieces[i];
+            if (piece == null || !IsFiniteRoutePoint(piece.Start) || !IsFiniteRoutePoint(piece.End)) return false;
+            if (!double.IsFinite(target.RoutePieceLengths[i]) || target.RoutePieceLengths[i] <= 0) return false;
+        }
+        return true;
+    }
+
+    /// <summary>조각 종류/레인/2D 점이 완전히 같을 때만 재사용한다. 근사 비교나 좌표 재구성은 하지 않는다.</summary>
+    private static bool IsSameRoutePiece(SerpentineRoutePiece left, SerpentineRoutePiece right)
+    {
+        if (left == null || right == null) return false;
+        if (left.Kind != right.Kind || left.LaneIndex != right.LaneIndex) return false;
+        IReadOnlyList<Vec2> a = left.Points;
+        IReadOnlyList<Vec2> b = right.Points;
+        if (a.Count != b.Count) return false;
+        for (int i = 0; i < a.Count; i++)
+            if (a[i].X != b[i].X || a[i].Y != b[i].Y) return false;
+        return true;
+    }
+
+    private static bool SameCircuitLayout(IReadOnlyList<List<int>> left, IReadOnlyList<List<int>> right)
+    {
+        if (left.Count != right.Count) return false;
+        for (int c = 0; c < left.Count; c++)
+        {
+            List<int> a = left[c];
+            List<int> b = right[c];
+            if (a.Count != b.Count) return false;
+            for (int i = 0; i < a.Count; i++)
+                if (a[i] != b[i]) return false;
+        }
+        return true;
+    }
+
+    /// <summary>커밋된 3D 결과를 새 배열로 복제한다. 영역 간 참조 공유를 만들지 않기 위해서다.</summary>
+    private static RoutePieceResult CloneRoutePieceResult(RoutePieceResult piece) => new()
+    {
+        Length = piece.Length,
+        Start = (double[])piece.Start.Clone(),
+        End = (double[])piece.End.Clone()
+    };
 
     private static int[] PrepareNativePieceIds(WorkingArea target, int count, HashSet<int> reservedIds,
         ref int nextNativeId)
@@ -571,6 +679,7 @@ public partial class MainWindow
         target.ProjectedPieces = candidate.ProjectedPieces;
         target.NativePieceIds = candidate.NativePieceIds;
         target.RoutePieceLengths = candidate.RoutePieceLengths;
+        target.RouteRetainContextKey = candidate.RouteRetainContextKey;
         target.Paths = candidate.Paths;
         target.ExclusionPieces = candidate.ExclusionPieces;
         target.PatternDisplayed = candidate.PatternDisplayed;
@@ -694,6 +803,9 @@ public partial class MainWindow
             _prefix = prefix;
             _boundary = boundary;
         }
+
+        /// <summary>조각 접미부를 붙이기 전의 공통 접두부. 이 문자열이 같으면 표면 매핑 조건이 같다.</summary>
+        internal string Value => _prefix;
 
         internal ValidatedRouteSampleKey Build(SerpentineRoutePiece piece,
             IReadOnlyDictionary<int, SurfaceMappedSample> overrides) =>

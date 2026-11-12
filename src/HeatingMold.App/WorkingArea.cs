@@ -83,6 +83,13 @@ internal sealed class WorkingArea
     public List<RoutePieceResult> ProjectedPieces { get; set; } = new();
     public int[] NativePieceIds { get; set; } = Array.Empty<int>();
     public double[] RoutePieceLengths { get; set; } = Array.Empty<double>();
+
+    /// <summary>
+    /// 이 영역의 조각들을 마지막으로 실제 네이티브 스테이징까지 마친 검증 키 접두부.
+    /// 다음 커밋에서 조각을 그대로 retain해도 되는지 판단하는 증빙으로만 쓰고 프로젝트에 저장하지 않는다.
+    /// 비어 있으면(로드 직후 등) retain하지 않고 기존 전체 스테이징 경로를 쓴다.
+    /// </summary>
+    public string RouteRetainContextKey { get; set; } = string.Empty;
     public List<List<Vec2>> Paths { get; set; } = new();
     /// <summary>제외영역이 있는 면의 경로를 조각별 kind와 함께 보관한다(가열 런/우회 스커트 표시용).
     /// 제외가 없거나 편집 모드(RoutePieces)면 null이다.</summary>

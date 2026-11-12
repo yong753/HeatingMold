@@ -170,6 +170,128 @@ bool ShowRoutePreviewNative(int pieceIndex, const std::vector<double>& xyz, bool
     } catch (const Standard_Failure&) { return false; }
 }
 
+// ---- 꼭지점 드래그 2D 미리보기 ----
+// 정면·직교 드래그 중 이동 방향만 보여 주는 표시 전용 객체다. 실제 표면점이 아니므로
+// 길이·검증·저장·출력에는 절대 쓰지 않는다. BRep/AIS_Shape를 만들지 않고 확정 작업
+// 프레임의 u,v를 매번 3D 폴리라인으로 재구성한다.
+class VertexPreview2DNative : public AIS_InteractiveObject
+{
+public:
+    VertexPreview2DNative()
+    {
+        SetInfiniteState(Standard_True);
+        SetDisplayMode(0);
+    }
+
+    void SetPayload(const gp_Pnt& originIn, const gp_Dir& xIn, const gp_Dir& yIn,
+        const std::vector<double>& uvIn, const std::vector<int>& offsetsIn, bool invalidIn)
+    {
+        origin = originIn;
+        xAxis = xIn;
+        yAxis = yIn;
+        uv = uvIn;
+        offsets = offsetsIn;
+        myLineAspect = new Prs3d_LineAspect(
+            invalidIn ? kRoutePreviewInvalidColor : kRoutePreviewColor, Aspect_TOL_SOLID, 3.0);
+    }
+
+    void Compute(const Handle(PrsMgr_PresentationManager)& thePrsMgr,
+        const Handle(Prs3d_Presentation)& thePrs,
+        const Standard_Integer theMode) override
+    {
+        (void)thePrsMgr;
+        if (theMode != 0 || thePrs.IsNull() || offsets.size() < 2 || uv.size() < 4) return;
+        try {
+            thePrs->SetInfiniteState(Standard_True);
+            Handle(Graphic3d_Group) group = thePrs->NewGroup();
+            if (!myLineAspect.IsNull()) group->SetGroupPrimitivesAspect(myLineAspect->Aspect());
+            const Standard_Integer pointCount = static_cast<Standard_Integer>(uv.size() / 2);
+            Handle(Graphic3d_ArrayOfPolylines) lines = new Graphic3d_ArrayOfPolylines(
+                pointCount, static_cast<Standard_Integer>(offsets.size() - 1));
+            for (size_t i = 0; i + 1 < offsets.size(); ++i) {
+                const int start = offsets[i], end = offsets[i + 1];
+                if (start < 0 || end > pointCount || end - start < 2) continue;
+                lines->AddBound(end - start);
+                for (int p = start; p < end; ++p) {
+                    const double u = uv[static_cast<size_t>(p) * 2];
+                    const double v = uv[static_cast<size_t>(p) * 2 + 1];
+                    lines->AddVertex(gp_Pnt(
+                        origin.X() + u * xAxis.X() + v * yAxis.X(),
+                        origin.Y() + u * xAxis.Y() + v * yAxis.Y(),
+                        origin.Z() + u * xAxis.Z() + v * yAxis.Z()));
+                }
+            }
+            if (lines->VertexNumber() > 0) group->AddPrimitiveArray(lines);
+        } catch (const Standard_Failure&) {}
+    }
+
+    void ComputeSelection(const Handle(SelectMgr_Selection)& theSelection,
+        const Standard_Integer theMode) override
+    {
+        (void)theSelection;
+        (void)theMode;
+    }
+
+private:
+    gp_Pnt origin;
+    gp_Dir xAxis{ 1.0, 0.0, 0.0 };
+    gp_Dir yAxis{ 0.0, 1.0, 0.0 };
+    std::vector<double> uv;
+    std::vector<int> offsets;
+    Handle(Prs3d_LineAspect) myLineAspect;
+};
+
+Handle(VertexPreview2DNative) g_vertexPreview2D;
+long long g_vertexPreview2DContext = 0, g_vertexPreview2DRevision = 0;
+
+void ClearVertexPreview2DNative()
+{
+    if (!g_vertexPreview2D.IsNull() && !g_ctx.IsNull())
+        g_ctx->Remove(g_vertexPreview2D, Standard_False);
+    g_vertexPreview2D.Nullify();
+    g_vertexPreview2DContext = 0;
+    g_vertexPreview2DRevision = 0;
+}
+
+// uv는 확정 작업평면 좌표쌍, offsets는 폴리라인별 시작 offset + 마지막 sentinel이다.
+// 입력 전체를 먼저 검증하고, 실패하면 이전 미리보기를 그대로 둔다(부분 갱신 없음).
+bool ReplaceVertexPreview2DNative(long long id, long long revision, const std::vector<double>& uv,
+    const std::vector<int>& offsets, bool invalid)
+{
+    const auto context = g_working.find(id);
+    if (context == g_working.end() || context->second->revision != revision) return false;
+    if (g_ctx.IsNull() || offsets.size() < 2 || uv.size() < 4 || uv.size() % 2 != 0) return false;
+    if (offsets.front() != 0) return false;
+    const long long pointCount = static_cast<long long>(uv.size() / 2);
+    if (offsets.back() != pointCount) return false;
+    for (size_t i = 0; i < uv.size(); ++i)
+        if (!std::isfinite(uv[i])) return false;
+    for (size_t i = 0; i < offsets.size(); ++i) {
+        if (offsets[i] < 0 || offsets[i] > pointCount) return false;
+        if (i > 0 && offsets[i] - offsets[i - 1] < 2) return false;
+    }
+    try {
+        const bool created = g_vertexPreview2D.IsNull();
+        if (created) g_vertexPreview2D = new VertexPreview2DNative();
+        g_vertexPreview2D->SetPayload(context->second->origin, context->second->x, context->second->y,
+            uv, offsets, invalid);
+        if (created) {
+            g_ctx->Display(g_vertexPreview2D, 0, -1, Standard_False);
+            g_ctx->SetZLayer(g_vertexPreview2D, Graphic3d_ZLayerId_Topmost);
+            g_ctx->Deactivate(g_vertexPreview2D, Standard_False);
+        } else {
+            // 표시 객체는 재사용하고 presentation 배열만 다시 만든다.
+            g_ctx->Redisplay(g_vertexPreview2D, Standard_False);
+        }
+        g_vertexPreview2DContext = id;
+        g_vertexPreview2DRevision = revision;
+        return true;
+    } catch (const Standard_Failure&) {
+        ClearVertexPreview2DNative();
+        return false;
+    }
+}
+
 void ClearWorkingBoundaryNative()
 {
     if (!g_ctx.IsNull()) for (auto& shape : g_workingBoundaries) g_ctx->Remove(shape,Standard_False);

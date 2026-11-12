@@ -503,6 +503,8 @@ public partial class MainWindow
             ? (sampleKeyPrefix ?? BuildValidatedRouteSampleKeyPrefix(area, side, mappingContext))
                 .Build(piece, vertexOverrides)
             : null;
+        // 이번 트랜잭션이 실제로 요구한 키만 커밋 뒤 캐시에 남긴다.
+        if (key != null) _validatedSamplesUsed.Add(key);
         SurfaceMappedSample[] cachedSamples = null;
         bool cached = key != null && validatedSamples != null &&
             validatedSamples.TryGetValue(key, out cachedSamples);

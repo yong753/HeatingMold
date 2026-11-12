@@ -288,13 +288,28 @@
 - **사용자 요구:** 발열경로를 수동으로 수정할 때 미리 설정한 발열사 간격(레인 피치)이 유지되어야 한다.
 - 이력: `0901c5e`가 간격 고정을 추가했고, 자식 커밋 `c12b595`가 이를 전부 되돌렸다(간격 유지가 동작하지 않던 원인). 2026-11-12에 같은 규칙을 복원했다.
 - `RouteVertexMoveConstraint.TryConstrain(Vec2 original, Vec2 requested, double angleDeg, out Vec2 constrained, out string failure)`(Core)가 변위의 진행 방향 성분만 남기고 수직 성분을 버린다. 축 정렬 방향은 `AxisTolerance = 1e-12`로 잠긴 좌표를 그대로 복사하고, 비유한 입력은 한국어 실패 문구로 명시적으로 거부한다. 생성 방향의 정본은 확정된 `SerpentineResult.AngleDeg`이며, 가로 생성이면 X, 세로 생성이면 Y만 움직인다.
-- 앱 경로(`MainWindow.VertexEdit.cs`)는 세 곳에서 같은 제약을 재계산한다: 드래그 미리보기(`UpdateVertexPreview`), 미리보기 조각 생성(`TryBuildVertexPreview`), 후보 생성(`TryBuildVertexCandidate`), 그리고 확정(`CommitVertex`)에서 한 번 더 확인한다. 미리보기와 커밋이 서로 다른 좌표를 쓰지 않도록 하는 것이 목적이며, 확정 단계에서 제약을 생략하지 않는다.
+- 앱 경로(`MainWindow.VertexEdit.cs`)는 드래그 미리보기(`UpdateVertexPreview`→`TryBuildVertexPreview2D`), 후보 생성(`TryBuildVertexCandidate`), 확정(`CommitVertex`)에서 같은 제약을 다시 계산한다. 미리보기와 커밋이 서로 다른 좌표를 쓰지 않도록 하는 것이 목적이며, 확정 단계에서 제약을 생략하지 않는다.
 - 제약 결과가 원래 점과 `VertexMoveEpsilon = 1e-6` 이내면 패턴 재생성도 Undo 기록도 만들지 않고 `VertexSpacingLockedMessage`("발열사 간격 유지 — 생성 방향과 수직인 이동은 적용되지 않았습니다")만 표시한다. 시작점/종료점은 종전대로 전용 선택 버튼으로만 바꾼다(제약 대상이 아님).
 - `SerpentineVertexEdit.ApplyVertexEdits`는 `CandidateId`를 결과에 그대로 넘긴다. 커밋 시 `CaptureAppliedInputs`가 `BuildRouteContextKey`로 입력 동일성을 판정하므로, 이 값을 잃으면 편집 직후 경로가 stale로 오판된다.
 - UI 안내 문구(`MainWindow.xaml`의 `VertexEditModeBox`)와 `docs\VertexEditing.md`는 "발열 진행 방향으로만 이동(가로 생성=좌우, 세로 생성=상하) → 발열사 간격 유지"를 명시한다. 굽힘 반경·자기교차·제조성 검증은 여전히 비범위다.
 - 검증 2026-11-12: Core 테스트 268 통과(신규 `RouteVertexMoveConstraintTests` 7개, `ApplyVertexEdits_PreservesTheCandidateIdentity`), App 테스트 194 통과, App Release/x64 빌드 0 errors(변경 파일 관련 경고 없음). `tests\WorkingSide.Regression` 전 그룹 통과 — 30 sidebar, 30 area highlight, 22 exclusion+exit, 19 direct exit, 27 vertex edit, 3 electrical, 38 pattern state, 64 geometry rollback, 19 project load, 50 project-load exclusion, 181 working-side. 회귀 픽스처는 실제 평행 2레인 경로(피치 20 mm)로 되돌려, 수직 드래그가 no-op이 되는지와 진행 방향 드래그가 이웃 레인 Y를 바꾸지 않는지를 함께 확인한다.
 - 회귀 하네스가 참조하는 `x64\WorkingSideBuild\OccBridge.dll`이 오래되면 한글 경로 STEP 내보내기 검사가 실패한다. 네이티브 변경 후에는 `x64\Release\OccBridge.dll`을 복사한 뒤 회귀 프로젝트를 다시 빌드해야 한다(기존 문서화된 함정과 동일).
 - 미검증: 실행 중 앱에서 실제 마우스 드래그, 화면 안내 문구 렌더링, 시나리오 JSON이 모두 삭제된 상태에서 visual-test `moveVertex` 액션의 종단 실행.
+
+## 꼭지점 편집 실시간화 (사용자 요구·구현 2026-11-12)
+
+- **사용자 요구 원문:** "현재 꼭지점 수정 기능이 너무 느림 거의 실시간에 가깝게 구현하고 싶은데 방법 찾아봐". 구현은 드래그 미리보기와 MouseUp 확정을 분리하는 방향으로 진행했다. 발열사 간격 유지·표면 검증·원자적 커밋 규칙은 그대로다.
+- **드래그 미리보기는 표시 전용 2D 폴리라인이다.** `MainWindow.VertexEdit.cs`의 `UpdateVertexPreview`가 `TryBuildVertexPreview2D`로 확정 작업평면 u,v 점만 만들고, `ShowVertexPreview2D`가 `Bridge.ReplaceVertexPreview2D(workingId, revision, uv, offsets, invalid)`를 한 번 호출한 뒤 `RedrawView`를 한 번 호출한다. 드래그 중에는 `CommittedRouteContext.Capture`, `BuildSurfaceMapDelegate`, `SurfacePathMapper.TryMapRoute`, `PrepareDisplayedEditPiece`, 조각별 `AIS_Shape` 생성이 전혀 실행되지 않는다.
+- 네이티브 `WorkingSideNative.inc`의 `VertexPreview2DNative`(AIS_InteractiveObject 상속)는 `Graphic3d_ArrayOfPolylines`로 폴리라인을 그리고 `Topmost` 레이어에 고정한다. 객체는 최초 1회만 `Display`하고 이후에는 `Redisplay`만 하므로, 드래그 중 BRep 형상을 다시 만들지 않는다. `ComputeSelection`은 비어 있어 선택되지 않는다. 입력 검증(offsets 단조 증가·각 구간 2점 이상·uv 유한·개수 일치, context/revision 일치)에 실패하면 이전 미리보기를 유지하고 `false`를 반환한다.
+- 미리보기 선은 **실제 모델 표면 위의 점이 아니며 검증되지 않았다.** 길이·전기 계산·저장·DXF/STEP 출력·strict 표본 캐시 승격에 절대 쓰지 않는다. `ClearVertexPreview2D`는 `ExitVertexEdit`, `BeginVertexDrag`, `CompleteVertexDrag`, `OnVertexDragCancelled`와 `ClearRoutePiecesNative`(따라서 overlay 전체 clear)에서 호출된다.
+- **확정은 영역 단위 전체 교체가 아니라 조각 단위 유지(retain)를 쓴다.** `PrepareCandidateRouteGeometry`는 target과 candidate의 `BuildRouteContextKey` 접두부(`WorkingArea.RouteRetainContextKey`), 회로 구성, 조각의 종류/레인/2D 좌표가 **비트 단위로 동일**할 때 그 조각을 다시 스테이징하지 않고 `retainedIds`로 넘긴다. 유지 조각은 이전 `ProjectedPieces`/`RoutePieceLengths`/native ID를 그대로 쓰고, `SetConnectorEnabled`도 다시 호출하지 않는다. 조각 간 연결 검사(`RouteJoinTolerance` 0.1 mm)는 유지 조각에도 그대로 수행한다.
+- 재사용 증빙은 이번 세션에서 실제 커밋까지 성공한 영역에만 존재한다. `RouteRetainContextKey`는 프로젝트에 저장하지 않으므로 **로드 직후 첫 편집은 기존 전체 스테이징 경로**를 쓰고, 그 커밋이 성공한 다음부터 retain이 가능하다. 증빙이 하나라도 어긋나면 자동으로 전체 스테이징으로 돌아간다.
+- 네이티브 `CommitWorkingGeometryDelta`는 retained가 현재 커밋된 ID이고 final과 겹치지 않으며 기존 커밋 조각 전체를 retain∪replace∪delete가 정확히 덮을 때만 성공한다. 분류가 틀리면 커밋이 실패하고 기존 영역·경로·길이·선택점은 그대로 남는다(네이티브 API 변경 없음).
+- `_validatedRouteSamples`(strict 표본 캐시)는 마지막 커밋 준비가 실제로 요구한 키만 남긴다. 이전에는 clear/prune 호출이 없어 편집마다 과거 키가 누적되고 트랜잭션마다 사전 전체를 복사했다. 캐시 미스는 재매핑일 뿐 검증 결과를 바꾸지 않는다.
+- 진단: `MainWindow.RouteRetainedPieceCount`/`ResetRouteRetainedPieceCount()`는 마지막 커밋에서 유지한 조각 수를 센다. 제품 판정에는 쓰지 않고 회귀/자동화가 retain 발동만 확인한다.
+- **검증 2026-11-12:** 네이티브 Release/x64 빌드 0 errors. App Release/x64 빌드 0 errors(CS8632 경고 14건, 기존). App 테스트 **170 통과**. `tests\WorkingSide.Regression` **EXIT=0** — 30 sidebar, 30 area highlight, 19 direct exit, **32 vertex edit**(기존 29 + retain/캐시 수명 검사 3), 3 electrical, 43 pattern state, 63 geometry rollback, 20 project load, 51 project-load exclusion, 187 working-side. 대표 시각테스트 `e2e-full.json` **36/36 OK**, `Status=Completed`(36단계: 생성·제외·초기화·꼭지점 편집·전기·3분할·저장/재로드·DXF/STEP).
+- 새 회귀 3건: 실제 커밋으로 baseline을 만든 뒤 두 번째 편집에서 유지 조각 수 ≥ 1, 유지 조각의 native ID·길이 불변, 표본 캐시가 마지막 커밋이 쓴 키만 보관(≤ 2). 가짜 fixture(ProjectedPieces 비어 있음)는 전체 스테이징 fallback 경로를 계속 검증한다.
+- **미검증:** 실제 마우스 드래그의 체감 속도와 프레임 시간(p50/p95), 대형 다중 영역 프로젝트에서의 확정 시간, DPI·줌·창 크기 변경 시 미리보기 선 두께/가독성, 화면에서의 2D 미리보기와 확정 3D 경로의 시각적 일치. 시간 계측을 실행하지 않았으므로 개선 배율을 수치로 단정하지 않는다.
 
 ## DXF export scope (user-confirmed)
 

@@ -118,6 +118,7 @@ public partial class MainWindow
         _vertexDragGroup = -1;
         Bridge.ClearVertexHandles();
         Bridge.ClearRoutePreview();
+        Bridge.ClearVertexPreview2D();
         if (_vertexPresentationHeld && _vertexPresentation != null)
         {
             Bridge.RestoreWorkingPresentation(_vertexPresentation.Id);
@@ -259,6 +260,7 @@ public partial class MainWindow
         _vertexLastMoveX = x;
         _vertexLastMoveY = y;
         Bridge.ClearRoutePreview();
+        Bridge.ClearVertexPreview2D();
         Bridge.HighlightVertexHandle(-1);
         return true;
     }
@@ -296,6 +298,7 @@ public partial class MainWindow
         int group = _vertexDragGroup;
         _vertexDragGroup = -1;
         Bridge.ClearRoutePreview();
+        Bridge.ClearVertexPreview2D();
         Bridge.HighlightVertexHandle(-1);
         if (group < 0 || group >= _vertexGroups.Count) return false;
         if ((datum - _vertexDragOriginDatum).Length <= 1e-6)
@@ -315,6 +318,7 @@ public partial class MainWindow
         _vertexDragging = false;
         _vertexDragGroup = -1;
         Bridge.ClearRoutePreview();
+        Bridge.ClearVertexPreview2D();
         Bridge.HighlightVertexHandle(-1);
     }
 
@@ -364,38 +368,33 @@ public partial class MainWindow
             StatusText.Text = VertexSpacingLockedMessage;
             return;
         }
-        if (!TryBuildVertexPreview(target, out var pieces, out var mappedPieces, out Vec2 applied,
-                out string failure, out bool anchor, out _))
+        // 표시 전용 2D 폴리라인이다. 표면 매핑·길이·검증에는 쓰지 않는다.
+        if (!TryBuildVertexPreview2D(target, out var pieces, out Vec2 applied, out string failure))
         {
-            Bridge.ClearRoutePreview();
+            Bridge.ClearVertexPreview2D();
             StatusText.Text = "이동 불가 — " + failure;
             return;
         }
-        if (ShowVertexPreview(pieces, mappedPieces))
-            StatusText.Text = string.Format("꼭지점 이동 ({0:F2}, {1:F2})mm{2}",
-                applied.X, applied.Y, anchor ? " · 인출 앵커" : "");
+        if (ShowVertexPreview2D(pieces))
+            StatusText.Text = string.Format("꼭지점 이동 ({0:F2}, {1:F2})mm — 표시용 2D 미리보기",
+                applied.X, applied.Y);
         else
         {
-            Bridge.ClearRoutePreview();
-            StatusText.Text = "이동할 수 없습니다 — 확정 구간을 작업면에 매핑하지 못했습니다";
+            Bridge.ClearVertexPreview2D();
+            StatusText.Text = "이동할 수 없습니다 — 미리보기 선을 표시하지 못했습니다";
         }
     }
 
     /// <summary>
-    /// 꼭지점 이동 후보를 미리보기용으로 준비한다. 변경된 조각의 점만 복사하고, 조각별로 표면에 매핑한다.
-    /// 확정 시에는 <see cref="CommitVertex"/>가 전체 패턴으로 보강 표본화한다.
+    /// 드래그 미리보기용 2D 점만 계산한다. 변경 조각의 작업면 좌표만 복사하며
+    /// 표면 매핑·표본 검증·확정 좌표 계산은 하지 않는다(확정은 <see cref="CommitVertex"/>).
     /// </summary>
-    private bool TryBuildVertexPreview(Vec2 datum,
-        out Dictionary<int, IReadOnlyList<Vec2>> pieces,
-        out Dictionary<int, List<SurfaceMappedSample>> mappedPieces,
-        out Vec2 applied, out string failure, out bool anchor, out bool isStart)
+    private bool TryBuildVertexPreview2D(Vec2 datum,
+        out Dictionary<int, IReadOnlyList<Vec2>> pieces, out Vec2 applied, out string failure)
     {
         pieces = new Dictionary<int, IReadOnlyList<Vec2>>();
-        mappedPieces = new Dictionary<int, List<SurfaceMappedSample>>();
         applied = datum;
         failure = string.Empty;
-        anchor = false;
-        isStart = false;
         var area = _activeArea;
         if (area?.Pattern == null || _vertexDragGroup < 0 || _vertexDragGroup >= _vertexGroups.Count)
         {
@@ -403,50 +402,37 @@ public partial class MainWindow
             return false;
         }
         RouteVertexGroup group = _vertexGroups[_vertexDragGroup];
-        anchor = IsAnchorGroup(area, group, out isStart);
-        var side = _workingSide.Confirmed;
-        if (side == null) { failure = "작업면이 확정되지 않았습니다"; return false; }
-        var context = CommittedRouteContext.Capture(area);
-        SurfaceMappedSample? anchorSample = null;
-        if (anchor)
-        {
-            CircuitExitPoint boundExit = isStart ? area.Pattern.StartExit : area.Pattern.EndExit;
-            ExitBoundaryPoint? boundPoint = boundExit == null ? null : ToBoundary(boundExit);
-            if (!TryProjectExitDatum(side, context, boundPoint, datum, 5.0,
-                    out ExitBoundaryPoint projected, out SurfaceMappedSample projectedSample, out failure))
-            {
-                return false;
-            }
-            applied = projected.Point;
-            if (applied.DistanceTo(group.Datum) <= 1e-6)
-            {
-                failure = "인출점 위치가 변경되지 않았습니다";
-                return false;
-            }
-            anchorSample = projectedSample;
-        }
-        else if (!TryConstrainVertexMove(area, group, datum, out applied, out failure))
-        {
-            return false;
-        }
+        if (!TryConstrainVertexMove(area, group, datum, out applied, out failure)) return false;
 
         var edits = new List<(RouteVertexOccurrence, Vec2)>(group.Occurrences.Count);
         foreach (RouteVertexOccurrence occurrence in group.Occurrences) edits.Add((occurrence, applied));
-        if (!SerpentineVertexPreview.TryApplyAffected(area.Pattern, edits, out pieces, out failure))
-            return false;
+        return SerpentineVertexPreview.TryApplyAffected(area.Pattern, edits, out pieces, out failure);
+    }
 
-        var hit = BuildSurfaceMapDelegate(area, side, context: context);
-        foreach (KeyValuePair<int, IReadOnlyList<Vec2>> entry in pieces.ToArray())
+    /// <summary>변경 조각의 작업면 좌표를 네이티브 2D 폴리라인으로 한 번에 교체한다.</summary>
+    private bool ShowVertexPreview2D(IReadOnlyDictionary<int, IReadOnlyList<Vec2>> pieces)
+    {
+        var side = _workingSide.Confirmed;
+        if (side == null || pieces.Count == 0) return false;
+        var uv = new List<double>();
+        var offsets = new List<int> { 0 };
+        foreach (KeyValuePair<int, IReadOnlyList<Vec2>> entry in pieces.OrderBy(e => e.Key))
         {
-            if (entry.Value.Count < 2) continue;
-            if (!PrepareDisplayedEditPiece(area, side, context, group, entry.Key, entry.Value, anchorSample,
-                    out IReadOnlyList<Vec2> displayPoints, out var overrides, out failure)) return false;
-            pieces[entry.Key] = displayPoints;
-            bool ok = SurfacePathMapper.TryMapRoute(
-                displayPoints, hit, overrides, out var samples, out string mapFailure);
-            if (!ok) { failure = "모델 표면 매핑 실패 — " + mapFailure; return false; }
-            mappedPieces[entry.Key] = samples;
+            IReadOnlyList<Vec2> points = entry.Value;
+            if (points.Count < 2) continue;
+            foreach (Vec2 point in points)
+            {
+                if (!PlanarMath2D.IsFinite(point)) return false;
+                uv.Add(point.X);
+                uv.Add(point.Y);
+            }
+            offsets.Add(uv.Count / 2);
         }
+        if (offsets.Count < 2) return false;
+        if (!Bridge.ReplaceVertexPreview2D(side.Id.Value, side.Revision.Value, uv.ToArray(),
+                offsets.ToArray(), false)) return false;
+        // 이 Tick의 미리보기를 한 번에 반영한다.
+        Bridge.RedrawView();
         return true;
     }
 
@@ -582,32 +568,6 @@ public partial class MainWindow
             }
         }
         displayedPoints = adjusted ?? points;
-        return true;
-    }
-
-    /// <summary>검증 단계에서 이미 계산한 매핑을 재사용해 미리보기 폴리라인을 그린다.</summary>
-    private bool ShowVertexPreview(IReadOnlyDictionary<int, IReadOnlyList<Vec2>> pieces,
-        Dictionary<int, List<SurfaceMappedSample>> mappedPieces)
-    {
-        var area = _activeArea;
-        if (area == null) return false;
-        foreach (KeyValuePair<int, IReadOnlyList<Vec2>> entry in pieces)
-        {
-            int pieceIndex = entry.Key;
-            IReadOnlyList<Vec2> points = entry.Value;
-            if (points.Count < 2) continue;
-            if (!mappedPieces.TryGetValue(pieceIndex, out var samples) || samples.Count < 2) return false;
-            var xyz = new double[samples.Count * 3];
-            for (int i = 0; i < samples.Count; i++)
-            {
-                xyz[i * 3] = samples[i].Point.X;
-                xyz[i * 3 + 1] = samples[i].Point.Y;
-                xyz[i * 3 + 2] = samples[i].Point.Z;
-            }
-            Bridge.ShowRoutePreview(pieceIndex, xyz, false);
-        }
-        // 조각별 Redraw 대신 이 Tick의 미리보기를 한 번에 반영한다.
-        Bridge.RedrawView();
         return true;
     }
 

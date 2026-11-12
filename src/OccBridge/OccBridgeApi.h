@@ -403,6 +403,12 @@ public:
     /// <summary>드래그 중인 조각 하나의 미리보기. invalid=true면 빨간색.</summary>
     static bool ShowRoutePreview(int pieceIndex, array<double>^ xyzFlat, bool invalid);
     static void ClearRoutePreview();
+    /// <summary>정면·직교 드래그용 2D 폴리라인 미리보기를 원자적으로 교체한다.
+    /// uvFlat은 확정 작업평면 좌표쌍, offsets는 폴리라인별 시작 offset + 마지막 sentinel.
+    /// 실제 표면점이 아닌 표시 전용이며 길이·검증·저장·출력에 쓰지 않는다.</summary>
+    static bool ReplaceVertexPreview2D(long long id, long long revision, array<double>^ uvFlat,
+        array<int>^ offsets, bool invalid);
+    static void ClearVertexPreview2D();
 
     // ---- AIS 뷰어 (S1 항목 1·6) — WPF HwndHost 자식 HWND 임베드 ----
     /// <summary>자식 HWND에 OpenGl 뷰어 초기화 (1회). 이미 로드된 셰이프가 있으면 표시+Fit</summary>

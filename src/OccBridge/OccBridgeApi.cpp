@@ -147,6 +147,11 @@
 #include <AIS_Point.hxx>
 #include <Geom_CartesianPoint.hxx>
 #include <AIS_InteractiveObject.hxx>
+#include <PrsMgr_PresentationManager.hxx>
+#include <Prs3d_Presentation.hxx>
+#include <SelectMgr_Selection.hxx>
+#include <Graphic3d_ArrayOfPolylines.hxx>
+#include <Graphic3d_Group.hxx>
 #include <AIS_RubberBand.hxx>
 #include <AIS_TextLabel.hxx>
 #include <AIS_Line.hxx>
@@ -431,6 +436,10 @@ namespace
     // 꼭지점 편집 오버레이 (WorkingSideNative.inc에서 정의, 이 파일 뒤쪽에 include됨)
     void ClearVertexHandlesNative();
     void ClearRoutePreviewNative();
+    // 꼭지점 드래그 2D 미리보기 (WorkingSideNative.inc에서 정의, 같은 이유로 include 전에 선언)
+    bool ReplaceVertexPreview2DNative(long long id, long long revision, const std::vector<double>& uv,
+        const std::vector<int>& offsets, bool invalid);
+    void ClearVertexPreview2DNative();
     // 제외영역 채움 메시 점유 면 조회 (AreaHighlightNative.inc에서 정의, 뒤쪽 include)
     bool IsFaceInAreaHighlightNative(int faceId);
 
@@ -2692,6 +2701,7 @@ namespace
         ClearRouteEndpointMarkersNative();
         ClearVertexHandlesNative();
         ClearRoutePreviewNative();
+        ClearVertexPreview2DNative();
         ClearRouteLengthLabelsNative();
         if (!g_ctx.IsNull()) for (const auto& piece : g_routePieces) g_ctx->Remove(piece.second.ais, Standard_False);
         g_routePieces.clear();
@@ -4229,6 +4239,34 @@ bool Bridge::ShowRoutePreview(int pieceIndex, array<double>^ xyzFlat, bool inval
 void Bridge::ClearRoutePreview()
 {
     ClearRoutePreviewNative();
+    if (!g_view.IsNull()) g_view->Redraw();
+}
+
+bool Bridge::ReplaceVertexPreview2D(long long id, long long revision, array<double>^ uvFlat,
+    array<int>^ offsets, bool invalid)
+{
+    try
+    {
+        std::vector<double> uv;
+        std::vector<int> bounds;
+        if (uvFlat != nullptr)
+        {
+            uv.resize((size_t)uvFlat->Length);
+            for (int i = 0; i < uvFlat->Length; ++i) uv[(size_t)i] = uvFlat[i];
+        }
+        if (offsets != nullptr)
+        {
+            bounds.resize((size_t)offsets->Length);
+            for (int i = 0; i < offsets->Length; ++i) bounds[(size_t)i] = offsets[i];
+        }
+        return ReplaceVertexPreview2DNative(id, revision, uv, bounds, invalid);
+    }
+    catch (...) { return false; }
+}
+
+void Bridge::ClearVertexPreview2D()
+{
+    ClearVertexPreview2DNative();
     if (!g_view.IsNull()) g_view->Redraw();
 }
 
