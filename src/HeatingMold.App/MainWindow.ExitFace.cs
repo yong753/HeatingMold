@@ -448,14 +448,16 @@ public partial class MainWindow
             : "적용영역 외곽 Edge에서 종료 인출점을 클릭하세요 (Esc 취소)";
     }
 
-    private bool TryProjectExitPoint(WorkingArea area, int x, int y,
+    /// <summary>작업평면 2D 좌표를 적용영역 외곽의 원본 Edge로 투영한다. 화면 픽과 시각테스트가
+    /// 같은 경계 판정을 쓰도록 공통 경로로 분리했다.</summary>
+    private static bool TryResolveExitPoint(WorkingArea area, Vec2 datum,
         out ExitBoundaryPoint point, out string error)
     {
         point = default;
         error = null;
-        if (area?.RegionExitBoundary == null || !TryViewportPointOnFrame(x, y, out Vec2 datum, out _))
+        if (area?.RegionExitBoundary == null)
         {
-            error = "작업 평면 위의 점을 찾지 못했습니다";
+            error = "적용영역 외곽 경계가 없습니다";
             return false;
         }
         ExitBoundaryResolution resolution = area.RegionExitBoundary.Project(datum, ExitPointPickTolerance);
@@ -466,6 +468,19 @@ public partial class MainWindow
         }
         point = resolution.Point!.Value;
         return true;
+    }
+
+    private bool TryProjectExitPoint(WorkingArea area, int x, int y,
+        out ExitBoundaryPoint point, out string error)
+    {
+        point = default;
+        error = null;
+        if (!TryViewportPointOnFrame(x, y, out Vec2 datum, out _))
+        {
+            error = "작업 평면 위의 점을 찾지 못했습니다";
+            return false;
+        }
+        return TryResolveExitPoint(area, datum, out point, out error);
     }
 
     private bool TryEvaluateSelectedExit3D(WorkingArea area, ExitBoundaryPoint point, out Vec3 position) =>
@@ -574,8 +589,17 @@ public partial class MainWindow
             return;
         }
 
-        if (_exitPointPickRole == 0) area.SelectedStartExit = point;
-        else area.SelectedEndExit = point;
+        ApplyPickedExitPoint(area, _exitPointPickRole, point);
+    }
+
+    /// <summary>해석된 인출점을 영역에 적용하고 선택 모드를 종료한다. 화면 픽과 시각테스트가
+    /// 같은 후처리를 쓰도록 공통 경로로 분리했다.</summary>
+    private void ApplyPickedExitPoint(WorkingArea area, int role, ExitBoundaryPoint point)
+    {
+        if (area == null) return;
+        if (role == 0) area.SelectedStartExit = point;
+        else if (role == 1) area.SelectedEndExit = point;
+        else return;
         area.LastExitFailure = null;
         // 후보 쌍/제외 계획은 이전 점 기준이므로 무효화한다. 선택한 점 자체는 유지한다.
         area.AnchorCandidates.Clear();

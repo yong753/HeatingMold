@@ -7,6 +7,7 @@ using HeatingMold.Core.Electrical;
 using HeatingMold.Core.Geometry;
 using HeatingMold.Core.Model;
 using HeatingMold.OccBridge;
+using HeatingMold.App.VisualTesting;
 
 namespace HeatingMold.App;
 
@@ -36,6 +37,25 @@ public partial class MainWindow
             SetSplitStatus("영역 분할 실패: " + ex.Message);
             ErrorReporter.ShowError("영역 분할 실패", ex);
         }
+    }
+
+    /// <summary>분할 확인을 제품 대화상자와 시각테스트 응답 큐에 동일하게 전달한다.
+    /// 시각테스트는 예상 응답이 없으면 hang 대신 명시적으로 실패한다.</summary>
+    private MessageBoxResult ConfirmSplit(WorkingArea area, bool autoExits)
+    {
+        string exitNote = autoExits
+            ? "분할이 확정되면 기존 경로는 폐기되고, 새 영역의 시작/종료점은 원래 범위 안에서 자동으로 지정되며 경로도 같은 분할에서 자동 생성됩니다. 필요하면 다시 선택할 수 있습니다."
+            : "분할이 확정되면 경로·인출점은 각 새 영역에서 다시 선택합니다.";
+        if (VisualTestSession.Current != null)
+        {
+            return ResolveVisualTestConfirm("영역 분할")
+                ? MessageBoxResult.OK
+                : MessageBoxResult.Cancel;
+        }
+        return MessageBox.Show(this,
+            string.Format("{0} 영역의 현재 발열경로를 폐기하고 분할할까요?\n{1}",
+                area.Name, exitNote),
+            "영역 분할", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
     }
 
     private void SplitActiveArea()
@@ -119,13 +139,7 @@ public partial class MainWindow
         bool autoExits = SplitExitPointPlanner.HasAssignablePair(area);
         if (HasUncommittedRoute(area))
         {
-            string exitNote = autoExits
-                ? "분할이 확정되면 기존 경로는 폐기되고, 새 영역의 시작/종료점은 원래 범위 안에서 자동으로 지정되며 경로도 같은 분할에서 자동 생성됩니다. 필요하면 다시 선택할 수 있습니다."
-                : "분할이 확정되면 경로·인출점은 각 새 영역에서 다시 선택합니다.";
-            MessageBoxResult answer = MessageBox.Show(this,
-                string.Format("{0} 영역의 현재 발열경로를 폐기하고 분할할까요?\n{1}",
-                    area.Name, exitNote),
-                "영역 분할", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            MessageBoxResult answer = ConfirmSplit(area, autoExits);
             if (answer != MessageBoxResult.OK)
             {
                 SetSplitStatus("분할을 취소했습니다 — 기존 영역과 경로를 유지합니다.");

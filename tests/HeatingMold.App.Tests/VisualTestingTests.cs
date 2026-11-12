@@ -154,6 +154,140 @@ namespace HeatingMold.App.Tests
         }
 
         [Fact]
+        public void Load_AcceptsZeroSolidModel()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string json = "{" +
+                "\"schemaVersion\":1," +
+                "\"name\":\"zero-solid\"," +
+                "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":80,\"solidCount\":0}," +
+                "\"area\":{\"faceIds\":[1],\"marginMm\":5,\"spacingMm\":10,\"direction\":0}," +
+                "\"exit\":{\"faceId\":3}," +
+                "\"electrical\":{\"presetIndex\":0,\"voltageV\":220,\"reviewScope\":0}" +
+                "}";
+            string scenarioPath = temp.WriteFile("scenario.json", json);
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(error);
+            Assert.NotNull(scenario);
+            Assert.Equal(0, scenario.Model.SolidCount);
+        }
+
+        [Fact]
+        public void Load_AcceptsRepresentativeEndToEndActions()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string json = "{" +
+                "\"schemaVersion\":2," +
+                "\"name\":\"e2e-contract\"," +
+                "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":80,\"solidCount\":0}," +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[44,56,69],\"marginMm\":5,\"spacingMm\":15,\"direction\":0}]," +
+                "\"steps\":[" +
+                "{\"id\":\"1\",\"action\":\"selectFaces\",\"faces\":[44,56,69]}," +
+                "{\"id\":\"2\",\"action\":\"confirmArea\",\"area\":\"A\"}," +
+                "{\"id\":\"3\",\"action\":\"pickExitPoint\",\"area\":\"A\",\"exitPoint\":{\"role\":\"start\",\"uv\":[1,2],\"toleranceMm\":0.5}}," +
+                "{\"id\":\"4\",\"action\":\"checkElectrical\",\"electrical\":{\"presetIndex\":0,\"voltageV\":220,\"allowedCurrentA\":16,\"allowedPowerKw\":3.5,\"reviewScope\":0,\"expectedWithinLimits\":false}}," +
+                "{\"id\":\"5\",\"action\":\"splitArea\",\"area\":\"A\",\"partCount\":3,\"childAliases\":[\"A1\",\"A2\",\"A3\"],\"confirm\":\"yes\",\"confirmAction\":\"영역 분할\"}," +
+                "{\"id\":\"6\",\"action\":\"checkArea\",\"area\":\"A1\"}," +
+                "{\"id\":\"7\",\"action\":\"exportStep\",\"fileName\":\"out.step\",\"scope\":0}," +
+                "{\"id\":\"8\",\"action\":\"saveProject\",\"fileName\":\"out.json\"}," +
+                "{\"id\":\"9\",\"action\":\"loadProject\",\"fileName\":\"out.json\",\"compareProject\":true,\"confirm\":\"yes\",\"confirmAction\":\"프로젝트 열기\"}" +
+                "]}";
+            string scenarioPath = temp.WriteFile("scenario.json", json);
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(error);
+            Assert.NotNull(scenario);
+            Assert.Equal(9, scenario.Steps.Length);
+        }
+
+        [Fact]
+        public void Load_RejectsSplitChildAliasCollision()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string json = "{" +
+                "\"schemaVersion\":2," +
+                "\"name\":\"split-alias\"," +
+                "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
+                "\"areas\":[" +
+                "{\"alias\":\"A\",\"faceIds\":[1]}," +
+                "{\"alias\":\"A1\",\"faceIds\":[2]}]," +
+                "\"steps\":[{\"id\":\"1\",\"action\":\"splitArea\",\"area\":\"A\",\"childAliases\":[\"A1\"]}]" +
+                "}";
+            string scenarioPath = temp.WriteFile("scenario.json", json);
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(scenario);
+            Assert.Contains("childAliases", error);
+        }
+
+        [Fact]
+        public void Load_RejectsArtifactPathOutsideRunDirectory()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string json = "{" +
+                "\"schemaVersion\":2," +
+                "\"name\":\"path\"," +
+                "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1]}]," +
+                "\"steps\":[{\"id\":\"1\",\"action\":\"saveProject\",\"fileName\":\"../outside.json\"}]" +
+                "}";
+            string scenarioPath = temp.WriteFile("scenario.json", json);
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(scenario);
+            Assert.Contains("순수 파일명", error);
+        }
+
+        [Fact]
+        public void Load_RejectsElectricalStepWithoutSettings()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string json = "{" +
+                "\"schemaVersion\":2," +
+                "\"name\":\"electrical\"," +
+                "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1]}]," +
+                "\"steps\":[{\"id\":\"1\",\"action\":\"checkElectrical\"}]" +
+                "}";
+            string scenarioPath = temp.WriteFile("scenario.json", json);
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(scenario);
+            Assert.Contains("electrical", error);
+        }
+
+        [Fact]
+        public void Load_RejectsElectricalDirectInputPresetInV2Step()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string json = "{" +
+                "\"schemaVersion\":2," +
+                "\"name\":\"electrical\"," +
+                "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1]}]," +
+                "\"steps\":[{\"id\":\"1\",\"action\":\"checkElectrical\",\"electrical\":{\"presetIndex\":2,\"voltageV\":220,\"reviewScope\":0}}]" +
+                "}";
+            string scenarioPath = temp.WriteFile("scenario.json", json);
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(scenario);
+            Assert.Contains("presetIndex", error);
+        }
+
+        [Fact]
         public void Load_RejectsDuplicateV2Alias()
         {
             using var temp = new TempDirectory();

@@ -67,8 +67,8 @@ internal sealed class VisualScenario
             scenario.ActualModelSha256 = ComputeSha256(scenario.ResolvedModelPath);
             if (!string.Equals(scenario.ActualModelSha256, scenario.Model.Sha256, StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException("모델 SHA-256이 시나리오와 일치하지 않습니다. 승인된 모델인지 확인하세요.");
-            if (scenario.Model.FaceCount <= 0 || scenario.Model.SolidCount <= 0)
-                throw new ArgumentException("model.faceCount/solidCount는 0보다 커야 합니다.");
+            if (scenario.Model.FaceCount <= 0 || scenario.Model.SolidCount < 0)
+                throw new ArgumentException("model.faceCount는 0보다 커야 하고 solidCount는 0 이상이어야 합니다.");
 
             if (scenario.SchemaVersion == 1)
                 scenario.ValidateLegacy();
@@ -233,6 +233,48 @@ internal sealed class VisualScenario
                         || (Math.Abs(step.OffsetMm[0]) < 1e-9 && Math.Abs(step.OffsetMm[1]) < 1e-9))
                         throw new ArgumentException("steps[" + i + "].offsetMm는 0이 아닌 [dx, dy]여야 합니다.");
                     break;
+                case "pickExitPoint":
+                    RequireAlias(step.Area, aliases, i);
+                    ValidateExitPoint(step.ExitPoint, i);
+                    break;
+                case "checkElectrical":
+                    ValidateElectricalStep(step.Electrical, i);
+                    break;
+                case "splitArea":
+                    RequireAlias(step.Area, aliases, i);
+                    if (step.PartCount != null && (step.PartCount.Value < 2 || step.PartCount.Value > 4))
+                        throw new ArgumentException("steps[" + i + "].partCount는 2..4여야 합니다.");
+                    ValidateOutcome(step, i);
+                    ValidateConfirm(step, i);
+                    if (step.ChildAliases != null)
+                    {
+                        if (step.ChildAliases.Length == 0)
+                            throw new ArgumentException("steps[" + i + "].childAliases가 비어 있습니다.");
+                        var added = new HashSet<string>(StringComparer.Ordinal);
+                        foreach (string childAlias in step.ChildAliases)
+                        {
+                            if (string.IsNullOrWhiteSpace(childAlias))
+                                throw new ArgumentException("steps[" + i + "].childAliases에 빈 alias가 있습니다.");
+                            if (!added.Add(childAlias))
+                                throw new ArgumentException("steps[" + i + "].childAliases가 중복되었습니다: " + childAlias);
+                            if (aliases.Contains(childAlias))
+                                throw new ArgumentException("steps[" + i + "].childAliases가 기존 alias와 충돌합니다: " + childAlias);
+                        }
+                        foreach (string childAlias in step.ChildAliases)
+                            aliases.Add(childAlias);
+                    }
+                    break;
+                case "exportStep":
+                    if (step.Scope != null && (step.Scope.Value < 0 || step.Scope.Value > 1))
+                        throw new ArgumentException("steps[" + i + "].scope는 0 또는 1이어야 합니다.");
+                    ValidateOutcome(step, i);
+                    break;
+                case "saveProject":
+                case "loadProject":
+                    ValidateFileName(step.FileName, i);
+                    ValidateOutcome(step, i);
+                    if (action == "loadProject") ValidateConfirm(step, i);
+                    break;
                 case "exportDxf":
                     if (step.Scope != null && (step.Scope.Value < 0 || step.Scope.Value > 1))
                         throw new ArgumentException("steps[" + i + "].scope는 0 또는 1이어야 합니다.");
@@ -280,6 +322,43 @@ internal sealed class VisualScenario
         if (string.IsNullOrWhiteSpace(step.Outcome)) step.Outcome = "success";
         if (step.Outcome != "success" && step.Outcome != "rejected")
             throw new ArgumentException("steps[" + index + "].outcome은 success 또는 rejected여야 합니다.");
+    }
+
+    private static void ValidateExitPoint(VisualExitPointSpec point, int index)
+    {
+        if (point == null)
+            throw new ArgumentException("steps[" + index + "].exitPoint가 필요합니다.");
+        if (point.Role != "start" && point.Role != "end")
+            throw new ArgumentException("steps[" + index + "].exitPoint.role은 start 또는 end여야 합니다.");
+        if (point.Uv == null || point.Uv.Length != 2 || !point.Uv.All(double.IsFinite))
+            throw new ArgumentException("steps[" + index + "].exitPoint.uv는 [u, v] 2개 실수여야 합니다.");
+        if (!double.IsFinite(point.ToleranceMm) || point.ToleranceMm <= 0)
+            throw new ArgumentException("steps[" + index + "].exitPoint.toleranceMm은 0보다 커야 합니다.");
+    }
+
+    private static void ValidateElectricalStep(VisualElectricalSpec electrical, int index)
+    {
+        if (electrical == null)
+            throw new ArgumentException("steps[" + index + "].electrical이 필요합니다.");
+        if (electrical.PresetIndex < 0 || electrical.PresetIndex > 1)
+            throw new ArgumentException("steps[" + index + "].electrical.presetIndex는 0 또는 1이어야 합니다(직접 입력은 지원하지 않습니다).");
+        if (!double.IsFinite(electrical.VoltageV) || !(electrical.VoltageV > 0))
+            throw new ArgumentException("steps[" + index + "].electrical.voltageV는 0보다 커야 합니다.");
+        if (!double.IsFinite(electrical.AllowedCurrentA) || !(electrical.AllowedCurrentA > 0))
+            throw new ArgumentException("steps[" + index + "].electrical.allowedCurrentA는 0보다 커야 합니다.");
+        if (!double.IsFinite(electrical.AllowedPowerKw) || !(electrical.AllowedPowerKw > 0))
+            throw new ArgumentException("steps[" + index + "].electrical.allowedPowerKw는 0보다 커야 합니다.");
+        if (electrical.ReviewScope < 0 || electrical.ReviewScope > 1)
+            throw new ArgumentException("steps[" + index + "].electrical.reviewScope는 0 또는 1이어야 합니다.");
+    }
+
+    private static void ValidateFileName(string fileName, int index)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+            throw new ArgumentException("steps[" + index + "].fileName이 필요합니다.");
+        if (fileName == "." || fileName == ".."
+            || fileName.IndexOfAny(new[] { '\\', '/', ':' }) >= 0)
+            throw new ArgumentException("steps[" + index + "].fileName은 실행 폴더 안의 순수 파일명이어야 합니다.");
     }
 
     private static void ValidateExpect(VisualAreaExpect expect, string section)
@@ -387,6 +466,14 @@ internal sealed class VisualAnchorSpec
     public double ToleranceMm { get; set; } = 0.5;
 }
 
+/// <summary>현재 제품의 직접 인출점 선택. 작업평면 2D 좌표로 영역 외곽/절단선/제외 변에 투영한다.</summary>
+internal sealed class VisualExitPointSpec
+{
+    public string Role { get; set; } = "start";
+    public double[] Uv { get; set; }
+    public double ToleranceMm { get; set; } = 0.5;
+}
+
 internal sealed class VisualElectricalSpec
 {
     public int PresetIndex { get; set; }
@@ -449,5 +536,10 @@ internal sealed class VisualActionSpec
     public string FailureContains { get; set; }
     public VisualExitSpec Exit { get; set; }
     public VisualAnchorSpec Anchor { get; set; }
+    public VisualExitPointSpec ExitPoint { get; set; }
+    public VisualElectricalSpec Electrical { get; set; }
+    public int? PartCount { get; set; }
+    public string[] ChildAliases { get; set; }
+    public bool? CompareProject { get; set; }
     public VisualAreaExpect Expect { get; set; }
 }
