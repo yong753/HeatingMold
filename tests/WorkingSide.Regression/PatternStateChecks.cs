@@ -2,6 +2,8 @@ using System.Collections;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Media;
 using HeatingMold.App;
 using HeatingMold.Core.Geometry;
 using HeatingMold.Core.Model;
@@ -31,6 +33,26 @@ static class PatternStateChecks
         bool ok = (bool)method.Invoke(null, args)!;
         if (!ok) throw new Exception("circuit refresh failed: " + args[1]);
         return ok;
+    }
+
+    /// <summary>판정별 행 텍스트 색 트리거. 실제 RowStyle의 DataTrigger를 읽어 배선과 색을 함께 확인한다.</summary>
+    static bool TryGetVerdictColor(Style? style, string verdict, out Color color)
+    {
+        color = default;
+        if (style == null) return false;
+        foreach (TriggerBase trigger in style.Triggers)
+        {
+            if (trigger is not DataTrigger data) continue;
+            if (data.Binding is not Binding binding || binding.Path?.Path != "Verdict") continue;
+            if (!Equals(data.Value, verdict)) continue;
+            foreach (SetterBase setterBase in data.Setters)
+            {
+                if (setterBase is not Setter setter) continue;
+                if (!Equals(setter.Property, DataGridRow.ForegroundProperty)) continue;
+                if (setter.Value is SolidColorBrush brush) { color = brush.Color; return true; }
+            }
+        }
+        return false;
     }
 
     static SerpentineResult Pattern(params Vec2[] points)
@@ -308,6 +330,22 @@ static class PatternStateChecks
         Check(specGrid.Items.Count == 3 && summary.Text.Contains("배분 3.50 kW")
             && exportScope.Text.Contains("준비 2/2"),
             "restoring the route returns both areas to the shared allocation and exportable review");
+
+        // 판정별 행 텍스트 색: NG는 빨강, OK는 초록. 검토 탭 표와 확대 보기가 같은 규칙을 쓴다.
+        foreach ((DataGrid grid, string label) in new[] { (specGrid, "review"), (expandedGrid, "expanded") })
+        {
+            Check(TryGetVerdictColor(grid.RowStyle, "NG", out Color ngColor)
+                && ngColor == Color.FromRgb(0xC6, 0x28, 0x28),
+                label + " specification table paints every NG row text red");
+            Check(TryGetVerdictColor(grid.RowStyle, "OK", out Color okColor)
+                && okColor == Color.FromRgb(0x1B, 0x7F, 0x3B),
+                label + " specification table paints every OK row text green");
+        }
+        var verdicts = specGrid.Items.Cast<object>()
+            .Select(item => (string)item.GetType().GetProperty("Verdict")!.GetValue(item)!)
+            .ToList();
+        Check(verdicts.Contains("NG") && verdicts.All(v => v is "OK" or "NG" or ""),
+            "row verdicts are the OK/NG/blank keys the row colors bind to");
 
         // (d)에서 위조한 음수 조각 ID는 네이티브에 존재하지 않으므로, 다음 삭제 검증의
         // oldIds에서 제거해 차등 커밋이 실제 존재하지 않는 ID 삭제를 시도하지 않게 한다.

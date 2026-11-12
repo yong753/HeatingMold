@@ -393,3 +393,13 @@
 - 검증 2026-11-12: App Release/x64 빌드 0 errors(기존 CS8632 경고만). Core 테스트 271 통과, App 테스트 191 통과(제거한 solver 4건·변형 2건, 추가한 방향 2건 반영). `tests\WorkingSide.Regression` 전 그룹 통과(30 sidebar, 30 area highlight, 22 exclusion+exit, 19 direct exit, 29 vertex edit, 3 electrical, 38 pattern state, 64 geometry rollback, 20 project load, 51 project load exclusion, 187 working-side).
 - 실제 프로젝트 검증(오프스크린, 임시 검사 후 삭제): `C:\Users\yong753\Desktop\발열몰드 저장테스트\Mold_Solids.json`을 `LoadProject`로 열어 `TryPrepareBalancedSplit`(3분할, margin 5, spacing 15, 3.5 kW)을 실행했다. 자식 A-1/A-2/A-3의 시작·종료 X가 모두 작업평면 오른쪽(295.9126/295.9136, 영역 최우 295.9100)이고, 시작/종료 Y는 부모 선택 구간 안이며, 모든 점이 자식 경계 위에서 3D 표면으로 평가됐다. 2D 길이는 5,304.0~5,886.8 mm, 편차 **1.1099배**로, 같은 측면을 유지한 채 절단만 탐색한 최선값이다. 이 값은 기존 1.10 하드 한도를 넘지만 새 정책에서는 확정된다. (참고: 과거 변형 탐색이 만들던 1.0219배는 인출 측면을 바꾼 결과이므로 새 정책의 기대값이 아니다.)
 - 미검증: 실행 중 앱에서 실제 마우스로 분할 클릭, 새 정책으로 분할한 프로젝트의 저장/재열기, 화면 인출점 마커 표시, 3D 실측 길이 균등, 제외영역/곡면/경사면, 좁은 중간 밴드, 대형 모델 탐색 시간, 분할 영역 DXF/STEP 출력.
+
+## 전기 사양표 판정별 행 색 (사용자 확정 2026-11-12)
+
+- **사용자 요구(원문):** "여기서 판정이 NG인 회로들은 해당 행의 텍스트 색을 전부 빨간색. OK인 회로들은 초록색으로 표시해줘". 대상은 검토 탭의 회로별 사양표 한 행 전체의 텍스트이며, 셀 단위가 아니라 행 단위다.
+- 구현: `MainWindow.xaml`의 `Window.Resources`에 `VerdictNgBrush`(`#C62828`)·`VerdictOkBrush`(`#1B7F3B`)를 두고, 두 DataGrid(`ElectricalSpecGrid`, `ExpandedElectricalGrid`)의 `DataGrid.RowStyle`에 `Verdict` 바인딩 DataTrigger를 각각 추가했다. 판정 문자열은 `MainWindow.Electrical.cs`의 `ElectricalVerdictText`가 만드는 `OK`/`NG`/`—`/`""`이며, 합계 행은 `IsTotal=true`·`Verdict=""`라 색이 적용되지 않고 굵게만 표시된다.
+- 행 Foreground는 셀 텍스트로 상속된다. .NET 8 WPF 오프스크린 probe로 확인: DataGridRow Foreground DataTrigger가 셀 TextBlock까지 전달되고(OK 초록/NG 빨강), 선택된 행에서는 DataGridCell 테마 트리거가 우선해 기본색으로 돌아간다(어두운 배경 위 빨강 텍스트 방지). 그래서 CellStyle이 아니라 RowStyle에 색을 둔다.
+- **사용자 요구(같은 날, 추가):** 표 아래 두 안내 문단(`L은 각 회로의 인출점 사이 실제 도체 전체 길이이며…`, `이 영역이 배분받은 발열 전력으로 필요한 분할 수를 계산합니다…`)을 삭제한다. 두 TextBlock만 지웠고, 그 사이 `Separator`는 표와 자동 분할 버튼 사이 구분선으로 남겼다.
+- 검증 2026-11-12: `tests\WorkingSide.Regression` EXIT=0, 478 PASS — pattern state 38→43(신규 5건: 검토 탭·확대 보기 각각 NG 빨강/OK 초록 트리거의 실제 `Setter` 색, 행 판정 문자열이 `OK`/`NG`/`""` 키 집합인지). App 테스트 191 통과, App Release/x64 빌드 0 errors(기존 CS8632 경고만). 네이티브 변경 없음.
+- 미검증: 실행 중 앱 화면에서 실제 렌더링(줌·DPI·행 선택 조합)을 육안 확인하지 않았다. 삭제한 두 문단이 사라진 검토 탭의 세로 배치도 실제 화면에서 확인하지 않았다.
+

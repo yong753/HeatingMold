@@ -13,6 +13,9 @@
         <SolidColorBrush x:Key="TextPrimaryBrush" Color="#1F2328"/>
         <SolidColorBrush x:Key="TextSecondaryBrush" Color="#5B636D"/>
         <SolidColorBrush x:Key="AccentBrush" Color="#2563EB"/>
+        <!-- 전기 사양표의 판정별 행 텍스트 색. 판정이 NG면 빨강, OK면 초록. -->
+        <SolidColorBrush x:Key="VerdictNgBrush" Color="#C62828"/>
+        <SolidColorBrush x:Key="VerdictOkBrush" Color="#1B7F3B"/>
 
         <Style x:Key="SectionTitle" TargetType="TextBlock">
             <Setter Property="FontSize" Value="13"/>
@@ -318,6 +321,13 @@
                                     <DataTrigger Binding="{Binding IsTotal}" Value="True">
                                         <Setter Property="FontWeight" Value="Bold"/>
                                     </DataTrigger>
+                                    <!-- 판정별 행 전체 텍스트 색. 합계 행은 Verdict가 비어 있어 적용되지 않는다. -->
+                                    <DataTrigger Binding="{Binding Verdict}" Value="NG">
+                                        <Setter Property="Foreground" Value="{StaticResource VerdictNgBrush}"/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Verdict}" Value="OK">
+                                        <Setter Property="Foreground" Value="{StaticResource VerdictOkBrush}"/>
+                                    </DataTrigger>
                                 </Style.Triggers>
                             </Style>
                         </DataGrid.RowStyle>
@@ -601,6 +611,13 @@
                                                         <DataTrigger Binding="{Binding IsTotal}" Value="True">
                                                             <Setter Property="FontWeight" Value="Bold"/>
                                                         </DataTrigger>
+                                                        <!-- 판정별 행 전체 텍스트 색. 합계 행은 Verdict가 비어 있어 적용되지 않는다. -->
+                                                        <DataTrigger Binding="{Binding Verdict}" Value="NG">
+                                                            <Setter Property="Foreground" Value="{StaticResource VerdictNgBrush}"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Verdict}" Value="OK">
+                                                            <Setter Property="Foreground" Value="{StaticResource VerdictOkBrush}"/>
+                                                        </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
                                             </DataGrid.RowStyle>
@@ -615,11 +632,7 @@
                                                 <DataGridTextColumn Header="비고" Binding="{Binding Note}" Width="*" MinWidth="60"/>
                                             </DataGrid.Columns>
                                         </DataGrid>
-                                        <TextBlock Style="{StaticResource Hint}"
-                                                   Text="L은 각 회로의 인출점 사이 실제 도체 전체 길이이며 외부 리드 저항은 반영하지 않습니다. P는 입력한 발열 전력(전체 합계), P_i = P·L_i/ΣL, R_i = rL_i, V_i = √(P_i·R_i), I_i = √(P_i/R_i). 회로별 필요 전압·전류가 허용치 이하이고 배분 전력 합계가 발열 전력 이하일 때만 OK입니다."/>
                                         <Separator Margin="0,12,0,8"/>
-                                        <TextBlock Style="{StaticResource Hint}"
-                                                   Text="이 영역이 배분받은 발열 전력으로 필요한 분할 수를 계산합니다. 분할은 전체 발열 전력을 늘리지 않으므로 부족한 전압만 분할 수를 정합니다. 가로 배치는 수평 절단선으로 위/아래, 세로 배치는 수직 절단선으로 좌/우를 나눕니다. 분할 후 시작점과 종료점은 원래 위치를 따라 자동으로 지정되며, 필요하면 다시 선택할 수 있습니다. 경로는 직접 생성하세요."/>
                                         <Button x:Name="SplitAreaButton" Content="한도 초과 시 자동 분할…"
                                                 Click="SplitArea_Click" Padding="8,4" Margin="0,8,0,0"
                                                 AutomationProperties.Name="적용영역을 여러 독립 영역으로 분할"/>
