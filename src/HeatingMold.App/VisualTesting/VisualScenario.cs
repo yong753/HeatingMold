@@ -38,8 +38,11 @@ internal sealed class VisualScenario
             if (scenario == null) throw new ArgumentException("시나리오 JSON이 비어 있습니다.");
             scenario.ScenarioPath = Path.GetFullPath(path);
 
-            if (scenario.SchemaVersion != 2)
-                throw new ArgumentException("지원하지 않는 schemaVersion입니다. 현재 지원 값은 2입니다.");
+            if (scenario.SchemaVersion == 2)
+                throw new ArgumentException("시각테스트 스키마 2는 지원하지 않습니다 — marginMm 제거·외곽 간격 의미로 다시 작성하세요.");
+            if (scenario.SchemaVersion != 3)
+                throw new ArgumentException("지원하지 않는 schemaVersion입니다. 현재 지원 값은 3입니다.");
+            RejectRemovedMarginProperties(File.ReadAllText(path));
             if (scenario.Model == null) throw new ArgumentException("model 섹션이 없습니다.");
 
             if (string.IsNullOrWhiteSpace(scenario.Model.Path))
@@ -71,12 +74,50 @@ internal sealed class VisualScenario
         }
     }
 
+    /// <summary>
+    /// 마진 기능은 제거되었다. 알 수 없는 JSON 속성은 역직렬화에서 조용히 무시되므로,
+    /// 레거시 marginMm 이 남아 있으면 명시적으로 거부한다.
+    /// </summary>
+    private static void RejectRemovedMarginProperties(string scenarioText)
+    {
+        using JsonDocument document = JsonDocument.Parse(scenarioText, new JsonDocumentOptions
+        {
+            CommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true
+        });
+        RejectMarginProperty(document.RootElement);
+    }
+
+    private static void RejectMarginProperty(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (JsonProperty property in element.EnumerateObject())
+                {
+                    if (string.Equals(property.Name, "marginMm", StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new ArgumentException(
+                            "marginMm는 지원하지 않습니다 — 마진 기능은 제거되었고 spacingMm은 발열사 외곽 간격입니다.");
+                    }
+
+                    RejectMarginProperty(property.Value);
+                }
+
+                break;
+            case JsonValueKind.Array:
+                foreach (JsonElement item in element.EnumerateArray())
+                    RejectMarginProperty(item);
+                break;
+        }
+    }
+
     private void ValidateActions()
     {
         if (Areas == null || Areas.Length == 0)
-            throw new ArgumentException("schemaVersion=2에는 areas가 필요합니다.");
+            throw new ArgumentException("schemaVersion=3에는 areas가 필요합니다.");
         if (Steps == null || Steps.Length == 0)
-            throw new ArgumentException("schemaVersion=2에는 steps가 필요합니다.");
+            throw new ArgumentException("schemaVersion=3에는 steps가 필요합니다.");
 
         var aliases = new HashSet<string>(StringComparer.Ordinal);
         foreach (VisualAreaDefinition area in Areas)
@@ -87,7 +128,7 @@ internal sealed class VisualScenario
             if (!aliases.Add(area.Alias))
                 throw new ArgumentException("area.alias가 중복되었습니다: " + area.Alias);
             ValidateFaceIds(area.FaceIds, "area[" + area.Alias + "].faceIds");
-            ValidatePatternInputs(area.MarginMm, area.SpacingMm, area.Direction, "area[" + area.Alias + "]");
+            ValidatePatternInputs(area.SpacingMm, area.Direction, "area[" + area.Alias + "]");
             ValidateExpect(area.Expect, "area[" + area.Alias + "].expect");
         }
 
@@ -129,10 +170,8 @@ internal sealed class VisualScenario
                     break;
                 case "setAreaInputs":
                     RequireAlias(step.Area, aliases, i);
-                    if (step.MarginMm == null && step.SpacingMm == null && step.Direction == null)
+                    if (step.SpacingMm == null && step.Direction == null)
                         throw new ArgumentException("steps[" + i + "].setAreaInputs에는 변경할 값이 필요합니다.");
-                    if (step.MarginMm != null && (!double.IsFinite(step.MarginMm.Value) || !(step.MarginMm.Value > 0)))
-                        throw new ArgumentException("steps[" + i + "].marginMm는 0보다 커야 합니다.");
                     if (step.SpacingMm != null && (!double.IsFinite(step.SpacingMm.Value) || !(step.SpacingMm.Value > 0)))
                         throw new ArgumentException("steps[" + i + "].spacingMm는 0보다 커야 합니다.");
                     if (step.Direction != null && (step.Direction.Value < 0 || step.Direction.Value > 2))
@@ -140,10 +179,8 @@ internal sealed class VisualScenario
                     break;
                 case "expectAreaInputs":
                     RequireAlias(step.Area, aliases, i);
-                    if (step.MarginMm == null && step.SpacingMm == null && step.Direction == null)
+                    if (step.SpacingMm == null && step.Direction == null)
                         throw new ArgumentException("steps[" + i + "].expectAreaInputs에는 기대할 값이 필요합니다.");
-                    if (step.MarginMm != null && (!double.IsFinite(step.MarginMm.Value) || !(step.MarginMm.Value > 0)))
-                        throw new ArgumentException("steps[" + i + "].marginMm는 0보다 커야 합니다.");
                     if (step.SpacingMm != null && (!double.IsFinite(step.SpacingMm.Value) || !(step.SpacingMm.Value > 0)))
                         throw new ArgumentException("steps[" + i + "].spacingMm는 0보다 커야 합니다.");
                     if (step.Direction != null && (step.Direction.Value < 0 || step.Direction.Value > 2))
@@ -334,8 +371,6 @@ internal sealed class VisualScenario
             throw new ArgumentException(section + ".turns는 0 이상이어야 합니다.");
         if (expect.Circuits != null && expect.Circuits.Value < 0)
             throw new ArgumentException(section + ".circuits는 0 이상이어야 합니다.");
-        if (expect.MarginMm != null && (!double.IsFinite(expect.MarginMm.Value) || expect.MarginMm.Value <= 0))
-            throw new ArgumentException(section + ".marginMm는 0보다 큰 유한 숫자여야 합니다.");
         if (expect.SpacingMm != null && (!double.IsFinite(expect.SpacingMm.Value) || expect.SpacingMm.Value <= 0))
             throw new ArgumentException(section + ".spacingMm는 0보다 큰 유한 숫자여야 합니다.");
         if (expect.LengthMm != null && (!double.IsFinite(expect.LengthMm.Value) || expect.LengthMm.Value < 0))
@@ -358,11 +393,10 @@ internal sealed class VisualScenario
             throw new ArgumentException(section + "에 중복된 Face ID가 있습니다.");
     }
 
-    private static void ValidatePatternInputs(double margin, double spacing, int direction, string section)
+    private static void ValidatePatternInputs(double spacing, int direction, string section)
     {
-        if (!double.IsFinite(margin) || !(margin > 0)
-            || !double.IsFinite(spacing) || !(spacing > 0))
-            throw new ArgumentException(section + ".marginMm/spacingMm은 0보다 큰 유한 숫자여야 합니다.");
+        if (!double.IsFinite(spacing) || !(spacing > 0))
+            throw new ArgumentException(section + ".spacingMm(발열사 외곽 간격)은 0보다 큰 유한 숫자여야 합니다.");
         if (direction < 0 || direction > 2)
             throw new ArgumentException(section + ".direction은 0(자동), 1(Frame X), 2(Frame Y) 중 하나여야 합니다.");
     }
@@ -389,8 +423,7 @@ internal sealed class VisualAreaDefinition
 {
     public string Alias { get; set; } = "";
     public int[] FaceIds { get; set; } = Array.Empty<int>();
-    public double MarginMm { get; set; } = 5;
-    public double SpacingMm { get; set; } = 50;
+    public double SpacingMm { get; set; } = 5;
     public int Direction { get; set; }
     public VisualAreaExpect Expect { get; set; }
 }
@@ -440,9 +473,7 @@ internal sealed class VisualAreaExpect
     public int? Circuits { get; set; }
     public double? LengthMm { get; set; }
     public double LengthToleranceMm { get; set; } = 0.5;
-    /// <summary>생성 당시 적용된 마진. 선언한 경우에만 검사한다.</summary>
-    public double? MarginMm { get; set; }
-    /// <summary>생성 당시 적용된 간격. 선언한 경우에만 검사한다.</summary>
+    /// <summary>생성 당시 적용된 발열사 외곽 간격. 선언한 경우에만 검사한다.</summary>
     public double? SpacingMm { get; set; }
     /// <summary>수동 편집 흔적. 선언한 경우에만 검사한다.</summary>
     public bool? RouteEdited { get; set; }
@@ -460,7 +491,6 @@ internal sealed class VisualActionSpec
     public string Action { get; set; } = "";
     public string Area { get; set; } = "";
     public int[] Faces { get; set; }
-    public double? MarginMm { get; set; }
     public double? SpacingMm { get; set; }
     public int? Direction { get; set; }
     public int? Scope { get; set; }

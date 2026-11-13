@@ -105,12 +105,10 @@ public partial class MainWindow
         if (area == null) return;
         // 두 값을 먼저 캡처해 두고, 복원 중 발생하는 TextChanged가 상대 필드의
         // 아직 화면에 남은 값을 새 영역 초안에 덮어쓰지 않게 한다.
-        string marginText = area.MarginText ?? "";
         string spacingText = area.SpacingText ?? "";
         _suppressPatternInputWriteBack = true;
         try
         {
-            if (MarginBox != null && MarginBox.Text != marginText) MarginBox.Text = marginText;
             if (SpacingBox != null && SpacingBox.Text != spacingText) SpacingBox.Text = spacingText;
         }
         finally
@@ -631,6 +629,8 @@ public partial class MainWindow
 
     private void ClearAllAreas(bool clearNative)
     {
+        InvalidateSpacingReview();
+        try { Bridge.ClearSpacingMarkers(); } catch (Exception) { }
         ExitExclusionSketch();
         ResetCircuitEditingUi();
         // 외부에서 이전 컬렉션 참조를 들고 있어도 빈 상태가 되도록 in-place로 비운다.

@@ -58,7 +58,7 @@ public static class Serpentine
         bool constrainConnectors = false)
     {
         if (outer.Count < 3) throw new ArgumentException("외곽 링은 점 3개 이상 필요", nameof(outer));
-        if (p.Spacing <= 0) throw new ArgumentOutOfRangeException(nameof(p), "Spacing > 0 필요");
+        if (!p.Pitch.IsValid) throw new ArgumentOutOfRangeException(nameof(p), "Spacing > 0 필요");
 
         double angleDeg = ResolveAngleDeg(outer, p.Direction);
         double rad = angleDeg * Math.PI / 180.0;
@@ -68,7 +68,7 @@ public static class Serpentine
         List<List<Vec2>>? holesLocal = holes?.Select(h => Rotate(h, -rad)).ToList();
 
         // 마진·홀 차집합
-        List<List<Vec2>> region = RegionOps.BuildPatternRegion(outerLocal, holesLocal, p.Margin);
+        List<List<Vec2>> region = RegionOps.BuildPatternRegion(outerLocal, holesLocal);
         if (region.Count == 0) return EmptyPattern(angleDeg);
         if (constrainConnectors && region.Count != 1)
             throw new InvalidOperationException("마진 적용 후 영역이 분리되어 단일 연속 경로를 구성할 수 없습니다");
@@ -106,11 +106,11 @@ public static class Serpentine
         double minY = region.Min(r => r.Min(v => v.Y));
         double maxY = region.Max(r => r.Max(v => v.Y));
         double height = maxY - minY;
-        int nominalLaneCount = Math.Max(1, (int)Math.Floor((height + 1e-9) / p.Spacing));
+        int nominalLaneCount = Math.Max(1, (int)Math.Floor((height + 1e-9) / p.CenterPitch));
         int laneCount = laneCountOverride.HasValue
             ? Math.Max(1, Math.Min(nominalLaneCount, laneCountOverride.Value))
             : nominalLaneCount;
-        double y0 = minY + (height - (laneCount - 1) * p.Spacing) / 2.0;
+        double y0 = minY + (height - (laneCount - 1) * p.CenterPitch) / 2.0;
 
         var segments = new List<SerpentineSegment>();
         var routePieces = new List<SerpentineRoutePiece>();
@@ -120,7 +120,7 @@ public static class Serpentine
 
         for (int k = 0; k < laneCount; k++)
         {
-            double y = y0 + k * p.Spacing;
+            double y = y0 + k * p.CenterPitch;
             List<(double X0, double X1)> intervals = ScanlineIntervals(region, y);
             if (intervals.Count == 0) continue;
 
@@ -216,7 +216,7 @@ public static class Serpentine
     {
         route = null;
         failure = AnchoredFailureReason.InvalidInput;
-        if (region.Count == 0 || p.Spacing <= 0) return false;
+        if (region.Count == 0 || !p.Pitch.IsValid) return false;
 
         double minY = region.Min(r => r.Min(v => v.Y));
         double maxY = region.Max(r => r.Max(v => v.Y));
@@ -259,8 +259,8 @@ public static class Serpentine
             }
             (double ox0, double ox1) = outerIntervals[outerChosen];
             // 진행 방향 반대쪽 끝에서만 마진을 적용한다. 시작점 쪽은 선택점 그대로다.
-            double lowEnd = outerLow ? startLocal.X : ox0 + p.Margin;
-            double highEnd = outerLow ? ox1 - p.Margin : startLocal.X;
+            double lowEnd = outerLow ? startLocal.X : ox0;
+            double highEnd = outerLow ? ox1 : startLocal.X;
             if (highEnd - lowEnd <= 1e-9)
             {
                 failure = AnchoredFailureReason.NoLanes;
@@ -374,7 +374,7 @@ public static class Serpentine
                 traversed++;
             }
 
-            double nextY = y + stepSign * p.Spacing;
+            double nextY = y + stepSign * p.CenterPitch;
             if (nextY == y) { failure = AnchoredFailureReason.NoLanes; return false; }
             y = nextY;
         }
@@ -391,7 +391,7 @@ public static class Serpentine
         if (prevEnd.HasValue && lastLaneEntry.HasValue &&
             prevEnd.Value.DistanceTo(endLocal) > lastLaneEntry.Value.DistanceTo(endLocal))
         {
-            double extraY = lastLaneY + stepSign * p.Spacing;
+            double extraY = lastLaneY + stepSign * p.CenterPitch;
             if (extraY == lastLaneY)
             {
                 failure = AnchoredFailureReason.NoLanes;
@@ -469,8 +469,8 @@ public static class Serpentine
                 return false;
             }
             (double ox0, double ox1) = outerIntervals[outerChosen];
-            double lowEnd = outerLow ? startLocal.X : ox0 + p.Margin;
-            double highEnd = outerLow ? ox1 - p.Margin : startLocal.X;
+            double lowEnd = outerLow ? startLocal.X : ox0;
+            double highEnd = outerLow ? ox1 : startLocal.X;
             if (highEnd - lowEnd <= 1e-9)
             {
                 failure = AnchoredFailureReason.NoLanes;
@@ -648,7 +648,7 @@ public static class Serpentine
         ExitBoundaryPoint end,
         IExitBoundary2D? boundary = null)
     {
-        if (outer.Count < 3 || p.Spacing <= 0) return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
+        if (outer.Count < 3 || !p.Pitch.IsValid) return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
         if (!IsFinite(start.Point) || !IsFinite(end.Point)
             || start.Point.DistanceTo(end.Point) <= AnchorMatchTolerance)
             return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
@@ -660,7 +660,7 @@ public static class Serpentine
         double rad = angleDeg * Math.PI / 180.0;
         List<Vec2> outerLocal = Rotate(outer, -rad);
         List<List<Vec2>>? holesLocal = holes?.Select(h => Rotate(h, -rad)).ToList();
-        List<List<Vec2>> region = RegionOps.BuildPatternRegion(outerLocal, holesLocal, p.Margin);
+        List<List<Vec2>> region = RegionOps.BuildPatternRegion(outerLocal, holesLocal);
         if (region.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
         if (region.Count != 1) return AnchoredResult.Fail(AnchoredFailureReason.RegionSplit);
 
@@ -703,7 +703,7 @@ public static class Serpentine
         ExitBoundaryPoint end,
         IExitBoundary2D? boundary = null)
     {
-        if (outer.Count < 3 || p.Spacing <= 0) return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
+        if (outer.Count < 3 || !p.Pitch.IsValid) return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
         if (!IsFinite(start.Point) || !IsFinite(end.Point)
             || start.Point.DistanceTo(end.Point) <= AnchorMatchTolerance)
             return AnchoredResult.Fail(AnchoredFailureReason.InvalidInput);
@@ -719,7 +719,7 @@ public static class Serpentine
         List<(double MinX, double MinY, double MaxX, double MaxY)> rotatedExclusions =
             RotateExclusions(exclusionList, -rad);
         List<List<Vec2>> region = RegionOps.BuildGenerationRegion(
-            localOuter, rotatedExclusions, p.Margin, out List<List<Vec2>> cadRegion);
+            localOuter, rotatedExclusions, out List<List<Vec2>> cadRegion);
         if (region.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
 
         Vec2 startLocal = savedStart.Point.Rotate(-rad);
@@ -778,7 +778,7 @@ public static class Serpentine
     {
         pieces = new();
         failure = AnchoredFailureReason.InvalidInput;
-        if (region.Count == 0 || p.Spacing <= 0) return false;
+        if (region.Count == 0 || !p.Pitch.IsValid) return false;
 
         double minY = region.Min(r => r.Min(v => v.Y));
         double maxY = region.Max(r => r.Max(v => v.Y));
@@ -795,7 +795,7 @@ public static class Serpentine
             lanes.Add(new LaneScan(y,
                 ScanlineIntervals(region, y),
                 ScanlineIntervals(cadRegion, y)));
-            double next = y + stepSign * p.Spacing;
+            double next = y + stepSign * p.CenterPitch;
             if (next == y) { failure = AnchoredFailureReason.NoLanes; return false; }
             y = next;
         }
@@ -929,7 +929,7 @@ public static class Serpentine
         if (previousEnd.HasValue && lastLaneEntry.HasValue &&
             previousEnd.Value.DistanceTo(endLocal) > lastLaneEntry.Value.DistanceTo(endLocal))
         {
-            double extraY = lastLaneY + stepSign * p.Spacing;
+            double extraY = lastLaneY + stepSign * p.CenterPitch;
             if (extraY == lastLaneY) { failure = AnchoredFailureReason.NoLanes; return false; }
             LaneScan extra = new(extraY,
                 ScanlineIntervals(region, extraY),
@@ -949,7 +949,7 @@ public static class Serpentine
             // 리드가 마진 확장 제외영역을 지나면 발열선으로 만들지 않고 연결선으로 둔다.
             bool outsideFirstLane = firstPopulated > 0;
             if (outsideFirstLane ||
-                SegmentCrossesExpandedExclusions(startLocal, firstRunStart, exclusions, p.Margin))
+                SegmentCrossesExpandedExclusions(startLocal, firstRunStart, exclusions, 0.0))
             {
                 built.Insert(0, new SerpentineRoutePiece(SerpentineRoutePieceKind.FixedConnector,
                     0, new[] { startLocal, firstRunStart }));
@@ -1148,7 +1148,7 @@ public static class Serpentine
 
     /// <summary>경로 끝점이 인출면 경계에 닿는 것으로 인정하는 최대 거리.
     /// 사행 경로는 마진만큼 안쪽으로 인셋되므로 그 거리까지 허용하고, 경계 위로 투영해 앵커로 쓴다.</summary>
-    private static double ChainReach(PatternParams p) => Math.Max(0.0, p.Margin) + ChainTolerance;
+    private static double ChainReach(PatternParams p) => ChainTolerance;
 
     public static Vec2 SnapOnChain(IReadOnlyList<Vec2> chain, Vec2 p)
     {
@@ -1229,7 +1229,7 @@ public static class Serpentine
         double rad = angleDeg * Math.PI / 180.0;
         List<Vec2> outerLocal = Rotate(outer, -rad);
         List<List<Vec2>>? holesLocal = holes?.Select(h => Rotate(h, -rad)).ToList();
-        List<List<Vec2>> region = RegionOps.BuildPatternRegion(outerLocal, holesLocal, p.Margin);
+        List<List<Vec2>> region = RegionOps.BuildPatternRegion(outerLocal, holesLocal);
         if (region.Count != 1) return (region.Count, rad, null);
         return (1, rad, BuildLocalRoute(region, p, startLtr, requireEvenRuns));
     }

@@ -44,8 +44,7 @@ public partial class MainWindow
         WorkingArea parent,
         AreaSplitResult initial,
         int partCount,
-        double margin,
-        double spacing,
+        LanePitchSpec pitch,
         out AreaSplitResult chosen,
         out List<WorkingArea> children,
         out Dictionary<WorkingArea, SerpentineResult> patterns,
@@ -57,6 +56,15 @@ public partial class MainWindow
         patterns = new Dictionary<WorkingArea, SerpentineResult>();
         balanceRatio = double.PositiveInfinity;
         failure = string.Empty;
+
+        if (!pitch.IsValid)
+        {
+            failure = "분할 영역의 레인 피치가 올바르지 않습니다.";
+            return false;
+        }
+        // 피치의 단일 기준은 LanePitchSpec이다. 영역 분할·레인 격자·인출점 행은
+        // 중심 피치를 쓰고, 실제 생성만 외곽 간격과 직경을 따로 받는다.
+        double centerPitch = pitch.CenterPitchMm;
 
         if (parent == null || parent.Region.Count != 1 || parent.Region[0].Count < 3)
         {
@@ -124,13 +132,13 @@ public partial class MainWindow
             {
                 AreaSplitResult split = AreaSplitter.TryBuildAtCuts(
                     parent.Region[0], parent.Exclusions, parent.Direction,
-                    margin, spacing, cuts);
+                    centerPitch, cuts);
                 if (!split.Succeeded)
                 {
                     candidateFailure = split.Failure;
                     return false;
                 }
-                if (!TryEvaluateSplit2D(parent, split, margin, spacing,
+                if (!TryEvaluateSplit2D(parent, split, pitch,
                         out List<WorkingArea> candidateChildren,
                         out Dictionary<WorkingArea, SerpentineResult> candidatePatterns,
                         out double[] lengths, out double ratio, out candidateFailure))
@@ -170,6 +178,34 @@ public partial class MainWindow
         // 1) 면적 근사로 만든 기존 후보를 그대로 첫 후보로 쓴다.
         if (initial != null && initial.Succeeded && initial.Cuts.Count == partCount - 1)
             AddStart(initial.Cuts.ToArray());
+
+        // 1-1) 공통 레인 격자를 연속 레인 묶음으로 나눈 후보. 절단선은 이웃한 두 레인 사이에 둔다.
+        //      마진이 없어졌으므로 영역마다 레인 위상을 다시 시작하지 않고 같은 중심 피치를 이어받는다.
+        if (double.IsFinite(centerPitch) && centerPitch > 0)
+        {
+            double lanePitch = centerPitch;
+            bool sweepAlongX = parent.Direction == PatternDirection.FrameY;
+            double Sweep(Vec2 point) => sweepAlongX ? point.X : point.Y;
+            double originSweep = parent.SelectedStartExit.HasValue
+                ? Sweep(parent.SelectedStartExit.Value.Point)
+                : axisMin;
+            int firstIndex = (int)Math.Floor((axisMin - originSweep) / lanePitch) - 1;
+            int lastIndex = (int)Math.Ceiling((axisMax - originSweep) / lanePitch) + 1;
+            if (lastIndex > firstIndex &&
+                LaneGridSpec.TryBuild(parent.Region[0], parent.Exclusions, parent.Direction,
+                    originSweep, lanePitch, firstIndex, lastIndex, out LaneGridSpec grid, out _) &&
+                LaneGridPartition.TrySplit(grid.Rows, partCount, out List<LaneRowRange> ranges, out _))
+            {
+                var gridCuts = new double[ranges.Count - 1];
+                for (int i = 0; i + 1 < ranges.Count; i++)
+                {
+                    int left = ranges[i].LastIndex - firstIndex;
+                    int right = ranges[i + 1].FirstIndex - firstIndex;
+                    gridCuts[i] = (grid.Rows[left].SweepCoordinateMm + grid.Rows[right].SweepCoordinateMm) * 0.5;
+                }
+                AddStart(gridCuts);
+            }
+        }
 
         // 2) 분할 축 전체를 균등하게 나눈 후보. 면적 근사가 실패한 경우의 대체 출발점이다.
         AddStart(EqualCuts(axisMin, axisMax, partCount));
@@ -228,9 +264,9 @@ public partial class MainWindow
                 Split2DCandidate localBest = seed;
                 double[] steps =
                 {
-                    spacing * 0.5,
-                    spacing * 0.25,
-                    spacing * 0.125,
+                    centerPitch * 0.5,
+                    centerPitch * 0.25,
+                    centerPitch * 0.125,
                 };
                 foreach (double step in steps)
                 {
@@ -296,8 +332,7 @@ public partial class MainWindow
     internal bool TryEvaluateSplit2D(
         WorkingArea parent,
         AreaSplitResult split,
-        double margin,
-        double spacing,
+        LanePitchSpec pitch,
         out List<WorkingArea> children,
         out Dictionary<WorkingArea, SerpentineResult> patterns,
         out double[] lengths,
@@ -310,6 +345,11 @@ public partial class MainWindow
         ratio = double.PositiveInfinity;
         failure = string.Empty;
 
+        if (!pitch.IsValid)
+        {
+            failure = "분할 영역의 레인 피치가 올바르지 않습니다.";
+            return false;
+        }
         if (!split.Succeeded || split.Bands.Count < 2)
         {
             failure = split.Succeeded ? "분할 영역 수가 2개보다 적습니다." : split.Failure;
@@ -317,14 +357,14 @@ public partial class MainWindow
         }
         if (!TryBuildSplitChildren(parent, split, out children, out failure))
             return false;
-        if (!SplitExitPointPlanner.TryAssign(parent, children, margin, spacing, out failure))
+        if (!SplitExitPointPlanner.TryAssign(parent, children, pitch.CenterPitchMm, out failure))
             return false;
 
         lengths = new double[children.Count];
         for (int i = 0; i < children.Count; i++)
         {
             WorkingArea child = children[i];
-            if (!TryGenerateSelectedExitPattern(child, margin, spacing,
+            if (!TryGenerateSelectedExitPattern(child, pitch.OuterGapMm, pitch.WireDiameterMm,
                     out SerpentineResult pattern, out string generationFailure))
             {
                 failure = child.Name + ": " + generationFailure;

@@ -59,7 +59,9 @@ namespace HeatingMold.App
             _visualTestInputLocked = true;
             Viewport.InputLocked = true;
             VisualTestInputShield.Visibility = Visibility.Visible;
-            VisualTestBar.Visibility = Visibility.Visible;
+            VisualTestBar.Visibility = session.Options.HideBar
+                ? Visibility.Collapsed
+                : Visibility.Visible;
             _visualTestConfirmResponses.Clear();
 
             _visualTestSuppressDialogsBefore = ErrorReporter.SuppressDialogs;
@@ -400,18 +402,15 @@ namespace HeatingMold.App
             RefreshAreaList();
             SidebarTabs.SelectedIndex = PatternTabIndex;
 
-            double margin = spec.MarginMm ?? definition.MarginMm;
             double spacing = spec.SpacingMm ?? definition.SpacingMm;
             int direction = spec.Direction ?? definition.Direction;
 
             DirectionBox.SelectedIndex = IndexFromDirection((PatternDirection)direction);
-            MarginBox.Text = margin.ToString("0.###", CultureInfo.CurrentCulture);
             SpacingBox.Text = spacing.ToString("0.###", CultureInfo.CurrentCulture);
 
-            Require(TryGetParams(out double readMargin, out double readSpacing, out string error),
-                "마진/간격 입력을 읽지 못했습니다: " + error);
-            Require(Math.Abs(readMargin - margin) < 1e-9, "적용된 마진이 요청과 다릅니다.");
-            Require(Math.Abs(readSpacing - spacing) < 1e-9, "적용된 간격이 요청과 다릅니다.");
+            Require(TryGetParams(out double readSpacing, out string error),
+                "외곽 간격 입력을 읽지 못했습니다: " + error);
+            Require(Math.Abs(readSpacing - spacing) < 1e-9, "적용된 외곽 간격이 요청과 다릅니다.");
             Require(area.Direction == EffectiveDirection((PatternDirection)direction), "영역 방향이 요청과 다릅니다.");
             Require(IsPatternInputStale(area) == (area.Pattern != null),
                 "입력 변경 후 stale 상태가 예상과 다릅니다.");
@@ -419,8 +418,7 @@ namespace HeatingMold.App
             var data = new Dictionary<string, string>
             {
                 ["alias"] = spec.Area,
-                ["marginMm"] = readMargin.ToString("0.###", CultureInfo.InvariantCulture),
-                ["spacingMm"] = readSpacing.ToString("0.###", CultureInfo.InvariantCulture),
+                ["outerGapMm"] = readSpacing.ToString("0.###", CultureInfo.InvariantCulture),
                 ["direction"] = direction.ToString(CultureInfo.InvariantCulture),
                 ["stale"] = IsPatternInputStale(area).ToString()
             };
@@ -435,22 +433,18 @@ namespace HeatingMold.App
             ActivateArea(area);
             RefreshAreaList();
 
-            double expectedMargin = spec.MarginMm ?? definition.MarginMm;
             double expectedSpacing = spec.SpacingMm ?? definition.SpacingMm;
             int expectedDirection = spec.Direction ?? definition.Direction;
 
-            Require(TryGetParams(out double margin, out double spacing, out string error),
-                "마진/간격 초안을 읽지 못했습니다: " + error);
-            Require(Math.Abs(margin - expectedMargin) < 1e-9,
-                string.Format("영역 초안 마진이 기대와 다릅니다. 기대 {0}, 실제 {1}", expectedMargin, margin));
+            Require(TryGetParams(out double spacing, out string error),
+                "외곽 간격 초안을 읽지 못했습니다: " + error);
             Require(Math.Abs(spacing - expectedSpacing) < 1e-9,
-                string.Format("영역 초안 간격이 기대와 다릅니다. 기대 {0}, 실제 {1}", expectedSpacing, spacing));
+                string.Format("영역 초안 외곽 간격이 기대와 다릅니다. 기대 {0}, 실제 {1}", expectedSpacing, spacing));
             Require(area.Direction == (PatternDirection)expectedDirection,
                 "영역 방향이 기대와 다릅니다.");
 
             bool appliedDiffers = area.AppliedInputs != null &&
-                (Math.Abs(margin - area.AppliedInputs.Margin) > 1e-9 ||
-                 Math.Abs(spacing - area.AppliedInputs.Spacing) > 1e-9 ||
+                (Math.Abs(spacing - area.AppliedInputs.OuterGapMm) > 1e-9 ||
                  area.Direction != area.AppliedInputs.Direction);
             bool stale = IsPatternInputStale(area);
             Require(stale == appliedDiffers, "입력 초안과 생성 결과의 stale 상태가 일치하지 않습니다.");
@@ -461,29 +455,23 @@ namespace HeatingMold.App
                     "조건이 바뀐 뒤에도 이전 경로가 화면에 유지되어야 합니다.");
             }
 
-            if (spec.Expect?.MarginMm != null || spec.Expect?.SpacingMm != null)
+            if (spec.Expect?.SpacingMm != null)
             {
                 Require(area.AppliedInputs != null, "적용된 생성 조건이 없습니다.");
-                if (spec.Expect.MarginMm != null)
-                    Require(Math.Abs(area.AppliedInputs.Margin - spec.Expect.MarginMm.Value) < 1e-9,
-                        string.Format("마지막 생성에 적용된 마진이 다릅니다. 기대 {0}, 실제 {1}",
-                            spec.Expect.MarginMm.Value, area.AppliedInputs.Margin));
-                if (spec.Expect.SpacingMm != null)
-                    Require(Math.Abs(area.AppliedInputs.Spacing - spec.Expect.SpacingMm.Value) < 1e-9,
-                        string.Format("마지막 생성에 적용된 간격이 다릅니다. 기대 {0}, 실제 {1}",
-                            spec.Expect.SpacingMm.Value, area.AppliedInputs.Spacing));
+                Require(Math.Abs(area.AppliedInputs.OuterGapMm - spec.Expect.SpacingMm.Value) < 1e-9,
+                    string.Format("마지막 생성에 적용된 외곽 간격이 다릅니다. 기대 {0}, 실제 {1}",
+                        spec.Expect.SpacingMm.Value, area.AppliedInputs.OuterGapMm));
             }
 
             var data = new Dictionary<string, string>
             {
                 ["alias"] = spec.Area,
-                ["marginMm"] = margin.ToString("0.###", CultureInfo.InvariantCulture),
-                ["spacingMm"] = spacing.ToString("0.###", CultureInfo.InvariantCulture),
+                ["outerGapMm"] = spacing.ToString("0.###", CultureInfo.InvariantCulture),
                 ["direction"] = ((int)area.Direction).ToString(CultureInfo.InvariantCulture),
                 ["stale"] = stale.ToString(),
                 ["displayed"] = area.PatternDisplayed.ToString(),
-                ["appliedMarginMm"] = area.AppliedInputs?.Margin.ToString("0.###", CultureInfo.InvariantCulture) ?? "",
-                ["appliedSpacingMm"] = area.AppliedInputs?.Spacing.ToString("0.###", CultureInfo.InvariantCulture) ?? ""
+                ["appliedOuterGapMm"] = area.AppliedInputs?.OuterGapMm.ToString("0.###", CultureInfo.InvariantCulture) ?? "",
+                ["appliedWireDiameterMm"] = area.AppliedInputs?.WireDiameterMm.ToString("0.###", CultureInfo.InvariantCulture) ?? ""
             };
             RequireAllRoutesPreserved(routesBefore, "영역 입력 초안 복원");
             return VisualStepOutcome.Ok("영역 입력 초안·stale 상태 확인", data);
@@ -500,8 +488,8 @@ namespace HeatingMold.App
             RefreshAreaList();
             SidebarTabs.SelectedIndex = PatternTabIndex;
             ConfigurePatternInputs(spec, definition);
-            Require(TryGetParams(out _, out _, out string parameterError),
-                "마진/간격 입력을 읽지 못했습니다: " + parameterError);
+            Require(TryGetParams(out _, out string parameterError),
+                "외곽 간격 입력을 읽지 못했습니다: " + parameterError);
 
             AppliedGenerationInputs appliedBefore = area.AppliedInputs;
             string statusBefore = StatusText.Text;
@@ -527,12 +515,17 @@ namespace HeatingMold.App
                 if (!string.IsNullOrEmpty(spec.FailureContains))
                     Require((StatusText.Text ?? "").Contains(spec.FailureContains),
                         "거부 사유가 기대 문구를 포함하지 않습니다: " + StatusText.Text);
+                // 생성 거부는 제품이 오류 알림을 함께 보고할 수 있다. 시나리오가 거부를
+                // 기대한 경우에만 그 알림을 소비하고 기록한다. 예상하지 않은 알림은
+                // 실행기가 다음 단계에서 실패로 처리한다.
+                string reportedError = TakeVisualTestReportedError();
                 var rejected = new Dictionary<string, string>
                 {
                     ["alias"] = spec.Area,
                     ["outcome"] = "rejected",
                     ["status"] = StatusText.Text ?? "",
-                    ["statusBefore"] = statusBefore ?? ""
+                    ["statusBefore"] = statusBefore ?? "",
+                    ["reportedError"] = reportedError ?? ""
                 };
                 return VisualStepOutcome.Ok("생성 거부 확인", rejected);
             }
@@ -541,7 +534,7 @@ namespace HeatingMold.App
             RequireSiblingRoutesPreserved(routesBefore, area, "발열경로 생성");
             VisualAreaExpect expect = spec.Expect ?? definition?.Expect;
             string error = CheckAreaState(area, expect, out Dictionary<string, string> data);
-            if (error != null) return VisualStepOutcome.Fail(error);
+            if (error != null) return VisualStepOutcome.Fail(error, data);
             return VisualStepOutcome.Ok("발열경로 생성·검증", data);
         }
 
@@ -551,7 +544,7 @@ namespace HeatingMold.App
             WorkingArea area = ResolveVisualArea(spec.Area);
             Require(TryCaptureAllAreaRoutes(out var routesBefore, out string captureError), captureError);
             string error = CheckAreaState(area, spec.Expect ?? definition?.Expect, out Dictionary<string, string> data);
-            if (error != null) return VisualStepOutcome.Fail(error);
+            if (error != null) return VisualStepOutcome.Fail(error, data);
             RequireAllRoutesPreserved(routesBefore, "영역 상태 확인");
             data["alias"] = spec.Area;
             return VisualStepOutcome.Ok("영역 상태 확인", data);
@@ -969,10 +962,12 @@ namespace HeatingMold.App
 
             QueueVisualTestConfirm(spec);
             SplitActiveArea();
-            RequireNoPendingVisualTestConfirms();
 
             // 자동분할의 결과 문구는 StatusText가 아니라 분할 전용 상태 문구에만 기록된다.
             string splitStatus = SplitStatusText?.Text ?? string.Empty;
+            if (_visualTestConfirmResponses.Count > 0)
+                throw new InvalidOperationException("사용되지 않은 확인 응답이 남아 있습니다: "
+                    + _visualTestConfirmResponses.Count + " — 분할 상태: " + splitStatus);
             bool parentRemoved = !_areas.Contains(parent);
             if (string.Equals(spec.Outcome, "rejected", StringComparison.OrdinalIgnoreCase))
             {
@@ -1522,9 +1517,8 @@ namespace HeatingMold.App
             Require(area.Pattern != null, "제외영역 적용 결과를 검사할 경로가 없습니다.");
             double[] rect = spec.Rect;
             Require(rect != null && rect.Length == 4, "검사할 제외 사각형이 없습니다.");
-            // 발열선은 마진이 적용된 제외영역 밖에 있어야 한다. 원본 사각형만 보면
-            // 마진 경계에 붙은 발열 구간을 통과시킬 수 있다. 커넥터의 통과는 허용한다.
-            double margin = area.AppliedInputs?.Margin ?? 0;
+            // 발열선은 제외영역 밖에 있어야 한다. 커넥터의 통과는 허용한다.
+            const double margin = 0;
             var exclusion = (
                 rect[0] - margin, rect[1] - margin,
                 rect[2] + margin, rect[3] + margin);
@@ -1987,8 +1981,8 @@ namespace HeatingMold.App
             data["routeEdited"] = area.RouteEdited.ToString();
             data["circuits"] = circuits.ToString(CultureInfo.InvariantCulture);
             data["totalLengthMm"] = length.ToString("0.###", CultureInfo.InvariantCulture);
-            data["appliedMarginMm"] = area.AppliedInputs.Margin.ToString("0.###", CultureInfo.InvariantCulture);
-            data["appliedSpacingMm"] = area.AppliedInputs.Spacing.ToString("0.###", CultureInfo.InvariantCulture);
+            data["appliedOuterGapMm"] = area.AppliedInputs.OuterGapMm.ToString("0.###", CultureInfo.InvariantCulture);
+            data["appliedWireDiameterMm"] = area.AppliedInputs.WireDiameterMm.ToString("0.###", CultureInfo.InvariantCulture);
             if (area.StartAnchor.HasValue && area.EndAnchor.HasValue)
                 data["anchor"] = string.Format(CultureInfo.InvariantCulture, "({0:0.###},{1:0.###})->({2:0.###},{3:0.###})",
                     area.StartAnchor.Value.X, area.StartAnchor.Value.Y, area.EndAnchor.Value.X, area.EndAnchor.Value.Y);
@@ -2007,12 +2001,9 @@ namespace HeatingMold.App
             if (expect.RouteEdited != null && area.RouteEdited != expect.RouteEdited.Value)
                 return string.Format("편집 상태가 기대와 다릅니다: {0} 기대 {1} 실제 {2}",
                     area.Name, expect.RouteEdited.Value, area.RouteEdited);
-            if (expect.MarginMm != null && Math.Abs(area.AppliedInputs.Margin - expect.MarginMm.Value) > 1e-9)
-                return string.Format("적용 마진이 기대와 다릅니다: {0} 기대 {1} 실제 {2}",
-                    area.Name, expect.MarginMm.Value, area.AppliedInputs.Margin);
-            if (expect.SpacingMm != null && Math.Abs(area.AppliedInputs.Spacing - expect.SpacingMm.Value) > 1e-9)
-                return string.Format("적용 간격이 기대와 다릅니다: {0} 기대 {1} 실제 {2}",
-                    area.Name, expect.SpacingMm.Value, area.AppliedInputs.Spacing);
+            if (expect.SpacingMm != null && Math.Abs(area.AppliedInputs.OuterGapMm - expect.SpacingMm.Value) > 1e-9)
+                return string.Format("적용 외곽 간격이 기대와 다릅니다: {0} 기대 {1} 실제 {2}",
+                    area.Name, expect.SpacingMm.Value, area.AppliedInputs.OuterGapMm);
             if (expect.LengthMm != null)
             {
                 double tolerance = expect.LengthToleranceMm > 0 ? expect.LengthToleranceMm : 0.5;
@@ -2111,8 +2102,6 @@ namespace HeatingMold.App
             _ = definition;
             // 시나리오가 값을 명시한 경우에만 덮어쓴다. 그 외에는 화면에 입력된 초안을
             // 그대로 사용해, 사용자가 조건을 바꾼 뒤 생성 버튼을 누르는 흐름과 같게 한다.
-            if (spec.MarginMm != null)
-                MarginBox.Text = spec.MarginMm.Value.ToString("0.###", CultureInfo.CurrentCulture);
             if (spec.SpacingMm != null)
                 SpacingBox.Text = spec.SpacingMm.Value.ToString("0.###", CultureInfo.CurrentCulture);
             if (spec.Direction != null)

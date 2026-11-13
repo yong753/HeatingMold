@@ -182,6 +182,20 @@ public partial class MainWindow
                     _routePresentationWarning = labelException.Message;
                     try { Bridge.ClearRouteLengthLabels(); } catch (Exception) { }
                 }
+                // 복원된 확정 경로의 발열사 간격 표시. 표시 실패는 복원된 기하를 되돌리지 않는다.
+                try
+                {
+                    if (!TryRefreshSpacingMarkers(_workingSide.Confirmed, _areas, out string spacingFailure))
+                    {
+                        _routePresentationWarning = spacingFailure;
+                        try { Bridge.ClearSpacingMarkers(); } catch (Exception) { }
+                    }
+                }
+                catch (Exception spacingException)
+                {
+                    _routePresentationWarning = spacingException.Message;
+                    try { Bridge.ClearSpacingMarkers(); } catch (Exception) { }
+                }
                 WorkingArea active = _areas.FirstOrDefault(a => a.AreaId == document.ActiveAreaId) ?? _areas.FirstOrDefault();
                 ActivateArea(active);
                 RefreshAreaList();
@@ -198,7 +212,7 @@ public partial class MainWindow
                     "프로젝트 열기 완료 — {0} · 영역 {1}개 · 모델 r{2}",
                     Path.GetFileName(projectPath), _areas.Count, context.Revision);
                 if (_routePresentationWarning != null)
-                    StatusText.Text += " · 경고: 경로 길이 라벨을 표시하지 못했습니다";
+                    StatusText.Text += " · 경고: " + _routePresentationWarning;
                 if (viewWarning != null)
                     StatusText.Text += " · 경고: " + viewWarning;
                 UpdateActionStates();
@@ -410,8 +424,7 @@ public partial class MainWindow
             Color = ToColor(document.Color),
             Frame = frame,
             Direction = ParseDirection(document.Direction),
-            MarginText = document.MarginText ?? "5",
-            SpacingText = document.SpacingText ?? "50",
+            SpacingText = document.SpacingText ?? "5",
             ExitChain = MapVec2(document.ExitChain),
             ExitChain3D = MapVec3(document.ExitChain3D),
             StartAnchor = document.StartAnchor == null ? null : ToVec2(document.StartAnchor),
@@ -810,9 +823,9 @@ public partial class MainWindow
     private AppliedGenerationInputs RestoreAppliedInputs(ProjectAppliedInputs document, WorkingArea area)
     {
         if (document == null) return null;
-        if (!double.IsFinite(document.Margin) || !double.IsFinite(document.Spacing))
-            throw new InvalidOperationException("작업영역 " + area.Name + "의 마지막 적용 마진/간격이 올바르지 않습니다.");
-        AppliedGenerationInputs captured = CaptureAppliedInputs(area, document.Margin, document.Spacing);
+        if (!double.IsFinite(document.OuterGapMm) || !double.IsFinite(document.WireDiameterMm))
+            throw new InvalidOperationException("작업영역 " + area.Name + "의 마지막 적용 외곽 간격/전선 직경이 올바르지 않습니다.");
+        AppliedGenerationInputs captured = CaptureAppliedInputs(area, document.OuterGapMm, document.WireDiameterMm);
         return captured;
     }
 

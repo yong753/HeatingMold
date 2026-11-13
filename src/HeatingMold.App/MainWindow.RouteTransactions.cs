@@ -52,7 +52,6 @@ public partial class MainWindow
             AreaId = source.AreaId,
             Frame = source.Frame,
             Direction = source.Direction,
-            MarginText = source.MarginText,
             SpacingText = source.SpacingText,
             Exclusions = source.Exclusions.ToList(),
             ExitChain = source.ExitChain.ToList(),
@@ -225,10 +224,11 @@ public partial class MainWindow
                 candidate.PatternDisplayed = candidate.NativePieceIds.Length > 0;
                 if (candidate.PatternDisplayed)
                 {
-                    if (!TryParseAreaParams(candidate.MarginText, candidate.SpacingText,
-                            out double margin, out double spacing))
-                        throw new InvalidOperationException("영역 " + candidate.Name + "의 마진/간격 입력이 유효하지 않습니다");
-                    candidate.AppliedInputs = CaptureAppliedInputs(candidate, margin, spacing);
+                    if (!TryParseAreaParams(candidate.SpacingText, out double spacing))
+                        throw new InvalidOperationException("영역 " + candidate.Name + "의 외곽 간격 입력이 유효하지 않습니다");
+                    if (!TryGetSelectedWireDiameter(out double wireDiameter))
+                        throw new InvalidOperationException("발열선 규격이 선택되지 않아 중심 피치를 정할 수 없습니다");
+                    candidate.AppliedInputs = CaptureAppliedInputs(candidate, spacing, wireDiameter);
                 }
                 else
                 {
@@ -339,6 +339,21 @@ public partial class MainWindow
         {
             presentationFailure ??= ex;
             try { Bridge.ClearRouteLengthLabels(); } catch (Exception) { }
+        }
+        // 발열사 간격 표시도 이번 커밋의 최종 영역 집합에서만 만든다. 분석/표시 실패는
+        // 이미 커밋된 경로·길이·전기 판정을 되돌리지 않고 표시 경고로만 남긴다.
+        try
+        {
+            if (!TryRefreshSpacingMarkers(side, areas, out string spacingFailure))
+            {
+                presentationFailure ??= new InvalidOperationException(spacingFailure);
+                try { Bridge.ClearSpacingMarkers(); } catch (Exception) { }
+            }
+        }
+        catch (Exception ex)
+        {
+            presentationFailure ??= ex;
+            try { Bridge.ClearSpacingMarkers(); } catch (Exception) { }
         }
         try { redrawn = Bridge.TryRedrawView(); }
         catch (Exception ex) { presentationFailure ??= ex; }
@@ -659,7 +674,6 @@ public partial class MainWindow
     private static void PublishAreaRouteCandidate(WorkingArea target, WorkingArea candidate)
     {
         target.Direction = candidate.Direction;
-        target.MarginText = candidate.MarginText;
         target.SpacingText = candidate.SpacingText;
         target.Exclusions = candidate.Exclusions;
         target.ExitChain = candidate.ExitChain;

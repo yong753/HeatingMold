@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Windows.Controls;
 using HeatingMold.App;
 using HeatingMold.Core.Geometry;
+using HeatingMold.Core.Model;
 using HeatingMold.OccBridge;
 
 /// <summary>
@@ -75,7 +76,6 @@ static class SplitBoundaryChecks
     static void Cleanup(MainWindow window, string fixtureDir)
     {
         Invoke(window, "ClearAllAreas", false);
-        ((TextBox)window.FindName("MarginBox")).Text = "5";
         ((TextBox)window.FindName("SpacingBox")).Text = "50";
         Bridge.LoadStep(Path.Combine(fixtureDir, "layers.stp"));
         Invoke(window, "ApplyWorkingSide", new Vec3(0, 0, 1));
@@ -192,6 +192,123 @@ static class SplitBoundaryChecks
                 }
             }
         }
+
+        // (3) 자동 인출점: 정확 행 교차가 실모델의 곡면 경계에서도 성립하는지.
+        //     기본 예제 B 영역(16,24,26), 세로 배치, 외곽 간격 20 mm(Case1 Ø0.30 → 중심 피치 20.3).
+        const double outerGap = 20.0, wireDiameter = 0.30;
+        double pitch = outerGap + wireDiameter;
+        var parentBinding = new ExitEdgeBinding(side.Revision!.Value, side.Id!.Value,
+            side.Revision.Value, 0, 0, 1, 0, false);
+        var parentArea = new WorkingArea
+        {
+            Name = "B-parent",
+            Direction = PatternDirection.FrameY,
+        };
+        parentArea.Region.Add(parentRing.ToList());
+        parentArea.SelectedStartExit = new ExitBoundaryPoint(new Vec2(310, -172.51), -1, 0)
+        {
+            Binding = parentBinding,
+        };
+        parentArea.SelectedEndExit = new ExitBoundaryPoint(new Vec2(620, -182.03), -1, 0)
+        {
+            Binding = parentBinding,
+        };
+        double radians = Serpentine.ResolveAngleDeg(parentRing, PatternDirection.FrameY) * Math.PI / 180.0;
+
+        bool VerifyRows(string label, List<WorkingArea> children)
+        {
+            foreach (WorkingArea child in children)
+            {
+                var childBoundary = child.RegionExitBoundary as SplitRegionBoundary2D;
+                if (childBoundary == null) return false;
+                if (!child.SelectedStartExit.HasValue || !child.SelectedEndExit.HasValue) return false;
+                List<Vec2> localRing = child.Region[0].Select(point => point.Rotate(-radians)).ToList();
+                double localMinX = localRing.Min(point => point.X);
+                double localMaxX = localRing.Max(point => point.X);
+                foreach (ExitBoundaryPoint selected in new[]
+                         { child.SelectedStartExit.Value, child.SelectedEndExit.Value })
+                {
+                    Vec2 local = selected.Point.Rotate(-radians);
+                    Vec2 a = new Vec2(localMinX - 1, local.Y).Rotate(radians);
+                    Vec2 b = new Vec2(localMaxX + 1, local.Y).Rotate(radians);
+                    var hits = new List<ExitBoundaryPoint>();
+                    ExitBoundaryFailureReason reason = childBoundary.IntersectLine(a, b, hits);
+                    if (reason != ExitBoundaryFailureReason.NoIntersection) return false;
+                    if (!hits.Any(hit => hit.Point.DistanceTo(selected.Point) <= 1e-6)) return false;
+                }
+                double startRow = child.SelectedStartExit.Value.Point.Rotate(-radians).Y;
+                double endRow = child.SelectedEndExit.Value.Point.Rotate(-radians).Y;
+                double lanes = Math.Round((endRow - startRow) / pitch);
+                if (Math.Abs((endRow - startRow) - lanes * pitch) > 1e-6)
+                {
+                    Console.WriteLine($"{label}: row gap {(endRow - startRow):F6} is not a pitch multiple");
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        foreach (int parts in new[] { 2, 4 })
+        {
+            AreaSplitResult automatic = AreaSplitter.Split(parentRing,
+                Array.Empty<(double MinX, double MinY, double MaxX, double MaxY)>(),
+                PatternDirection.FrameY, pitch, parts);
+            Check(automatic.Succeeded, $"{parts}-partition split builds bands on the example: {automatic.Failure}");
+            if (!automatic.Succeeded) continue;
+
+            var cuts = automatic.Cuts
+                .Select(cut => (A: new Vec2(cut, -1000), B: new Vec2(cut, 1000)))
+                .ToList();
+            var children = new List<WorkingArea>();
+            bool boundariesOk = true;
+            foreach (AreaSplitBand band in automatic.Bands)
+            {
+                bool builtChild = SplitRegionBoundary2D.TryCreate(parentCad, parentRing, band.Outer,
+                    Array.Empty<(double MinX, double MinY, double MaxX, double MaxY)>(),
+                    cuts, out SplitRegionBoundary2D childBoundary, out string childFailure);
+                if (!builtChild)
+                {
+                    Check(false, $"{parts}-partition child boundary builds: {childFailure}");
+                    boundariesOk = false;
+                    break;
+                }
+                var child = new WorkingArea
+                {
+                    Name = $"B-{band.Index}",
+                    Direction = PatternDirection.FrameY,
+                    RegionExitBoundary = childBoundary,
+                    ExitBoundary = childBoundary,
+                };
+                child.Region.Add(band.Outer.ToList());
+                children.Add(child);
+            }
+            if (!boundariesOk || children.Count != parts) continue;
+
+            bool assigned = SplitExitPointPlanner.TryAssign(parentArea, children, pitch, out string assignFailure);
+            Check(assigned, $"{parts}-partition auto exit points assign on the example: {assignFailure}");
+            if (!assigned) continue;
+            Check(VerifyRows($"{parts}-partition", children),
+                $"{parts}-partition auto exit points lie exactly on their lane rows");
+        }
+
+        // 발열사 간격 표시는 표시 전용 네이티브 집합이며, 잘못된 배열은 거부하고
+        // 정상 마커는 실제 작업 컨텍스트에 원자적으로 교체·삭제되어야 한다.
+        Vec3 spacingA = side.Frame.Unproject(new Vec2(0, 0));
+        Vec3 spacingB = side.Frame.Unproject(new Vec2(0, 5));
+        var spacingAnchors = new[] { spacingA.X, spacingA.Y, spacingA.Z };
+        var spacingTargets = new[] { spacingB.X, spacingB.Y, spacingB.Z };
+        var spacingTexts = new[] { "5.0" };
+        var spacingColors = new[] { 0.2, 0.4, 0.6 };
+        Check(Bridge.ReplaceSpacingMarkers(side.Id!.Value, side.Revision!.Value,
+                spacingAnchors, spacingTargets, spacingTexts, spacingColors, 8.0),
+            "spacing marker display replaces the working context marker set");
+        Check(!Bridge.ReplaceSpacingMarkers(side.Id.Value, side.Revision.Value,
+                spacingAnchors, spacingTargets, spacingTexts, new[] { 0.2, 0.4 }, 8.0),
+            "spacing marker display rejects mismatched array lengths");
+        bool spacingCleared = true;
+        try { Bridge.ClearSpacingMarkers(); }
+        catch (Exception) { spacingCleared = false; }
+        Check(spacingCleared, "spacing marker display clears without throwing");
 
         Cleanup(window, fixtureDir);
         Console.WriteLine($"{count} split boundary checks passed.");

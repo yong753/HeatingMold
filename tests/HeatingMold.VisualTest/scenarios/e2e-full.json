@@ -1,5 +1,5 @@
 {
-    "schemaVersion":  2,
+    "schemaVersion":  3,
     "name":  "E2E 전체 기능",
     "model":  {
                   "path":  "resource/Mold_Cover_Trim.step",
@@ -15,8 +15,7 @@
                                       56,
                                       69
                                   ],
-                      "marginMm":  5,
-                      "spacingMm":  15,
+                      "spacingMm":  14.7,
                       "direction":  0
                   }
               ],
@@ -70,8 +69,7 @@
                       "name":  "영역 A 가로 경로 생성",
                       "action":  "generate",
                       "area":  "A",
-                      "marginMm":  5,
-                      "spacingMm":  15,
+                      "spacingMm":  14.7,
                       "direction":  0
                   },
                   {
@@ -83,7 +81,7 @@
                                      "pieces":  60,
                                      "turns":  29,
                                      "circuits":  1,
-                                     "lengthMm":  18015.505,
+                                     "lengthMm":  18440.993,
                                      "lengthToleranceMm":  0.5
                                  }
                   },
@@ -132,10 +130,9 @@
                                      "pieces":  60,
                                      "turns":  29,
                                      "circuits":  1,
-                                     "lengthMm":  18015.505,
+                                     "lengthMm":  18440.903,
                                      "lengthToleranceMm":  0.5,
-                                     "marginMm":  5,
-                                     "spacingMm":  15
+                                     "spacingMm":  14.7
                                  }
                   },
                   {
@@ -165,7 +162,7 @@
                                      "pieces":  60,
                                      "turns":  29,
                                      "circuits":  1,
-                                     "lengthMm":  18015.505,
+                                     "lengthMm":  18440.993,
                                      "lengthToleranceMm":  0.5
                                  }
                   },
@@ -189,7 +186,7 @@
                                      "pieces":  60,
                                      "turns":  29,
                                      "circuits":  1,
-                                     "lengthMm":  17979.067,
+                                     "lengthMm":  18404.702,
                                      "lengthToleranceMm":  0.5,
                                      "routeEdited":  true
                                  }
@@ -266,10 +263,10 @@
                       "action":  "checkArea",
                       "area":  "A1",
                       "expect":  {
-                                     "pieces":  16,
-                                     "turns":  7,
+                                     "pieces":  20,
+                                     "turns":  9,
                                      "circuits":  1,
-                                     "lengthMm":  5323.82,
+                                     "lengthMm":  6746.533,
                                      "routeEdited":  false
                                  }
                   },
@@ -282,7 +279,7 @@
                                      "pieces":  16,
                                      "turns":  7,
                                      "circuits":  1,
-                                     "lengthMm":  5343.181,
+                                     "lengthMm":  5405.521,
                                      "routeEdited":  false
                                  }
                   },
@@ -295,7 +292,7 @@
                                      "pieces":  24,
                                      "turns":  11,
                                      "circuits":  1,
-                                     "lengthMm":  6009.727,
+                                     "lengthMm":  6250.376,
                                      "routeEdited":  false
                                  }
                   },
@@ -360,10 +357,10 @@
                       "action":  "checkArea",
                       "area":  "A1",
                       "expect":  {
-                                     "pieces":  16,
-                                     "turns":  7,
+                                     "pieces":  20,
+                                     "turns":  9,
                                      "circuits":  1,
-                                     "lengthMm":  5323.82,
+                                     "lengthMm":  6746.533,
                                      "routeEdited":  false
                                  }
                   },

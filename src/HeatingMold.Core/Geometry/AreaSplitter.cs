@@ -64,20 +64,19 @@ public static class AreaSplitter
         IReadOnlyList<Vec2> outer,
         IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
         PatternDirection direction,
-        double margin,
         double spacing,
         int count)
     {
         if (count < 1)
             return AreaSplitResult.Fail("분할 영역 수는 1 이상이어야 합니다");
-        if (!TryPrepare(outer, exclusions, direction, margin, spacing,
+        if (!TryPrepare(outer, exclusions, direction, spacing,
                 out SplitContext context, out string failure))
             return AreaSplitResult.Fail(failure);
 
         if (count == 1)
         {
             AreaSplitBand? single = BuildBand(0, context.OuterRing, context.Holes,
-                margin, spacing, context.SplitAxisIsY, out string singleFailure);
+                spacing, context.SplitAxisIsY, out string singleFailure);
             if (single == null) return AreaSplitResult.Fail(singleFailure);
             return new AreaSplitResult
             {
@@ -108,7 +107,7 @@ public static class AreaSplitter
         for (int step = 0; step < RefinementSteps; step++)
         {
             List<AreaSplitBand>? bands = BuildBands(
-                cuts, context.Min, context.Max, context.Rings, margin, spacing, context.SplitAxisIsY);
+                cuts, context.Min, context.Max, context.Rings, spacing, context.SplitAxisIsY);
             if (bands == null || bands.Count != count)
                 return AreaSplitResult.Fail("분할 영역을 구성하지 못했습니다");
             double ratio = LengthRatio(bands);
@@ -145,7 +144,7 @@ public static class AreaSplitter
         }
 
         List<AreaSplitBand>? finalBands = BuildBands(
-            cuts, context.Min, context.Max, context.Rings, margin, spacing, context.SplitAxisIsY);
+            cuts, context.Min, context.Max, context.Rings, spacing, context.SplitAxisIsY);
         if (finalBands == null || finalBands.Count != count)
             return AreaSplitResult.Fail("분할 영역을 구성하지 못했습니다");
         double finalRatio = LengthRatio(finalBands);
@@ -163,18 +162,17 @@ public static class AreaSplitter
         IReadOnlyList<Vec2> outer,
         IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
         PatternDirection direction,
-        double margin,
         double spacing,
         IReadOnlyList<double> cuts)
     {
-        if (!TryPrepare(outer, exclusions, direction, margin, spacing,
+        if (!TryPrepare(outer, exclusions, direction, spacing,
                 out SplitContext context, out string failure))
             return AreaSplitResult.Fail(failure);
 
         if (cuts == null || cuts.Count == 0)
         {
             AreaSplitBand? single = BuildBand(0, context.OuterRing, context.Holes,
-                margin, spacing, context.SplitAxisIsY, out string singleFailure);
+                spacing, context.SplitAxisIsY, out string singleFailure);
             if (single == null) return AreaSplitResult.Fail(singleFailure);
             return new AreaSplitResult
             {
@@ -200,7 +198,7 @@ public static class AreaSplitter
         }
 
         List<AreaSplitBand>? bands = BuildBands(
-            cuts.ToList(), context.Min, context.Max, context.Rings, margin, spacing, context.SplitAxisIsY);
+            cuts.ToList(), context.Min, context.Max, context.Rings, spacing, context.SplitAxisIsY);
         if (bands == null)
             return AreaSplitResult.Fail("절단 위치로 분할 영역을 구성할 수 없습니다");
         return Success(bands, cuts.ToList(), context.SplitAxisIsY);
@@ -221,7 +219,6 @@ public static class AreaSplitter
         IReadOnlyList<Vec2> outer,
         IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
         PatternDirection direction,
-        double margin,
         double spacing,
         out SplitContext context,
         out string failure)
@@ -231,11 +228,6 @@ public static class AreaSplitter
         if (outer == null || outer.Count < 3)
         {
             failure = "분할할 적용영역 외곽이 없습니다";
-            return false;
-        }
-        if (!double.IsFinite(margin) || margin < 0)
-        {
-            failure = "마진은 0 이상이어야 합니다";
             return false;
         }
         if (!double.IsFinite(spacing) || spacing <= 0)
@@ -405,7 +397,7 @@ public static class AreaSplitter
 
     /// <summary>절단 좌표들로 실제 밴드 영역을 구성한다. 홀이 생기면 null.</summary>
     private static List<AreaSplitBand>? BuildBands(List<double> cuts, double min, double max,
-        List<List<Vec2>> rings, double margin, double spacing, bool splitAxisIsY)
+        List<List<Vec2>> rings, double spacing, bool splitAxisIsY)
     {
         var bands = new List<AreaSplitBand>();
         var bounds = new List<double>(cuts.Count + 2) { min };
@@ -417,7 +409,7 @@ public static class AreaSplitter
             if (!TryClassifyRings(clipped, out List<Vec2>? bandOuter, out List<List<Vec2>> bandHoles, out _))
                 return null;
             if (bandHoles.Count > 0) return null;   // 잘린 영역에 홀이 생기면 독립 영역으로 쓸 수 없다
-            AreaSplitBand? band = BuildBand(i, bandOuter!, bandHoles, margin, spacing, splitAxisIsY, out _);
+            AreaSplitBand? band = BuildBand(i, bandOuter!, bandHoles, spacing, splitAxisIsY, out _);
             if (band == null) return null;
             bands.Add(band);
         }
@@ -429,10 +421,10 @@ public static class AreaSplitter
     /// 사행 진행 높이(레인 사이 턴 연결선 근사)를 더한다.
     /// </summary>
     private static AreaSplitBand? BuildBand(int index, List<Vec2> outer, List<List<Vec2>> holes,
-        double margin, double spacing, bool splitAxisIsY, out string failure)
+        double spacing, bool splitAxisIsY, out string failure)
     {
         failure = "";
-        List<List<Vec2>> patternRegion = RegionOps.BuildPatternRegion(outer, holes, margin);
+        List<List<Vec2>> patternRegion = RegionOps.BuildPatternRegion(outer, holes);
         if (!TryClassifyRings(patternRegion, out _, out List<List<Vec2>> patternHoles, out _))
         {
             failure = string.Format(CultureInfo.InvariantCulture,

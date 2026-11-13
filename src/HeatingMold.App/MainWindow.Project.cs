@@ -16,8 +16,6 @@ namespace HeatingMold.App
         private string _savedProjectFingerprint;
         private string _modelContentHash;
 
-        private void SaveProject_Click(object sender, RoutedEventArgs e) => SaveProject();
-
         private void SaveProjectAs_Click(object sender, RoutedEventArgs e) => SaveProjectAs();
 
         /// <summary>현재 프로젝트 경로로 저장한다. 경로가 없으면 다른 이름으로 저장을 연다.</summary>
@@ -129,7 +127,6 @@ namespace HeatingMold.App
         {
             bool hasModel = !string.IsNullOrEmpty(_modelPath);
             if (OpenProjectButton != null) OpenProjectButton.IsEnabled = !_isBusy;
-            if (SaveProjectButton != null) SaveProjectButton.IsEnabled = hasModel && !_isBusy;
             if (SaveProjectAsButton != null) SaveProjectAsButton.IsEnabled = hasModel && !_isBusy;
         }
 
@@ -265,7 +262,6 @@ namespace HeatingMold.App
                     MaxY = rect.MaxY
                 }).ToList(),
                 Direction = area.Direction.ToString(),
-                MarginText = area.MarginText,
                 SpacingText = area.SpacingText,
                 ExitChain = area.ExitChain.Select(ToProjectVec2).ToList(),
                 ExitChain3D = area.ExitChain3D.Select(ToProjectVec3).ToList(),
@@ -296,8 +292,8 @@ namespace HeatingMold.App
                 RouteEdited = area.RouteEdited,
                 AppliedInputs = area.AppliedInputs == null ? null : new ProjectAppliedInputs
                 {
-                    Margin = area.AppliedInputs.Margin,
-                    Spacing = area.AppliedInputs.Spacing,
+                    OuterGapMm = area.AppliedInputs.OuterGapMm,
+                    WireDiameterMm = area.AppliedInputs.WireDiameterMm,
                     Direction = area.AppliedInputs.Direction.ToString(),
                     RouteContextKey = area.AppliedInputs.RouteContextKey
                 },

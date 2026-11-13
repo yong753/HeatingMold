@@ -428,11 +428,22 @@ namespace
         long long contextId = 0, revision = 0;
     };
     std::map<int, RouteLengthLabelOverlay> g_routeLengthLabels;
+
+    // 화면 표시 전용 발열사 간격 마커. 기존 길이 라벨 세트와 섞지 않는다.
+    struct SpacingMarkerOverlay {
+        Handle(AIS_Line) tick;
+        Handle(AIS_Line) dimension;
+        Handle(AIS_TextLabel) label;
+        long long contextId = 0, revision = 0;
+    };
+    std::map<int, SpacingMarkerOverlay> g_spacingMarkers;
+
     std::set<int> g_hoveredCircuitPieces;
     void HighlightCircuitNative(const std::vector<int>& ids);
     void ClearRouteEndpointMarkersNative();
     // 경로 길이 라벨 (WorkingSideNative.inc에서 정의, 이 파일 뒤쪽에 include됨)
     void ClearRouteLengthLabelsNative();
+    void ClearSpacingMarkersNative();
     // 꼭지점 편집 오버레이 (WorkingSideNative.inc에서 정의, 이 파일 뒤쪽에 include됨)
     void ClearVertexHandlesNative();
     void ClearRoutePreviewNative();
@@ -2703,6 +2714,7 @@ namespace
         ClearRoutePreviewNative();
         ClearVertexPreview2DNative();
         ClearRouteLengthLabelsNative();
+        ClearSpacingMarkersNative();
         if (!g_ctx.IsNull()) for (const auto& piece : g_routePieces) g_ctx->Remove(piece.second.ais, Standard_False);
         g_routePieces.clear();
         g_stagedWorkingRouteOwners.clear();
@@ -3416,6 +3428,7 @@ namespace
         return out;
     }
 #include "WorkingSideNative.inc"
+#include "SpacingMarkerNative.inc"
 #include "AreaHighlightNative.inc"
 #include "FaceIdSelectionNative.inc"
 #include "FaceIdSelectionRefinementNative.inc"
@@ -4213,6 +4226,41 @@ bool Bridge::ReplaceRouteLengthLabels(long long id, long long revision,
 void Bridge::ClearRouteLengthLabels()
 {
     ClearRouteLengthLabelsNative();
+    if (!g_view.IsNull()) g_view->Redraw();
+}
+
+bool Bridge::ReplaceSpacingMarkers(long long id, long long revision,
+    array<double>^ anchors, array<double>^ targets, array<System::String^>^ texts,
+    array<double>^ rgb, double height)
+{
+    if (anchors == nullptr || targets == nullptr || texts == nullptr || rgb == nullptr)
+        return false;
+    if (anchors->Length != targets->Length
+        || anchors->Length != texts->Length * 3
+        || anchors->Length != rgb->Length)
+        return false;
+
+    std::vector<double> anchorValues(anchors->Length);
+    std::vector<double> targetValues(targets->Length);
+    std::vector<double> colorValues(rgb->Length);
+    for (int i = 0; i < anchors->Length; ++i) anchorValues[static_cast<size_t>(i)] = anchors[i];
+    for (int i = 0; i < targets->Length; ++i) targetValues[static_cast<size_t>(i)] = targets[i];
+    for (int i = 0; i < rgb->Length; ++i) colorValues[static_cast<size_t>(i)] = rgb[i];
+
+    std::vector<std::string> textValues(texts->Length);
+    for (int i = 0; i < texts->Length; ++i)
+    {
+        System::String^ text = texts[i];
+        textValues[static_cast<size_t>(i)] = msclr::interop::marshal_as<std::string>(text);
+    }
+
+    return ReplaceSpacingMarkersNative(id, revision, anchorValues, targetValues,
+        textValues, colorValues, height);
+}
+
+void Bridge::ClearSpacingMarkers()
+{
+    ClearSpacingMarkersNative();
     if (!g_view.IsNull()) g_view->Redraw();
 }
 

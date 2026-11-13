@@ -96,20 +96,26 @@ public partial class MainWindow
             SetSplitStatus("발열 전력이 배분되지 않아 분할 수를 계산할 수 없습니다 — 검토 탭에서 발열 전력과 경로를 확인하세요.");
             return;
         }
-        if (!TryGetParams(out double margin, out double spacing, out string parameterError))
+        if (!TryGetParams(out double spacing, out string parameterError))
         {
-            SetSplitStatus("마진/간격 입력 오류 — " + parameterError);
+            SetSplitStatus("간격 입력 오류 — " + parameterError);
             return;
         }
+        if (!TryGetSelectedWireDiameter(out double wireDiameter))
+        {
+            SetSplitStatus("발열선 규격이 선택되지 않아 분할 계획을 세울 수 없습니다.");
+            return;
+        }
+        var pitch = new LanePitchSpec(spacing, wireDiameter);
         if (!TryReadElectricalLimits(out TargetPowerElectricalSettings settings, out string limitError))
         {
             SetSplitStatus("전기 한도 입력 오류 — " + limitError);
             return;
         }
 
-        // 부모 예상 길이: 실제 생성과 같은 규칙(유효영역 ∩ 마진)으로 한 번만 추정한다.
+        // 부모 예상 길이: 실제 생성과 같은 규칙(적용영역 − 제외영역, 동일 중심 피치)으로 한 번만 추정한다.
         AreaSplitResult parentEstimate = AreaSplitter.Split(area.Region[0], area.Exclusions,
-            area.Direction, margin, spacing, 1);
+            area.Direction, pitch.CenterPitchMm, 1);
         if (!parentEstimate.Succeeded || parentEstimate.Bands.Count != 1)
         {
             SetSplitStatus("분할할 수 없습니다 — " + parentEstimate.Failure);
@@ -148,24 +154,43 @@ public partial class MainWindow
         }
 
         AreaSplitResult split = AreaSplitter.Split(area.Region[0], area.Exclusions,
-            area.Direction, margin, spacing, plan.Parts);
+            area.Direction, pitch.CenterPitchMm, plan.Parts);
 
-        List<WorkingArea> children;
+        List<WorkingArea> children = null!;
         var preparedPatterns = new Dictionary<WorkingArea, SerpentineResult>();
         double balanceRatio = double.NaN;
+        int effectiveParts = plan.Parts;
 
         if (autoExits)
         {
             // 면적 근사만으로 확정하지 않는다. 실제 선택-인출점 2D 생성기로 후보 절단을
             // 평가해 경로 길이가 가장 균등한 분할을 고르고, 그때 만든 패턴을 그대로 쓴다.
-            if (!TryPrepareBalancedSplit(area, split, plan.Parts, margin, spacing,
-                    out AreaSplitResult balancedSplit, out children, out preparedPatterns,
-                    out balanceRatio, out string balanceFailure))
+            // 전압 기준 개수로 배치를 만들 수 없으면, 같은 조건에서 한 개씩 늘려 최대 4개까지
+            // 다시 찾는다. 전력·간격·허용 한도는 바꾸지 않는다.
+            bool prepared = false;
+            string balanceFailure = string.Empty;
+            for (int partCount = plan.Parts; partCount <= TargetPowerSplitPlanner.MaxParts; partCount++)
+            {
+                AreaSplitResult attempt = partCount == plan.Parts
+                    ? split
+                    : AreaSplitter.Split(area.Region[0], area.Exclusions,
+                        area.Direction, pitch.CenterPitchMm, partCount);
+                if (!TryPrepareBalancedSplit(area, attempt, partCount, pitch,
+                        out AreaSplitResult balancedSplit, out children, out preparedPatterns,
+                        out balanceRatio, out balanceFailure))
+                {
+                    continue;
+                }
+                split = balancedSplit;
+                effectiveParts = partCount;
+                prepared = true;
+                break;
+            }
+            if (!prepared)
             {
                 SetSplitStatus("분할에 실패했습니다 — " + balanceFailure);
                 return;
             }
-            split = balancedSplit;
         }
         else
         {
@@ -182,10 +207,16 @@ public partial class MainWindow
             }
         }
 
-        if (split.Bands.Count != plan.Parts)
+        if (children == null)
+        {
+            SetSplitStatus("분할 영역을 준비할 수 없습니다 — 자식 영역이 만들어지지 않았습니다.");
+            return;
+        }
+
+        if (split.Bands.Count != effectiveParts)
         {
             SetSplitStatus(string.Format(CultureInfo.CurrentCulture,
-                "분할 결과 영역 수가 계획과 다릅니다 — 계획 {0}개, 계산 {1}개.", plan.Parts, split.Bands.Count));
+                "분할 결과 영역 수가 계획과 다릅니다 — 계획 {0}개, 계산 {1}개.", effectiveParts, split.Bands.Count));
             return;
         }
 
@@ -341,7 +372,6 @@ public partial class MainWindow
                 Color = color,
                 Frame = parent.Frame,
                 Direction = parent.Direction,
-                MarginText = parent.MarginText,
                 SpacingText = parent.SpacingText,
                 AreaId = 0,
                 ExitChain = parent.ExitChain.ToList(),

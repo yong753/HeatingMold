@@ -11,9 +11,6 @@ internal static class NumericInputValidator
 {
     private const NumberStyles Styles = NumberStyles.Float;
 
-    public static bool TryMargin(string text, out double value, out string error) =>
-        TryFinite(text, "마진", minimum: 0, inclusive: true, out value, out error);
-
     public static bool TrySpacing(string text, out double value, out string error) =>
         TryFinite(text, "간격", minimum: 0, inclusive: false, out value, out error);
 

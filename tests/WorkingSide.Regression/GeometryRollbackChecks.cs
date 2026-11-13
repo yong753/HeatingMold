@@ -53,6 +53,17 @@ static class GeometryRollbackChecks
         return area;
     }
 
+    /// <summary>확정 생성 입력. 제품 경로가 저장·복원하는 것과 같은 필수 값을 채운다.</summary>
+    static object NewAppliedInputs()
+    {
+        var type = typeof(MainWindow).Assembly.GetType("HeatingMold.App.AppliedGenerationInputs")!;
+        object inputs = Activator.CreateInstance(type, nonPublic: true)!;
+        type.GetProperty("OuterGapMm")!.SetValue(inputs, 5.0);
+        type.GetProperty("WireDiameterMm")!.SetValue(inputs, 0.30);
+        type.GetProperty("Direction")!.SetValue(inputs, HeatingMold.Core.Model.PatternDirection.FrameX);
+        return inputs;
+    }
+
     static void SnapshotOwnershipChecks(Type type, WorkingSideDefinition side)
     {
         var area = NewArea(type, side, 0, "SnapshotCheck", 4401);
@@ -254,6 +265,11 @@ static class GeometryRollbackChecks
             areaType.GetProperty("ProjectedPieces")!.SetValue(entry.area,
                 new List<RoutePieceResult> { entry.staged });
             areaType.GetProperty("PatternDisplayed")!.SetValue(entry.area, true);
+            // 확정된 실제 영역은 생성 결과와 확정 입력을 항상 함께 보유한다. 간격 검토가
+            // 표시 중 영역을 분석하려면 이 두 값이 필요하므로 픽스처도 같은 상태로 만든다.
+            areaType.GetProperty("Pattern")!.SetValue(entry.area,
+                Pattern(new Vec2(-10, 0), new Vec2(10, 0)));
+            areaType.GetProperty("AppliedInputs")!.SetValue(entry.area, NewAppliedInputs());
             areaType.GetProperty("CommittedMapping")!.SetValue(entry.area,
                 captureMethod.Invoke(null, new[] { entry.area }));
         }

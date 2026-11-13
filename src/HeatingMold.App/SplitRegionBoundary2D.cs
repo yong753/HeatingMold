@@ -50,6 +50,9 @@ internal sealed class SplitRegionBoundary2D :
     /// <summary>이 영역 외곽에 실제로 남은 절단선 구간.</summary>
     internal IReadOnlyList<SplitSegment> Segments => _segments;
 
+    /// <summary>이 영역 외곽에 실제로 남은 제외변 구간 수(진단·회귀용).</summary>
+    internal int ArtificialSegmentCount => _inner.Segments.Count;
+
     /// <summary>
     /// 이 영역이 실제로 유지되는 쪽을 나타내는 절단선 반평면(작업평면 축 정렬 기준).
     /// 전체 절단선 목록이 아니라 <b>이 영역 외곽에 실제로 남은 절단선</b>만 사용한다.
@@ -219,6 +222,100 @@ internal sealed class SplitRegionBoundary2D :
                     ? ExitBoundaryFailureReason.NoIntersection
                     : ExitBoundaryFailureReason.MissingReference);
         return SelectNearest(point, candidates);
+    }
+
+    /// <summary>
+    /// 자동 인출점용 정확 행 직선 교차. 원본 CAD는 네이티브 무한 직선 질의로, 제외변·절단선은
+    /// 분석적 교차로 구한다. 최근접 투영이 아니며, 접선·겹침은 명시적 실패다.
+    /// 반환값이 <see cref="ExitBoundaryFailureReason.NoIntersection"/>이면 <paramref name="hits"/>에
+    /// 교차 후보가 들어 있을 수 있다(0개면 교차 없음).
+    /// </summary>
+    internal ExitBoundaryFailureReason IntersectLine(Vec2 a, Vec2 b, List<ExitBoundaryPoint> hits)
+    {
+        if (hits == null) return ExitBoundaryFailureReason.InvalidInput;
+        if (!IsFinite(a) || !IsFinite(b) || a.DistanceTo(b) <= PointEpsilon)
+            return ExitBoundaryFailureReason.InvalidInput;
+
+        ExitBoundaryFailureReason cadFailure = _snapshot.AddLineHits(a, b, hits);
+        if (cadFailure != ExitBoundaryFailureReason.NoIntersection) return cadFailure;
+
+        bool tangent = false;
+        foreach (EffectiveRegionBoundary2D.ArtificialSegment segment in _inner.Segments)
+        {
+            if (!TryIntersectLineSegment(a, b, segment.A, segment.B,
+                    out Vec2 point, out double u, out bool segmentTangent))
+            {
+                if (segmentTangent) tangent = true;
+                continue;
+            }
+            if (!_snapshot.IsInside(point)) continue;
+            ArtificialEdgeBinding binding = segment.Binding;
+            double parameter = binding.FirstParameter + u * (binding.LastParameter - binding.FirstParameter);
+            AddLineCandidate(hits, new ExitBoundaryPoint(point, -1, parameter)
+            {
+                ArtificialBinding = binding with { Parameter = parameter }
+            });
+        }
+
+        foreach (SplitSegment segment in _segments)
+        {
+            if (!TryIntersectLineSegment(a, b, segment.A, segment.B,
+                    out Vec2 point, out double u, out bool segmentTangent))
+            {
+                if (segmentTangent) tangent = true;
+                continue;
+            }
+            if (!_snapshot.IsInside(point)) continue;
+            SplitLineBinding binding = segment.Binding;
+            double first = binding.FirstParameter;
+            double last = binding.LastParameter;
+            double parameter = first + u * (last - first);
+            AddLineCandidate(hits, new ExitBoundaryPoint(point, -1, parameter)
+            {
+                SplitBinding = binding with { Parameter = parameter }
+            });
+        }
+
+        if (tangent) return ExitBoundaryFailureReason.TangentOrOverlap;
+        return ExitBoundaryFailureReason.NoIntersection;
+    }
+
+    /// <summary>행 직선과 선분의 분석적 교차. 평행이면 겹침만 접선으로 보고한다.</summary>
+    private static bool TryIntersectLineSegment(Vec2 a, Vec2 b, Vec2 c, Vec2 d,
+        out Vec2 point, out double u, out bool tangent)
+    {
+        point = default;
+        u = 0;
+        tangent = false;
+        Vec2 direction = b - a;
+        Vec2 side = d - c;
+        double directionLength = direction.Length;
+        double sideLength = side.Length;
+        if (!(directionLength > 1e-12) || !(sideLength > 1e-12)) return false;
+
+        double denominator = Cross(direction, side);
+        if (Math.Abs(denominator) <= 1e-12 * directionLength * sideLength)
+        {
+            // 같은 직선 위에 있으면 행이 경계와 겹치는 것이므로 교차점 하나로 확정할 수 없다.
+            if (Math.Abs(Cross(c - a, direction)) <= 1e-9 * directionLength) tangent = true;
+            return false;
+        }
+
+        double along = Cross(c - a, direction) / denominator;
+        if (along < -1e-9 || along > 1.0 + 1e-9) return false;
+        u = Math.Clamp(along, 0.0, 1.0);
+        point = Lerp(c, d, u);
+        return IsFinite(point);
+    }
+
+    private static void AddLineCandidate(List<ExitBoundaryPoint> candidates, ExitBoundaryPoint candidate)
+    {
+        foreach (ExitBoundaryPoint existing in candidates)
+        {
+            if (existing.Point.DistanceTo(candidate.Point) > PointEpsilon) continue;
+            if (ExitBoundaryIdentity.Same(existing, candidate)) return;
+        }
+        candidates.Add(candidate);
     }
 
     public ExitBoundaryResolution ResolveOutward(Vec2 endpoint, Vec2 next, double tolerance)

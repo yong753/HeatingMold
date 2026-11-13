@@ -116,9 +116,57 @@ internal sealed class SplitBoundarySnapshot
         return deferred;
     }
 
+    /// <summary>
+    /// 자동 인출점의 행 직선과 이 자식이 유지하는 원본 CAD 구간의 정확 교차.
+    /// 마우스 최근접 투영과 달리 커서 허용치가 없고, 교차가 접선·겹침이거나 같은 2D 점의
+    /// 다른 parameter가 나오면 명시적 실패로 돌려준다. Miss는 교차 없음으로 건너뛴다.
+    /// </summary>
+    internal ExitBoundaryFailureReason AddLineHits(Vec2 a, Vec2 b, List<ExitBoundaryPoint> hits)
+    {
+        if (!IsFinite(a) || !IsFinite(b) || a.DistanceTo(b) <= PointEpsilon)
+            return ExitBoundaryFailureReason.InvalidInput;
+
+        foreach (CadInterval interval in _cad)
+        {
+            ExitEdgeRayResult result = Bridge.IntersectExitEdgeLine(_contextId, _revision, interval.Query,
+                a.X, a.Y, b.X, b.Y);
+            if (result == null) return ExitBoundaryFailureReason.GeometryFailure;
+            if (result.Status == ExitEdgeQueryStatus.Miss) continue;
+            if (result.Status != ExitEdgeQueryStatus.Hit)
+                return CadExitBoundary2D.Reason(result.Status);
+            foreach (ExitEdgeHit hit in result.Hits ?? Array.Empty<ExitEdgeHit>())
+            {
+                if (hit.Status == ExitEdgeQueryStatus.Miss) continue;
+                if (hit.Status != ExitEdgeQueryStatus.Hit)
+                    return CadExitBoundary2D.Reason(hit.Status);
+                if (!TryDatum(hit, out Vec2 point)) return ExitBoundaryFailureReason.GeometryFailure;
+                if (!IsInside(point)) continue;
+                AddLineCandidate(hits, new ExitBoundaryPoint(point, -1, hit.Parameter)
+                {
+                    Binding = Convert(interval, hit)
+                });
+            }
+        }
+        return ExitBoundaryFailureReason.NoIntersection;
+    }
+
     private static void AddCandidate(List<ExitBoundaryPoint> candidates, ExitBoundaryPoint candidate)
     {
         if (candidates.Any(existing => existing.Point.DistanceTo(candidate.Point) <= PointEpsilon)) return;
+        candidates.Add(candidate);
+    }
+
+    /// <summary>
+    /// 정확 교차 후보는 같은 위치라도 원본 참조나 선택 parameter가 다르면 서로 다른 해로 남긴다.
+    /// 호출부가 그 차이를 모호성으로 판정할 수 있어야 하기 때문이다.
+    /// </summary>
+    private static void AddLineCandidate(List<ExitBoundaryPoint> candidates, ExitBoundaryPoint candidate)
+    {
+        foreach (ExitBoundaryPoint existing in candidates)
+        {
+            if (existing.Point.DistanceTo(candidate.Point) > PointEpsilon) continue;
+            if (ExitBoundaryIdentity.Same(existing, candidate)) return;
+        }
         candidates.Add(candidate);
     }
 

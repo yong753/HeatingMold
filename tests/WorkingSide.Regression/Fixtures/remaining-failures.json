@@ -1,0 +1,392 @@
+{
+  "version": 1,
+  "note": "2026-11-13 기준 남은 두 실패의 재현 입력. 추정값은 confirmed=false로 표시한다. 제품 코드 수정 전 비교 기준이며, 실행 자체는 연결된 시각테스트 시나리오가 담당한다.",
+  "model": {
+    "path": "resource/Mold_Cover_Trim.step",
+    "sha256": "8CB03405817606D1917FEF55B46A60011FFB5E93075EECDEF5A8651D4359FCED",
+    "faceCount": 80,
+    "solidCount": 0
+  },
+  "execution": {
+    "reproducedAt": "2026-11-13",
+    "runs": [
+      {
+        "scenario": "tests/HeatingMold.VisualTest/scenarios/repro-b-four-split-anchor.json",
+        "runDirectory": "artifacts/visual-test/repro-four-fixed",
+        "status": "Completed",
+        "steps": "18/18"
+      },
+      {
+        "scenario": "tests/HeatingMold.VisualTest/scenarios/repro-b-exclusion-surface.json",
+        "runDirectory": "artifacts/visual-test/repro-exclusion-fixed",
+        "status": "Completed",
+        "steps": "20/20"
+      }
+    ],
+    "assemblies": [
+      {
+        "file": "OccBridge.dll",
+        "path": "src/HeatingMold.App/bin/x64/Release/net8.0-windows/OccBridge.dll",
+        "sha256": "D5E5ECE7B37039437DD2BEF5C48F69BFC6A7300DD8F8073B8B801773991BE9AE"
+      },
+      {
+        "file": "HeatingMold.App.dll",
+        "path": "src/HeatingMold.App/bin/x64/Release/net8.0-windows/HeatingMold.App.dll",
+        "sha256": "399FC3ADC6B4347427A9F5728BB35C963A61702F4F389BAF6E6F474C4F8C2023"
+      },
+      {
+        "file": "HeatingMold.Core.dll",
+        "path": "src/HeatingMold.App/bin/x64/Release/net8.0-windows/HeatingMold.Core.dll",
+        "sha256": "2D9CA87B3302C36EFB3A7D05C5B1C310A5491231085D3C013F938F72ABD0083E"
+      }
+    ],
+    "historicalArtifactAssemblies": "미확정 — meas-four-1/meas-margin-9 실행 당시 로드된 DLL 해시는 result.json에 기록되지 않았다. 재현은 위 현재 DLL 세트로 두 시나리오 모두 Completed를 확인했다."
+  },
+  "failures": [
+    {
+      "id": "split-four-anchor-not-at-lane-end",
+      "scenario": "tests/HeatingMold.VisualTest/scenarios/repro-b-four-split-anchor.json",
+      "sourceArtifact": "artifacts/visual-test/meas-four-1/result.json",
+      "actionCount": 17,
+      "areas": [
+        {
+          "alias": "A",
+          "faceIds": [44, 56, 69],
+          "spacingMm": 14.85,
+          "direction": 1,
+          "picks": [
+            {
+              "role": "start",
+              "uv": [295.91262149879026, 133.36749353890832],
+              "toleranceMm": 0.5,
+              "toleranceConfirmed": true,
+              "resolvedBinding": {
+                "kind": "cad",
+                "edgeId": 1,
+                "parameter": 0.26787879518,
+                "firstParameter": 0.0,
+                "lastParameter": 1.0
+              }
+            },
+            {
+              "role": "end",
+              "uv": [295.9106395319768, -291.6634555349192],
+              "toleranceMm": 0.5,
+              "toleranceConfirmed": true,
+              "resolvedBinding": {
+                "kind": "cad",
+                "edgeId": 3,
+                "parameter": -16.866076117375,
+                "firstParameter": -136.684313553301,
+                "lastParameter": 48.274024969872
+              }
+            }
+          ],
+          "generatedExpect": {
+            "pieces": 60,
+            "turns": 29,
+            "circuits": 1,
+            "lengthMm": 18440.993,
+            "heatingPieces": 30,
+            "heatingLengthMm": 17757.056,
+            "spacingMm": 14.85
+          }
+        },
+        {
+          "alias": "B",
+          "faceIds": [16, 24, 26],
+          "spacingMm": 24.7,
+          "direction": 2,
+          "picks": [
+            {
+              "role": "start",
+              "uv": [330.0, -172.51],
+              "toleranceMm": 1.5,
+              "toleranceConfirmed": true,
+              "resolvedBinding": {
+                "kind": "cad",
+                "edgeId": 11,
+                "parameter": 0.862431666256,
+                "firstParameter": 0.0,
+                "lastParameter": 1.0
+              }
+            },
+            {
+              "role": "end",
+              "uv": [620.0, -182.03],
+              "toleranceMm": 1.5,
+              "toleranceConfirmed": true,
+              "resolvedBinding": {
+                "kind": "cad",
+                "edgeId": 21,
+                "parameter": 0.467843677423,
+                "firstParameter": 0.408715197552,
+                "lastParameter": 1.0
+              }
+            }
+          ],
+          "generatedExpect": {
+            "pieces": 24,
+            "turns": 11,
+            "circuits": 1,
+            "lengthMm": 6644.888,
+            "heatingPieces": 12,
+            "heatingLengthMm": 6349.574,
+            "spacingMm": 24.7
+          }
+        }
+      ],
+      "wire": {
+        "presetIndex": 1,
+        "caseName": "Case 2",
+        "diameterMm": 0.15,
+        "resistanceOhmPerM": 8.0
+      },
+      "initialElectrical": {
+        "presetIndex": 1,
+        "voltageV": 220.0,
+        "allowedCurrentA": 16.0,
+        "allowedPowerKw": 3.5,
+        "reviewScope": 0
+      },
+      "splitElectrical": {
+        "presetIndex": 1,
+        "voltageV": 60.0,
+        "allowedCurrentA": 16.0,
+        "allowedPowerKw": 3.5,
+        "reviewScope": 0
+      },
+      "failure": {
+        "action": "splitArea",
+        "area": "B",
+        "outcome": "rejected",
+        "partCount": 4,
+        "childAliases": ["B-1", "B-2", "B-3", "B-4"],
+        "confirm": "yes",
+        "confirmAction": "영역 분할",
+        "failureContains": "마지막 레인이 종료점 반대편",
+        "observedFailurePoint": "B-1",
+        "observedStatus": "분할에 실패했습니다 — 분할 영역의 실제 2D 경로를 만들 수 있는 절단 위치를 찾지 못했습니다 — B-1: 마지막 레인이 종료점 반대편에서 끝나 같은 간격으로 레인을 한 줄 더 만들어야 하지만, 그 위치에 발열영역 구간이 없습니다 — 기존 결과를 유지합니다",
+        "failureClass": "Core.Serpentine.RequiredExtraLaneOutsideRegion",
+        "historicalFailurePoint": "B-4",
+        "historicalFailureClass": "Core.Serpentine.AnchorNotAtLaneEnd",
+        "cause": "부모 측면을 유지한 채 4개로 나누는 최선의 절단에서도 한 자식의 마지막 레인이 종료점 반대편에서 끝나 같은 피치의 레인을 한 줄 더 만들어야 하고, 그 레인이 자식 영역 밖에 놓인다. 생성 규칙을 바꾸지 않고 일부 자식만 확정하지 않으며, 전체를 명시적으로 거부하고 부모를 보존한다."
+      },
+      "preservation": [
+        {
+          "when": "after",
+          "action": "checkArea",
+          "area": "A",
+          "expect": {
+            "pieces": 60,
+            "turns": 29,
+            "circuits": 1,
+            "lengthMm": 18440.993,
+            "heatingPieces": 30,
+            "heatingLengthMm": 17757.056,
+            "spacingMm": 14.85
+          }
+        },
+        {
+          "when": "after",
+          "action": "checkArea",
+          "area": "B",
+          "expect": {
+            "pieces": 24,
+            "turns": 11,
+            "circuits": 1,
+            "lengthMm": 6644.888,
+            "heatingPieces": 12,
+            "heatingLengthMm": 6349.574,
+            "spacingMm": 24.7
+          }
+        }
+      ]
+    },
+    {
+      "id": "exclusion-surface-domain",
+      "scenario": "tests/HeatingMold.VisualTest/scenarios/repro-b-exclusion-surface.json",
+      "sourceArtifact": "artifacts/visual-test/meas-margin-9/result.json",
+      "actionCount": 19,
+      "areas": [
+        {
+          "alias": "A",
+          "faceIds": [44, 56, 69],
+          "spacingMm": 23.7,
+          "direction": 1,
+          "picks": [
+            {
+              "role": "start",
+              "uv": [-362.710894, -300.0],
+              "toleranceMm": 0.5,
+              "toleranceConfirmed": true,
+              "resolvedBinding": {
+                "kind": "cad",
+                "edgeId": 5,
+                "parameter": 14.632401092355,
+                "firstParameter": -148.9334983145,
+                "lastParameter": 71.435957712,
+                "reversed": true
+              }
+            },
+            {
+              "role": "end",
+              "uv": [-362.710894, -36.0],
+              "toleranceMm": 0.5,
+              "toleranceConfirmed": true,
+              "resolvedBinding": {
+                "kind": "cad",
+                "edgeId": 8,
+                "parameter": 0.414004971154,
+                "firstParameter": 0.0,
+                "lastParameter": 0.999999995511,
+                "reversed": true
+              }
+            }
+          ],
+          "generatedExpect": {
+            "pieces": 23,
+            "turns": 11,
+            "circuits": 1,
+            "lengthMm": 8207.764,
+            "heatingPieces": 12,
+            "heatingLengthMm": 7926.998,
+            "spacingMm": 23.7
+          }
+        },
+        {
+          "alias": "B",
+          "faceIds": [16, 24, 26],
+          "spacingMm": 27.7,
+          "direction": 1,
+          "picks": [
+            {
+              "role": "start",
+              "uv": [630.0, -160.0],
+              "toleranceMm": 0.5,
+              "toleranceConfirmed": false,
+              "toleranceNote": "미확정 — 원본 result.json에 픽 tolerance가 없다. 재현 시 0.5로 고정했고 해석 좌표가 artifact와 일치했다.",
+              "resolvedBinding": {
+                "kind": "cad",
+                "edgeId": 20,
+                "parameter": 0.041676736941,
+                "firstParameter": 0.0,
+                "lastParameter": 1.0,
+                "reversed": true
+              }
+            },
+            {
+              "role": "end",
+              "uv": [304.366215, 190.0],
+              "toleranceMm": 0.5,
+              "toleranceConfirmed": false,
+              "toleranceNote": "미확정 — 원본 result.json에 픽 tolerance가 없다. 재현 시 0.5로 고정했고 해석 좌표가 artifact와 일치했다.",
+              "resolvedBinding": {
+                "kind": "cad",
+                "edgeId": 12,
+                "parameter": 0.048773817202,
+                "firstParameter": 0.0,
+                "lastParameter": 1.0,
+                "reversed": true
+              }
+            }
+          ],
+          "generatedExpect": {
+            "pieces": 26,
+            "turns": 12,
+            "circuits": 1,
+            "lengthMm": 4687.71,
+            "heatingPieces": 13,
+            "heatingLengthMm": 4255.417,
+            "spacingMm": 27.7
+          }
+        }
+      ],
+      "wire": {
+        "presetIndex": 0,
+        "caseName": "Case 1",
+        "diameterMm": 0.3,
+        "resistanceOhmPerM": 4.0
+      },
+      "initialElectrical": {
+        "presetIndex": 0,
+        "voltageV": 220.0,
+        "allowedCurrentA": 16.0,
+        "allowedPowerKw": 3.5,
+        "reviewScope": 0
+      },
+      "exclusion": {
+        "area": "B",
+        "rect": [520.0, -200.0, 590.0, -166.0]
+      },
+      "failure": {
+        "action": "generate",
+        "area": "B",
+        "resolved": true,
+        "expect": {
+          "pieces": 26,
+          "turns": 12,
+          "circuits": 1,
+          "lengthMm": 4687.678,
+          "heatingPieces": 13,
+          "heatingLengthMm": 4255.385,
+          "spacingMm": 27.7
+        },
+        "observedFailurePoint": "영역 B 경로 조각 3/26 (HeatingRun)",
+        "observedStatus": "표시 경로 실패 — 영역 경계/경로를 벗어났습니다: 영역 B 경로 조각 3/26 (HeatingRun) 매핑 실패 — The path leaves the selected surface domain. [Face 16=SurfaceOfExtrusion, Face 24=SurfaceOfExtrusion, Face 26=BSplineSurface]",
+        "reportedError": "[Error] 경로 표시 생성 실패 — 기존 영역/경로를 유지했습니다",
+        "failureClass": "SurfacePathMapper.The path leaves the selected surface domain",
+        "cause": "실패 좌표 uv=(630,-132)는 선택 영역의 정확한 경계 위 점이다. 네이티브 면 교차는 경계 시작점을 Miss로 반환하지만, 원본 경계 parameter로 평가하면 Face 24의 유효한 3D 점이다."
+      },
+      "preservation": [
+        {
+          "when": "before",
+          "action": "checkArea",
+          "area": "A",
+          "expect": {
+            "pieces": 23,
+            "turns": 11,
+            "circuits": 1,
+            "lengthMm": 8207.764,
+            "heatingPieces": 12,
+            "heatingLengthMm": 7926.998,
+            "spacingMm": 23.7
+          }
+        },
+        {
+          "when": "before",
+          "action": "expectNoPattern",
+          "area": "B"
+        },
+        {
+          "when": "after",
+          "action": "checkArea",
+          "area": "B",
+          "expect": {
+            "pieces": 26,
+            "turns": 12,
+            "circuits": 1,
+            "lengthMm": 4687.678,
+            "heatingPieces": 13,
+            "heatingLengthMm": 4255.385,
+            "spacingMm": 27.7
+          }
+        },
+        {
+          "when": "after",
+          "action": "checkArea",
+          "area": "A",
+          "expect": {
+            "pieces": 23,
+            "turns": 11,
+            "circuits": 1,
+            "lengthMm": 8207.764,
+            "heatingPieces": 12,
+            "heatingLengthMm": 7926.998,
+            "spacingMm": 23.7
+          }
+        }
+      ]
+    }
+  ]
+}

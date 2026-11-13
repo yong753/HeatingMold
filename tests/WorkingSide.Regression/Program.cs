@@ -43,8 +43,17 @@ static class Program
             Console.WriteLine("CHECK-GROUP FAILED " + name + ": " + ex);
             for (Exception inner = ex.InnerException; inner != null; inner = inner.InnerException)
                 Console.WriteLine("  inner: " + inner);
+            try
+            {
+                string dir = Path.Combine(Environment.CurrentDirectory, "artifacts");
+                Directory.CreateDirectory(dir);
+                File.AppendAllText(Path.Combine(dir, "ws-failure.txt"),
+                    DateTime.UtcNow.ToString("O") + " " + name + Environment.NewLine + ex + Environment.NewLine);
+            }
+            catch { }
             throw;
         }
+        finally { Console.Out.Flush(); }
     }
     [STAThread]
     static void Main(string[] args)
@@ -187,11 +196,12 @@ static class Program
             typeof(OccViewport).GetEvent("WorkingBoundaryPicked")==null,"diagnostic UI and click interception are removed");
         Check(window.FindName("WorkingBoundaryCanvas")==null && window.FindName("WorkingAxisBox")==null,
             "boundary diagnostic canvas removed; axis selector removed because working direction is fixed to +Z");
-        SidebarTabChecks.Run(window);
-        AreaHighlightChecks.Run(window);
+        RunGroup("SidebarTabChecks", () => SidebarTabChecks.Run(window));
+        RunGroup("AreaHighlightChecks", () => AreaHighlightChecks.Run(window));
         RunGroup("SelectedExitChecks", () => SelectedExitChecks.Run(window, args[0]));
         RunGroup("VertexEditChecks", () => VertexEditChecks.Run(window, args[0]));
         RunGroup("SplitBoundaryChecks", () => SplitBoundaryChecks.Run(window, args[0]));
+        RunGroup("RemainingFailureFixtureChecks", () => RemainingFailureFixtureChecks.Run(args[0]));
         RunGroup("ElectricalRefreshChecks", () => ElectricalRefreshChecks.Run(window));
         RunGroup("PatternStateChecks", () => PatternStateChecks.Run(window));
         RunGroup("GeometryRollbackChecks", () => GeometryRollbackChecks.Run(window, args[0]));
@@ -846,7 +856,7 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
                 Bridge.ReleaseWorkingContext(exampleContext.Id);
             }
         }
-        ProjectLoadChecks.Run(window,args[0]);
+        RunGroup("ProjectLoadChecks", () => ProjectLoadChecks.Run(window, args[0]));
         // STEP 열기도 같은 UTF-8 경로 규약을 쓴다. 한글 경로 사본으로 확인한다.
         if (File.Exists(examplePath))
         {

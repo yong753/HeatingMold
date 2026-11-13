@@ -170,11 +170,9 @@ static class VertexEditChecks
         areaType.GetProperty("SelectedStartExit")!.SetValue(area.Value, startRes.Point!.Value);
         areaType.GetProperty("SelectedEndExit")!.SetValue(area.Value, endRes.Point!.Value);
 
-        var marginBox = (TextBox)window.FindName("MarginBox");
         var spacingBox = (TextBox)window.FindName("SpacingBox");
-        marginBox.Text = "5";
         spacingBox.Text = "20";
-        areaType.GetProperty("MarginText")!.SetValue(area.Value, "5");
+        areaType.GetProperty("SpacingText")!.SetValue(area.Value, "5");
         areaType.GetProperty("SpacingText")!.SetValue(area.Value, "20");
 
         var p0 = Pattern3(startRes.Point!.Value.Binding, endRes.Point!.Value.Binding);
@@ -190,10 +188,10 @@ static class VertexEditChecks
         area.StartAnchor = new Vec2(-10, -10);
         area.EndAnchor = new Vec2(-10, 10);
         area.RouteEdited = false;
-        areaType.GetProperty("AppliedInputs")!.SetValue(area.Value,
-            Invoke(window, "CaptureAppliedInputs", area.Value, 5.0, 20.0));
 
         Invoke(window, "ActivateArea", area.Value);
+        areaType.GetProperty("AppliedInputs")!.SetValue(area.Value,
+            Invoke(window, "CaptureAppliedInputs", area.Value, 20.0, 0.30));
 
         // 시작/종료 꼭지점은 편집 모드에서 고정된다 — 전용 선택 버튼으로만 변경한다.
         Commit(window, area, 0, new Vec2(-10, -5));

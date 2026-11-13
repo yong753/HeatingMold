@@ -396,6 +396,18 @@ public:
     /// <summary>Remove only the route length labels.</summary>
     static void ClearRouteLengthLabels();
 
+    /// <summary>
+    /// 화면 표시 전용 발열사 간격 마커 세트를 통째로 교체한다. anchors/targets는
+    /// 마커당 3개(x,y,z), texts/rgb는 마커당 1개/3개다. 기하·길이·전기 판정에는
+    /// 관여하지 않으며, 검증이나 표시에 실패하면 false를 반환한다.
+    /// </summary>
+    static bool ReplaceSpacingMarkers(long long id, long long revision,
+        array<double>^ anchors, array<double>^ targets, array<System::String^>^ texts,
+        array<double>^ rgb, double height);
+
+    /// <summary>화면 표시 전용 간격 마커를 모두 지운다.</summary>
+    static void ClearSpacingMarkers();
+
     // ---- 꼭지점 편집 오버레이 ----
     /// <summary>편집 핸들을 표시한다. 좌표는 표시 인덱스 순서의 flat xyz.</summary>
     static bool SetVertexHandles(long long id, long long revision, array<double>^ xyzFlat);

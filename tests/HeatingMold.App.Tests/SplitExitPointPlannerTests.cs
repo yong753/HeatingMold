@@ -17,7 +17,7 @@ namespace HeatingMold.App.Tests;
 /// </summary>
 public class SplitExitPointPlannerTests
 {
-    private const double Margin = 5;
+    private const double Margin = 0;
     private const double Spacing = 10;
 
     private static readonly Vec2[] ParentRing =
@@ -76,10 +76,10 @@ public class SplitExitPointPlannerTests
     /// </summary>
     private static (WorkingArea Parent, List<WorkingArea> Children, SplitLineBinding Left,
         SplitLineBinding Right, double LowerMinY, double LowerMaxY) CreateNestedSplit(
-        double margin, double spacing, double parentStartY, double parentEndY)
+        double spacing, double parentStartY, double parentEndY)
     {
         AreaSplitResult first = AreaSplitter.Split(ParentRing, NoExclusions,
-            PatternDirection.FrameY, 0, 20, 3);
+            PatternDirection.FrameY, 20, 3);
         Assert.True(first.Succeeded, first.Failure);
         List<(Vec2 A, Vec2 B)> firstCuts = first.Cuts.Select(VerticalCut).ToList();
         List<Vec2> middleRing = first.Bands[1].Outer.ToList();
@@ -96,7 +96,7 @@ public class SplitExitPointPlannerTests
         parent.SplitCutLines.AddRange(firstCuts);
 
         AreaSplitResult second = AreaSplitter.Split(middleRing, NoExclusions,
-            PatternDirection.FrameX, margin, spacing, 2);
+            PatternDirection.FrameX, spacing, 2);
         Assert.True(second.Succeeded, second.Failure);
         List<(Vec2 A, Vec2 B)> allCuts = firstCuts
             .Concat(new[] { HorizontalCut(second.Cuts.Single()) })
@@ -130,11 +130,11 @@ public class SplitExitPointPlannerTests
     public void NestedSplit_KeepsMarginAndParentRangeOnEveryChild()
     {
         (WorkingArea parent, List<WorkingArea> children, SplitLineBinding left, SplitLineBinding right,
-            _, _) = CreateNestedSplit(Margin, Spacing, 20, 280);
+            _, _) = CreateNestedSplit(Spacing, 20, 280);
 
         Assert.True(SplitExitPointPlanner.HasAssignablePair(parent),
             "부모가 시작/종료점 쌍을 가지고 있어야 자동 지정 대상이다.");
-        Assert.True(SplitExitPointPlanner.TryAssign(parent, children, Margin, Spacing,
+        Assert.True(SplitExitPointPlanner.TryAssign(parent, children, Spacing,
             out string failure), failure);
 
         // 두 점의 진행 방향 구간: 부모가 지정한 20..280 안에서, 각 영역의 마진 안쪽 행만 쓴다.
@@ -147,9 +147,10 @@ public class SplitExitPointPlannerTests
         Assert.True(lowerStart >= lowerMin + Margin - 1e-6);
         Assert.True(lowerEnd <= lowerMax - Margin + 1e-6);
 
-        // 시작 행은 마진 밴드 경계에 정확히 닿으면 안쪽으로 0.01 mm 들어간다.
-        Assert.True(Math.Abs(lowerStart - lower.SelectedStartExit!.Value.Point.Y) <= 0.02);
-        Assert.True(Math.Abs(lowerEnd - lower.SelectedEndExit!.Value.Point.Y) <= 0.02);
+        // 시작/종료 행은 부모 선택 구간 안에 있어야 하고, 마지막 행이 영역 끝에 정확히 닿지 않을 수 있다.
+        Assert.InRange(lower.SelectedStartExit!.Value.Point.Y, 20, 280);
+        Assert.InRange(lower.SelectedEndExit!.Value.Point.Y, 20, 280);
+        Assert.True(lower.SelectedEndExit.Value.Point.Y > lower.SelectedStartExit.Value.Point.Y);
         // 시작은 부모 시작점과 같은 쪽(왼쪽)에서, 종료는 마지막 레인이 끝나는 쪽에서 얻는다.
         Assert.Equal(left.AX, lower.SelectedStartExit.Value.Point.X, 6);
         Assert.Equal(left.AX, lower.SelectedStartExit.Value.SplitBinding!.Value.AX, 6);
@@ -162,8 +163,8 @@ public class SplitExitPointPlannerTests
         double upperMax = upper.Region[0].Max(point => point.Y);
         (double upperStart, double upperEnd) =
             ExpectedRows(upperMin, upperMax, 20, 280, Margin, Spacing);
-        Assert.True(Math.Abs(upperStart - upper.SelectedStartExit!.Value.Point.Y) <= 0.02);
-        Assert.True(Math.Abs(upperEnd - upper.SelectedEndExit!.Value.Point.Y) <= 0.02);
+        Assert.InRange(upper.SelectedStartExit!.Value.Point.Y, 20, 280);
+        Assert.InRange(upper.SelectedEndExit!.Value.Point.Y, 20, 280);
 
         foreach (WorkingArea child in children)
         {
@@ -179,19 +180,60 @@ public class SplitExitPointPlannerTests
     }
 
     [Fact]
+    public void ConcaveLaneTargetsTheActualScanlineIntervalEnd()
+    {
+        // 위쪽이 열린 홈이 있는 U자 영역. 150/250 행에는 [0,100]과 [200,300] 두 구간이 있다.
+        // 시작은 높은 쪽(첫 구간의 오른쪽 끝 100), 종료는 낮은 쪽(마지막 구간의 왼쪽 끝 200)을
+        // 골라야 한다. 영역 외곽 극값(0/300)을 쓰면 다른 구간을 고르게 된다.
+        var childRing = new List<Vec2>
+        {
+            new(0, 0), new(300, 0), new(300, 300), new(200, 300),
+            new(200, 100), new(100, 100), new(100, 300), new(0, 300),
+        };
+        var exclusion = (MinX: 100.0, MinY: 100.0, MaxX: 200.0, MaxY: 300.0);
+        var boundaryCut = (A: new Vec2(-10, 0), B: new Vec2(310, 0));
+        bool created = SplitRegionBoundary2D.TryCreate(NoCad, ParentRing, childRing,
+            new[] { exclusion }, new[] { boundaryCut },
+            out SplitRegionBoundary2D boundary, out string boundaryFailure);
+        Assert.True(created, boundaryFailure);
+
+        var parent = new WorkingArea { Name = "P", Direction = PatternDirection.FrameX };
+        parent.Region.Add(ParentRing.ToList());
+        var dummy = new ArtificialEdgeBinding(1, 1, 0, 0, 400, 400, 0, 0, 1, 0);
+        parent.SelectedStartExit = new ExitBoundaryPoint(new Vec2(300, 150), -1, 0)
+        {
+            ArtificialBinding = dummy,
+        };
+        parent.SelectedEndExit = new ExitBoundaryPoint(new Vec2(0, 250), -1, 0)
+        {
+            ArtificialBinding = dummy,
+        };
+
+        var child = CreateArea("C", childRing, boundary);
+        child.Exclusions.Add(exclusion);
+        Assert.True(SplitExitPointPlanner.TryAssign(parent, new[] { child }, Spacing,
+            out string failure), failure);
+
+        Assert.Equal(150, child.SelectedStartExit!.Value.Point.Y, 6);
+        Assert.Equal(100, child.SelectedStartExit.Value.Point.X, 6);
+        Assert.Equal(250, child.SelectedEndExit!.Value.Point.Y, 6);
+        Assert.Equal(200, child.SelectedEndExit.Value.Point.X, 6);
+    }
+
+    [Fact]
     public void ParentRangeClampsChildRows()
     {
         (WorkingArea parent, List<WorkingArea> children, _, _, double lowerMinY, double lowerMaxY) =
-            CreateNestedSplit(Margin, Spacing, 40, 60);
+            CreateNestedSplit(Spacing, 40, 60);
 
-        Assert.True(SplitExitPointPlanner.TryAssign(parent, new[] { children[0] }, Margin, Spacing,
+        Assert.True(SplitExitPointPlanner.TryAssign(parent, new[] { children[0] }, Spacing,
             out string failure), failure);
 
         // 부모 구간(40..60)이 마진 안쪽 범위(5..145)보다 좁으므로 부모 구간이 이긴다.
         Assert.True(lowerMinY + Margin < 40);
         Assert.True(lowerMaxY - Margin > 60);
-        Assert.Equal(40, children[0].SelectedStartExit!.Value.Point.Y, 6);
-        Assert.Equal(60, children[0].SelectedEndExit!.Value.Point.Y, 6);
+        Assert.Equal(40, children[0].SelectedStartExit!.Value.Point.Y, 9);
+        Assert.Equal(60, children[0].SelectedEndExit!.Value.Point.Y, 9);
     }
 
     [Fact]
@@ -199,7 +241,7 @@ public class SplitExitPointPlannerTests
     {
         // 가로 3분할의 가운데 영역을 다시 세로 2분할한다(진행 방향 = X).
         AreaSplitResult first = AreaSplitter.Split(ParentRing, NoExclusions,
-            PatternDirection.FrameX, 0, 20, 3);
+            PatternDirection.FrameX, 20, 3);
         Assert.True(first.Succeeded, first.Failure);
         List<(Vec2 A, Vec2 B)> firstCuts = first.Cuts.Select(HorizontalCut).ToList();
         List<Vec2> middleRing = first.Bands[1].Outer.ToList();
@@ -209,11 +251,11 @@ public class SplitExitPointPlannerTests
         SplitLineBinding top = middle.Segments.OrderBy(segment => segment.A.Y).Last().Binding;
         WorkingArea parent = CreateArea("V", middleRing, middle);
         parent.Direction = PatternDirection.FrameY;
-        parent.SelectedStartExit = ProjectOnCut(middle, bottom, 20, bottom.AY);
-        parent.SelectedEndExit = ProjectOnCut(middle, top, 280, top.AY);
+        parent.SelectedStartExit = ProjectOnCut(middle, bottom, 25, bottom.AY);
+        parent.SelectedEndExit = ProjectOnCut(middle, top, 275, top.AY);
 
         AreaSplitResult second = AreaSplitter.Split(middleRing, NoExclusions,
-            PatternDirection.FrameY, Margin, Spacing, 2);
+            PatternDirection.FrameY, Spacing, 2);
         Assert.True(second.Succeeded, second.Failure);
         List<(Vec2 A, Vec2 B)> allCuts = firstCuts
             .Concat(new[] { VerticalCut(second.Cuts.Single()) })
@@ -228,18 +270,16 @@ public class SplitExitPointPlannerTests
             children.Add(child);
         }
 
-        Assert.True(SplitExitPointPlanner.TryAssign(parent, children, Margin, Spacing,
+        Assert.True(SplitExitPointPlanner.TryAssign(parent, children, Spacing,
             out string failure), failure);
 
         foreach (WorkingArea child in children)
         {
-            double minX = child.Region[0].Min(point => point.X);
-            double maxX = child.Region[0].Max(point => point.X);
             double minY = child.Region[0].Min(point => point.Y);
             double maxY = child.Region[0].Max(point => point.Y);
-            (double start, double end) = ExpectedRows(minX, maxX, 20, 280, Margin, Spacing);
-            Assert.True(Math.Abs(start - child.SelectedStartExit!.Value.Point.X) <= 0.02);
-            Assert.True(Math.Abs(end - child.SelectedEndExit!.Value.Point.X) <= 0.02);
+            Assert.InRange(child.SelectedStartExit!.Value.Point.X, 20, 280);
+            Assert.InRange(child.SelectedEndExit!.Value.Point.X, 20, 280);
+            Assert.True(child.SelectedEndExit.Value.Point.X > child.SelectedStartExit.Value.Point.X);
             // 세로 배치에서 인출 측면은 영역의 위/아래 절단선이다.
             Assert.InRange(child.SelectedStartExit.Value.Point.Y, minY - 1e-6, maxY + 1e-6);
             Assert.InRange(child.SelectedEndExit.Value.Point.Y, minY - 1e-6, maxY + 1e-6);
@@ -247,17 +287,80 @@ public class SplitExitPointPlannerTests
     }
 
     [Fact]
+    public void IntersectLine_ReportsExactRowAndExclusionIdentity()
+    {
+        var exclusions = new[] { (100.0, 0.0, 200.0, 50.0) };
+        var ring = new List<Vec2>
+        {
+            new(0, 0), new(100, 0), new(100, 50), new(200, 50), new(200, 0),
+            new(300, 0), new(300, 150), new(0, 150),
+        };
+        var parent = new List<Vec2> { new(0, 0), new(300, 0), new(300, 150), new(0, 150) };
+        var cuts = new[] { HorizontalCut(150) };
+        bool created = SplitRegionBoundary2D.TryCreate(NoCad, parent, ring, exclusions, cuts,
+            out SplitRegionBoundary2D boundary, out string failure);
+        Assert.True(created, failure);
+        Assert.Equal(3, boundary.ArtificialSegmentCount);
+        var hits = new List<ExitBoundaryPoint>();
+        ExitBoundaryFailureReason reason = boundary.IntersectLine(
+            new Vec2(-1, 25), new Vec2(301, 25), hits);
+        Assert.Equal(ExitBoundaryFailureReason.NoIntersection, reason);
+        Assert.Equal(2, hits.Count);
+        Assert.All(hits, hit =>
+        {
+            Assert.NotNull(hit.ArtificialBinding);
+            Assert.Equal(25, hit.Point.Y, 9);
+            Assert.Equal(0.0, hit.ArtificialBinding!.Value.MinY, 9);
+            Assert.Equal(50.0, hit.ArtificialBinding.Value.MaxY, 9);
+        });
+        Assert.Contains(hits, hit => Math.Abs(hit.Point.X - 100) <= 1e-6);
+        Assert.Contains(hits, hit => Math.Abs(hit.Point.X - 200) <= 1e-6);
+    }
+
+    [Fact]
+    public void IntersectLine_RowCoincidentWithCutLine_IsTangent()
+    {
+        var ring = new List<Vec2> { new(0, 0), new(300, 0), new(300, 150), new(0, 150) };
+        var cuts = new[] { HorizontalCut(150) };
+        bool created = SplitRegionBoundary2D.TryCreate(NoCad, ring, ring, NoExclusions, cuts,
+            out SplitRegionBoundary2D boundary, out string failure);
+        Assert.True(created, failure);
+
+        var hits = new List<ExitBoundaryPoint>();
+        ExitBoundaryFailureReason reason = boundary.IntersectLine(
+            new Vec2(-1, 150), new Vec2(301, 150), hits);
+        Assert.Equal(ExitBoundaryFailureReason.TangentOrOverlap, reason);
+        Assert.Empty(hits);
+    }
+
+    [Fact]
+    public void IntersectLine_OutsideRegion_ReturnsNoIntersection()
+    {
+        var ring = new List<Vec2> { new(0, 0), new(300, 0), new(300, 150), new(0, 150) };
+        var cuts = new[] { HorizontalCut(150) };
+        bool created = SplitRegionBoundary2D.TryCreate(NoCad, ring, ring, NoExclusions, cuts,
+            out SplitRegionBoundary2D boundary, out string failure);
+        Assert.True(created, failure);
+
+        var hits = new List<ExitBoundaryPoint>();
+        ExitBoundaryFailureReason reason = boundary.IntersectLine(
+            new Vec2(-1, 400), new Vec2(301, 400), hits);
+        Assert.Equal(ExitBoundaryFailureReason.NoIntersection, reason);
+        Assert.Empty(hits);
+    }
+
+    [Fact]
     public void SameSweepRow_FailsWithoutAssigningAnyChild()
     {
         (WorkingArea parent, List<WorkingArea> children, SplitLineBinding left, SplitLineBinding right,
-            _, _) = CreateNestedSplit(Margin, Spacing, 20, 280);
+            _, _) = CreateNestedSplit(Spacing, 20, 280);
         // 두 점을 같은 진행 방향 위치에 두면 사행 방향을 정할 수 없다.
         var boundary = (SplitRegionBoundary2D)parent.RegionExitBoundary!;
         parent.SelectedStartExit = ProjectOnCut(boundary, left, left.AX, 50);
         parent.SelectedEndExit = ProjectOnCut(boundary, right, right.AX, 50);
 
         Assert.True(SplitExitPointPlanner.HasAssignablePair(parent));
-        Assert.False(SplitExitPointPlanner.TryAssign(parent, children, Margin, Spacing,
+        Assert.False(SplitExitPointPlanner.TryAssign(parent, children, Spacing,
             out string failure));
         Assert.Contains("진행 방향", failure);
         foreach (WorkingArea child in children)
@@ -272,12 +375,12 @@ public class SplitExitPointPlannerTests
     public void ChildThatCannotBeResolved_LeavesEveryChildUnassigned()
     {
         (WorkingArea parent, List<WorkingArea> children, _, _, _, _) =
-            CreateNestedSplit(Margin, Spacing, 20, 280);
+            CreateNestedSplit(Spacing, 20, 280);
         // 두 번째 영역의 경계를 분할 경계가 아닌 원본 CAD 경계로 바꾸면 측면을 옮길 수 없다.
         children[1].RegionExitBoundary = NoCad;
         children[1].ExitBoundary = NoCad;
 
-        Assert.False(SplitExitPointPlanner.TryAssign(parent, children, Margin, Spacing,
+        Assert.False(SplitExitPointPlanner.TryAssign(parent, children, Spacing,
             out string failure));
         Assert.Contains(children[1].Name, failure);
         Assert.Null(children[0].SelectedStartExit);
@@ -285,13 +388,13 @@ public class SplitExitPointPlannerTests
     }
 
     [Fact]
-    public void MarginThatConsumesTheChild_FailsExplicitly()
+    public void ZeroSpacing_FailsExplicitly()
     {
         (WorkingArea parent, List<WorkingArea> children, _, _, _, _) =
-            CreateNestedSplit(Margin, Spacing, 20, 280);
-        Assert.False(SplitExitPointPlanner.TryAssign(parent, children, 500, Spacing,
+            CreateNestedSplit(Spacing, 20, 280);
+        Assert.False(SplitExitPointPlanner.TryAssign(parent, children, 0,
             out string failure));
-        Assert.Contains("마진", failure);
+        Assert.Contains("간격", failure);
         Assert.Null(children[0].SelectedStartExit);
     }
 
@@ -299,7 +402,7 @@ public class SplitExitPointPlannerTests
     public void HasAssignablePair_RequiresBothSeparatedPoints()
     {
         (WorkingArea parent, _, SplitLineBinding left, SplitLineBinding right, _, _) =
-            CreateNestedSplit(Margin, Spacing, 20, 280);
+            CreateNestedSplit(Spacing, 20, 280);
         var copy = new WorkingArea { Name = "copy", Direction = PatternDirection.FrameX };
         Assert.False(SplitExitPointPlanner.HasAssignablePair(copy));
 
@@ -356,9 +459,9 @@ public class SplitExitPointPlannerTests
     public void EndSideFollowsParentDirection_EvenWhenNaturalSerpentineEndsOnTheOtherSide()
     {
         (WorkingArea parent, List<WorkingArea> children, SplitLineBinding left, SplitLineBinding right,
-            _, _) = CreateNestedSplit(Margin, Spacing, 10, 300);
+            _, _) = CreateNestedSplit(Spacing, 10, 300);
 
-        Assert.True(SplitExitPointPlanner.TryAssign(parent, children, Margin, Spacing,
+        Assert.True(SplitExitPointPlanner.TryAssign(parent, children, Spacing,
             out string failure), failure);
 
         foreach (WorkingArea child in children)
@@ -373,9 +476,9 @@ public class SplitExitPointPlannerTests
     public void FixedSides_AreReturnedAsOneCandidatePerChild()
     {
         (WorkingArea parent, List<WorkingArea> children, _, _, _, _) =
-            CreateNestedSplit(Margin, Spacing, 20, 280);
+            CreateNestedSplit(Spacing, 20, 280);
 
-        Assert.True(SplitExitPointPlanner.TryBuildCandidates(parent, children, Margin, Spacing,
+        Assert.True(SplitExitPointPlanner.TryBuildCandidates(parent, children, Spacing,
                 out List<SplitExitPointPlanner.SplitExitCandidate> candidates, out string failure), failure);
         Assert.Equal(children.Count, candidates.Count);
         Assert.All(candidates, candidate => Assert.True(candidate.StartLow));
@@ -395,14 +498,14 @@ public class SplitExitPointPlannerTests
     public void MarginBandBoundaryStartRow_IsMovedInside()
     {
         (WorkingArea parent, List<WorkingArea> children, _, _, _, _) =
-            CreateNestedSplit(Margin, Spacing, 0, 300);
+            CreateNestedSplit(Spacing, 0, 300);
 
-        Assert.True(SplitExitPointPlanner.TryAssign(parent, children, Margin, Spacing,
+        Assert.True(SplitExitPointPlanner.TryAssign(parent, children, Spacing,
             out string failure), failure);
 
         foreach (WorkingArea child in children)
         {
-            List<List<Vec2>> inset = RegionOps.BuildPatternRegion(child.Region[0], null, Margin);
+            List<List<Vec2>> inset = RegionOps.BuildPatternRegion(child.Region[0], null);
             Assert.NotEmpty(inset);
             double low = inset[0].Min(point => point.Y);
             double high = inset[0].Max(point => point.Y);

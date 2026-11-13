@@ -6,7 +6,7 @@ namespace HeatingMold.App
 {
     /// <summary>
     /// 기본 예제 모델별 로드 프리셋. 파일명이 아니라 내용 해시로 판별하므로 같은 파일을
-    /// '예제 열기'와 'STEP 열기' 어느 쪽으로 열어도 동일한 작업 좌표를 사용한다.
+    /// 예제로 열든 프로젝트 복원으로 열든 동일한 작업 좌표를 사용한다.
     /// </summary>
     internal static class ExampleModelPresets
     {

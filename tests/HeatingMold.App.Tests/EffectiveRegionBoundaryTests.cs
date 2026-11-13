@@ -139,7 +139,6 @@ public class EffectiveRegionBoundaryTests
         var end = ArtificialPoint(boundary, side: 2, t: 0.5);
         var parameters = new PatternParams
         {
-            Margin = 5,
             Spacing = 10,
             Direction = PatternDirection.FrameX,
         };
@@ -164,7 +163,6 @@ public class EffectiveRegionBoundaryTests
         var end = ArtificialPoint(boundary, side: 2, t: 0.5);
         var parameters = new PatternParams
         {
-            Margin = 5,
             Spacing = 10,
             Direction = PatternDirection.FrameX,
         };

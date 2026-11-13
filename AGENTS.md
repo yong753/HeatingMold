@@ -589,6 +589,82 @@
   - `*>` 리다이렉션은 UTF-16LE로 파일을 쓴다(UTF8 로 읽으면 깨진다).
   - 시작 도구는 앱을 띄운 뒤 15초 뒤 정상 종료한다. 시각테스트 대기 로직은 이 종료를 실패로 보면 안 된다.
 - **매뉴얼 화면 가공(검증됨):** 매뉴얼 그림은 실제 배포본 실행 화면이며, ① 모델 절대경로(x145~905, y42~118) ② Windows 정품 인증 안내(x1482~1912, y928~1002) 두 영역만 흰색으로 가린다. 18장 전부에서 해당 영역이 순백임을 픽셀 검사로 확인했다. 수치·UI·경로 내용을 바꾸지 않는다. 화면 캡처용으로 `--visual-hide-bar` 옵션(`VisualTestOptions.HideBar`)을 추가해 노란 시각테스트 진행 바만 숨긴다(실행·판정 로직 불변).
+- **헤더 버튼 변경(2026-11-13):** 상단 `STEP 열기…`와 `저장` 버튼을 삭제하고 `다른 이름으로 저장…`만 남겼다. `tools\deploy\assets\Manual\index.template.html`의 헤더 목록(83행)과 모델 열기 항목(93행)은 갱신했다. 기존 18장 스크린샷은 상단 헤더에 옛 버튼이 찍혀 있으므로, 다음 매뉴얼 작성 때 `Capture-Manual.ps1`로 전량 재캡처하고 `Build-Manual.ps1`로 HTML·PDF를 다시 만들어야 한다. 재캡처 전 기존 패키지의 `Manual\`을 재사용하면 문서와 화면이 불일치한다.
 - **미검증:** 깨끗한 Windows 10 x64 PC(별도 장비/VM)에서의 실행, 관리자 권한 없는 표준 사용자 계정, 100%/150% DPI 화면, 한글·공백 계정 경로, 새 프로세스에서의 프로젝트 복원, 외부 CAD에서 DXF/STEP 열기, 백신/보안 정책 간섭.
 - **남은 배포 게이트:** .NET 8 지원은 2026-11-10 종료됐다. 외부 배포 전에 유지 승인 또는 지원 버전 전환 후 재검증이 필요하다. 제3자 라이선스(FFmpeg·FreeImage·FreeType·OpenVR·oneTBB) 원문과 CAD 모델 외부 전달 권한도 배포 담당자 확인 항목으로 `THIRD-PARTY-NOTICES.txt`·`ReleaseNotes.txt`에 남겨 두었다.
 
+
+
+## RemainingWork 1·2단계 진행 (2026-11-13)
+
+- 1단계 완료: 두 실패를 별도 시나리오 `repro-b-four-split-anchor.json`(18/18), `repro-b-exclusion-surface.json`(20/20)로 재현했고, `tests\WorkingSide.Regression\Fixtures\remaining-failures.json`와 `RemainingFailureFixtureChecks` 312건으로 입력·보존 조건을 고정했다. 실행 DLL은 OccBridge `D5E5…E9AE`, App `399F…2023`, Core `2D9C…083E`.
+- 2단계 완료: `LanePitchSpec`을 분할 탐색의 단일 기준으로 사용한다. `TryPrepareBalancedSplit`/`TryEvaluateSplit2D`는 `LanePitchSpec`을 받고, 영역 분할·레인 격자·자동 인출점 행은 `CenterPitchMm`, 실제 생성만 `OuterGapMm`/`WireDiameterMm`를 쓴다. `spacing + wireDiameter` 이중 덧셈은 제거됐다.
+- 2단계 검증: App 테스트 184 통과. 외곽 5 mm에서 Case1(Ø0.30) 레인 중심거리 5.30 mm, Case2(Ø0.15) 5.15 mm, 동일 입력 재평가 좌표 동일. 실제 모델 2분할은 B-1 4,276.956 mm / B-2 4,465.184 mm, 적용 외곽 19.35 mm·직경 0.15 mm로 저장·재로드 후에도 동일했다. WorkingSide 전 그룹 통과(split boundary 28, fixture 312, working-side 187 등).
+- 3단계 결정(사용자 확정): 자동 인출점의 목표 레인 끝은 자식 외곽 극값이 아니라 그 행의 실제 스캔라인 발열 구간 끝이다. 시작 행은 생성기가 허용하는 첫 구간, 종료 행은 마지막 구간의 해당 측면 끝을 쓴다.
+- 3단계는 같은 날 구현 완료됐다(아래 `## RemainingWork 3단계 정확 행 교차`). 정확 교차 중복 판정은 provenance+선택 parameter, 접선·겹침은 다른 교차가 있어도 즉시 실패, 후보는 측면 유지→목표 구간 끝 최근접→동률 provenance 모호성 실패 순서로 고쳤다.
+- 단계별 검증 정책(사용자 확정 2026-11-13, `docs\RemainingWork.Steps.md` §0.5·§0.6에 기록): 1~6단계의 "통과"는 그 단계의 필수 테스트·통과 기준과 변경 영향 범위 회귀의 충족을 뜻하며, 시각테스트 5개 전체 통과를 뜻하지 않는다. 5개 각 2회 통과는 7·8단계 기준이다. 계약 변경으로 낡은 기대값은 7단계에서 재측정하고, 원인 미확인 실패는 다음 단계로 넘기지 않는다. "로직이 바뀌었다"는 설명만으로 실패를 면제하지 않는다.
+- 미완료/갱신 예정: `e2e-split-safety`의 B-1 기대 4,280.265 mm는 피치 수정 후 실제 4,276.956 mm가 되어 현재 실패한다. 7단계에서 실측값으로 재확정하며 제품 회귀로 되돌리지 않는다.
+
+
+## RemainingWork 3단계 정확 행 교차 (2026-11-13)
+
+- `ExitBoundaryIdentity`가 인출 경계 후보의 동일성을 판정한다. 2D 좌표와 표시용 숫자 parameter만 비교하지 않고, CAD edge identity·trim·선택 parameter, 제외 사각형 identity, 절단선 identity를 각각 보존한다. CAD와 절단선이 같은 좌표에 있어도 서로 다른 후보로 유지된다.
+- `SplitBoundarySnapshot.AddLineCandidate`와 `SplitRegionBoundary2D.AddLineCandidate`가 이 판정을 사용한다. `SplitRegionBoundary2D.IntersectLine`은 접선·겹침이 다른 교차점과 함께 있어도 `TangentOrOverlap`으로 즉시 실패한다.
+- 자동 인출점의 목표는 자식 외곽 극값이 아니라 그 행의 실제 스캔라인 발열 구간 끝이다. 시작은 생성기가 허용하는 첫 구간, 종료는 마지막 구간의 요청 측면 끝을 쓴다. 후보 선택은 요구 측면 필터 → 목표 구간 끝 최근접 → 1e-6 동률의 서로 다른 provenance 모호성 실패 순서다.
+- App 테스트 190 통과: CAD edge/parameter identity, 다른 provenance, 겹침+수직 교차, 오목 행의 실제 구간 끝 선택을 포함한다. WorkingSide는 split boundary 28, fixture 312, working-side 187을 포함해 전 그룹 통과했다. 실제 모델 2분할 저장·재로드 시나리오는 22/22 Completed였다.
+- 4단계 분석 대상: B 세로 4분할 재현은 이제 원래 B-4 `AnchorNotAtLaneEnd` 대신 B-1 `RequiredExtraLaneOutsideRegion`으로 거부된다. 실제 구간 끝 목표로 바뀌면서 실패 지점이 이동한 것이며, 제외영역 재현은 20/20으로 그대로 통과한다. 시나리오 기대 문구를 임의로 바꾸지 않는다.
+
+## RemainingWork 4단계 완료 (2026-11-13)
+
+- **실패 1은 정상 거부로 판정했다.** B 세로 4분할의 B-1은 마지막 레인이 종료점 반대편에서 끝나 같은 피치 레인을 한 줄 더 만들어야 하지만 그 위치에 발열영역 구간이 없다. 마지막 레인 뒤집기·피치 변경·부분 분할을 하지 않는 현재 생성 규칙에서는 성립하지 않는다. 자동 배정 좌표는 B-1 `(329.934254,-173.664867)→(379.634254,-176.421829)`, B-2 `(391.78,-177.071972)→(466.33,-180.873877)`, B-3 `(473.43,-181.221536)→(547.98,-182.026687)`, B-4 `(551.79,-182.026687)→(601.49,-182.026687)`다. `repro-b-four-split-anchor.json`의 기대 문구를 `마지막 레인이 종료점 반대편`으로 갱신해 18/18 Completed였고, fixture에는 현재 실패 지점과 함께 `historicalFailurePoint: B-4`, `historicalFailureClass: AnchorNotAtLaneEnd`를 남겼다.
+- **실패 2는 유효 경로 오판을 수정했다.** 실패 조각 B 3/26 HeatingRun의 2D `(304.37,-132)-(630,-132)`, 실패 uv `(630,-132)`는 `MapWorkingPointOntoFaces` direct와 `QueryWorkingSurface` global이 모두 Miss였지만 인접 `(629.95,-132)`는 Face 24에 Hit였다. 내부 표면 틈이 아니라 선택 영역 경계 위 정확한 점을 네이티브 면 교차가 시작점으로 처리하지 못한 것이다. `MainWindow.RouteMapping.cs`의 `BuildSurfaceMapDelegate`는 direct/global이 모두 Miss일 때만 `context.Boundary.Project(uv, ExitBoundaryConstraint.Tolerance)`로 경계 provenance를 얻고, 투영점이 요청 uv와 tolerance 이내로 같으면 `TryEvaluateExitSample`로 원본 edge parameter의 3D 점을 반환한다. 내부 표면 틈을 최근접 점으로 대체하지 않는다.
+- 수정 후 B 홈 재생성은 **26조각/12턴/1회로/총 4,687.678mm, 발열 13/4,255.385mm, 적용 외곽 27.7mm·직경 0.30mm**로 성공했고 A의 23/11/8,207.764mm는 보존됐다. `repro-b-exclusion-surface.json`은 성공 회귀 시나리오로 갱신해 최신 DLL로 20/20 Completed였다. fixture failure 2는 `resolved: true`와 기대값·원인을 기록했고 `RemainingFailureFixtureChecks`는 resolved 항목에서 마지막 일치 단계의 expect를 비교한다.
+- **검증:** App 테스트 190 통과, WorkingSide EXITCODE=0 — 30 sidebar, 30 area highlight, 19 direct exit-point, 32 vertex edit, 28 split boundary, 340 remaining failure fixture, 3 electrical refresh, 43 pattern state, 63 geometry rollback, 20 project load, 51 project load exclusion, 187 working-side. 재현 1·2 실행 DLL SHA-256: App `BD49288672C613B7F78C8F16B28C45522B70DC3AE54EDF4D55CB0C72F3875022`, Core `2D9CA87B3302C36EFB3A7D05C5B1C310A5491231085D3C013F938F72ABD0083E`, OccBridge `D5E5ECE7B37039437DD2BEF5C48F69BFC6A7300DD8F8073B8B801773991BE9AE`.
+- **미검증:** 실제 마우스로 이 두 실패 경로를 클릭하는 것, 새 프로세스에서의 복원, 화면 육안 판정. 다음 단계는 5단계(간격 분석 누락·부분 성공 제거)이며 아직 시작하지 않았다.
+
+## RemainingWork 5단계 완료·6-1 승인 (2026-11-13)
+
+- **5단계 완료(자동검증).** 간격 분석을 설정 간격·직경 그룹 단위에서 같은 작업평면 전체로 넓혔다. 분석 입력은 영역 ID·조각 번호·확정 간격·직경·생성 방향을 보존하고, 결과는 방향 그룹별 쌍(min/max)을 제공한다. 직경이 다른 쌍은 `중심선 거리 − (d1 + d2) / 2`로 계산한다.
+- **평행 판정과 그룹 가입.** 평행은 0.1°(180° 모듈로)이며 그룹 가입은 구성원 전체와의 평행을 요구한다. 대표 각도 하나만 비교하면 0°, +0.09°, −0.09°가 한 그룹에 섞여 서로 0.18° 차이나는 레인까지 비교되는 전이 결함이 생긴다(독립 리뷰 지적, 수정·경계 테스트 추가).
+- 방향이 다른 배치만 있으면 `DirectionSeparated`로 보고하고 수치 정상·비정상을 만들지 않는다. 방향 그룹이 둘 이상이면 요약에 "서로 비교하지 않았습니다"를 덧붙인다.
+- **누락의 경고 승격.** 표시 중 영역의 패턴·조각 ID/길이·확정 입력·native chain·좌표 누락은 조용히 건너뛰지 않고 사유를 모아 경고로 실패시킨다. 일부 수집 실패 시 부분 결과를 게시하지 않는다. 수집 로직은 `SpacingReviewCollector`(App)로 분리해 단위 테스트한다. 레거시 4인자 분석 API는 의미를 그대로 유지한다.
+- 분석 지문은 마커 갱신 성공 이후에만 게시한다(실패 시 빈 문자열 유지). 이 순서는 자동 테스트 없이 코드 검토로만 확인했다.
+- **검증(2026-11-13).** Core 245, App 200 통과. WorkingSide EXIT=0, 총 846 체크, 그룹 실패 0 (sidebar 30, area highlight 30, direct exit 19, vertex edit 32, split boundary 28, remaining fixture 340, electrical 3, pattern state 43, geometry rollback 63, project load 20, project load exclusion 51, working-side 187). 로드 DLL SHA-256: OccBridge `D5E5ECE7…E9AE`, App `F4840977…5B9F`, Core `C400AB9D…CC9E`.
+- **픽스처 보강 기록:** `GeometryRollbackChecks`의 합성 영역이 `PatternDisplayed=true`인데 패턴·적용 입력이 없어 새 수집기가 정상 경고를 냈다. 실제 제품은 생성·복원 모두 두 정보를 채우므로 픽스처를 보강했고 제품 규칙·기대 문구는 그대로다.
+- **6-1 사용자 확정(2026-11-13): 레인 쌍마다 최소 간격 한 곳만 표시하는 현재 동작을 유지한다.** 최대·변동 구간 표시는 추가하지 않는다. 검토 탭에 별도 간격 점검 구역을 만들지 않는다(기존 확정).
+- **6-2 미착수.** 지문에 모델·작업 컨텍스트·프레임·전체 중간 좌표를 포함하고 실제 비교, UI 스레드/native 분리, 백그라운드 분석, 늦은 결과 미게시, 삭제·초기화·복원·종료 정리, 표시 실패 경고 유지, 임의 표본 확대 금지가 남아 있다.
+- **미검증:** 실제 마우스·화면 육안, 새 프로세스 복원, 외부 CAD 출력, 6-2 전체. `e2e-split-safety` B-1 기대값(4,280.265 mm)은 7단계에서 실측 재확정 대상이다.
+
+## RemainingWork 6단계 완료 (2026-11-13)
+
+- **6-2 완료(자동검증).** 분석 지문(`SpacingAnalysisFingerprint`, 정책 `spacing-v3`)은 정책 버전·모델 리비전·작업 컨텍스트 ID/리비전·작업평면 프레임·영역/조각 identity·확정 간격·직경·방향·색·중간점 포함 전체 2D 좌표를 담는다. 지문은 캐시 재사용과 게시 시점에 실제로 비교한다.
+- **스레드 분리.** native chain 조회와 화면 좌표 변환·마커 교체는 UI 스레드, 순수 2D 간격 분석과 마커 후보 산출은 불변 스냅샷을 받은 백그라운드 작업에서 수행한다. 게시 직전 세대 번호와 지문을 다시 대조해 늦게 끝난 이전 결과를 버리고, 같은 지문의 직전 결과는 재분석 없이 재사용한다(`SpacingReviewCoordinator`).
+- **정리 경로.** `ClearAllAreas`(영역 삭제·전체 초기화·모델 교체·프로젝트 복원 공통)와 `OnClosing`에서 대기 분석을 취소하고 마커를 지우며 지문·요약을 비운다. 표시 실패는 경고만 남기고 확정 기하를 롤백하지 않는다. 표본 간격 1 mm는 그대로다. 수집 시간과 분석 시간은 분리 계측한다.
+- **취소 지원:** `RouteSpacingAnalyzer.Analyze`가 선택적 `CancellationToken`을 받고 레인마다 취소를 확인한다. 교체되는 취소 토큰 소스는 취소 후 Dispose한다.
+- **독립 리뷰 3건:** 중간(분석 내부 취소 미확인), 낮음(토큰 소스 미정리)은 수정·재검증했다. 낮음(비동기 취소·늦은 완료·종료 후 콜백 통합 테스트)은 **미해결** — App 테스트가 `MainWindow`를 생성하지 않는 제약 때문에 코디네이터 동기 검증과 Core 취소 경계 테스트로만 고정했다.
+- **검증:** Core 246, App 206 통과. WorkingSide EXIT=0, 846 체크, 그룹 실패 0(5단계와 동일 구성). 로드 DLL SHA-256: OccBridge `D5E5ECE7…E9AE`, App(회귀) `5CC2E2D7…D7AFE`, Core(회귀) `877B7B93…B713E`.
+- **미검증:** 실제 마우스·화면 육안(마커 위치·가독성, 백그라운드 전환 깜빡임), 대량 입력 체감 지연·시간 실측, 새 프로세스 복원, 외부 CAD 출력, 시각테스트 5개 전체(§0.5). 다음은 7단계(시나리오 5개 실측 재확정·각 2회)이다.
+
+## RemainingWork 7단계 완료 (2026-11-13)
+
+- **5개 시나리오 × 2회 모두 Completed.** 새 실행 폴더 A/B에서 `e2e-full` 36/36, `e2e-multi-area` 54/54, `e2e-margin-spacing-exit` 59/59, `e2e-split-safety` 42/42, `e2e-split-four` 20/20. 실패 단계 0.
+- **결정성:** 단계 이름·성공 여부·단계 데이터가 두 실행에서 동일하다. 차이는 산출물 경로와 DXF 헤더 `$TDUPDATE`(시각) 때문에 생기는 파일 바이트 수 3~4 B뿐이다. 엔티티·영역·회로·조각 수는 동일하다.
+- **2단계 이후 실측 재확정(측정 전 기대값 수정 금지 준수, 시나리오 JSON 3개만 변경).**
+  - `e2e-full` 3분할: A1 20조각/9턴/6,746.533 mm, A2 16/7/5,405.521, A3 24/11/6,250.376, 2D 1.251. 복원 A1 동일.
+  - `e2e-split-safety`: B-1 4,276.956 mm/발열 4,135.48, B-2 4,465.184/4,324.503.
+  - `e2e-split-four` A 4분할: A-1 2,689.544, A-2 16/7/5,395.236(5,289.263), A-3 16/7/5,424.17(5,279.503), A-4 20/9/4,883.415(4,544.904), 2D 2.006(보고 2.0168).
+- **schema 2·`marginMm` 거부 유지:** App 테스트 `Load_RejectsSchema2WithMigrationMessage`가 통과한다(App 206 전체 통과 상태).
+- **줄어든 검증 범위:** `e2e-split-four`는 세로 B 4분할 → 가로 A 4분할로 대상이 바뀌었고 편차가 이전 B 기준 1.0931보다 나쁜 2.0168이다. 현 정책(절단 위치만 탐색·편차 표시 후 확정)상 결함으로 되돌리지 않고 수치만 기록한다. `e2e-margin-spacing-exit`는 B 하단 제외영역 블록이 초안 변경 테스트로 대체된 범위를 유지한다.
+- 7단계에서 제품 코드는 변경하지 않았다. 다음은 8단계(최종 전체 검증·완료 보고)다.
+
+## RemainingWork 8단계 완료 (2026-11-13)
+
+- **최종 검증 완료.** 네이티브 Release/x64 빌드 SHA-256 `D5E5ECE7…E9AE`, Core 테스트 246 통과/0 실패, App 테스트 206 통과/0 실패, WorkingSide EXIT=0 846 체크(그룹 실패 0), 시나리오 5개 × 2회 모두 `Status=Completed`(36/54/59/42/20단계, 실패 0). 두 실행의 단계 데이터 차이는 산출물 경로와 DXF `$TDUPDATE`(시각) 때문에 생기는 `dxf`/`path`/`bytes`뿐이다.
+- **로드 DLL:** App 테스트 출력 `HeatingMold.App.dll` `13FCF6A6…3FDD`, `HeatingMold.Core.dll` `877B7B93…B713E`, `OccBridge.dll` `D5E5ECE7…E9AE`.
+- **최종 독립 리뷰 수정 2건(8단계에서 App 코드 변경):**
+  - 중간: 최소 간격 표본이 두 번째 레인에 놓여도 마커가 첫 레인의 영역 ID·조각 번호·색을 쓰던 문제. `SpacingPairSample`에 `AtRunIndex`를 추가하고, 표본이 놓인 레인의 소유 정보와 반대 레인 번호를 쓰도록 고쳤다. 마커 위치·간격 수치는 그대로다.
+  - 낮음: 프로젝트 복원 완료 문구가 간격 표시 실패도 "경로 길이 라벨을 표시하지 못했습니다"로 표시하던 문제. 실제 경고 문구를 그대로 덧붙이도록 고쳤다.
+  - 수정 후 App 206, WorkingSide EXIT=0, 시나리오 10회를 다시 실행해 모두 통과했다.
+- **두 원래 실패 처리:** 세로 B 4분할은 마지막 레인 반대편에 발열 구간이 없어 정상 거부로 판정하고 재현 시나리오 기대 문구를 고정했다. 경계 위 정확한 점의 표면 매핑 실패는 경계 provenance로 수정해 성공 회귀 시나리오로 갱신했다(4단계).
+- **성능:** 수집/분석 시간을 분리하는 계측 필드만 구현했고 실측값은 측정하지 않았다. 개선 배율을 주장하지 않는다.
+- **미검증:** 실제 마우스 조작, 화면 가독성·줌/DPI, 새 프로세스에서의 복원, 외부 CAD에서 DXF/STEP 열기, 대량 입력에서의 체감 지연. 승인 대기 항목은 없다(6-1 확정 완료).

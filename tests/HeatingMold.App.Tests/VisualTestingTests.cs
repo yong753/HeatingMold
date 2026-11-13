@@ -105,7 +105,7 @@ namespace HeatingMold.App.Tests
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
             string json = "{" +
-                "\"schemaVersion\":2," +
+                "\"schemaVersion\":3," +
                 "\"name\":\"binding-kind-test\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) +
                 "\",\"faceCount\":2,\"solidCount\":1}," +
@@ -127,7 +127,7 @@ namespace HeatingMold.App.Tests
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
             string json = "{" +
-                "\"schemaVersion\":2," +
+                "\"schemaVersion\":3," +
                 "\"name\":\"binding-kind-test\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) +
                 "\",\"faceCount\":2,\"solidCount\":1}," +
@@ -164,7 +164,7 @@ namespace HeatingMold.App.Tests
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
             string scenarioPath = WriteScenario(temp, model, sha256: VisualScenario.ComputeSha256(model),
-                schemaVersion: 3);
+                schemaVersion: 4);
 
             VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
 
@@ -173,15 +173,50 @@ namespace HeatingMold.App.Tests
         }
 
         [Fact]
+        public void Load_RejectsSchema2WithMigrationMessage()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string scenarioPath = WriteScenario(temp, model, sha256: VisualScenario.ComputeSha256(model),
+                schemaVersion: 2);
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(scenario);
+            Assert.Contains("스키마 2", error);
+            Assert.Contains("marginMm", error);
+        }
+
+        [Fact]
+        public void Load_RejectsRemovedMarginProperty()
+        {
+            using var temp = new TempDirectory();
+            string model = temp.WriteFile("model.stp", "test-model");
+            string json = "{" +
+                "\"schemaVersion\":3," +
+                "\"name\":\"margin-test\"," +
+                "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1],\"marginMm\":5,\"spacingMm\":10,\"direction\":0}]," +
+                "\"steps\":[{\"id\":\"1\",\"action\":\"selectFaces\",\"faces\":[1]}]" +
+                "}";
+            string scenarioPath = temp.WriteFile("scenario.json", json);
+
+            VisualScenario scenario = VisualScenario.Load(scenarioPath, temp.Path, out string error);
+
+            Assert.Null(scenario);
+            Assert.Contains("marginMm", error);
+        }
+
+        [Fact]
         public void Load_AcceptsV2AreasAndActions()
         {
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
             string json = "{" +
-                "\"schemaVersion\":2," +
+                "\"schemaVersion\":3," +
                 "\"name\":\"v2-test\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
-                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1],\"marginMm\":5,\"spacingMm\":10,\"direction\":0," +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1],\"spacingMm\":10,\"direction\":0," +
                 "\"expect\":{\"pieces\":2}}]," +
                 "\"steps\":[" +
                 "{\"id\":\"1\",\"action\":\"selectFaces\",\"faces\":[1]}," +
@@ -205,10 +240,10 @@ namespace HeatingMold.App.Tests
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
             string json = "{" +
-                "\"schemaVersion\":2," +
+                "\"schemaVersion\":3," +
                 "\"name\":\"zero-solid\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":80,\"solidCount\":0}," +
-                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1],\"marginMm\":5,\"spacingMm\":10,\"direction\":0}]," +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1],\"spacingMm\":10,\"direction\":0}]," +
                 "\"steps\":[{\"id\":\"1\",\"action\":\"selectFaces\",\"faces\":[1]}]" +
                 "}";
             string scenarioPath = temp.WriteFile("scenario.json", json);
@@ -226,10 +261,10 @@ namespace HeatingMold.App.Tests
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
             string json = "{" +
-                "\"schemaVersion\":2," +
+                "\"schemaVersion\":3," +
                 "\"name\":\"e2e-contract\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":80,\"solidCount\":0}," +
-                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[44,56,69],\"marginMm\":5,\"spacingMm\":15,\"direction\":0}]," +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":[44,56,69],\"spacingMm\":15,\"direction\":0}]," +
                 "\"steps\":[" +
                 "{\"id\":\"1\",\"action\":\"selectFaces\",\"faces\":[44,56,69]}," +
                 "{\"id\":\"2\",\"action\":\"confirmArea\",\"area\":\"A\"}," +
@@ -256,7 +291,7 @@ namespace HeatingMold.App.Tests
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
             string json = "{" +
-                "\"schemaVersion\":2," +
+                "\"schemaVersion\":3," +
                 "\"name\":\"split-alias\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
                 "\"areas\":[" +
@@ -278,7 +313,7 @@ namespace HeatingMold.App.Tests
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
             string json = "{" +
-                "\"schemaVersion\":2," +
+                "\"schemaVersion\":3," +
                 "\"name\":\"path\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
                 "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1]}]," +
@@ -298,7 +333,7 @@ namespace HeatingMold.App.Tests
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
             string json = "{" +
-                "\"schemaVersion\":2," +
+                "\"schemaVersion\":3," +
                 "\"name\":\"electrical\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
                 "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1]}]," +
@@ -318,7 +353,7 @@ namespace HeatingMold.App.Tests
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
             string json = "{" +
-                "\"schemaVersion\":2," +
+                "\"schemaVersion\":3," +
                 "\"name\":\"electrical\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
                 "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1]}]," +
@@ -338,7 +373,7 @@ namespace HeatingMold.App.Tests
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
             string json = "{" +
-                "\"schemaVersion\":2," +
+                "\"schemaVersion\":3," +
                 "\"name\":\"electrical\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
                 "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1]}]," +
@@ -358,7 +393,7 @@ namespace HeatingMold.App.Tests
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
             string json = "{" +
-                "\"schemaVersion\":2," +
+                "\"schemaVersion\":3," +
                 "\"name\":\"electrical\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
                 "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1]}]," +
@@ -378,7 +413,7 @@ namespace HeatingMold.App.Tests
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
             string json = "{" +
-                "\"schemaVersion\":2," +
+                "\"schemaVersion\":3," +
                 "\"name\":\"electrical\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
                 "\"areas\":[{\"alias\":\"A\",\"faceIds\":[1]}]," +
@@ -398,7 +433,7 @@ namespace HeatingMold.App.Tests
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
             string json = "{" +
-                "\"schemaVersion\":2," +
+                "\"schemaVersion\":3," +
                 "\"name\":\"v2-test\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + VisualScenario.ComputeSha256(model) + "\",\"faceCount\":2,\"solidCount\":1}," +
                 "\"areas\":[" +
@@ -415,14 +450,14 @@ namespace HeatingMold.App.Tests
         }
 
         private static string WriteScenario(TempDirectory temp, string model, string sha256,
-            int schemaVersion = 2, string faceIds = "[1, 2]",
+            int schemaVersion = 3, string faceIds = "[1, 2]",
             string electrical = "\"presetIndex\": 0, \"voltageV\": 220, \"reviewScope\": 0")
         {
             string json = "{" +
                 "\"schemaVersion\":" + schemaVersion + "," +
                 "\"name\":\"test\"," +
                 "\"model\":{\"path\":\"model.stp\",\"sha256\":\"" + sha256 + "\",\"faceCount\":2,\"solidCount\":1}," +
-                "\"areas\":[{\"alias\":\"A\",\"faceIds\":" + faceIds + ",\"marginMm\":5,\"spacingMm\":10,\"direction\":0}]," +
+                "\"areas\":[{\"alias\":\"A\",\"faceIds\":" + faceIds + ",\"spacingMm\":10,\"direction\":0}]," +
                 "\"steps\":[{\"id\":\"1\",\"action\":\"checkElectrical\",\"electrical\":{" + electrical + "}}]" +
                 "}";
             return temp.WriteFile("scenario.json", json);

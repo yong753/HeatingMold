@@ -15,14 +15,14 @@ public class AppliedGenerationInputsTests
     {
         var inputs = new AppliedGenerationInputs
         {
-            Margin = 5.0,
-            Spacing = 50.0,
+            OuterGapMm = 50.0,
+            WireDiameterMm = 0.0,
             Direction = PatternDirection.FrameX,
             RouteContextKey = "ctx-1"
         };
 
-        Assert.Equal(5.0, inputs.Margin);
-        Assert.Equal(50.0, inputs.Spacing);
+        Assert.Equal(50.0, inputs.OuterGapMm);
+        Assert.Equal(0.0, inputs.WireDiameterMm);
         Assert.Equal(PatternDirection.FrameX, inputs.Direction);
         Assert.Equal("ctx-1", inputs.RouteContextKey);
     }

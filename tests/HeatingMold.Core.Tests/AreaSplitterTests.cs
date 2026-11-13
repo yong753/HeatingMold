@@ -19,7 +19,7 @@ public class AreaSplitterTests
     public void HorizontalSplit_HalvesEqualLengthBands()
     {
         AreaSplitResult result = AreaSplitter.Split(
-            Rect(0, 0, 400, 200), NoExclusions, PatternDirection.FrameX, margin: 5, spacing: 50, count: 2);
+            Rect(0, 0, 400, 200), NoExclusions, PatternDirection.FrameX, spacing: 50, count: 2);
 
         Assert.True(result.Succeeded, result.Failure);
         Assert.True(result.SplitAxisIsY);
@@ -34,7 +34,7 @@ public class AreaSplitterTests
     public void VerticalSplit_ForFrameY_UsesVerticalCuts()
     {
         AreaSplitResult result = AreaSplitter.Split(
-            Rect(0, 0, 400, 200), NoExclusions, PatternDirection.FrameY, margin: 5, spacing: 50, count: 2);
+            Rect(0, 0, 400, 200), NoExclusions, PatternDirection.FrameY, spacing: 50, count: 2);
 
         Assert.True(result.Succeeded, result.Failure);
         Assert.False(result.SplitAxisIsY);
@@ -52,7 +52,7 @@ public class AreaSplitterTests
     public void MultiSplit_NotPowerOfTwo_BalancesEstimatedLength(int count)
     {
         AreaSplitResult result = AreaSplitter.Split(
-            Rect(0, 0, 500, 320), NoExclusions, PatternDirection.FrameX, margin: 5, spacing: 50, count: count);
+            Rect(0, 0, 500, 320), NoExclusions, PatternDirection.FrameX, spacing: 50, count: count);
 
         Assert.True(result.Succeeded, result.Failure);
         Assert.Equal(count, result.Bands.Count);
@@ -68,7 +68,7 @@ public class AreaSplitterTests
     public void Bands_DoNotOverlap_AndCoverParent()
     {
         AreaSplitResult result = AreaSplitter.Split(
-            Rect(0, 0, 300, 400), NoExclusions, PatternDirection.FrameY, margin: 0, spacing: 40, count: 4);
+            Rect(0, 0, 300, 400), NoExclusions, PatternDirection.FrameY, spacing: 40, count: 4);
 
         Assert.True(result.Succeeded, result.Failure);
         double totalArea = result.Bands.Sum(b => b.AreaMm2);
@@ -88,7 +88,7 @@ public class AreaSplitterTests
         var exclusions = new[] { (0.0, 10.0, 60.0, 60.0) };
 
         AreaSplitResult result = AreaSplitter.Split(
-            Rect(0, 0, 400, 200), exclusions, PatternDirection.FrameX, margin: 5, spacing: 50, count: 2);
+            Rect(0, 0, 400, 200), exclusions, PatternDirection.FrameX, spacing: 50, count: 2);
 
         Assert.True(result.Succeeded, result.Failure);
         Assert.Equal(2, result.Bands.Count);
@@ -103,7 +103,7 @@ public class AreaSplitterTests
         var exclusions = new[] { (150.0, -10.0, 250.0, 210.0) };
 
         AreaSplitResult result = AreaSplitter.Split(
-            Rect(0, 0, 400, 200), exclusions, PatternDirection.FrameX, margin: 5, spacing: 50, count: 2);
+            Rect(0, 0, 400, 200), exclusions, PatternDirection.FrameX, spacing: 50, count: 2);
 
         Assert.False(result.Succeeded);
         Assert.Contains("분리", result.Failure);
@@ -115,7 +115,7 @@ public class AreaSplitterTests
         var exclusions = new[] { (150.0, 70.0, 250.0, 130.0) };
 
         AreaSplitResult result = AreaSplitter.Split(
-            Rect(0, 0, 400, 200), exclusions, PatternDirection.FrameX, margin: 5, spacing: 50, count: 2);
+            Rect(0, 0, 400, 200), exclusions, PatternDirection.FrameX, spacing: 50, count: 2);
 
         Assert.False(result.Succeeded);
         Assert.Contains("구멍", result.Failure);
@@ -125,7 +125,7 @@ public class AreaSplitterTests
     public void CountOne_ReturnsSingleBandWithoutCuts()
     {
         AreaSplitResult result = AreaSplitter.Split(
-            Rect(0, 0, 400, 200), NoExclusions, PatternDirection.FrameX, margin: 5, spacing: 50, count: 1);
+            Rect(0, 0, 400, 200), NoExclusions, PatternDirection.FrameX, spacing: 50, count: 1);
 
         Assert.True(result.Succeeded, result.Failure);
         Assert.Single(result.Bands);
@@ -135,14 +135,16 @@ public class AreaSplitterTests
     }
 
     [Fact]
-    public void NarrowBand_WithoutMarginRoom_IsExplicitFailure()
+    public void NarrowBands_ThinnerThanSpacing_AreStillProduced()
     {
-        // 200 mm 높이를 40개로 나누면 각 밴드 높이가 5 mm라 마진 5 mm에서 발열영역이 남지 않는다.
+        // 배치 마진이 없으므로 밴드가 간격보다 얇아도 밴드 자체는 유효하다.
+        // 실제 경로 생성 가능 여부는 이후 생성 단계가 판단한다.
         AreaSplitResult result = AreaSplitter.Split(
-            Rect(0, 0, 400, 200), NoExclusions, PatternDirection.FrameX, margin: 5, spacing: 50, count: 40);
+            Rect(0, 0, 400, 200), NoExclusions, PatternDirection.FrameX, spacing: 50, count: 40);
 
-        Assert.False(result.Succeeded);
-        Assert.False(string.IsNullOrEmpty(result.Failure));
+        Assert.True(result.Succeeded, result.Failure);
+        Assert.Equal(40, result.Bands.Count);
+        Assert.All(result.Bands, band => Assert.True(band.AreaMm2 > 0));
     }
 
     [Theory]
@@ -151,7 +153,7 @@ public class AreaSplitterTests
     public void InvalidCount_IsRejected(int count)
     {
         AreaSplitResult result = AreaSplitter.Split(
-            Rect(0, 0, 400, 200), NoExclusions, PatternDirection.FrameX, margin: 5, spacing: 50, count: count);
+            Rect(0, 0, 400, 200), NoExclusions, PatternDirection.FrameX, spacing: 50, count: count);
 
         Assert.False(result.Succeeded);
     }
@@ -160,7 +162,7 @@ public class AreaSplitterTests
     public void ZeroSpacing_IsRejected()
     {
         AreaSplitResult result = AreaSplitter.Split(
-            Rect(0, 0, 400, 200), NoExclusions, PatternDirection.FrameX, margin: 5, spacing: 0, count: 2);
+            Rect(0, 0, 400, 200), NoExclusions, PatternDirection.FrameX, spacing: 0, count: 2);
 
         Assert.False(result.Succeeded);
         Assert.Contains("간격", result.Failure);
@@ -173,7 +175,7 @@ public class AreaSplitterTests
         // 후보 평가용 API는 실제 2D 길이를 재는 호출자가 판단하도록 그대로 구성해야 한다.
         AreaSplitResult result = AreaSplitter.TryBuildAtCuts(
             Rect(0, 0, 400, 200), NoExclusions, PatternDirection.FrameX,
-            margin: 5, spacing: 50, cuts: new[] { 30.0 });
+            spacing: 50, cuts: new[] { 30.0 });
 
         Assert.True(result.Succeeded, result.Failure);
         Assert.Equal(2, result.Bands.Count);
@@ -188,13 +190,13 @@ public class AreaSplitterTests
     {
         Assert.False(AreaSplitter.TryBuildAtCuts(
             Rect(0, 0, 400, 200), NoExclusions, PatternDirection.FrameX,
-            margin: 5, spacing: 50, cuts: new[] { 150.0, 100.0 }).Succeeded);
+            spacing: 50, cuts: new[] { 150.0, 100.0 }).Succeeded);
         Assert.False(AreaSplitter.TryBuildAtCuts(
             Rect(0, 0, 400, 200), NoExclusions, PatternDirection.FrameX,
-            margin: 5, spacing: 50, cuts: new[] { 0.0 }).Succeeded);
+            spacing: 50, cuts: new[] { 0.0 }).Succeeded);
         Assert.False(AreaSplitter.TryBuildAtCuts(
             Rect(0, 0, 400, 200), NoExclusions, PatternDirection.FrameX,
-            margin: 5, spacing: 50, cuts: new[] { 200.0 }).Succeeded);
+            spacing: 50, cuts: new[] { 200.0 }).Succeeded);
     }
 
     [Fact]
@@ -204,7 +206,7 @@ public class AreaSplitterTests
         // UI/생성기와 같은 해석을 위해 분할의 Auto는 항상 가로(Y=상수)여야 한다.
         AreaSplitResult result = AreaSplitter.Split(
             Rect(0, 0, 200, 400), NoExclusions, PatternDirection.Auto,
-            margin: 5, spacing: 50, count: 2);
+            spacing: 50, count: 2);
 
         Assert.True(result.Succeeded, result.Failure);
         Assert.True(result.SplitAxisIsY);

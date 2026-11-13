@@ -31,6 +31,19 @@ public partial class MainWindow
                 global.Point != null)
                 return new SurfaceMappedSample(uv,
                     new Vec3(global.Point[0], global.Point[1], global.Point[2]), global.FaceId);
+
+            // 선택 영역의 정확한 경계 위 점은 네이티브 면 교차가 경계 시작점을 Miss로
+            // 돌려줄 수 있다. 이때만 원본 경계 provenance의 parameter로 3D를 평가한다.
+            // 내부의 표면 틈을 최근접 점으로 대체하는 경로가 아니다.
+            if (context.Boundary != null)
+            {
+                ExitBoundaryResolution onBoundary = context.Boundary.Project(uv, ExitBoundaryConstraint.Tolerance);
+                if (onBoundary.Succeeded &&
+                    onBoundary.Point.Value.Point.DistanceTo(uv) <= ExitBoundaryConstraint.Tolerance &&
+                    TryEvaluateExitSample(side, context, onBoundary.Point, uv,
+                        out SurfaceMappedSample boundarySample, out _))
+                    return boundarySample;
+            }
             return null;
         };
     }

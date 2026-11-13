@@ -1,3 +1,4 @@
+using HeatingMold.Core.Geometry;
 using HeatingMold.Core.Model;
 
 namespace HeatingMold.App;
@@ -9,9 +10,17 @@ namespace HeatingMold.App;
 /// </summary>
 internal sealed class AppliedGenerationInputs
 {
-    public double Margin { get; init; }
-    public double Spacing { get; init; }
+    /// <summary>사용자가 지정한 발열사 외곽 사이 간격(mm). 중심 간격이 아니다.</summary>
+    public double OuterGapMm { get; init; }
+
+    /// <summary>생성에 사용한 전선 직경(mm). 중심 피치는 외곽 간격 + 직경이다.</summary>
+    public double WireDiameterMm { get; init; }
+
     public PatternDirection Direction { get; init; }
+
+    public LanePitchSpec Pitch => new(OuterGapMm, WireDiameterMm);
+
+    public double CenterPitchMm => Pitch.CenterPitchMm;
 
     /// <summary>모델/작업면/Face/인출면/체인/앵커/제외영역을 직렬화한 지문.</summary>
     public string RouteContextKey { get; init; } = "";

@@ -8,23 +8,23 @@ public class SerpentineTests
     private static List<Vec2> Rect(double x0, double y0, double x1, double y1) =>
         new() { new(x0, y0), new(x1, y0), new(x1, y1), new(x0, y1) };
 
-    // T1: 직사각형 + 마진 ???�인 ?�·길?�·간�??�치
+    // T1: 직사각형 - 레인 수·길이·간격 일치 (배치 마진 없음)
     [Fact]
-    public void T1_Rectangle_Margin_LaneCount_Length_Spacing()
+    public void T1_Rectangle_LaneCount_Length_Spacing()
     {
         var outer = Rect(0, 0, 100, 60);
-        var r = Serpentine.Generate(outer, null, new PatternParams { Margin = 5, Spacing = 10 });
+        var r = Serpentine.Generate(outer, null, new PatternParams { Spacing = 10 });
 
         Assert.Equal(0.0, r.AngleDeg, 9);
-        Assert.Equal(5, r.LaneCount);
-        Assert.Equal(5, r.Segments.Count);
+        Assert.Equal(6, r.LaneCount);
+        Assert.Equal(6, r.Segments.Count);
 
         for (int i = 0; i < r.Segments.Count; i++)
         {
             SerpentineSegment s = r.Segments[i];
-            Assert.Equal(10.0 + 10.0 * i, s.Start.Y, 9);   // ?�인 y = 10,20,30,40,50
+            Assert.Equal(5.0 + 10.0 * i, s.Start.Y, 9);   // 영역 높이 60에 10 간격으로 균등 배치
             if (i > 0) Assert.Equal(10.0, s.Start.Y - r.Segments[i - 1].Start.Y, 9);
-            Assert.Equal(90.0, s.Length, 9);               // 마진 5 ??100 ??2×5
+            Assert.Equal(100.0, s.Length, 9);              // 마진이 없으므로 영역 폭 전체
         }
     }
 
@@ -33,33 +33,33 @@ public class SerpentineTests
     public void T2_HoleSplitsLaneIntoSegments()
     {
         var outer = Rect(0, 0, 100, 60);
-        var holes = new List<IReadOnlyList<Vec2>> { Rect(40, 18, 60, 22) };
-        var r = Serpentine.Generate(outer, holes, new PatternParams { Margin = 5, Spacing = 10 });
+        var holes = new List<IReadOnlyList<Vec2>> { Rect(40, 13, 60, 17) };
+        var r = Serpentine.Generate(outer, holes, new PatternParams { Spacing = 10 });
 
-        Assert.Equal(5, r.LaneCount);
-        Assert.Equal(6, r.Segments.Count);   // ?�인 5�?�?y=20 ?�나가 ?�???�해 2분절
+        Assert.Equal(6, r.LaneCount);
+        Assert.Equal(7, r.Segments.Count);   // 레인 6개 중 y=15 하나가 구멍 때문에 2분절
 
-        var split = r.Segments.Where(s => Math.Abs(s.Start.Y - 20.0) < 1e-9).ToList();
+        var split = r.Segments.Where(s => Math.Abs(s.Start.Y - 15.0) < 1e-9).ToList();
         Assert.Equal(2, split.Count);
 
         var spans = split
             .Select(s => (Min: Math.Min(s.Start.X, s.End.X), Max: Math.Max(s.Start.X, s.End.X)))
             .OrderBy(t => t.Min)
             .ToArray();
-        Assert.Equal(5.0, spans[0].Min, 9);    // ?�역 좌측 (마진 ?�프??
-        Assert.Equal(35.0, spans[0].Max, 9);   // ?� x=40 ??마진 5
-        Assert.Equal(65.0, spans[1].Min, 9);   // ?� x=60 + 마진 5
-        Assert.Equal(95.0, spans[1].Max, 9);   // ?�역 ?�측
+        Assert.Equal(0.0, spans[0].Min, 9);    // 영역 좌측 경계
+        Assert.Equal(40.0, spans[0].Max, 9);   // 구멍 좌측 x=40 (마진 확장 없음)
+        Assert.Equal(60.0, spans[1].Min, 9);   // 구멍 우측 x=60
+        Assert.Equal(100.0, spans[1].Max, 9);  // 영역 우측 경계
     }
 
     // T3: ?�???�인 U??반전 ???�일 ?�속 ?�?�어
     [Fact]
-    public void T3_OddLaneCount_AlternatesDirection_SingleContinuousPath()
+    public void T3_AlternatesDirection_SingleContinuousPath()
     {
         var outer = Rect(0, 0, 100, 60);
-        var r = Serpentine.Generate(outer, null, new PatternParams { Margin = 5, Spacing = 10 });
+        var r = Serpentine.Generate(outer, null, new PatternParams { Spacing = 10 });
 
-        Assert.Equal(5, r.LaneCount);   // ?�???�인
+        Assert.Equal(6, r.LaneCount);   // 레인 6개
 
         // 진행 방향 교�?: ?�인 0 LTR, 1 RTL, 2 LTR, ...
         for (int i = 0; i < r.Segments.Count; i++)
@@ -87,8 +87,8 @@ public class SerpentineTests
     [Fact]
     public void T4_AutoLongAxisRotation()
     {
-        var wide = Serpentine.Generate(Rect(0, 0, 100, 60), null, new PatternParams { Margin = 5, Spacing = 10 });
-        var tall = Serpentine.Generate(Rect(0, 0, 60, 100), null, new PatternParams { Margin = 5, Spacing = 10 });
+        var wide = Serpentine.Generate(Rect(0, 0, 100, 60), null, new PatternParams { Spacing = 10 });
+        var tall = Serpentine.Generate(Rect(0, 0, 60, 100), null, new PatternParams { Spacing = 10 });
 
         Assert.Equal(0.0, wide.AngleDeg, 9);    // ?�축 = X
         Assert.Equal(90.0, tall.AngleDeg, 9);   // ?�축 = Y
@@ -108,10 +108,10 @@ public class SerpentineTests
     public void T5_TotalLengthSanity()
     {
         var outer = Rect(0, 0, 100, 60);
-        var r = Serpentine.Generate(outer, null, new PatternParams { Margin = 5, Spacing = 10 });
+        var r = Serpentine.Generate(outer, null, new PatternParams { Spacing = 10 });
 
-        double straight = 5 * 90.0;           // ?�인 5�?× 길이 90
-        double turns = 4 * 10.0;     // U??반원 4�?(r = Spacing/2 = 5)
+        double straight = 6 * 100.0;           // 레인 6개 × 길이 100
+        double turns = 5 * 10.0;     // 레인 사이 직선 턴 5개
 
         Assert.True(r.TotalLength >= straight);
         Assert.InRange(r.TotalLength, straight + turns * 0.98, straight + turns * 1.02);
@@ -122,10 +122,10 @@ public class SerpentineTests
     public void TurnConnector_IsStraightTwoPointSegment()
     {
         var r = Serpentine.Generate(Rect(0, 0, 100, 60), null,
-            new PatternParams { Margin = 5, Spacing = 10 });
+            new PatternParams { Spacing = 10 });
 
         var turns = r.RoutePieces.Where(p => p.Kind == SerpentineRoutePieceKind.TurnConnector).ToList();
-        Assert.Equal(4, turns.Count);
+        Assert.Equal(5, turns.Count);
         Assert.All(turns, t => Assert.Equal(2, t.Points.Count));
         Assert.All(turns, t => Assert.Equal(10.0, t.Points[0].DistanceTo(t.Points[1]), 6));
     }
@@ -136,8 +136,8 @@ public class SerpentineTests
     {
         // ?�단???�만?�게 기울?�진 ?�기 ???�인 극단?�이 ?�인??~130mm???�동
         var outer = new List<Vec2> { new(0, 0), new(400, 0), new(400, 120), new(0, 90) };
-        double margin = 5, spacing = 10;
-        var r = Serpentine.Generate(outer, null, new PatternParams { Margin = margin, Spacing = spacing });
+        double spacing = 10;
+        var r = Serpentine.Generate(outer, null, new PatternParams { Spacing = spacing });
 
         // ?�리�?존재 ?�인: ?�접 ?�인 ?�↔?�작 직선거리가 간격보다 ?�씬 ??
         double maxJump = 0;
@@ -157,7 +157,7 @@ public class SerpentineTests
     public void T7_ConvexButTightMargin_StaysInsideFace()
     {
         var outer = Rect(0, 0, 100, 60);
-        var r = Serpentine.Generate(outer, null, new PatternParams { Margin = 2, Spacing = 10 });
+        var r = Serpentine.Generate(outer, null, new PatternParams { Spacing = 10 });
 
         foreach (Vec2 p in r.Path)
             Assert.True(InsideOrOn(outer, p), $"�?�?경로??{p}");
@@ -167,8 +167,8 @@ public class SerpentineTests
     public void RoutePieces_ReconstructPathAndClassifyConnectors()
     {
         var result = Serpentine.Generate(Rect(0, 0, 100, 60),
-            new List<IReadOnlyList<Vec2>> { Rect(40, 18, 60, 22) },
-            new PatternParams { Margin = 5, Spacing = 10 });
+            new List<IReadOnlyList<Vec2>> { Rect(40, 13, 60, 17) },
+            new PatternParams { Spacing = 10 });
         Assert.Equal(result.LaneCount - 1, result.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector));
         Assert.Single(result.RoutePieces.Where(p => p.Kind == SerpentineRoutePieceKind.FixedConnector));
         var rebuilt = result.RoutePieces.SelectMany((p, i) => i == 0 ? p.Points : p.Points.Skip(1)).ToList();
@@ -182,16 +182,16 @@ public class SerpentineTests
     {
         var outer = Rect(0, 0, 100, 60);
         var r = Serpentine.Generate(outer, null,
-            new PatternParams { Margin = 5, Spacing = 10, Direction = PatternDirection.FrameY });
+            new PatternParams { Spacing = 10, Direction = PatternDirection.FrameY });
 
         Assert.Equal(90.0, r.AngleDeg, 9);
-        Assert.Equal(9, r.LaneCount);                        // 로컬 ?�이 100 ??2×5 = 90
-        Assert.All(r.Segments, s => Assert.Equal(50.0, s.Length, 9));
+        Assert.Equal(10, r.LaneCount);                       // 로컬 폭 100 / 간격 10
+        Assert.All(r.Segments, s => Assert.Equal(60.0, s.Length, 9));
         Assert.All(r.Segments, s => Assert.Equal(s.Start.X, s.End.X, 9));   // ?�드?�서 ?�로 ?�인
 
         var tall = Rect(0, 0, 60, 100);
         var rx = Serpentine.Generate(tall, null,
-            new PatternParams { Margin = 5, Spacing = 10, Direction = PatternDirection.FrameX });
+            new PatternParams { Spacing = 10, Direction = PatternDirection.FrameX });
         Assert.Equal(0.0, rx.AngleDeg, 9);
     }
 

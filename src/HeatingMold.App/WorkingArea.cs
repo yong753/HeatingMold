@@ -25,11 +25,11 @@ internal sealed class WorkingArea
     /// <summary>사행 배치 방향(자동/프레임 X/프레임 Y).</summary>
     public PatternDirection Direction { get; set; } = PatternDirection.Auto;
 
-    /// <summary>영역별 마진 입력 문자열. 마지막 성공 생성 조건과는 별개의 UI 초안이다.</summary>
-    public string MarginText { get; set; } = "5";
-
-    /// <summary>영역별 간격 입력 문자열. 마지막 성공 생성 조건과는 별개의 UI 초안이다.</summary>
-    public string SpacingText { get; set; } = "50";
+    /// <summary>
+    /// 영역별 발열사 외곽 사이 간격 입력 문자열. 마지막 성공 생성 조건과는 별개의 UI 초안이다.
+    /// 중심 간격이 아니라 전선 외곽 사이 거리이며, 내부 중심 피치는 여기에 전선 직경을 더한다.
+    /// </summary>
+    public string SpacingText { get; set; } = "5";
 
     /// <summary>
     /// 공통 발열전력 배분 결과(W). 사용자 입력이 아니라 검토 계산이 갱신하는 파생값이며,

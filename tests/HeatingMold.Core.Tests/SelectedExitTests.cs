@@ -19,7 +19,7 @@ public class SelectedExitTests
     public void FirstRunStartsAtSelectedPointAndStaysAxisParallel()
     {
         var outer = Rect(0, 0, 100, 60);
-        var parameters = new PatternParams { Margin = 5, Spacing = 10, Direction = PatternDirection.FrameX };
+        var parameters = new PatternParams { Spacing = 10, Direction = PatternDirection.FrameX };
 
         var result = Serpentine.GenerateWithSelectedExits(
             outer, null, parameters, PatternDirection.FrameX, Exit(0, 20), Exit(100, 45));
@@ -33,7 +33,7 @@ public class SelectedExitTests
         Assert.Equal(SerpentineRoutePieceKind.HeatingRun, first.Kind);
         AssertNear(new Vec2(0, 20), first.Points[0]);
         Assert.Equal(20.0, first.Points[^1].Y, 9);     // 시작점 y에서 축평행
-        AssertNear(new Vec2(95, 20), first.Points[^1]); // 마진 인셋에서 정지
+        AssertNear(new Vec2(100, 20), first.Points[^1]); // 마진 인셋에서 정지
 
         // 마지막 레인이 종료점 가까운 쪽에서 끝나므로 발열선은 (95,40)에서 끝나고,
         // 별도 연결선이 종료점까지 이어진다.
@@ -41,11 +41,11 @@ public class SelectedExitTests
             p => p.Kind == SerpentineRoutePieceKind.HeatingRun);
         Assert.Equal(40.0, lastHeating.Points[0].Y, 9);
         Assert.Equal(40.0, lastHeating.Points[^1].Y, 9);
-        AssertNear(new Vec2(95, 40), lastHeating.Points[^1]);
+        AssertNear(new Vec2(100, 40), lastHeating.Points[^1]);
 
         SerpentineRoutePiece terminal = pattern.RoutePieces[^1];
         Assert.Equal(SerpentineRoutePieceKind.FixedConnector, terminal.Kind);
-        AssertNear(new Vec2(95, 40), terminal.Points[0]);
+        AssertNear(new Vec2(100, 40), terminal.Points[0]);
         AssertNear(new Vec2(100, 45), terminal.Points[^1]);
     }
 
@@ -53,7 +53,7 @@ public class SelectedExitTests
     public void EndPointBelowStartSweepsDownward()
     {
         var outer = Rect(0, 0, 100, 60);
-        var parameters = new PatternParams { Margin = 5, Spacing = 10, Direction = PatternDirection.FrameX };
+        var parameters = new PatternParams { Spacing = 10, Direction = PatternDirection.FrameX };
 
         var result = Serpentine.GenerateWithSelectedExits(
             outer, null, parameters, PatternDirection.FrameX, Exit(0, 50), Exit(100, 20));
@@ -74,12 +74,12 @@ public class SelectedExitTests
         SerpentineRoutePiece lastHeating = pattern.RoutePieces.Last(
             p => p.Kind == SerpentineRoutePieceKind.HeatingRun);
         Assert.Equal(10.0, lastHeating.Points[0].Y, 9);
-        AssertNear(new Vec2(5, 10), lastHeating.Points[0]);
-        AssertNear(new Vec2(95, 10), lastHeating.Points[^1]);
+        AssertNear(new Vec2(0, 10), lastHeating.Points[0]);
+        AssertNear(new Vec2(100, 10), lastHeating.Points[^1]);
 
         SerpentineRoutePiece terminal = pattern.RoutePieces[^1];
         Assert.Equal(SerpentineRoutePieceKind.FixedConnector, terminal.Kind);
-        AssertNear(new Vec2(95, 10), terminal.Points[0]);
+        AssertNear(new Vec2(100, 10), terminal.Points[0]);
         AssertNear(new Vec2(100, 20), terminal.Points[^1]);
     }
 
@@ -87,7 +87,7 @@ public class SelectedExitTests
     public void VerticalLayoutRunsAlongFrameYAxis()
     {
         var outer = Rect(0, 0, 60, 100);
-        var parameters = new PatternParams { Margin = 5, Spacing = 10, Direction = PatternDirection.FrameY };
+        var parameters = new PatternParams { Spacing = 10, Direction = PatternDirection.FrameY };
 
         var result = Serpentine.GenerateWithSelectedExits(
             outer, null, parameters, PatternDirection.FrameY, Exit(20, 100), Exit(40, 0));
@@ -99,24 +99,23 @@ public class SelectedExitTests
         SerpentineRoutePiece first = pattern.RoutePieces[0];
         AssertNear(new Vec2(20, 100), first.Points[0]);
         Assert.Equal(20.0, first.Points[^1].X, 9);     // 세로축 평행
-        AssertNear(new Vec2(20, 5), first.Points[^1]); // 반대편 마진에서 정지
+        AssertNear(new Vec2(20, 0), first.Points[^1]); // 반대편 마진에서 정지
 
         SerpentineRoutePiece lastHeating = pattern.RoutePieces.Last(
             p => p.Kind == SerpentineRoutePieceKind.HeatingRun);
         Assert.Equal(40.0, lastHeating.Points[^1].X, 9);
-        AssertNear(new Vec2(40, 5), lastHeating.Points[^1]);
+        AssertNear(new Vec2(40, 0), lastHeating.Points[^1]);
 
-        SerpentineRoutePiece terminal = pattern.RoutePieces[^1];
-        Assert.Equal(SerpentineRoutePieceKind.FixedConnector, terminal.Kind);
-        AssertNear(new Vec2(40, 5), terminal.Points[0]);
-        AssertNear(new Vec2(40, 0), terminal.Points[^1]);
+        // 마진이 없으므로 마지막 발열선이 곧 종료점에 닿는다. 별도 연결선이 필요 없다.
+        Assert.Equal(SerpentineRoutePieceKind.HeatingRun, pattern.RoutePieces[^1].Kind);
+        AssertNear(new Vec2(40, 0), pattern.RoutePieces[^1].Points[^1]);
     }
 
     [Fact]
     public void SingleLaneKeepsHorizontalRunAndAddsTailConnector()
     {
         var outer = Rect(0, 0, 100, 10);
-        var parameters = new PatternParams { Margin = 0, Spacing = 50, Direction = PatternDirection.FrameX };
+        var parameters = new PatternParams { Spacing = 50, Direction = PatternDirection.FrameX };
 
         // 레인은 하나뿐이므로 첫 발열선이 곧 마지막 발열선이다. 발열선을 종료점으로
         // 비스듬하게 당기지 않고, 정상 끝에서 별도 연결선으로 종료점에 닿는다.
@@ -144,7 +143,7 @@ public class SelectedExitTests
         // 두 점이 같은 진행 행에 있으면 그 행 하나로 이루어진 단일 레인 회로가 된다.
         // 분할 영역이 spacing보다 얇을 때 실제로 생기는 배치다.
         var result = Serpentine.GenerateWithSelectedExits(
-            outer, null, new PatternParams { Margin = 5, Spacing = 10 },
+            outer, null, new PatternParams { Spacing = 10 },
             PatternDirection.FrameX, Exit(0, 20), Exit(100, 20));
 
         Assert.True(result.Succeeded, result.Failure?.ToString());
@@ -152,10 +151,10 @@ public class SelectedExitTests
         SerpentineRoutePiece heating = result.Pattern.RoutePieces[0];
         Assert.Equal(SerpentineRoutePieceKind.HeatingRun, heating.Kind);
         AssertNear(new Vec2(0, 20), heating.Points[0]);
-        AssertNear(new Vec2(95, 20), heating.Points[^1]);
-        SerpentineRoutePiece terminal = result.Pattern.RoutePieces[^1];
-        Assert.Equal(SerpentineRoutePieceKind.FixedConnector, terminal.Kind);
-        AssertNear(new Vec2(100, 20), terminal.Points[^1]);
+        AssertNear(new Vec2(100, 20), heating.Points[^1]);
+        // 마진이 없으므로 발열선이 영역 폭 전체를 덮어 종료점에 바로 닿는다.
+        Assert.Single(result.Pattern.RoutePieces);
+        AssertNear(new Vec2(100, 20), result.Pattern.RoutePieces[^1].Points[^1]);
     }
 
     [Fact]
@@ -164,7 +163,7 @@ public class SelectedExitTests
         var outer = Rect(0, 0, 100, 60);
         // 같은 행이라도 시작점이 발열구간 안쪽이면 레인 끝에서 시작할 수 없다.
         var result = Serpentine.GenerateWithSelectedExits(
-            outer, null, new PatternParams { Margin = 5, Spacing = 10 },
+            outer, null, new PatternParams { Spacing = 10 },
             PatternDirection.FrameX, Exit(40, 20), Exit(100, 20));
 
         Assert.False(result.Succeeded);
@@ -176,7 +175,7 @@ public class SelectedExitTests
     {
         var outer = Rect(0, 0, 60, 100);
         var result = Serpentine.GenerateWithSelectedExits(
-            outer, null, new PatternParams { Margin = 5, Spacing = 10 },
+            outer, null, new PatternParams { Spacing = 10 },
             PatternDirection.FrameY, Exit(20, 100), Exit(20, 0));
 
         Assert.True(result.Succeeded, result.Failure?.ToString());
@@ -184,10 +183,10 @@ public class SelectedExitTests
         SerpentineRoutePiece heating = result.Pattern.RoutePieces[0];
         Assert.Equal(SerpentineRoutePieceKind.HeatingRun, heating.Kind);
         AssertNear(new Vec2(20, 100), heating.Points[0]);
-        AssertNear(new Vec2(20, 5), heating.Points[^1]);
-        SerpentineRoutePiece terminal = result.Pattern.RoutePieces[^1];
-        Assert.Equal(SerpentineRoutePieceKind.FixedConnector, terminal.Kind);
-        AssertNear(new Vec2(20, 0), terminal.Points[^1]);
+        AssertNear(new Vec2(20, 0), heating.Points[^1]);
+        // 마진이 없으므로 발열선이 영역 길이 전체를 덮어 종료점에 바로 닿는다.
+        Assert.Single(result.Pattern.RoutePieces);
+        AssertNear(new Vec2(20, 0), result.Pattern.RoutePieces[^1].Points[^1]);
     }
 
     [Fact]
@@ -195,7 +194,7 @@ public class SelectedExitTests
     {
         var outer = Rect(0, 0, 100, 60);
         var exclusions = new[] { (MinX: 40d, MinY: 10d, MaxX: 60d, MaxY: 30d) };
-        var parameters = new PatternParams { Margin = 0, Spacing = 10, Direction = PatternDirection.FrameX };
+        var parameters = new PatternParams { Spacing = 10, Direction = PatternDirection.FrameX };
 
         var result = Serpentine.GenerateComponentsWithSelectedExits(
             outer, exclusions, parameters, PatternDirection.FrameX, Exit(0, 5), Exit(100, 35));
@@ -227,7 +226,7 @@ public class SelectedExitTests
         var exclusions = new[] { (MinX: 40d, MinY: 0d, MaxX: 60d, MaxY: 60d) };
 
         var result = Serpentine.GenerateComponentsWithSelectedExits(
-            outer, exclusions, new PatternParams { Margin = 0, Spacing = 10 },
+            outer, exclusions, new PatternParams { Spacing = 10 },
             PatternDirection.FrameX, Exit(0, 5), Exit(100, 35));
 
         Assert.True(result.Succeeded, result.Failure?.ToString());
@@ -256,7 +255,7 @@ public class SelectedExitTests
         var exclusions = new[] { (MinX: 400d, MinY: 0d, MaxX: 600d, MaxY: 10d) };
 
         var result = Serpentine.GenerateComponentsWithSelectedExits(
-            outer, exclusions, new PatternParams { Margin = 0, Spacing = 1 },
+            outer, exclusions, new PatternParams { Spacing = 1 },
             PatternDirection.FrameX, Exit(0, 0.5), Exit(0, 39.5));
 
         Assert.True(result.Succeeded, result.Failure?.ToString());
@@ -279,7 +278,7 @@ public class SelectedExitTests
         var exclusions = new[] { (MinX: 200d, MinY: 0d, MaxX: 400d, MaxY: 10d) };
 
         var result = Serpentine.GenerateComponentsWithSelectedExits(
-            outer, exclusions, new PatternParams { Margin = 0, Spacing = 1 },
+            outer, exclusions, new PatternParams { Spacing = 1 },
             PatternDirection.FrameX, Exit(0, 0.5), Exit(0, 39.5));
 
         Assert.True(result.Succeeded, result.Failure?.ToString());
@@ -302,7 +301,7 @@ public class SelectedExitTests
         // 5, 15, 25, 35 레인 뒤 마지막 레인이 왼쪽에서 끝나 종료점(100,35)과 멀다.
         // 같은 간격의 다음 레인(45)은 영역 높이 40 밖이므로 일부만 만들지 않고 실패해야 한다.
         var result = Serpentine.GenerateWithSelectedExits(
-            outer, null, new PatternParams { Margin = 0, Spacing = 10 },
+            outer, null, new PatternParams { Spacing = 10 },
             PatternDirection.FrameX, Exit(0, 5), Exit(100, 35));
 
         Assert.False(result.Succeeded);
@@ -318,7 +317,7 @@ public class SelectedExitTests
         // 추가 레인 위치(45)에는 폭 10mm 구간만 남지만, 발열구간이 하나라도 있으므로
         // 길이와 무관하게 그 구간으로 레인을 만든다.
         var result = Serpentine.GenerateComponentsWithSelectedExits(
-            outer, exclusions, new PatternParams { Margin = 0, Spacing = 10 },
+            outer, exclusions, new PatternParams { Spacing = 10 },
             PatternDirection.FrameX, Exit(0, 5), Exit(100, 35));
 
         Assert.True(result.Succeeded, result.Failure?.ToString());
@@ -343,7 +342,7 @@ public class SelectedExitTests
         var outer = Rect(0, 0, 100, 60);
 
         var result = Serpentine.GenerateWithSelectedExits(
-            outer, null, new PatternParams { Margin = 5, Spacing = 10 },
+            outer, null, new PatternParams { Spacing = 10 },
             PatternDirection.FrameX, Exit(50, 25), Exit(0, 40));
 
         Assert.False(result.Succeeded);
@@ -356,7 +355,7 @@ public class SelectedExitTests
         var outer = Rect(0, 0, 100, 60);
 
         var result = Serpentine.GenerateWithSelectedExits(
-            outer, null, new PatternParams { Margin = 5, Spacing = 10 },
+            outer, null, new PatternParams { Spacing = 10 },
             PatternDirection.FrameX, Exit(50, 70), Exit(0, 20));
 
         Assert.False(result.Succeeded);

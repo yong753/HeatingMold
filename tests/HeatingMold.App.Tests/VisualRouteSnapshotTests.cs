@@ -18,8 +18,8 @@ namespace HeatingMold.App.Tests
                 Region: new[] { new[] { new Vec2(0, 0), new Vec2(10, 0), new Vec2(10, 10), new Vec2(0, 10) } },
                 Exclusions: Array.Empty<VisualExclusionSnapshot>(),
                 Direction: 1,
-                AppliedMarginMm: 5,
-                AppliedSpacingMm: 15,
+                AppliedOuterGapMm: 5,
+                AppliedWireDiameterMm: 15,
                 AppliedDirection: 1,
                 AppliedRouteContextKey: "key-1",
                 CircuitCount: 1,
@@ -184,7 +184,7 @@ namespace HeatingMold.App.Tests
         {
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
-            string json = "{ \"schemaVersion\": 2, \"name\": \"t\", \"model\": { \"path\": \"" +
+            string json = "{ \"schemaVersion\": 3, \"name\": \"t\", \"model\": { \"path\": \"" +
                           model.Replace("\\", "\\\\") + "\", \"sha256\": \"" +
                           VisualScenario.ComputeSha256(model) +
                           "\", \"faceCount\": 80, \"solidCount\": 0 }, " +
@@ -206,7 +206,7 @@ namespace HeatingMold.App.Tests
         {
             using var temp = new TempDirectory();
             string model = temp.WriteFile("model.stp", "test-model");
-            string json = "{ \"schemaVersion\": 2, \"name\": \"t\", \"model\": { \"path\": \"" +
+            string json = "{ \"schemaVersion\": 3, \"name\": \"t\", \"model\": { \"path\": \"" +
                           model.Replace("\\", "\\\\") + "\", \"sha256\": \"" +
                           VisualScenario.ComputeSha256(model) +
                           "\", \"faceCount\": 80, \"solidCount\": 0 }, " +

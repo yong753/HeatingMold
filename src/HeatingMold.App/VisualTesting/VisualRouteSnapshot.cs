@@ -21,8 +21,8 @@ internal sealed record VisualRouteSnapshot(
     Vec2[][] Region,
     VisualExclusionSnapshot[] Exclusions,
     int Direction,
-    double? AppliedMarginMm,
-    double? AppliedSpacingMm,
+    double? AppliedOuterGapMm,
+    double? AppliedWireDiameterMm,
     int? AppliedDirection,
     string AppliedRouteContextKey,
     int CircuitCount,
@@ -198,8 +198,8 @@ internal static class VisualRouteSnapshotComparer
             region,
             exclusions,
             (int)area.Direction,
-            area.AppliedInputs?.Margin,
-            area.AppliedInputs?.Spacing,
+            area.AppliedInputs?.OuterGapMm,
+            area.AppliedInputs?.WireDiameterMm,
             area.AppliedInputs is null ? null : (int)area.AppliedInputs.Direction,
             area.AppliedInputs?.RouteContextKey ?? string.Empty,
             area.Circuits.Count,
@@ -258,8 +258,8 @@ internal static class VisualRouteSnapshotComparer
         if (!SameRings(before.Region, after.Region)) { difference = string.Format(CultureInfo.InvariantCulture, "{0}: 유효 경계 외곽이 달라졌습니다", area); return false; }
         if (!SameExclusions(before.Exclusions, after.Exclusions)) { difference = string.Format(CultureInfo.InvariantCulture, "{0}: 제외영역이 달라졌습니다", area); return false; }
         if (before.Direction != after.Direction) { difference = Diff(area, "생성 방향", before.Direction, after.Direction); return false; }
-        if (!NullableDouble(before.AppliedMarginMm, after.AppliedMarginMm)) { difference = Diff(area, "적용 마진", before.AppliedMarginMm, after.AppliedMarginMm); return false; }
-        if (!NullableDouble(before.AppliedSpacingMm, after.AppliedSpacingMm)) { difference = Diff(area, "적용 간격", before.AppliedSpacingMm, after.AppliedSpacingMm); return false; }
+        if (!NullableDouble(before.AppliedOuterGapMm, after.AppliedOuterGapMm)) { difference = Diff(area, "적용 외곽 간격", before.AppliedOuterGapMm, after.AppliedOuterGapMm); return false; }
+        if (!NullableDouble(before.AppliedWireDiameterMm, after.AppliedWireDiameterMm)) { difference = Diff(area, "적용 전선 직경", before.AppliedWireDiameterMm, after.AppliedWireDiameterMm); return false; }
         if (before.AppliedDirection != after.AppliedDirection) { difference = Diff(area, "적용 방향", before.AppliedDirection, after.AppliedDirection); return false; }
         if (!string.Equals(before.AppliedRouteContextKey, after.AppliedRouteContextKey, StringComparison.Ordinal))
         {

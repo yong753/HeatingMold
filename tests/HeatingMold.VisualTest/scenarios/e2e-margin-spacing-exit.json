@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 2,
-  "name": "E2E 조건 변형 — 마진·간격·인출점 (가로 A / 세로 B)",
+  "schemaVersion": 3,
+  "name": "E2E 조건 변형 — 외곽 간격·인출점 (가로 A / 세로 B)",
   "model": {
     "path": "resource/Mold_Cover_Trim.step",
     "sha256": "8CB03405817606D1917FEF55B46A60011FFB5E93075EECDEF5A8651D4359FCED",
@@ -11,15 +11,13 @@
     {
       "alias": "A",
       "faceIds": [44, 56, 69],
-      "marginMm": 8,
-      "spacingMm": 24,
+      "spacingMm": 23.7,
       "direction": 1
     },
     {
       "alias": "B",
       "faceIds": [16, 24, 26],
-      "marginMm": 12,
-      "spacingMm": 28,
+      "spacingMm": 27.7,
       "direction": 2
     }
   ],
@@ -38,11 +36,10 @@
     },
     {
       "id": "m3",
-      "name": "A 입력(가로 24mm·마진 8)",
+      "name": "A 입력(가로 외곽 23.7mm)",
       "action": "setAreaInputs",
       "area": "A",
-      "marginMm": 8,
-      "spacingMm": 24,
+      "spacingMm": 23.7,
       "direction": 1
     },
     {
@@ -72,19 +69,17 @@
       "name": "A 생성",
       "action": "generate",
       "area": "A",
-      "marginMm": 8,
-      "spacingMm": 24,
+      "spacingMm": 23.7,
       "direction": 1,
       "expect": {
-        "pieces": 24,
+        "pieces": 23,
         "turns": 11,
         "circuits": 1,
-        "lengthMm": 8030.735,
+        "lengthMm": 8207.764,
         "heatingPieces": 12,
-        "heatingLengthMm": 7742.326,
+        "heatingLengthMm": 7926.998,
         "routeEdited": false,
-        "marginMm": 8,
-        "spacingMm": 24
+        "spacingMm": 23.7
       }
     },
     {
@@ -101,11 +96,10 @@
     },
     {
       "id": "m9",
-      "name": "B 입력(세로 28mm·마진 12)",
+      "name": "B 입력(세로 외곽 27.7mm)",
       "action": "setAreaInputs",
       "area": "B",
-      "marginMm": 12,
-      "spacingMm": 28,
+      "spacingMm": 27.7,
       "direction": 2
     },
     {
@@ -135,19 +129,17 @@
       "name": "B 생성",
       "action": "generate",
       "area": "B",
-      "marginMm": 12,
-      "spacingMm": 28,
+      "spacingMm": 27.7,
       "direction": 2,
       "expect": {
         "pieces": 20,
         "turns": 9,
         "circuits": 1,
-        "lengthMm": 5239.919,
+        "lengthMm": 5592.21,
         "heatingPieces": 10,
-        "heatingLengthMm": 4907.115,
+        "heatingLengthMm": 5313.143,
         "routeEdited": false,
-        "marginMm": 12,
-        "spacingMm": 28
+        "spacingMm": 27.7
       }
     },
     {
@@ -156,12 +148,12 @@
       "action": "checkArea",
       "area": "A",
       "expect": {
-        "pieces": 24,
+        "pieces": 23,
         "turns": 11,
         "circuits": 1,
-        "lengthMm": 8030.735,
+        "lengthMm": 8207.764,
         "heatingPieces": 12,
-        "heatingLengthMm": 7742.326
+        "heatingLengthMm": 7926.998
       }
     },
     {
@@ -173,9 +165,9 @@
         "pieces": 20,
         "turns": 9,
         "circuits": 1,
-        "lengthMm": 5239.919,
+        "lengthMm": 5592.21,
         "heatingPieces": 10,
-        "heatingLengthMm": 4907.115
+        "heatingLengthMm": 5313.143
       }
     },
     {
@@ -213,56 +205,64 @@
     },
     {
       "id": "m18",
-      "name": "B 하단 홈 추가",
-      "action": "addExclusion",
+      "name": "B 초안 변경(외곽 29.7)",
+      "action": "setAreaInputs",
       "area": "B",
-      "rect": [520, -200, 590, -166]
-    },
-    {
-      "id": "m19",
-      "name": "B 경로 무효",
-      "action": "expectNoPattern",
-      "area": "B"
+      "spacingMm": 29.7,
+      "direction": 2
     },
     {
       "id": "m20",
-      "name": "B 홈 재생성",
+      "name": "B 초안 확인(외곽 29.7)",
+      "action": "expectAreaInputs",
+      "area": "B",
+      "spacingMm": 29.7,
+      "direction": 2
+    },
+    {
+      "id": "m21",
+      "name": "B 원 조건 재생성",
       "action": "generate",
       "area": "B",
-      "marginMm": 12,
-      "spacingMm": 28,
+      "spacingMm": 27.7,
       "direction": 2,
       "expect": {
         "pieces": 20,
         "turns": 9,
         "circuits": 1,
-        "lengthMm": 5174.13,
+        "lengthMm": 5592.21,
         "heatingPieces": 10,
-        "heatingLengthMm": 4841.326,
+        "heatingLengthMm": 5313.143,
         "routeEdited": false,
-        "marginMm": 12,
-        "spacingMm": 28
+        "spacingMm": 27.7
       }
     },
     {
-      "id": "m21",
-      "name": "B 홈 침범 검사",
-      "action": "checkExclusion",
-      "area": "B",
-      "rect": [520, -200, 590, -166]
-    },
-    {
       "id": "m22",
-      "name": "B 홈 후 A 보존",
+      "name": "B 재생성 후 A 보존",
       "action": "checkArea",
       "area": "A",
       "expect": {
-        "pieces": 24,
+        "pieces": 23,
         "turns": 11,
         "circuits": 1,
-        "lengthMm": 8030.735,
+        "lengthMm": 8207.764,
         "heatingPieces": 12,
-        "heatingLengthMm": 7742.326
+        "heatingLengthMm": 7926.998
+      }
+    },
+    {
+      "id": "m22b",
+      "name": "B 재생성 확인",
+      "action": "checkArea",
+      "area": "B",
+      "expect": {
+        "pieces": 20,
+        "turns": 9,
+        "circuits": 1,
+        "lengthMm": 5592.21,
+        "heatingPieces": 10,
+        "heatingLengthMm": 5313.143
       }
     },
     {
@@ -289,12 +289,12 @@
       "action": "checkArea",
       "area": "A",
       "expect": {
-        "pieces": 24,
+        "pieces": 23,
         "turns": 11,
         "circuits": 1,
-        "lengthMm": 8030.735,
+        "lengthMm": 8207.764,
         "heatingPieces": 12,
-        "heatingLengthMm": 7742.326
+        "heatingLengthMm": 7926.998
       }
     },
     {
@@ -306,18 +306,17 @@
         "pieces": 20,
         "turns": 9,
         "circuits": 1,
-        "lengthMm": 5174.13,
+        "lengthMm": 5592.21,
         "heatingPieces": 10,
-        "heatingLengthMm": 4841.326
+        "heatingLengthMm": 5313.143
       }
     },
     {
       "id": "m27",
-      "name": "A 초안 변경(10/30)",
+      "name": "A 초안 변경(외곽 29.7)",
       "action": "setAreaInputs",
       "area": "A",
-      "marginMm": 10,
-      "spacingMm": 30,
+      "spacingMm": 29.7,
       "direction": 1
     },
     {
@@ -325,17 +324,15 @@
       "name": "B 초안 보존",
       "action": "expectAreaInputs",
       "area": "B",
-      "marginMm": 12,
-      "spacingMm": 28,
+      "spacingMm": 27.7,
       "direction": 2
     },
     {
       "id": "m29",
-      "name": "A 초안 확인(10/30)",
+      "name": "A 초안 확인(외곽 29.7)",
       "action": "expectAreaInputs",
       "area": "A",
-      "marginMm": 10,
-      "spacingMm": 30,
+      "spacingMm": 29.7,
       "direction": 1
     },
     {
@@ -343,19 +340,17 @@
       "name": "A 원 조건 재생성",
       "action": "generate",
       "area": "A",
-      "marginMm": 8,
-      "spacingMm": 24,
+      "spacingMm": 23.7,
       "direction": 1,
       "expect": {
-        "pieces": 24,
+        "pieces": 23,
         "turns": 11,
         "circuits": 1,
-        "lengthMm": 8030.735,
+        "lengthMm": 8207.764,
         "heatingPieces": 12,
-        "heatingLengthMm": 7742.326,
+        "heatingLengthMm": 7926.998,
         "routeEdited": false,
-        "marginMm": 8,
-        "spacingMm": 24
+        "spacingMm": 23.7
       }
     },
     {
@@ -367,9 +362,9 @@
         "pieces": 20,
         "turns": 9,
         "circuits": 1,
-        "lengthMm": 5174.13,
+        "lengthMm": 5592.21,
         "heatingPieces": 10,
-        "heatingLengthMm": 4841.326
+        "heatingLengthMm": 5313.143
       }
     },
     {
@@ -546,12 +541,12 @@
       "action": "checkArea",
       "area": "A",
       "expect": {
-        "pieces": 24,
+        "pieces": 23,
         "turns": 11,
         "circuits": 1,
-        "lengthMm": 8030.735,
+        "lengthMm": 8207.764,
         "heatingPieces": 12,
-        "heatingLengthMm": 7742.326
+        "heatingLengthMm": 7926.998
       }
     },
     {
@@ -563,9 +558,9 @@
         "pieces": 20,
         "turns": 9,
         "circuits": 1,
-        "lengthMm": 5174.13,
+        "lengthMm": 5592.21,
         "heatingPieces": 10,
-        "heatingLengthMm": 4841.326
+        "heatingLengthMm": 5313.143
       }
     },
     {
@@ -602,9 +597,9 @@
         "pieces": 20,
         "turns": 9,
         "circuits": 1,
-        "lengthMm": 5174.13,
+        "lengthMm": 5592.21,
         "heatingPieces": 10,
-        "heatingLengthMm": 4841.326
+        "heatingLengthMm": 5313.143
       }
     },
     {

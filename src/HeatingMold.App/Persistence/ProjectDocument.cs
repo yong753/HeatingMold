@@ -11,7 +11,7 @@ namespace HeatingMold.App.Persistence
     public sealed class ProjectDocument
     {
         public string Format { get; set; } = "HeatingMold.Project";
-        public int SchemaVersion { get; set; } = 6;
+        public int SchemaVersion { get; set; } = ProjectJsonStore.CurrentSchemaVersion;
         public string AppVersion { get; set; }
         public string CreatedUtc { get; set; }
         public string SavedUtc { get; set; }
@@ -83,7 +83,6 @@ namespace HeatingMold.App.Persistence
         public List<ProjectRect> Exclusions { get; set; } = new();
 
         public string Direction { get; set; }
-        public string MarginText { get; set; }
         public string SpacingText { get; set; }
 
         public List<ProjectVec2> ExitChain { get; set; } = new();
@@ -147,8 +146,8 @@ namespace HeatingMold.App.Persistence
 
     public sealed class ProjectAppliedInputs
     {
-        public double Margin { get; set; }
-        public double Spacing { get; set; }
+        public double OuterGapMm { get; set; }
+        public double WireDiameterMm { get; set; }
         public string Direction { get; set; }
         public string RouteContextKey { get; set; }
     }

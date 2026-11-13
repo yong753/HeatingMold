@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 3,
+  "name": "repro: B 세로 4분할 AnchorNotAtLaneEnd (기존 실패 보존)",
+  "model": {
+    "path": "resource/Mold_Cover_Trim.step",
+    "sha256": "8CB03405817606D1917FEF55B46A60011FFB5E93075EECDEF5A8651D4359FCED",
+    "faceCount": 80,
+    "solidCount": 0
+  },
+  "areas": [
+    { "alias": "A", "faceIds": [44, 56, 69], "spacingMm": 14.85, "direction": 1 },
+    { "alias": "B", "faceIds": [16, 24, 26], "spacingMm": 24.7, "direction": 2 }
+  ],
+  "steps": [
+    { "id": "r1", "name": "A 선택", "action": "selectFaces", "faces": [44, 56, 69] },
+    { "id": "r2", "name": "A 확정", "action": "confirmArea", "area": "A" },
+    { "id": "r3", "name": "Case 2 전기 선택", "action": "setElectrical",
+      "electrical": { "presetIndex": 1, "voltageV": 220, "allowedCurrentA": 16, "allowedPowerKw": 3.5, "reviewScope": 0 } },
+    { "id": "r4", "name": "A 입력(외곽 14.85)", "action": "setAreaInputs", "area": "A", "spacingMm": 14.85, "direction": 1 },
+    { "id": "r5", "name": "A 시작", "action": "pickExitPoint", "area": "A",
+      "exitPoint": { "role": "start", "uv": [295.91262149879026, 133.36749353890832], "toleranceMm": 0.5 } },
+    { "id": "r6", "name": "A 종료", "action": "pickExitPoint", "area": "A",
+      "exitPoint": { "role": "end", "uv": [295.9106395319768, -291.6634555349192], "toleranceMm": 0.5 } },
+    { "id": "r7", "name": "A 생성", "action": "generate", "area": "A",
+      "expect": { "pieces": 60, "turns": 29, "circuits": 1, "lengthMm": 18440.993,
+        "heatingPieces": 30, "heatingLengthMm": 17757.056, "spacingMm": 14.85 } },
+
+    { "id": "r8", "name": "B 선택", "action": "selectFaces", "faces": [16, 24, 26] },
+    { "id": "r9", "name": "B 확정", "action": "confirmArea", "area": "B" },
+    { "id": "r10", "name": "B 입력(외곽 24.7·세로)", "action": "setAreaInputs", "area": "B", "spacingMm": 24.7, "direction": 2 },
+    { "id": "r11", "name": "B 시작", "action": "pickExitPoint", "area": "B",
+      "exitPoint": { "role": "start", "uv": [330, -172.51], "toleranceMm": 1.5 } },
+    { "id": "r12", "name": "B 종료", "action": "pickExitPoint", "area": "B",
+      "exitPoint": { "role": "end", "uv": [620, -182.03], "toleranceMm": 1.5 } },
+    { "id": "r13", "name": "B 생성", "action": "generate", "area": "B",
+      "expect": { "pieces": 24, "turns": 11, "circuits": 1, "lengthMm": 6644.888,
+        "heatingPieces": 12, "heatingLengthMm": 6349.574, "spacingMm": 24.7 } },
+
+    { "id": "r14", "name": "Case2 60V", "action": "setElectrical",
+      "electrical": { "presetIndex": 1, "voltageV": 60, "allowedCurrentA": 16, "allowedPowerKw": 3.5, "reviewScope": 0 } },
+    { "id": "r15", "name": "B 4분할 실패 재현", "action": "splitArea", "area": "B", "outcome": "rejected",
+      "confirm": "yes", "confirmAction": "영역 분할", "partCount": 4,
+      "childAliases": ["B-1", "B-2", "B-3", "B-4"],
+      "failureContains": "마지막 레인이 종료점 반대편" },
+
+    { "id": "r16", "name": "A 보존", "action": "checkArea", "area": "A",
+      "expect": { "pieces": 60, "turns": 29, "circuits": 1, "lengthMm": 18440.993,
+        "heatingPieces": 30, "heatingLengthMm": 17757.056, "spacingMm": 14.85 } },
+    { "id": "r17", "name": "B 보존", "action": "checkArea", "area": "B",
+      "expect": { "pieces": 24, "turns": 11, "circuits": 1, "lengthMm": 6644.888,
+        "heatingPieces": 12, "heatingLengthMm": 6349.574, "spacingMm": 24.7 } }
+  ]
+}

@@ -110,7 +110,7 @@ namespace HeatingMold.App
         {
             int selected = _selectedFaceIds.Count;
             bool vertexActive = Viewport != null && Viewport.VertexEditMode;
-            bool patternInputValid = TryGetParams(out _, out _, out string patternInputError);
+            bool patternInputValid = TryGetParams(out _, out string patternInputError);
             bool activeStale = _activeArea != null && IsPatternInputStale(_activeArea);
             // 편집 중에는 영역 구성/생성/삭제로 경로와 핸들이 어긋나지 않게 막는다.
             if (ConfirmAreaButton != null) ConfirmAreaButton.IsEnabled = selected > 0 && !vertexActive && !_isBusy;
@@ -122,7 +122,6 @@ namespace HeatingMold.App
                     && patternInputValid && !activeStale && _activeArea.TargetPowerW is > 0;
             if (ExportButton != null) ExportButton.IsEnabled = !_isBusy;
             if (StepExportButton != null) StepExportButton.IsEnabled = !_isBusy;
-            if (OpenButton != null) OpenButton.IsEnabled = !_isBusy;
             if (OpenExampleButton != null) OpenExampleButton.IsEnabled = !_isBusy;
             if (PatternInputErrorText != null)
             {
@@ -225,8 +224,8 @@ namespace HeatingMold.App
             }
 
             string mold = OcctEnv.FindMoldStp();
-            if (mold != null) StatusText.Text = "뷰어 준비 — STEP 열기 또는 예제 열기로 모델을 선택하세요";
-            else StatusText.Text = "뷰어 준비 — 'STEP 열기'로 모델 파일을 선택하세요";
+            if (mold != null) StatusText.Text = "뷰어 준비 — 예제 열기 또는 프로젝트 열기로 모델을 선택하세요";
+            else StatusText.Text = "뷰어 준비 — 프로젝트 열기로 저장된 프로젝트를 여세요";
 
             if (VisualTestSession.Current != null)
                 Dispatcher.BeginInvoke(new Action(StartVisualTestIfConfigured));
@@ -238,7 +237,7 @@ namespace HeatingMold.App
             string mold = OcctEnv.FindMoldStp();
             if (string.IsNullOrEmpty(mold))
             {
-                StatusText.Text = "예제 STEP을 찾을 수 없습니다 — STEP 열기로 파일을 선택하세요";
+                StatusText.Text = "예제 STEP을 찾을 수 없습니다 — 프로젝트 열기로 저장된 프로젝트를 여세요";
                 return;
             }
             LoadFile(mold);
@@ -292,7 +291,7 @@ namespace HeatingMold.App
                 Path.GetFileName(path), info.Solids, info.Shells, info.Faces, info.Planes, sw.ElapsedMilliseconds);
             // 기본은 +Z. 예제 프리셋이 있는 모델은 그 작업 법선을 쓴다
             // (Mold_Cover_Trim.step → +X 가열면). 파일 해시로 판별하므로
-            // '예제 열기'와 'STEP 열기'가 같은 좌표를 쓴다.
+            // '예제 열기'와 프로젝트 복원이 같은 좌표를 쓴다.
             var workingNormal = new Vec3(0, 0, 1);
             if (ExampleModelPresets.TryGetWorkingNormal(path, out var presetNormal))
                 workingNormal = presetNormal;
@@ -301,24 +300,18 @@ namespace HeatingMold.App
             ReturnToAreaTab();
         }
 
-        private bool TryGetParams(out double margin, out double spacing, out string error)
+        private bool TryGetParams(out double spacing, out string error)
         {
-            margin = 0;
             spacing = 0;
-            string marginError = null, spacingError = null;
-            bool marginOk = NumericInputValidator.TryMargin(MarginBox?.Text ?? "", out margin, out marginError);
-            bool spacingOk = NumericInputValidator.TrySpacing(SpacingBox?.Text ?? "", out spacing, out spacingError);
-            error = !marginOk ? marginError + " (mm)" : !spacingOk ? spacingError + " (mm)" : null;
-            return marginOk && spacingOk;
+            bool spacingOk = NumericInputValidator.TrySpacing(SpacingBox?.Text ?? "", out spacing, out string spacingError);
+            error = spacingOk ? null : spacingError + " (mm)";
+            return spacingOk;
         }
 
         /// <summary>영역에 보관된 입력 초안을 같은 규칙으로 해석한다(비활성 영역 포함).</summary>
-        private static bool TryParseAreaParams(string marginText, string spacingText,
-            out double margin, out double spacing)
+        private static bool TryParseAreaParams(string spacingText, out double spacing)
         {
-            margin = 0;
             spacing = 0;
-            if (!NumericInputValidator.TryMargin(marginText ?? "", out margin, out _)) return false;
             return NumericInputValidator.TrySpacing(spacingText ?? "", out spacing, out _);
         }
 
@@ -430,28 +423,40 @@ namespace HeatingMold.App
               .Append(anchor.Value.Y.ToString("R", inv));
         }
 
-        private AppliedGenerationInputs CaptureAppliedInputs(WorkingArea area, double margin, double spacing) =>
+        private AppliedGenerationInputs CaptureAppliedInputs(WorkingArea area, double spacing, double wireDiameter) =>
             new()
             {
-                Margin = margin,
-                Spacing = spacing,
+                OuterGapMm = spacing,
+                WireDiameterMm = wireDiameter,
                 Direction = area.Direction,
                 RouteContextKey = BuildRouteContextKey(area)
             };
 
-        /// <summary>표시 중인 경로가 현재 입력 초안이나 원본 조건보다 오래되었는지 판단한다.</summary>
+        /// <summary>표시 중인 경로가 현재 입력 초안(간격·전선 직경 포함)이나 원본 조건보다 오래되었는지 판단한다.</summary>
         internal bool IsPatternInputStale(WorkingArea area)
         {
             if (area?.Pattern == null) return false;
             // 생성 출처를 알 수 없는 결과는 최신으로 간주하지 않는다.
             if (area.AppliedInputs == null) return true;
-            if (!TryParseAreaParams(area.MarginText, area.SpacingText, out double margin, out double spacing))
+            if (!TryParseAreaParams(area.SpacingText, out double spacing))
                 return true;
             AppliedGenerationInputs applied = area.AppliedInputs;
-            return Math.Abs(margin - applied.Margin) > 1e-9 ||
-                   Math.Abs(spacing - applied.Spacing) > 1e-9 ||
-                   area.Direction != applied.Direction ||
+            if (Math.Abs(spacing - applied.OuterGapMm) > 1e-9) return true;
+            // 전선 Case 선택이 없으면 직경 변경으로 단정하지 않는다. 생성 시에는 별도 오류로 막는다.
+            if (TryGetSelectedWireDiameter(out double diameter) &&
+                Math.Abs(diameter - applied.WireDiameterMm) > 1e-9) return true;
+            return area.Direction != applied.Direction ||
                    !string.Equals(BuildRouteContextKey(area), applied.RouteContextKey, StringComparison.Ordinal);
+        }
+
+        /// <summary>현재 선택된 전선 Case의 직경. 선택이 없으면 false.</summary>
+        private bool TryGetSelectedWireDiameter(out double diameter)
+        {
+            diameter = 0;
+            if (!ElectricalSettingsResolver.TryGetWire(WirePresetBox?.SelectedIndex ?? -1, out HeatingWireSpec wire))
+                return false;
+            diameter = wire.DiameterMm;
+            return double.IsFinite(diameter) && diameter >= 0;
         }
 
         // 입력 문자열은 영역별 초안으로 보존한다. 프로그램이 영역 전환 중 상자를 복원할 때는
@@ -461,8 +466,7 @@ namespace HeatingMold.App
             if (_suppressPatternInputWriteBack) return;
             if (_activeArea != null)
             {
-                if (ReferenceEquals(sender, MarginBox)) _activeArea.MarginText = MarginBox.Text;
-                else if (ReferenceEquals(sender, SpacingBox)) _activeArea.SpacingText = SpacingBox.Text;
+                if (ReferenceEquals(sender, SpacingBox)) _activeArea.SpacingText = SpacingBox.Text;
                 // 버튼만 비활성화하고 진행 중인 편집 제스처를 남겨두면 확정 시점에
                 // 이전 결과를 새 조건으로 덮어쓸 수 있으므로 즉시 종료한다.
                 if (IsPatternInputStale(_activeArea))
@@ -470,7 +474,7 @@ namespace HeatingMold.App
                     if (Viewport != null && Viewport.VertexEditMode) ExitVertexEdit();
                 }
             }
-            // 마진/간격이 바뀌면 기존 경로가 stale이 되어 배분 대상에서 빠진다. 분할 버튼이
+            // 간격이 바뀌면 기존 경로가 stale이 되어 배분 대상에서 빠진다. 분할 버튼이
             // 오래된 배분값으로 분할 수를 계산하지 않도록 파생 배분값을 즉시 다시 계산한다.
             RefreshElectricalTable();
             UpdateActionStates();
@@ -876,8 +880,7 @@ namespace HeatingMold.App
                 AreaId = ++_nextAreaId,
                 // 새 영역은 현재 화면에 입력된 배치 조건을 초안으로 이어받는다.
                 Direction = DirectionFromIndex(DirectionBox?.SelectedIndex ?? 0),
-                MarginText = MarginBox?.Text ?? "5",
-                SpacingText = SpacingBox?.Text ?? "50"
+                SpacingText = SpacingBox?.Text ?? "5"
             };
             area.FaceIdSet.UnionWith(_selectedFaceIds);
             area.Region.Add(region[0]);
@@ -1059,9 +1062,14 @@ namespace HeatingMold.App
                 StatusText.Text = _multiFaceRegionFailure ?? "작업영역을 먼저 확정하세요";
                 return;
             }
-            if (!TryGetParams(out double margin, out double spacing, out string parameterError))
+            if (!TryGetParams(out double spacing, out string parameterError))
             {
                 StatusText.Text = parameterError;
+                return;
+            }
+            if (!TryGetSelectedWireDiameter(out double wireDiameter))
+            {
+                StatusText.Text = "발열선 규격을 선택하세요 — 중심 피치는 외곽 간격 + 전선 직경입니다";
                 return;
             }
             if (!double.TryParse(InsertionDepthBox.Text, out double insertionDepth) ||
@@ -1085,7 +1093,7 @@ namespace HeatingMold.App
             List<IReadOnlyList<Vec2>> paths;
             try
             {
-                if (!TryGenerateAreaPattern(candidate, margin, spacing,
+                if (!TryGenerateAreaPattern(candidate, spacing, wireDiameter,
                         out editablePattern, out paths, out string generationFailure))
                 {
                     SyncExitFaceUi(area);
@@ -1127,7 +1135,7 @@ namespace HeatingMold.App
                 ? area.Pattern.RoutePieces.Count(p => p.Kind == SerpentineRoutePieceKind.TurnConnector) : 0;
             if (projectedCount == 0)
             {
-                StatusText.Text = "생성 가능한 경로가 없습니다. 마진/간격 또는 선택 영역을 확인하세요";
+                StatusText.Text = "생성 가능한 경로가 없습니다. 간격 또는 선택 영역을 확인하세요";
             }
             else if (routePiecesMode)
             {
@@ -1153,7 +1161,7 @@ namespace HeatingMold.App
         /// 패턴과 2D 경로만 돌려준다. 일반 생성과 분할 자동 생성이 같은 4분기 규칙을 쓰도록
         /// GenerateMultiFace의 생성부를 그대로 옮겼다.
         /// </summary>
-        private bool TryGenerateAreaPattern(WorkingArea candidate, double margin, double spacing,
+        private bool TryGenerateAreaPattern(WorkingArea candidate, double spacing, double wireDiameter,
             out SerpentineResult? pattern, out List<IReadOnlyList<Vec2>> paths, out string failure)
         {
             pattern = null;
@@ -1178,13 +1186,13 @@ namespace HeatingMold.App
 
             // 선택한 두 인출점을 고정한 실제 생성 경로. 분할 후보 탐색과 최종 생성이 같은
             // 헬퍼를 쓰므로, 탐색에서 잰 2D 길이와 확정 경로의 길이가 달라지지 않는다.
-            if (!TryGenerateSelectedExitPattern(candidate, margin, spacing,
+            if (!TryGenerateSelectedExitPattern(candidate, spacing, wireDiameter,
                     out SerpentineResult? editablePattern, out failure))
                 return false;
             paths.Add(editablePattern!.Path);
             if (paths.Count == 0 && (editablePattern == null || editablePattern.RoutePieces.Count == 0))
             {
-                failure = "생성 가능한 경로가 없습니다. 마진/간격 또는 선택 영역을 확인하세요";
+                failure = "생성 가능한 경로가 없습니다. 간격 또는 선택 영역을 확인하세요";
                 return false;
             }
             pattern = editablePattern;
@@ -1196,7 +1204,7 @@ namespace HeatingMold.App
         /// 같은 코드를 쓰도록 한 곳에 모은다. Auto 방향은 UI·인출점 배정과 같은 가로(FrameX)로
         /// 해석하고, 실패하면 무앵커 경로로 대체하지 않는다.
         /// </summary>
-        private bool TryGenerateSelectedExitPattern(WorkingArea candidate, double margin, double spacing,
+        private bool TryGenerateSelectedExitPattern(WorkingArea candidate, double spacing, double wireDiameter,
             out SerpentineResult pattern, out string failure)
         {
             pattern = null;
@@ -1216,8 +1224,8 @@ namespace HeatingMold.App
             PatternDirection effectiveDirection = EffectiveDirection(candidate.Direction);
             var parameters = new PatternParams
             {
-                Margin = margin,
                 Spacing = spacing,
+                WireDiameter = wireDiameter,
                 Direction = effectiveDirection,
             };
             AnchoredResult anchored = candidate.Exclusions.Count > 0
@@ -1237,7 +1245,7 @@ namespace HeatingMold.App
             SerpentineResult generated = anchored.Pattern;
             if (generated == null || generated.RoutePieces.Count == 0 || generated.Path.Count < 2)
             {
-                failure = "생성 가능한 경로가 없습니다. 마진/간격 또는 선택 영역을 확인하세요";
+                failure = "생성 가능한 경로가 없습니다. 간격 또는 선택 영역을 확인하세요";
                 return false;
             }
             pattern = generated;
@@ -1534,15 +1542,9 @@ namespace HeatingMold.App
                 e.Cancel = true;
                 return;
             }
+            InvalidateSpacingReview();
+            try { Bridge.ClearSpacingMarkers(); } catch (Exception) { }
             base.OnClosing(e);
         }
-
-        private void Open_Click(object sender, RoutedEventArgs e)
-        {
-            if (_visualTestInputLocked) return;
-            var dlg = new OpenFileDialog { Filter = "STEP (*.stp;*.step)|*.stp;*.step|모든 파일 (*.*)|*.*" };
-            if (dlg.ShowDialog(this) == true) LoadFile(dlg.FileName);
-        }
-
     }
 }

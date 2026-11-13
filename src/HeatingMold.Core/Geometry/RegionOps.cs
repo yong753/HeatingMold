@@ -64,41 +64,32 @@ public static class RegionOps
     }
 
     /// <summary>
-    /// 발열 경로 생성 전용 영역. 외곽은 margin만큼 안쪽, 제외 사각형은 같은 margin만큼
-    /// 바깥쪽으로 확장해 차감한다. 원본 제외영역 값과 기존 <see cref="SubtractRectangles"/>
-    /// 계약(정확 차감)은 변경하지 않는다. margin이 0이면 기존 결과와 같다.
-    /// 제외영역 확장은 입력 사각형을 복사해서만 적용하며 저장·표시 값에는 영향을 주지 않는다.
+    /// 발열 경로 생성 전용 영역 = 적용영역 − 제외영역.
+    /// 사용자가 지정하던 배치 마진 기능은 제거되었다. 외곽을 안쪽으로 줄이거나 제외영역을
+    /// 넓히지 않으므로 제외 사각형은 입력한 크기 그대로 차감된다.
     /// </summary>
     public static List<List<Vec2>> BuildGenerationRegion(
         IReadOnlyList<Vec2> outer,
-        IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
-        double margin)
+        IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions)
     {
-        return BuildGenerationRegion(outer, exclusions, margin, out _);
+        ArgumentNullException.ThrowIfNull(outer);
+        ArgumentNullException.ThrowIfNull(exclusions);
+        return SubtractRectangles(new[] { outer }, exclusions);
     }
 
     /// <summary>
-    /// <see cref="BuildGenerationRegion"/>와 같은 결과를 만들면서, 차감 전의 마진 적용
-    /// 패턴 영역도 함께 돌려준다. 생성 경로가 같은 외곽 오프셋을 다시 계산하지 않도록
-    /// 두 결과를 한 번의 오프셋 연산에서 만든다. 반환된 두 목록은 서로 독립적이다.
+    /// <see cref="BuildGenerationRegion"/>와 같은 결과를 만들면서, 차감 전의 패턴 영역도
+    /// 함께 돌려준다. 생성 경로가 같은 외곽 계산을 두 번 하지 않도록 한다.
     /// </summary>
     internal static List<List<Vec2>> BuildGenerationRegion(
         IReadOnlyList<Vec2> outer,
         IEnumerable<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
-        double margin,
         out List<List<Vec2>> patternRegion)
     {
         ArgumentNullException.ThrowIfNull(outer);
         ArgumentNullException.ThrowIfNull(exclusions);
-        patternRegion = BuildPatternRegion(outer, null, margin);
-        double grow = Math.Max(0.0, margin);
-        var expanded = new List<(double MinX, double MinY, double MaxX, double MaxY)>();
-        foreach (var r in exclusions)
-        {
-            if (!(r.MaxX > r.MinX && r.MaxY > r.MinY)) continue;
-            expanded.Add((r.MinX - grow, r.MinY - grow, r.MaxX + grow, r.MaxY + grow));
-        }
-        return SubtractRectangles(patternRegion, expanded);
+        patternRegion = BuildPatternRegion(outer, null);
+        return SubtractRectangles(patternRegion, exclusions);
     }
 
     /// <summary>링의 부호 있는 면적 (CCW 양수).</summary>
@@ -114,17 +105,14 @@ public static class RegionOps
         return a / 2.0;
     }
 
-    /// <summary>패턴 영역 = outer를 margin만큼 안쪽 오프셋 − holes를 margin만큼 바깥쪽 오프셋.</summary>
+    /// <summary>패턴 영역 = 적용영역 − 홀. 외곽을 안쪽으로 줄이는 배치 마진은 제거되었다.</summary>
     public static List<List<Vec2>> BuildPatternRegion(
         IReadOnlyList<Vec2> outer,
-        IReadOnlyList<IReadOnlyList<Vec2>>? holes,
-        double margin)
+        IReadOnlyList<IReadOnlyList<Vec2>>? holes)
     {
         if (outer.Count < 3) throw new ArgumentException("외곽 링은 점 3개 이상 필요", nameof(outer));
 
-        PathD outerPath = ToPath(EnsureOrientation(outer, ccw: true));
-        PathsD subject = Clipper.InflatePaths(
-            new PathsD { outerPath }, -margin, JoinType.Miter, EndType.Polygon);
+        PathsD subject = new() { ToPath(EnsureOrientation(outer, ccw: true)) };
 
         if (holes is null || holes.Count == 0)
             return FromPaths(subject);
@@ -137,8 +125,7 @@ public static class RegionOps
         }
         if (clipPaths.Count == 0) return FromPaths(subject);
 
-        PathsD clip = Clipper.InflatePaths(clipPaths, margin, JoinType.Miter, EndType.Polygon);
-        PathsD result = Clipper.Difference(subject, clip, FillRule.NonZero);
+        PathsD result = Clipper.Difference(subject, clipPaths, FillRule.NonZero);
         return FromPaths(result);
     }
 

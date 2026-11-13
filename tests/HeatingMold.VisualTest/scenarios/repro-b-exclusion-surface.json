@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 3,
+  "name": "repro: B 하단 제외영역 후 표면 이탈 실패 (기존 실패 보존)",
+  "model": {
+    "path": "resource/Mold_Cover_Trim.step",
+    "sha256": "8CB03405817606D1917FEF55B46A60011FFB5E93075EECDEF5A8651D4359FCED",
+    "faceCount": 80,
+    "solidCount": 0
+  },
+  "areas": [
+    { "alias": "A", "faceIds": [44, 56, 69], "spacingMm": 23.7, "direction": 1 },
+    { "alias": "B", "faceIds": [16, 24, 26], "spacingMm": 27.7, "direction": 1 }
+  ],
+  "steps": [
+    { "id": "s1", "name": "A 선택", "action": "selectFaces", "faces": [44, 56, 69] },
+    { "id": "s2", "name": "A 확정", "action": "confirmArea", "area": "A" },
+    { "id": "s3", "name": "Case 1 전기 선택", "action": "setElectrical",
+      "electrical": { "presetIndex": 0, "voltageV": 220, "allowedCurrentA": 16, "allowedPowerKw": 3.5, "reviewScope": 0 } },
+    { "id": "s4", "name": "A 입력(외곽 23.7)", "action": "setAreaInputs", "area": "A", "spacingMm": 23.7, "direction": 1 },
+    { "id": "s5", "name": "A 시작", "action": "pickExitPoint", "area": "A",
+      "exitPoint": { "role": "start", "uv": [-362.710894, -300], "toleranceMm": 0.5 } },
+    { "id": "s6", "name": "A 종료", "action": "pickExitPoint", "area": "A",
+      "exitPoint": { "role": "end", "uv": [-362.710894, -36], "toleranceMm": 0.5 } },
+    { "id": "s7", "name": "A 생성", "action": "generate", "area": "A",
+      "expect": { "pieces": 23, "turns": 11, "circuits": 1, "lengthMm": 8207.764,
+        "heatingPieces": 12, "heatingLengthMm": 7926.998, "spacingMm": 23.7 } },
+
+    { "id": "s8", "name": "B 선택", "action": "selectFaces", "faces": [16, 24, 26] },
+    { "id": "s9", "name": "B 확정", "action": "confirmArea", "area": "B" },
+    { "id": "s10", "name": "B 입력(외곽 27.7·가로)", "action": "setAreaInputs", "area": "B", "spacingMm": 27.7, "direction": 1 },
+    { "id": "s11", "name": "B 시작", "action": "pickExitPoint", "area": "B",
+      "exitPoint": { "role": "start", "uv": [630, -160], "toleranceMm": 0.5 } },
+    { "id": "s12", "name": "B 종료", "action": "pickExitPoint", "area": "B",
+      "exitPoint": { "role": "end", "uv": [304.366215, 190], "toleranceMm": 0.5 } },
+    { "id": "s13", "name": "B 생성", "action": "generate", "area": "B",
+      "expect": { "pieces": 26, "turns": 12, "circuits": 1, "lengthMm": 4687.71,
+        "heatingPieces": 13, "heatingLengthMm": 4255.417, "spacingMm": 27.7 } },
+
+    { "id": "s14", "name": "B 하단 홈 추가", "action": "addExclusion", "area": "B",
+      "rect": [520, -200, 590, -166] },
+    { "id": "s15", "name": "B 경로 무효", "action": "expectNoPattern", "area": "B" },
+    { "id": "s16", "name": "A 보존(실패 전)", "action": "checkArea", "area": "A",
+      "expect": { "pieces": 23, "turns": 11, "circuits": 1, "lengthMm": 8207.764,
+        "heatingPieces": 12, "heatingLengthMm": 7926.998, "spacingMm": 23.7 } },
+    { "id": "s17", "name": "B 홈 재생성(수정 후 성공)", "action": "generate", "area": "B",
+      "expect": { "pieces": 26, "turns": 12, "circuits": 1, "lengthMm": 4687.678,
+        "heatingPieces": 13, "heatingLengthMm": 4255.385, "spacingMm": 27.7 } },
+    { "id": "s18", "name": "B 재생성 경로 확인", "action": "checkArea", "area": "B",
+      "expect": { "pieces": 26, "turns": 12, "circuits": 1, "lengthMm": 4687.678,
+        "heatingPieces": 13, "heatingLengthMm": 4255.385, "spacingMm": 27.7 } },
+    { "id": "s19", "name": "A 보존(실패 후)", "action": "checkArea", "area": "A",
+      "expect": { "pieces": 23, "turns": 11, "circuits": 1, "lengthMm": 8207.764,
+        "heatingPieces": 12, "heatingLengthMm": 7926.998, "spacingMm": 23.7 } }
+  ]
+}

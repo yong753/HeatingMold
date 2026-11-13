@@ -23,10 +23,9 @@ static class SelectedExitChecks
     static object Invoke(object target, string name, params object[] args) =>
         target.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(target, args);
 
-    static void Cleanup(MainWindow window, TextBox marginBox, TextBox spacingBox, string fixtureDir)
+    static void Cleanup(MainWindow window, TextBox spacingBox, string fixtureDir)
     {
         Invoke(window, "ClearAllAreas", false);
-        marginBox.Text = "5";
         spacingBox.Text = "50";
         Bridge.LoadStep(Path.Combine(fixtureDir, "layers.stp"));
         Invoke(window, "ApplyWorkingSide", new Vec3(0, 0, 1));
@@ -40,7 +39,7 @@ static class SelectedExitChecks
             "confirm +Z side for direct exit-point checks");
         var side = Field<WorkingSideSession>(window, "_workingSide").Confirmed;
         Check(side != null, "confirmed side is available for direct exit-point checks");
-        if (side == null) { Cleanup(window, (TextBox)window.FindName("MarginBox"), (TextBox)window.FindName("SpacingBox"), fixtureDir); return; }
+        if (side == null) { Cleanup(window, (TextBox)window.FindName("SpacingBox"), fixtureDir); return; }
 
         int topFace = -1;
         for (int id = 0; ; ++id)
@@ -50,13 +49,13 @@ static class SelectedExitChecks
             if (probe[2] > 0.9 && Math.Abs(probe[5] - 20) < 1e-6) { topFace = id; break; }
         }
         Check(topFace >= 0, "planar top face exists for direct exit-point checks");
-        if (topFace < 0) { Cleanup(window, (TextBox)window.FindName("MarginBox"), (TextBox)window.FindName("SpacingBox"), fixtureDir); return; }
+        if (topFace < 0) { Cleanup(window, (TextBox)window.FindName("SpacingBox"), fixtureDir); return; }
 
         var loops = Bridge.GetSelectedRegionBoundary(new[] { topFace }, 0.05);
         Check(loops != null && loops.Length == 1 && loops[0].Closed &&
               loops[0].EdgeReferences != null && loops[0].EdgeReferences.Length > 0,
             "region boundary exposes original CAD references");
-        if (loops == null || loops.Length != 1) { Cleanup(window, (TextBox)window.FindName("MarginBox"), (TextBox)window.FindName("SpacingBox"), fixtureDir); return; }
+        if (loops == null || loops.Length != 1) { Cleanup(window, (TextBox)window.FindName("SpacingBox"), fixtureDir); return; }
 
         var areaType = typeof(MainWindow).Assembly.GetType("HeatingMold.App.WorkingArea")!;
         var area = Activator.CreateInstance(areaType, nonPublic: true)!;
@@ -100,17 +99,15 @@ static class SelectedExitChecks
         Check(startResolution.Succeeded && endResolution.Succeeded &&
               startResolution.Point!.Value.Binding.HasValue && endResolution.Point!.Value.Binding.HasValue,
             "two short exit points bind to different original boundary edges");
-        if (!startResolution.Succeeded || !endResolution.Succeeded) { Cleanup(window, (TextBox)window.FindName("MarginBox"), (TextBox)window.FindName("SpacingBox"), fixtureDir); return; }
+        if (!startResolution.Succeeded || !endResolution.Succeeded) { Cleanup(window, (TextBox)window.FindName("SpacingBox"), fixtureDir); return; }
         areaType.GetProperty("SelectedStartExit")!.SetValue(area, startResolution.Point);
         areaType.GetProperty("SelectedEndExit")!.SetValue(area, endResolution.Point);
 
         ((IList)Field<object>(window, "_areas")).Add(area);
         Invoke(window, "ActivateArea", area);
-        var marginBox = (TextBox)window.FindName("MarginBox");
         var spacingBox = (TextBox)window.FindName("SpacingBox");
-        marginBox.Text = "5";
         spacingBox.Text = "10";
-        areaType.GetProperty("MarginText")!.SetValue(area, "5");
+        areaType.GetProperty("SpacingText")!.SetValue(area, "5");
         areaType.GetProperty("SpacingText")!.SetValue(area, "10");
 
         Invoke(window, "GenerateMultiFace");
@@ -118,7 +115,7 @@ static class SelectedExitChecks
         if (pattern == null)
             Console.WriteLine("GenerateMultiFace status: " + ((TextBlock)window.FindName("StatusText")).Text);
         Check(pattern != null, "direct exit-point generation produces a route plan");
-        if (pattern == null) { Cleanup(window, marginBox, spacingBox, fixtureDir); return; }
+        if (pattern == null) { Cleanup(window, spacingBox, fixtureDir); return; }
 
         Check(pattern.StartExit != null && pattern.EndExit != null,
             "generated pattern records both direct exit endpoints");
@@ -159,7 +156,7 @@ static class SelectedExitChecks
         Check((bool)areaType.GetProperty("PatternDisplayed")!.GetValue(area)!,
             "direct-exit route is displayed after commit");
 
-        Cleanup(window, marginBox, spacingBox, fixtureDir);
+        Cleanup(window, spacingBox, fixtureDir);
         Console.WriteLine($"{count} direct exit-point checks passed.");
     }
 }

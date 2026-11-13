@@ -14,7 +14,7 @@ namespace HeatingMold.App.Persistence
     public static class ProjectJsonStore
     {
         public const string FileExtension = ".json";
-        public const int CurrentSchemaVersion = 6;
+        public const int CurrentSchemaVersion = 7;
 
         /// <summary>이 앱이 읽을 수 있는 스키마 버전인지. 구형 파일은 지원하지 않는다.</summary>
         public static bool IsSupportedSchemaVersion(int version) => version == CurrentSchemaVersion;

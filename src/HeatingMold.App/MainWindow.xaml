@@ -234,18 +234,11 @@
                     <Button x:Name="VisualTestButton" Content="시각 테스트…" Click="VisualTest_Click"
                             AutomationProperties.Name="시각 테스트 실행"
                             Style="{StaticResource FlatButton}" Margin="0,0,8,0"/>
-                    <Button x:Name="OpenButton" Content="STEP 열기…" Click="Open_Click"
-                            AutomationProperties.Name="STEP 모델 열기"
-                            Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"/>
                     <Button x:Name="OpenProjectButton" Content="프로젝트 열기…" Click="OpenProject_Click"
                             AutomationProperties.Name="프로젝트 열기"
                             ToolTip="저장된 JSON 프로젝트를 열고 원본 STEP을 다시 불러옵니다"
                             Style="{StaticResource FlatButton}" Margin="0,0,8,0"/>
-                    <Button x:Name="SaveProjectButton" Content="저장" Click="SaveProject_Click"
-                            AutomationProperties.Name="프로젝트 저장"
-                            ToolTip="현재 작업을 JSON 프로젝트로 저장"
-                            Style="{StaticResource FlatButton}" Margin="0,0,8,0"/>
-                    <Button x:Name="SaveProjectAsButton" Content="다른 이름…" Click="SaveProjectAs_Click"
+                    <Button x:Name="SaveProjectAsButton" Content="다른 이름으로 저장…" Click="SaveProjectAs_Click"
                             AutomationProperties.Name="프로젝트 다른 이름으로 저장"
                             ToolTip="현재 작업을 새 JSON 프로젝트로 저장"
                             Style="{StaticResource FlatButton}" Margin="0,0,8,0"/>
@@ -471,19 +464,11 @@
                                         <Grid Margin="0,8,0,0">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="10"/>
-                                                <ColumnDefinition Width="*"/>
                                             </Grid.ColumnDefinitions>
                                             <StackPanel>
-                                                <TextBlock Text="마진 (mm)" Style="{StaticResource FieldLabel}"/>
-                                                <TextBox x:Name="MarginBox" Text="5" Style="{StaticResource ValueBox}"
-                                                         AutomationProperties.Name="마진 밀리미터"
-                                                         TextChanged="PatternInput_Changed"/>
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="2">
-                                                <TextBlock Text="경로 중심 간격 (mm)" Style="{StaticResource FieldLabel}"/>
-                                                <TextBox x:Name="SpacingBox" Text="50" Style="{StaticResource ValueBox}"
-                                                         AutomationProperties.Name="경로 중심 간격 밀리미터"
+                                                <TextBlock Text="발열사 외곽 간격 (mm)" Style="{StaticResource FieldLabel}"/>
+                                                <TextBox x:Name="SpacingBox" Text="5" Style="{StaticResource ValueBox}"
+                                                         AutomationProperties.Name="발열사 외곽 간격 밀리미터"
                                                          TextChanged="PatternInput_Changed"/>
                                             </StackPanel>
                                         </Grid>
@@ -640,7 +625,7 @@
                                         <TextBlock Style="{StaticResource Hint}"
                                                    Text="이 DXF에는 다른 방향 투상도, 3D STEP, 프로젝트 JSON이 포함되지 않습니다."/>
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="프로젝트 저장은 상단 저장 버튼을 사용하세요. DXF 내보내기는 프로젝트 저장이 아닙니다."/>
+                                                   Text="프로젝트 저장은 상단의 다른 이름으로 저장 버튼을 사용하세요. DXF 내보내기는 프로젝트 저장이 아닙니다."/>
                                         <Separator Margin="0,14,0,10"/>
                                         <TextBlock Text="3D STEP 내보내기" Style="{StaticResource SectionTitle}"/>
                                         <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0"

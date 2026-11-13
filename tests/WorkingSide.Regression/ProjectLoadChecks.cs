@@ -88,8 +88,7 @@ static class ProjectLoadChecks
         areaType.GetProperty("Name")!.SetValue(area, "LoadCheck");
         areaType.GetProperty("AreaId")!.SetValue(area, 8801);
         areaType.GetProperty("Frame")!.SetValue(area, frame);
-        areaType.GetProperty("MarginText")!.SetValue(area, "7");
-        areaType.GetProperty("SpacingText")!.SetValue(area, "50");
+        areaType.GetProperty("SpacingText")!.SetValue(area, "7");
         ((HashSet<int>)areaType.GetProperty("FaceIdSet")!.GetValue(area)!).Add(faceId);
         ((IList)areaType.GetProperty("Region")!.GetValue(area)!).Add(polygon);
         areaType.GetProperty("ExitChain")!.SetValue(area, polygon);
@@ -197,7 +196,7 @@ static class ProjectLoadChecks
                 "project load re-colors committed routes with the area color");
             Check((bool)areaType.GetProperty("RouteEdited")!.GetValue(restored)!,
                 "project load preserves the manually edited route flag");
-            Check((string)areaType.GetProperty("MarginText")!.GetValue(restored)! == "7",
+            Check((string)areaType.GetProperty("SpacingText")!.GetValue(restored)! == "7",
                 "project load preserves the unapplied draft text");
             Check((bool)Invoke(window, "IsPatternInputStale", restored),
                 "project load preserves stale applied-input status");
@@ -369,7 +368,7 @@ static class ProjectLoadChecks
         areaType.GetProperty("RoutePieceLengths")!.SetValue(area, new[] { staged.Length });
         areaType.GetProperty("PatternDisplayed")!.SetValue(area, true);
         areaType.GetProperty("RouteEdited")!.SetValue(area, true);
-        areaType.GetProperty("MarginText")!.SetValue(area, "5");
+        areaType.GetProperty("SpacingText")!.SetValue(area, "5");
         areaType.GetProperty("SpacingText")!.SetValue(area, "10");
         areaType.GetProperty("AppliedInputs")!.SetValue(area, Invoke(window, "CaptureAppliedInputs", area, 5.0, 10.0));
         areaType.GetProperty("CommittedMapping")!.SetValue(area,

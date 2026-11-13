@@ -16,8 +16,7 @@ namespace HeatingMold.App.Tests;
 /// </summary>
 public class SplitLengthSearchTests
 {
-    private const double Margin = 5;
-    private const double Spacing = 10;
+        private const double Spacing = 10;
 
     private static readonly Vec2[] ParentRing =
     {
@@ -61,7 +60,7 @@ public class SplitLengthSearchTests
     private static WorkingArea CreateParent(double startY, double endY)
     {
         AreaSplitResult first = AreaSplitter.Split(ParentRing, NoExclusions,
-            PatternDirection.FrameY, 0, 20, 3);
+            PatternDirection.FrameY, 20, 3);
         Assert.True(first.Succeeded, first.Failure);
         List<(Vec2 A, Vec2 B)> firstCuts = first.Cuts.Select(VerticalCut).ToList();
         List<Vec2> middleRing = first.Bands[1].Outer.ToList();
@@ -98,13 +97,13 @@ public class SplitLengthSearchTests
     private static WorkingArea CreateParentWithExclusion(double startY, double endY)
     {
         AreaSplitResult first = AreaSplitter.Split(ParentRing, NoExclusions,
-            PatternDirection.FrameY, 0, 20, 3);
+            PatternDirection.FrameY, 20, 3);
         Assert.True(first.Succeeded, first.Failure);
         List<(Vec2 A, Vec2 B)> firstCuts = first.Cuts.Select(VerticalCut).ToList();
         List<Vec2> middleRing = first.Bands[1].Outer.ToList();
         var exclusions = new[]
         {
-            (MinX: 100.0, MinY: 100.0, MaxX: 150.0, MaxY: 140.0)
+            (MinX: 100.0, MinY: 95.0, MaxX: 180.0, MaxY: 145.0)
         };
         SplitRegionBoundary2D middle = CreateBoundary(ParentRing, middleRing, firstCuts, exclusions);
 
@@ -139,14 +138,14 @@ public class SplitLengthSearchTests
     {
         WorkingArea parent = CreateParent(20, 280);
         AreaSplitResult initial = AreaSplitter.Split(parent.Region[0], NoExclusions,
-            PatternDirection.FrameX, Margin, Spacing, 2);
+            PatternDirection.FrameX, Spacing, 2);
         Assert.True(initial.Succeeded, initial.Failure);
 
         MainWindow window = UninitializedWindow();
-        Assert.True(window.TryEvaluateSplit2D(parent, initial, Margin, Spacing,
+        Assert.True(window.TryEvaluateSplit2D(parent, initial, new LanePitchSpec(Spacing, 0),
             out _, out _, out _, out double initialRatio, out string initialFailure), initialFailure);
 
-        bool assigned = window.TryPrepareBalancedSplit(parent, initial, 2, Margin, Spacing,
+        bool assigned = window.TryPrepareBalancedSplit(parent, initial, 2, new LanePitchSpec(Spacing, 0),
             out AreaSplitResult chosen, out List<WorkingArea> children,
             out Dictionary<WorkingArea, SerpentineResult> patterns,
             out double balanceRatio, out string failure);
@@ -193,14 +192,14 @@ public class SplitLengthSearchTests
         // 실제 레인 수/길이를 크게 벌린다. 탐색은 절단을 아래로 옮겨 실제 2D 길이를 맞춘다.
         WorkingArea parent = CreateParent(20, 200);
         AreaSplitResult initial = AreaSplitter.Split(parent.Region[0], NoExclusions,
-            PatternDirection.FrameX, Margin, Spacing, 2);
+            PatternDirection.FrameX, Spacing, 2);
         Assert.True(initial.Succeeded, initial.Failure);
 
         MainWindow window = UninitializedWindow();
-        Assert.True(window.TryEvaluateSplit2D(parent, initial, Margin, Spacing,
+        Assert.True(window.TryEvaluateSplit2D(parent, initial, new LanePitchSpec(Spacing, 0),
             out _, out _, out _, out double initialRatio, out string initialFailure), initialFailure);
 
-        bool assigned = window.TryPrepareBalancedSplit(parent, initial, 2, Margin, Spacing,
+        bool assigned = window.TryPrepareBalancedSplit(parent, initial, 2, new LanePitchSpec(Spacing, 0),
             out _, out List<WorkingArea> children,
             out Dictionary<WorkingArea, SerpentineResult> patterns,
             out double balanceRatio, out string failure);
@@ -217,6 +216,80 @@ public class SplitLengthSearchTests
         Assert.Equal(measuredLengths.Max() / measuredLengths.Min(), balanceRatio, 9);
     }
 
+    [Theory]
+    [InlineData(0.30, 5.30)]
+    [InlineData(0.15, 5.15)]
+    public void Evaluate_UsesOuterGapPlusWireDiameterAsCenterPitch(double diameter, double expectedPitch)
+    {
+        // 사용자가 입력한 5mm는 인접 발열사 외곽 사이 간격이다. 중심 피치는 여기에
+        // 전선 직경을 한 번만 더한 값이며, 분할 탐색과 실제 생성이 같은 규칙을 써야 한다.
+        WorkingArea parent = CreateParent(20, 280);
+        MainWindow window = UninitializedWindow();
+        AreaSplitResult split = default!;
+        bool evaluated = false;
+        string failure = string.Empty;
+        // 자식의 레인 수 홀/짝에 따라 생성기의 마지막 추가 레인이 영역 밖이 될 수 있다.
+        // 피치 검증과 무관한 그 경계 조건을 피하려고, 같은 피치 격자에서 유효한 절단을 찾는다.
+        for (int k = 20; k <= 40 && !evaluated; k++)
+        {
+            double cut = 20 + (k + 0.25) * expectedPitch;
+            AreaSplitResult candidate = AreaSplitter.TryBuildAtCuts(parent.Region[0], NoExclusions,
+                PatternDirection.FrameX, expectedPitch, new[] { cut });
+            if (!candidate.Succeeded)
+                continue;
+            evaluated = window.TryEvaluateSplit2D(parent, candidate,
+                new LanePitchSpec(5.0, diameter),
+                out List<WorkingArea> candidateChildren,
+                out Dictionary<WorkingArea, SerpentineResult> candidatePatterns,
+                out _, out _, out failure);
+            if (evaluated)
+            {
+                split = candidate;
+                break;
+            }
+        }
+
+        Assert.True(evaluated, failure);
+        List<WorkingArea> children = new();
+        Dictionary<WorkingArea, SerpentineResult> patterns = new();
+        evaluated = window.TryEvaluateSplit2D(parent, split, new LanePitchSpec(5.0, diameter),
+            out children, out patterns, out _, out _, out failure);
+        Assert.True(evaluated, failure);
+        double[][] firstLanes = children.Select(child => LaneCoordinates(patterns[child])).ToArray();
+
+        // 같은 입력을 다시 평가하면 같은 레인 좌표가 나와야 한다(결정적 생성).
+        bool repeated = window.TryEvaluateSplit2D(parent, split, new LanePitchSpec(5.0, diameter),
+            out List<WorkingArea> repeatedChildren,
+            out Dictionary<WorkingArea, SerpentineResult> repeatedPatterns,
+            out _, out _, out failure);
+        Assert.True(repeated, failure);
+        Assert.Equal(children.Count, repeatedChildren.Count);
+        for (int i = 0; i < children.Count; i++)
+        {
+            Assert.Equal(firstLanes[i], LaneCoordinates(repeatedPatterns[repeatedChildren[i]]));
+        }
+
+        foreach (WorkingArea child in children)
+        {
+            double[] laneY = LaneCoordinates(patterns[child]);
+            Assert.True(laneY.Length >= 2, child.Name + ": 레인이 두 개 이상이어야 한다.");
+            for (int i = 0; i + 1 < laneY.Length; i++)
+            {
+                Assert.Equal(expectedPitch, laneY[i + 1] - laneY[i], 6);
+            }
+        }
+    }
+
+    private static double[] LaneCoordinates(SerpentineResult pattern)
+    {
+        return pattern.RoutePieces
+            .Where(piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun)
+            .Select(piece => piece.Points[0].Y)
+            .Distinct()
+            .OrderBy(value => value)
+            .ToArray();
+    }
+
     [Fact]
     public void Evaluate_GeneratesRoutesAcrossExclusionSplitLanes()
     {
@@ -227,11 +300,11 @@ public class SplitLengthSearchTests
         // 면적 근사 분할은 이 비대칭 제외영역에서 1.10배 한도를 넘어 실패할 수 있다.
         // 후보 평가 자체를 검증하려면 한도를 적용하지 않는 절단 지정 API를 쓴다.
         AreaSplitResult split = AreaSplitter.TryBuildAtCuts(parent.Region[0], parent.Exclusions,
-            PatternDirection.FrameX, Margin, Spacing, new[] { 150.0 });
+            PatternDirection.FrameX, Spacing, new[] { 150.0 });
         Assert.True(split.Succeeded, split.Failure);
 
         MainWindow window = UninitializedWindow();
-        bool evaluated = window.TryEvaluateSplit2D(parent, split, Margin, Spacing,
+        bool evaluated = window.TryEvaluateSplit2D(parent, split, new LanePitchSpec(Spacing, 0),
             out List<WorkingArea> children,
             out Dictionary<WorkingArea, SerpentineResult> patterns,
             out double[] lengths, out double ratio, out string failure);
@@ -247,10 +320,10 @@ public class SplitLengthSearchTests
             Assert.Contains(patterns[child].RoutePieces,
                 piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun);
         }
-        // 제외영역이 있는 아래쪽 자식은 같은 레인이 갈라진 구간을 연결선으로 이어야 한다.
+        // 제외영역이 있는 아래쪽 자식은 영역 외곽에서 들어온 노치 때문에 레인이 짧아져야 한다.
         WorkingArea lower = children.OrderBy(child => child.Region[0].Min(point => point.Y)).First();
         Assert.Contains(patterns[lower].RoutePieces,
-            piece => piece.Kind == SerpentineRoutePieceKind.FixedConnector);
+            piece => piece.Kind == SerpentineRoutePieceKind.HeatingRun && piece.Length < 100.0 - 1e-6);
     }
 
     [Fact]
@@ -259,11 +332,11 @@ public class SplitLengthSearchTests
         // 시작/종료점의 진행 방향 위치가 같으면 어느 자식에도 유일한 인출점을 배정할 수 없다.
         WorkingArea parent = CreateParent(20, 20);
         AreaSplitResult initial = AreaSplitter.Split(parent.Region[0], NoExclusions,
-            PatternDirection.FrameX, Margin, Spacing, 2);
+            PatternDirection.FrameX, Spacing, 2);
         Assert.True(initial.Succeeded, initial.Failure);
 
         MainWindow window = UninitializedWindow();
-        bool assigned = window.TryPrepareBalancedSplit(parent, initial, 2, Margin, Spacing,
+        bool assigned = window.TryPrepareBalancedSplit(parent, initial, 2, new LanePitchSpec(Spacing, 0),
             out _, out List<WorkingArea> children,
             out Dictionary<WorkingArea, SerpentineResult> patterns,
             out double balanceRatio, out string failure);
@@ -284,11 +357,11 @@ public class SplitLengthSearchTests
         // 제품 상한은 4개다. 5개 요청은 후보를 만들기 전에 거부하고, 부모와 출력은 그대로 둔다.
         WorkingArea parent = CreateParent(20, 280);
         AreaSplitResult initial = AreaSplitter.Split(parent.Region[0], NoExclusions,
-            PatternDirection.FrameX, Margin, Spacing, 5);
+            PatternDirection.FrameX, Spacing, 5);
         Assert.True(initial.Succeeded, initial.Failure);
 
         MainWindow window = UninitializedWindow();
-        bool assigned = window.TryPrepareBalancedSplit(parent, initial, 5, Margin, Spacing,
+        bool assigned = window.TryPrepareBalancedSplit(parent, initial, 5, new LanePitchSpec(Spacing, 0),
             out AreaSplitResult chosen, out List<WorkingArea> children,
             out Dictionary<WorkingArea, SerpentineResult> patterns,
             out double balanceRatio, out string failure);
@@ -308,11 +381,11 @@ public class SplitLengthSearchTests
     {
         WorkingArea parent = CreateParent(20, 280);
         AreaSplitResult split = AreaSplitter.Split(parent.Region[0], NoExclusions,
-            PatternDirection.FrameX, Margin, Spacing, 2);
+            PatternDirection.FrameX, Spacing, 2);
         Assert.True(split.Succeeded, split.Failure);
 
         MainWindow window = UninitializedWindow();
-        bool evaluated = window.TryEvaluateSplit2D(parent, split, Margin, Spacing,
+        bool evaluated = window.TryEvaluateSplit2D(parent, split, new LanePitchSpec(Spacing, 0),
             out List<WorkingArea> children, out Dictionary<WorkingArea, SerpentineResult> patterns,
             out double[] lengths, out double ratio, out string failure);
 

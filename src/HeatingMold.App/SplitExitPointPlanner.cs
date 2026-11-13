@@ -76,9 +76,9 @@ internal static class SplitExitPointPlanner
     /// 시작점은 분할 전 시작점과 같은 측면, 종료점은 분할 전 종료점과 같은 측면을 쓴다.
     /// </summary>
     internal static bool TryAssign(WorkingArea parent, IReadOnlyList<WorkingArea> children,
-        double margin, double spacing, out string failure)
+        double spacing, out string failure)
     {
-        if (!TryBuildCandidates(parent, children, margin, spacing,
+        if (!TryBuildCandidates(parent, children, spacing,
                 out List<SplitExitCandidate> candidates, out failure))
             return false;
 
@@ -101,7 +101,7 @@ internal static class SplitExitPointPlanner
     /// 후보는 기록하지 않는다(호출자가 게시한다).
     /// </summary>
     internal static bool TryBuildCandidates(WorkingArea parent, IReadOnlyList<WorkingArea> children,
-        double margin, double spacing,
+        double spacing,
         out List<SplitExitCandidate> candidates, out string failure)
     {
         candidates = new List<SplitExitCandidate>();
@@ -114,11 +114,6 @@ internal static class SplitExitPointPlanner
         if (parent.Region.Count != 1 || parent.Region[0].Count < 3)
         {
             failure = "분할 전 영역이 단일 폐합 영역이 아니어서 인출 방향을 확정할 수 없습니다.";
-            return false;
-        }
-        if (!double.IsFinite(margin) || margin < 0)
-        {
-            failure = "분할 영역의 마진이 올바르지 않습니다.";
             return false;
         }
         if (!double.IsFinite(spacing) || spacing <= 0)
@@ -146,7 +141,7 @@ internal static class SplitExitPointPlanner
         var layouts = new List<ChildLayout>(children.Count);
         foreach (WorkingArea child in children)
         {
-            if (!TryPrepareLayout(child, parentStart, parentEnd, radians, margin, spacing,
+            if (!TryPrepareLayout(child, parentStart, parentEnd, radians, spacing,
                     out ChildLayout layout, out failure))
                 return false;
             layouts.Add(layout);
@@ -195,7 +190,7 @@ internal static class SplitExitPointPlanner
     }
 
     private static bool TryPrepareLayout(WorkingArea child, ExitBoundaryPoint parentStart,
-        ExitBoundaryPoint parentEnd, double radians, double margin, double spacing,
+        ExitBoundaryPoint parentEnd, double radians, double spacing,
         out ChildLayout layout, out string failure)
     {
         layout = null!;
@@ -231,35 +226,34 @@ internal static class SplitExitPointPlanner
 
         List<Vec2> localRing = child.Region[0].Select(point => point.Rotate(-radians)).ToList();
 
-        // 마진이 적용된 생성 영역. 제외영역은 Y 범위를 넓히지 않으므로 범위 산출에는 쓰지 않는다.
-        List<List<Vec2>> patternRegion = RegionOps.BuildPatternRegion(localRing, null, margin);
+        // 생성 영역. 제외영역은 Y 범위를 넓히지 않으므로 범위 산출에는 쓰지 않는다.
+        List<List<Vec2>> patternRegion = RegionOps.BuildPatternRegion(localRing, null);
         if (patternRegion.Count == 0)
         {
-            failure = child.Name + ": 마진을 적용하면 발열 영역이 남지 않습니다.";
+            failure = child.Name + ": 발열 영역이 남지 않습니다.";
             return false;
         }
         double offsetMinY = patternRegion.Min(ring => ring.Min(point => point.Y));
         double offsetMaxY = patternRegion.Max(ring => ring.Max(point => point.Y));
         if (!(offsetMaxY - offsetMinY > RowEpsilon))
         {
-            failure = child.Name + ": 마진을 적용한 영역의 폭이 없어 레인을 만들 수 없습니다.";
+            failure = child.Name + ": 영역의 폭이 없어 레인을 만들 수 없습니다.";
             return false;
         }
 
-        // 사용자가 지정한 두 점의 진행 방향 구간과 마진이 적용된 영역의 교집합.
+        // 사용자가 지정한 두 점의 진행 방향 구간과 영역의 교집합.
         // 이 범위 밖으로는 시작/종료점을 배정하지 않는다.
         double rowLow = Math.Max(parentLow, offsetMinY);
         double rowHigh = Math.Min(parentHigh, offsetMaxY);
         if (!(rowHigh - rowLow > RowEpsilon))
         {
-            failure = child.Name + ": 분할 전 시작/종료점 범위가 마진 적용 영역과 겹치지 않습니다.";
+            failure = child.Name + ": 분할 전 시작/종료점 범위가 영역과 겹치지 않습니다.";
             return false;
         }
 
-        // 실제 생성기가 쓰는 영역과 같은 규칙: 마진 영역에서 제외영역을 마진만큼 확장해 차감한다.
-        // 원시 제외 사각형을 그대로 빼면 레인 행이 생성기와 달라져 인출점이 레인 끝에 놓이지 않는다.
+        // 실제 생성기가 쓰는 영역과 같은 규칙: 원시 제외 사각형을 그대로 차감한다.
         List<List<Vec2>> generationRegion = RegionOps.BuildGenerationRegion(
-            localRing, RotateExclusions(child.Exclusions, radians), margin);
+            localRing, RotateExclusions(child.Exclusions, radians));
         if (generationRegion.Count == 0)
         {
             failure = child.Name + ": 제외영역을 적용하면 발열 영역이 남지 않습니다.";
@@ -295,20 +289,24 @@ internal static class SplitExitPointPlanner
                 out failure))
             return false;
 
-        (double startRow, _) = lanes[0];
-        double endRow = lanes[^1].Y;
-        // 시작 행의 첫 레인 구간이 여럿이면 생성기는 첫 구간(가장 왼쪽)에서만 시작을 허용한다.
-        // 측면은 부모 방향으로 고정되어 있으므로, 그 방향의 실제 경계에서 점을 다시 구한다.
-        if (!TryRingExtremes(layout.LocalRing, startRow, out double startMinX, out double startMaxX)
-            || !TryRingExtremes(layout.LocalRing, endRow, out double endMinX, out double endMaxX))
+        (double startRow, List<(double X0, double X1)> startIntervals) = lanes[0];
+        (double endRow, List<(double X0, double X1)> endIntervals) = lanes[^1];
+        if (startIntervals.Count == 0 || endIntervals.Count == 0)
         {
-            failure = layout.Child.Name + ": 레인 행에서 영역 경계를 찾지 못했습니다.";
+            failure = layout.Child.Name + ": 레인 행의 발열 구간을 찾지 못했습니다.";
             return false;
         }
 
-        if (!TryResolveCandidate(layout, startRow, startLow,
-                startLow ? startMinX : startMaxX,
-                endRow, endLow, endLow ? endMinX : endMaxX,
+        // 목표는 영역 외곽의 극값이 아니라 그 행의 실제 발열 구간 끝이다. 제외영역으로
+        // 레인이 안쪽에서 끊기면 외곽 극값은 레인 끝이 아니므로 다른 구간을 고를 수 있다.
+        // 시작은 생성기가 허용하는 첫 구간, 종료는 마지막 구간의 요청 측면을 쓴다.
+        (double startX0, double startX1) = startIntervals[0];
+        (double endX0, double endX1) = endIntervals[^1];
+        double startTargetX = startLow ? startX0 : startX1;
+        double endTargetX = endLow ? endX0 : endX1;
+
+        if (!TryResolveCandidate(layout, startRow, startLow, startTargetX,
+                endRow, endLow, endTargetX,
                 out candidate, out failure))
             return false;
         return true;
@@ -408,9 +406,9 @@ internal static class SplitExitPointPlanner
     }
 
     /// <summary>
-    /// 주어진 행/측면의 경계점을 <b>그 영역의 실제 경계</b>에서 다시 구한다. 좌표를 복사하거나
-    /// 전지역 최근접으로 대체하지 않고, 계산한 측면의 다각형 교차 위치를 원본 CAD edge / 제외 변 /
-    /// 절단선 provenance로 투영한다.
+    /// 주어진 행/측면의 경계점을 <b>정확한 행 직선 교차</b>로 구한다. 최근접 투영이 아니므로
+    /// 점은 배정한 격자 행 위에 그대로 놓인다. 원본 CAD는 원본 parameter identity를,
+    /// 제외변·절단선은 각자의 provenance를 유지한다. 후보가 없거나 접선·겹침·모호성이면 실패한다.
     /// </summary>
     private static bool TryResolveBoundaryPoint(SplitRegionBoundary2D boundary, double radians,
         double rowLocalY, bool lowSide, double targetLocalX, double rowMatchTolerance,
@@ -419,90 +417,77 @@ internal static class SplitExitPointPlanner
         point = default;
         failure = string.Empty;
 
-        Vec2 target = new Vec2(targetLocalX, rowLocalY).Rotate(radians);
-        // 목표점이 분할 절단선 위에 정확히 놓이면 그 절단선이 이 점의 identity다. 마진이 0일 때
-        // 시작 행이 절단선과 겹치고 절단선 끝이 외곽 모서리에서 만나면 경계 조회가 두 후보를
-        // 동시에 돌려주므로, 정확히 일치하는 절단선으로 먼저 확정한다(근접 대체가 아니다).
-        ExitBoundaryResolution resolved = TryFindSplitSegmentAt(boundary, target,
-            out SplitRegionBoundary2D.SplitSegment segment)
-            ? boundary.ProjectSplitLine(segment.Binding, target, BoundaryProjectionTolerance)
-            : boundary.Project(target, BoundaryProjectionTolerance);
-        if (!resolved.Succeeded || resolved.Point is not { } candidate)
+        double minX = double.PositiveInfinity, maxX = double.NegativeInfinity;
+        foreach (Vec2 ringPoint in boundary.Ring)
         {
-            failure = "영역 경계에서 인출점을 찾지 못했습니다 — "
-                + (resolved.Failure?.ToString() ?? nameof(ExitBoundaryFailureReason.MissingReference));
+            Vec2 local = ringPoint.Rotate(-radians);
+            if (local.X < minX) minX = local.X;
+            if (local.X > maxX) maxX = local.X;
+        }
+        if (!(maxX - minX > RowEpsilon))
+        {
+            failure = "배정한 레인 행에서 영역 폭을 찾지 못했습니다.";
             return false;
         }
 
-        Vec2 local = candidate.Point.Rotate(-radians);
-        if (Math.Abs(local.Y - rowLocalY) > Math.Max(SideTolerance, rowMatchTolerance))
+        // 레인 방향으로 자식 외곽보다 1 mm 바깥까지 연장한 무한 직선을 쓴다.
+        Vec2 a = new Vec2(minX - 1.0, rowLocalY).Rotate(radians);
+        Vec2 b = new Vec2(maxX + 1.0, rowLocalY).Rotate(radians);
+        var hits = new List<ExitBoundaryPoint>(8);
+        ExitBoundaryFailureReason reason = boundary.IntersectLine(a, b, hits);
+        if (reason != ExitBoundaryFailureReason.NoIntersection)
         {
-            failure = string.Format(CultureInfo.CurrentCulture,
-                "경계 투영점이 배정한 레인 행에서 {0:F2} mm 벗어났습니다.",
-                Math.Abs(local.Y - rowLocalY));
+            failure = "영역 경계와 배정한 레인 행의 교차를 계산하지 못했습니다 — " + reason;
             return false;
         }
-        // 반대 측면이나 영역 안쪽 경계(제외 변 등)로 해석되면 그 점은 시작/종료 위치가 아니다.
-        bool wrongSide = lowSide
-            ? local.X > targetLocalX + BoundaryProjectionTolerance
-            : local.X < targetLocalX - BoundaryProjectionTolerance;
-        if (wrongSide)
+        if (hits.Count == 0)
         {
-            failure = "영역 경계가 다른 측면으로 해석되었습니다.";
+            failure = "영역 경계와 배정한 레인 행이 만나지 않습니다.";
             return false;
         }
 
-        point = candidate;
-        return true;
-    }
-
-    /// <summary>목표점이 자식 외곽에 남은 절단선 구간 위에 정확히 놓이는지.</summary>
-    private static bool TryFindSplitSegmentAt(SplitRegionBoundary2D boundary, Vec2 point,
-        out SplitRegionBoundary2D.SplitSegment segment)
-    {
-        foreach (SplitRegionBoundary2D.SplitSegment candidate in boundary.Segments)
+        var candidates = new List<(ExitBoundaryPoint Point, double X)>(hits.Count);
+        foreach (ExitBoundaryPoint hit in hits)
         {
-            double abX = candidate.B.X - candidate.A.X;
-            double abY = candidate.B.Y - candidate.A.Y;
-            double lengthSquared = abX * abX + abY * abY;
-            if (lengthSquared <= 1e-18) continue;
-            double apX = point.X - candidate.A.X;
-            double apY = point.Y - candidate.A.Y;
-            double u = (apX * abX + apY * abY) / lengthSquared;
-            if (u < -1e-9 || u > 1.0 + 1e-9) continue;
-            double distance = Math.Abs(abX * apY - abY * apX) / Math.Sqrt(lengthSquared);
-            if (distance > 1e-6) continue;
-            segment = candidate;
-            return true;
+            Vec2 local = hit.Point.Rotate(-radians);
+            if (Math.Abs(local.Y - rowLocalY) > RowEpsilon) continue;
+            candidates.Add((hit, local.X));
         }
-        segment = default;
-        return false;
-    }
-
-    /// <summary>수평선과 다각형의 교차 x 목록에서 최좌/최우를 구한다.</summary>
-    private static bool TryRingExtremes(IReadOnlyList<Vec2> ring, double y,
-        out double minX, out double maxX)
-    {
-        var xs = new List<double>();
-        for (int i = 0; i < ring.Count; i++)
+        if (candidates.Count == 0)
         {
-            Vec2 a = ring[i];
-            Vec2 b = ring[(i + 1) % ring.Count];
-            if ((a.Y <= y && b.Y > y) || (b.Y <= y && a.Y > y))
-            {
-                double t = (y - a.Y) / (b.Y - a.Y);
-                xs.Add(a.X + t * (b.X - a.X));
-            }
-        }
-        if (xs.Count == 0)
-        {
-            minX = 0;
-            maxX = 0;
+            failure = "영역 경계 교차점이 배정한 레인 행 위에 있지 않습니다.";
             return false;
         }
-        xs.Sort();
-        minX = xs[0];
-        maxX = xs[^1];
+
+        // 요구 측면에 있는 후보만 남긴 뒤 목표 구간 끝에 가장 가까운 후보를 고른다.
+        // 측면 밖 후보로 대체하지 않으며, 같은 거리의 서로 다른 provenance는 모호성 실패다.
+        double sideTolerance = Math.Max(SideTolerance, rowMatchTolerance);
+        var eligible = new List<(ExitBoundaryPoint Point, double X)>(candidates.Count);
+        foreach ((ExitBoundaryPoint hit, double x) in candidates)
+        {
+            bool onRequestedSide = lowSide
+                ? x <= targetLocalX + sideTolerance
+                : x >= targetLocalX - sideTolerance;
+            if (onRequestedSide) eligible.Add((hit, x));
+        }
+        if (eligible.Count == 0)
+        {
+            failure = "영역 경계가 요구 측면에 있지 않습니다 — 다른 측면으로 대체하지 않습니다.";
+            return false;
+        }
+
+        double bestDistance = eligible.Min(candidate => Math.Abs(candidate.X - targetLocalX));
+        var tied = eligible
+            .Where(candidate => Math.Abs(candidate.X - targetLocalX) - bestDistance <= RowEpsilon)
+            .ToList();
+        for (int i = 1; i < tied.Count; i++)
+        {
+            if (ExitBoundaryIdentity.Same(tied[0].Point, tied[i].Point)) continue;
+            failure = "같은 위치에 서로 다른 경계 후보가 있어 인출점을 확정할 수 없습니다.";
+            return false;
+        }
+
+        point = tied[0].Point;
         return true;
     }
 

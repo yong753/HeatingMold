@@ -35,26 +35,26 @@ public class RegionOpsTests
     }
 
     [Fact]
-    public void BuildGenerationRegionExpandsExclusionsByMargin()
+    public void BuildGenerationRegionSubtractsRawExclusions()
     {
-        // 외곽 0..40x0..20, 마진 2 → 36x16=576. 제외 10..14x6..10을 2만큼 확장하면
-        // 8..16x4..12=64를 차감해 512가 남는다. 원본 제외영역은 그대로다.
+        // 외곽 0..40x0..20에서 제외 10..14x6..10을 그대로 차감한다.
+        // 800 - 16 = 784가 남고, 원본 제외영역은 그대로다.
         var exclusions = new[] { (10d, 6d, 14d, 10d) };
-        var remaining = RegionOps.BuildGenerationRegion(Rect(0, 0, 40, 20), exclusions, 2.0);
+        var remaining = RegionOps.BuildGenerationRegion(Rect(0, 0, 40, 20), exclusions);
 
-        Assert.Equal(512, remaining.Sum(r => RegionOps.SignedArea(r)), 6);
+        Assert.Equal(784, remaining.Sum(r => RegionOps.SignedArea(r)), 6);
         Assert.Equal((10d, 6d, 14d, 10d), exclusions[0]);
     }
 
     [Fact]
-    public void BuildGenerationRegionWithZeroMarginMatchesExistingSubtraction()
+    public void BuildGenerationRegionMatchesSubtractionOfPatternRegion()
     {
         var outer = new IReadOnlyList<Vec2>[] { Rect(0, 0, 20, 10) };
         var exclusions = new[] { (8d, 2d, 12d, 8d) };
 
-        var generation = RegionOps.BuildGenerationRegion(outer[0], exclusions, 0.0);
+        var generation = RegionOps.BuildGenerationRegion(outer[0], exclusions);
         var existing = RegionOps.SubtractRectangles(
-            RegionOps.BuildPatternRegion(outer[0], null, 0.0), exclusions);
+            RegionOps.BuildPatternRegion(outer[0], null), exclusions);
 
         Assert.Equal(existing.Sum(r => RegionOps.SignedArea(r)),
             generation.Sum(r => RegionOps.SignedArea(r)), 6);

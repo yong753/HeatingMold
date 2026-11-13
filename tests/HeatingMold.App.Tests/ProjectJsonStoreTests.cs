@@ -33,8 +33,9 @@ namespace HeatingMold.App.Tests
         {
             ProjectDocument document = CreateDocument();
             string before = ProjectJsonStore.ComputeFingerprint(document);
-            document.Areas[0].MarginText = "7.5";
-            Assert.NotEqual(before, ProjectJsonStore.ComputeFingerprint(document));
+            document.Areas[0].SpacingText = "7.5";
+            string after = ProjectJsonStore.ComputeFingerprint(document);
+            Assert.NotEqual(before, after);
         }
 
         [Fact]
@@ -141,7 +142,7 @@ namespace HeatingMold.App.Tests
             {
                 string futurePath = Path.Combine(directory, "future.json");
                 File.WriteAllText(futurePath,
-                    "{\"format\":\"HeatingMold.Project\",\"schemaVersion\":7}");
+                    "{\"format\":\"HeatingMold.Project\",\"schemaVersion\":8}");
                 Assert.Throws<InvalidDataException>(() => ProjectJsonStore.Load(futurePath));
 
                 string malformedPath = Path.Combine(directory, "malformed.json");
@@ -276,7 +277,6 @@ namespace HeatingMold.App.Tests
                         } },
                         Frame = Frame(),
                         Direction = "auto",
-                        MarginText = "5",
                         SpacingText = "50",
                         CommittedChains =
                         {

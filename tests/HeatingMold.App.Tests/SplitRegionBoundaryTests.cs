@@ -34,7 +34,29 @@ public class SplitRegionBoundaryTests
     }
 
     private static AreaSplitResult Split(int count) =>
-        AreaSplitter.Split(Parent, NoExclusions, PatternDirection.FrameX, 0, 50, count);
+        AreaSplitter.Split(Parent, NoExclusions, PatternDirection.FrameX, 50, count);
+
+    [Fact]
+    public void IntersectLine_RejectsOverlapEvenWhenAnotherCutCrossesTheRow()
+    {
+        Vec2[] child =
+        {
+            new(0, 0), new(100, 0), new(100, 50), new(0, 50),
+        };
+        var cuts = new (Vec2, Vec2)[]
+        {
+            (new Vec2(-10, 50), new Vec2(210, 50)),
+            (new Vec2(100, -10), new Vec2(100, 110)),
+        };
+        SplitRegionBoundary2D boundary = CreateBoundary(child, cuts);
+        var hits = new List<ExitBoundaryPoint>();
+
+        ExitBoundaryFailureReason reason = boundary.IntersectLine(
+            new Vec2(-10, 50), new Vec2(210, 50), hits);
+
+        // 수직 교차점이 하나 있어도 행과 겹치는 절단선이 있으면 성공으로 넘기지 않는다.
+        Assert.Equal(ExitBoundaryFailureReason.TangentOrOverlap, reason);
+    }
 
     [Fact]
     public void HorizontalCut_CreatesOneSplitSegmentPerChild()
@@ -62,7 +84,7 @@ public class SplitRegionBoundaryTests
     [Fact]
     public void VerticalCut_CreatesLeftRightSplitSegments()
     {
-        AreaSplitResult split = AreaSplitter.Split(Parent, NoExclusions, PatternDirection.FrameY, 0, 50, 2);
+        AreaSplitResult split = AreaSplitter.Split(Parent, NoExclusions, PatternDirection.FrameY, 50, 2);
         Assert.True(split.Succeeded, split.Failure);
         Assert.False(split.SplitAxisIsY);
 
