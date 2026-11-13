@@ -183,17 +183,19 @@ public class SplitExitPointPlannerTests
     public void ConcaveLaneTargetsTheActualScanlineIntervalEnd()
     {
         // 위쪽이 열린 홈이 있는 U자 영역. 150/250 행에는 [0,100]과 [200,300] 두 구간이 있다.
-        // 시작은 높은 쪽(첫 구간의 오른쪽 끝 100), 종료는 낮은 쪽(마지막 구간의 왼쪽 끝 200)을
-        // 골라야 한다. 영역 외곽 극값(0/300)을 쓰면 다른 구간을 고르게 된다.
+        // 자식에 제외영역이 있으므로 실제 생성은 제외 경로를 쓴다. 그 경로는 다중 구간 행에서
+        // 오른쪽 진입이면 '가장 오른쪽 구간의 오른쪽 끝', 왼쪽 진입이면 '가장 왼쪽 구간의 왼쪽 끝'만
+        // 허용한다. 따라서 시작은 x=300, 종료는 x=0이어야 하며, 내부 구간 끝(100/200)을 고르면
+        // 실제 생성이 AnchorNotAtLaneEnd로 거부된다.
         var childRing = new List<Vec2>
         {
             new(0, 0), new(300, 0), new(300, 300), new(200, 300),
             new(200, 100), new(100, 100), new(100, 300), new(0, 300),
         };
         var exclusion = (MinX: 100.0, MinY: 100.0, MaxX: 200.0, MaxY: 300.0);
-        var boundaryCut = (A: new Vec2(-10, 0), B: new Vec2(310, 0));
+        // 좌우 변은 부모의 세로 절단선, 아래 변은 가로 절단선이다. 노치 변은 제외영역에서 온다.
         bool created = SplitRegionBoundary2D.TryCreate(NoCad, ParentRing, childRing,
-            new[] { exclusion }, new[] { boundaryCut },
+            new[] { exclusion }, new[] { HorizontalCut(0), VerticalCut(0), VerticalCut(300) },
             out SplitRegionBoundary2D boundary, out string boundaryFailure);
         Assert.True(created, boundaryFailure);
 
@@ -215,9 +217,65 @@ public class SplitExitPointPlannerTests
             out string failure), failure);
 
         Assert.Equal(150, child.SelectedStartExit!.Value.Point.Y, 6);
-        Assert.Equal(100, child.SelectedStartExit.Value.Point.X, 6);
+        Assert.Equal(300, child.SelectedStartExit.Value.Point.X, 6);
         Assert.Equal(250, child.SelectedEndExit!.Value.Point.Y, 6);
-        Assert.Equal(200, child.SelectedEndExit.Value.Point.X, 6);
+        Assert.Equal(0, child.SelectedEndExit.Value.Point.X, 6);
+
+        // 자동 배정 결과가 실제 제품 생성 경로에서 성립해야 한다. 좌표만 맞고 생성이 실패하면
+        // 분할 전체가 거부되므로, 배정과 생성을 함께 검증한다.
+        var parameters = new PatternParams
+        {
+            Spacing = Spacing,
+            WireDiameter = 0,
+            Direction = PatternDirection.FrameX,
+        };
+        AnchoredResult generated = Serpentine.GenerateComponentsWithSelectedExits(
+            childRing, new[] { exclusion }, parameters, PatternDirection.FrameX,
+            child.SelectedStartExit.Value, child.SelectedEndExit.Value, boundary);
+        Assert.Null(generated.Failure);
+        Assert.NotNull(generated.Pattern);
+    }
+
+    [Fact]
+    public void TrimmedParentSide_UsesTheEffectiveRegionNotTheOuterRing()
+    {
+        // 외곽 제외로 왼쪽이 60까지 깎인 영역. 원본 외곽(0~100) 기준으로는 x=60이 오른쪽에
+        // 가깝지만, 실제 발열 구간(60~100)에서는 왼쪽 끝이다. 인출 측면은 실제 발열영역
+        // (적용영역 − 제외영역)으로만 판정해야 하므로 시작·종료 모두 왼쪽(low)이어야 한다.
+        var ring = new List<Vec2> { new(0, 0), new(100, 0), new(100, 100), new(0, 100) };
+        var parent = new WorkingArea { Name = "P", Direction = PatternDirection.FrameX };
+        parent.Region.Add(ring);
+        parent.Exclusions.Add((MinX: 0.0, MinY: 0.0, MaxX: 60.0, MaxY: 100.0));
+        parent.SelectedStartExit = new ExitBoundaryPoint(new Vec2(60, 30), -1, 0);
+        parent.SelectedEndExit = new ExitBoundaryPoint(new Vec2(60, 70), -1, 0);
+
+        Assert.True(SplitExitSidePolicy.TryResolve(parent, 0, out bool startLow, out bool endLow,
+            out string failure), failure);
+        Assert.True(startLow);
+        Assert.True(endLow);
+    }
+
+    [Fact]
+    public void ConcaveParentSide_UsesThePointOwnIntervalNotTheRowExtremes()
+    {
+        // 제외영역이 없는 오목 부모. 150행 구간은 [0,100], [200,300]이고 시작점은 첫 구간의
+        // 오른쪽 끝(x=100)이다. 행 전체 최좌/최우(0/300)로 비교하면 x=100을 왼쪽으로
+        // 오판하지만, 생성기는 레인을 그 구간의 오른쪽 끝에서 시작하므로 오른쪽(high)이다.
+        // 250행 종료점 x=200은 둘째 구간의 왼쪽 끝이므로 왼쪽(low)이다.
+        var ring = new List<Vec2>
+        {
+            new(0, 0), new(300, 0), new(300, 300), new(200, 300),
+            new(200, 100), new(100, 100), new(100, 300), new(0, 300),
+        };
+        var parent = new WorkingArea { Name = "P", Direction = PatternDirection.FrameX };
+        parent.Region.Add(ring);
+        parent.SelectedStartExit = new ExitBoundaryPoint(new Vec2(100, 150), -1, 0);
+        parent.SelectedEndExit = new ExitBoundaryPoint(new Vec2(200, 250), -1, 0);
+
+        Assert.True(SplitExitSidePolicy.TryResolve(parent, 0, out bool startLow, out bool endLow,
+            out string failure), failure);
+        Assert.False(startLow);
+        Assert.True(endLow);
     }
 
     [Fact]

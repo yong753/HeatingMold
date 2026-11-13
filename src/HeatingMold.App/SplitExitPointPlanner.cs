@@ -299,11 +299,20 @@ internal static class SplitExitPointPlanner
 
         // 목표는 영역 외곽의 극값이 아니라 그 행의 실제 발열 구간 끝이다. 제외영역으로
         // 레인이 안쪽에서 끊기면 외곽 극값은 레인 끝이 아니므로 다른 구간을 고를 수 있다.
-        // 시작은 생성기가 허용하는 첫 구간, 종료는 마지막 구간의 요청 측면을 쓴다.
+        // 시작은 실제 생성기가 허용하는 구간, 종료는 레인이 실제로 끝나는 쪽 구간을 쓴다.
+        //
+        // 두 생성 경로의 시작 규칙이 다르므로 하나로 합치지 않는다.
+        //  - 제외영역 있음: 다중 구간 행에서 오른쪽 진입은 '가장 오른쪽 구간의 오른쪽 끝'만
+        //    허용한다(Serpentine.TryBuildExcludedSequentialPieces).
+        //  - 제외영역 없음: 첫 레인의 시작 구간이 항상 intervals[0]이어야 하므로(같은 파일의
+        //    anchored 경로) 오른쪽 진입도 첫 구간의 오른쪽 끝을 쓴다.
+        bool exclusionPath = layout.Child.Exclusions is { Count: > 0 };
         (double startX0, double startX1) = startIntervals[0];
-        (double endX0, double endX1) = endIntervals[^1];
-        double startTargetX = startLow ? startX0 : startX1;
-        double endTargetX = endLow ? endX0 : endX1;
+        double startTargetX = startLow
+            ? startX0
+            : exclusionPath ? startIntervals[^1].X1 : startX1;
+        // 종료는 두 경로 모두 레인 방출이 끝나는 쪽 구간 끝과 맞춘다.
+        double endTargetX = endLow ? endIntervals[0].X0 : endIntervals[^1].X1;
 
         if (!TryResolveCandidate(layout, startRow, startLow, startTargetX,
                 endRow, endLow, endTargetX,
