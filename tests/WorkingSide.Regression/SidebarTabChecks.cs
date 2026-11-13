@@ -72,8 +72,10 @@ static class SidebarTabChecks
         object presetBox = window.FindName("WirePresetBox")!;
         Check(LogicalContains(reviewContent, electricalGrid) &&
               LogicalContains(reviewContent, reviewScope) &&
-              LogicalContains(reviewContent, presetBox),
-            "the review tab is one unified electrical specification section");
+              !LogicalContains(reviewContent, presetBox),
+            "the review tab is one unified electrical specification section without the wire case");
+        Check(LogicalContains(pathContent, presetBox),
+            "the wire case selector lives on the path tab as a generation input");
         Check(window.FindName("CircuitLengthGrid") == null &&
               window.FindName("WireDiameterBox") == null &&
               window.FindName("WireResistanceBox") == null,

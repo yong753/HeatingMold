@@ -15,19 +15,6 @@ public partial class MainWindow
     private bool _suppressElectricalInput;
     private bool _reviewCurrentAreaOnly;
 
-    /// <summary>사양표 UI 표시용 행. 합계 행은 전류/전력만 채우고 IsTotal이 true다.</summary>
-    private sealed record ElectricalSpecUiRow(
-        string CircuitId,
-        double? TargetPowerW,
-        double? LengthM,
-        double? ResistanceOhm,
-        double? VoltageV,
-        double? CurrentA,
-        double? PowerW,
-        string Verdict,
-        string Note,
-        bool IsTotal);
-
     private void InitializeElectricalUi()
     {
         // XAML의 표시 문자열은 culture에 따라 파싱되지 않을 수 있으므로 초기값을 다시 쓴다.
@@ -207,6 +194,28 @@ public partial class MainWindow
             .Select(e => e.Area)
             .ToList();
 
+        // 표시용 목록은 계산 자격과 무관하게 검토 범위의 확정 회로를 담는다. 케이스가 바뀌어
+        // 재생성 필요가 되어도 검토 표의 행이 사라지지 않게 하는 근거이며, 계산·합계·내보내기
+        // 자격은 아래 table/CanExport 경로가 그대로 판정한다.
+        var displayCircuits = new List<ReviewCircuitDisplayEntry>();
+        string displayReason = "";
+        foreach (ReviewAreaEntry entry in entries)
+        {
+            // 근거 미확인 영역은 확정 회로로 볼 수 없으므로 표시 목록에도 넣지 않는다.
+            if (entry.State == ReviewAreaState.Unverified) continue;
+            if (!ElectricalReviewRows.TryBuildDisplayEntries(entry.Area, entry.State == ReviewAreaState.Stale,
+                    out IReadOnlyList<ReviewCircuitDisplayEntry> displayEntries, out string displayError))
+            {
+                displayReason = string.IsNullOrEmpty(displayError)
+                    ? entry.Area.Name + " 회로 목록을 만들 수 없습니다"
+                    : entry.Area.Name + ": " + displayError;
+                displayCircuits.Clear();
+                break;
+            }
+
+            displayCircuits.AddRange(displayEntries);
+        }
+
         ElectricalSpecTable table = null;
         ElectricalLimits limits = null;
         TargetPowerElectricalSettings settings = null;
@@ -266,6 +275,8 @@ public partial class MainWindow
             Entries = entries,
             ReadyAreas = readyAreas,
             Circuits = circuits,
+            DisplayCircuits = displayCircuits,
+            DisplayReason = displayReason,
             Table = table,
             Limits = limits,
             ElectricalError = electricalError,
@@ -309,9 +320,16 @@ public partial class MainWindow
     private void WirePreset_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (!_electricalUiReady || _suppressElectricalInput) return;
+
+        // 케이스 변경은 적용 직경과 비교해 재생성 필요 여부를 바꾼다. 확정 경로·길이·선택점은
+        // 건드리지 않고, 그 상태를 쓰는 화면 요소만 같은 시점에 갱신한다.
+        if (_activeArea != null && IsPatternInputStale(_activeArea)) ExitVertexEdit();
+
         RefreshElectricalTable();
         // STEP 범위 문구가 선택한 Case의 직경을 표시하므로 함께 갱신한다.
         UpdateExportScopeText();
+        UpdateActionStates();
+        RefreshAreaList();
     }
 
     /// <summary>
@@ -359,29 +377,14 @@ public partial class MainWindow
         // 같은 동기 갱신 안에서 이미 만든 검토 결과만 전달받는다. 이벤트 사이에는
         // 캐시하지 않으므로 입력 변경/내보내기 재검증은 각자 새로 계산한다.
         ReviewSnapshot snapshot = sharedSnapshot ?? BuildReviewSnapshot();
-        if (snapshot.ElectricalError != null)
-        {
-            SetElectricalRows(null);
-            ElectricalSummaryText.Text = "전기 입력 오류 — " + snapshot.ElectricalError;
-            return;
-        }
-
         ElectricalSpecTable table = snapshot.Table;
-        var rows = table == null
-            ? new List<ElectricalSpecUiRow>()
-            : table.Rows.Select(r => new ElectricalSpecUiRow(
-                r.CircuitId,
-                r.TargetPowerW,
-                r.LengthM,
-                r.ResistanceOhm,
-                // 배분 전력이 없는 행은 0 V/0 A가 아니라 '계산 불가'다. 길이·저항은 확정값이므로 남긴다.
-                r.IsTargetPowerMissing ? null : r.VoltageV,
-                r.IsTargetPowerMissing ? null : r.CurrentA,
-                r.IsTargetPowerMissing ? null : r.PowerW,
-                ElectricalVerdictText(r), r.Note, false)).ToList();
-        if (rows.Count > 0)
+
+        // 표시 행은 계산 자격과 무관하게 확정 회로를 유지한다. 케이스가 바뀌어 재생성 필요가
+        // 되어도 회로 ID와 확정 실측 길이가 표에서 사라지지 않는다.
+        var rows = ElectricalReviewRows.Build(snapshot.DisplayCircuits, table).ToList();
+        if (rows.Count > 0 && table != null && table.HasRows)
         {
-            rows.Add(new ElectricalSpecUiRow(
+            rows.Add(new ElectricalReviewCircuitRow(
                 "합계", table.TotalTargetPowerW, null, null, null, table.TotalCurrentA, table.TotalPowerW,
                 "", "", true));
         }
@@ -391,11 +394,34 @@ public partial class MainWindow
         string excluded = snapshot.ExcludedCount > 0
             ? string.Format(" · 준비되지 않은 영역 {0}개 제외", snapshot.ExcludedCount)
             : "";
-        if (rows.Count == 0 || table == null || table.Rows.Count == 0)
+        int staleCount = snapshot.Entries.Count(e => e.State == ReviewAreaState.Stale);
+        string staleText = staleCount > 0
+            ? string.Format(" · 재생성 필요 {0}개 영역(길이만 표시)", staleCount)
+            : "";
+
+        // 전기 입력 오류·경로 없음·계산 대상 없음은 각각 다른 안내다. 행이 남아 있어도
+        // 계산값을 현재 결과처럼 보여 주지 않고 합계를 0 W로 위장하지 않는다.
+        if (snapshot.ElectricalError != null)
         {
-            ElectricalSummaryText.Text = scope
-                + (_reviewCurrentAreaOnly ? "선택한 영역에 발열 경로가 없습니다" : "검토 범위에 발열 경로가 없습니다")
-                + excluded;
+            ElectricalSummaryText.Text = string.Format("{0}전기 입력 오류 — {1}{2}{3}",
+                scope, snapshot.ElectricalError, staleText, excluded);
+            return;
+        }
+
+        if (rows.Count == 0)
+        {
+            string reason = !string.IsNullOrEmpty(snapshot.DisplayReason)
+                ? snapshot.DisplayReason
+                : (_reviewCurrentAreaOnly ? "선택한 영역에 발열 경로가 없습니다" : "검토 범위에 발열 경로가 없습니다");
+            ElectricalSummaryText.Text = scope + reason + staleText + excluded;
+            return;
+        }
+
+        if (table == null || table.Rows.Count == 0)
+        {
+            ElectricalSummaryText.Text = scope + "계산할 수 있는 확정 회로가 없어 전기 계산을 보류했습니다"
+                + (string.IsNullOrEmpty(snapshot.BlockReason) ? "" : " · " + snapshot.BlockReason)
+                + staleText + excluded;
             return;
         }
 
@@ -436,15 +462,23 @@ public partial class MainWindow
             : string.Format(CultureInfo.CurrentCulture, " · 허용 {0:0.###} A / {1:0.###} V",
                 snapshot.Limits.CurrentLimitA, snapshot.Limits.VoltageLimitV);
 
+        // 재생성 필요 등으로 계산에서 빠진 회로도 표에 남으므로, 계산된 회로 수와
+        // 표시된 회로 수가 다르면 그 사실을 함께 적는다.
+        int displayCircuitCount = rows.Count - (table.HasRows ? 1 : 0);
+        string circuitCountText = displayCircuitCount == table.Rows.Count
+            ? string.Format(CultureInfo.CurrentCulture, "총 {0}회로", table.Rows.Count)
+            : string.Format(CultureInfo.CurrentCulture, "총 {0}회로(계산 {1})", displayCircuitCount,
+                table.Rows.Count);
+
         ElectricalSummaryText.Text = string.Format(CultureInfo.CurrentCulture,
-            "{0}총 {1}회로{2} · 배분 {3:F2} kW / 한도 {4:F2} kW · 합계 {5:F2} A / {6:F1} W{7}{8}",
-            scope, table.Rows.Count, verdicts, table.TotalTargetPowerW / 1000.0,
+            "{0}{1}{2} · 배분 {3:F2} kW / 한도 {4:F2} kW · 합계 {5:F2} A / {6:F1} W{7}{8}{9}",
+            scope, circuitCountText, verdicts, table.TotalTargetPowerW / 1000.0,
             snapshot.Limits == null ? 0.0 : snapshot.Limits.PowerLimitW / 1000.0,
-            table.TotalCurrentA, table.TotalPowerW, limitText, excluded);
+            table.TotalCurrentA, table.TotalPowerW, limitText, staleText, excluded);
     }
 
     /// <summary>검토 탭의 사양표와 뷰포트의 확대 보기가 같은 행 집합을 보여 준다.</summary>
-    private void SetElectricalRows(IReadOnlyList<ElectricalSpecUiRow> rows)
+    private void SetElectricalRows(IReadOnlyList<ElectricalReviewCircuitRow> rows)
     {
         System.Collections.IEnumerable source = rows == null || rows.Count == 0 ? null : (System.Collections.IEnumerable)rows;
         if (ElectricalSpecGrid != null) ElectricalSpecGrid.ItemsSource = source;

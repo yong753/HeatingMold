@@ -20,7 +20,8 @@ internal sealed record CircuitLengthInfo(string CircuitId, double HeatingLengthM
 
 /// <summary>
 /// 회로 표·전기 사양표·내보내기 안내가 같은 판단을 쓰도록 만든 한 번의 검토 결과.
-/// 오래된/근거 미확인 영역은 참고 표시용으로만 남기고 합계와 내보내기에서는 제외한다.
+/// 계산·합계·내보내기는 Ready 영역만 쓰고, 표시용 회로 목록(DisplayCircuits)은
+/// 재생성 필요 등으로 계산에서 빠진 확정 회로도 행을 유지하기 위해 따로 담는다.
 /// </summary>
 internal sealed class ReviewSnapshot
 {
@@ -28,6 +29,14 @@ internal sealed class ReviewSnapshot
     public IReadOnlyList<ReviewAreaEntry> Entries { get; init; } = new List<ReviewAreaEntry>();
     public IReadOnlyList<WorkingArea> ReadyAreas { get; init; } = new List<WorkingArea>();
     public IReadOnlyList<CircuitLengthInfo> Circuits { get; init; } = new List<CircuitLengthInfo>();
+    /// <summary>
+    /// 표시 전용 확정 회로 목록. 검토 범위의 모든 영역을 계산 자격과 무관하게 담는다.
+    /// 행이 남는다는 이유로 분할·편집·내보내기 자격을 통과시키지 않는다.
+    /// </summary>
+    public IReadOnlyList<ReviewCircuitDisplayEntry> DisplayCircuits { get; init; } =
+        new List<ReviewCircuitDisplayEntry>();
+    /// <summary>표시용 회로 목록을 만들지 못한 이유. 비어 있으면 정상.</summary>
+    public string DisplayReason { get; init; } = "";
     public ElectricalSpecTable Table { get; init; }
     /// <summary>회로별 판정에 쓴 허용치. 전기 입력 오류면 null.</summary>
     public ElectricalLimits Limits { get; init; }

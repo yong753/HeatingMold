@@ -45,7 +45,7 @@ public partial class MainWindow
         if (!ElectricalSettingsResolver.TryGetWire(WirePresetBox?.SelectedIndex ?? -1, out HeatingWireSpec wire))
         {
             error = "발열사 규격을 선택하세요.";
-            StatusText.Text = "STEP 내보내기 불가 — 전기 검토 탭에서 발열사 규격을 선택하세요.";
+            StatusText.Text = "STEP 내보내기 불가 — 경로 탭에서 발열사 케이스를 선택하세요.";
             return ExportStepResult.Rejected;
         }
 

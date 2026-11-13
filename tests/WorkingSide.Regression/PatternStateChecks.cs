@@ -325,6 +325,39 @@ static class PatternStateChecks
             && exportScope.Text.Contains("준비 2/2"),
             "restoring the route returns both areas to the shared allocation and exportable review");
 
+        // 케이스 변경은 적용 직경과 달라져 재생성 필요가 되지만, 확정 회로 행과 실측 길이는
+        // 그대로 남아야 한다. 계산값만 비우고, 원래 케이스로 돌아오면 다시 계산한다.
+        var presetBox = (ComboBox)window.FindName("WirePresetBox");
+        presetBox.SelectedIndex = 1;
+        Invoke(window, "UpdateCircuitTable");
+        Check(specGrid.Items.Count == 2 && expandedGrid.Items.Count == 2,
+            "changing the wire case keeps every committed circuit row in both tables");
+        Check(summary.Text.Contains("재생성 필요 2개 영역") && !summary.Text.Contains("전체 OK"),
+            "the summary reports the areas that need regeneration instead of dropping them");
+        double? staleLengthA = null, stalePowerA = null;
+        string staleVerdictA = "";
+        string staleNoteA = "";
+        foreach (object item in specGrid.Items)
+        {
+            string id = (string)item.GetType().GetProperty("CircuitId")!.GetValue(item)!;
+            if (!id.StartsWith("PatternStateA-")) continue;
+            staleLengthA = (double?)item.GetType().GetProperty("LengthM")!.GetValue(item);
+            stalePowerA = (double?)item.GetType().GetProperty("TargetPowerW")!.GetValue(item);
+            staleVerdictA = (string)item.GetType().GetProperty("Verdict")!.GetValue(item)!;
+            staleNoteA = (string)item.GetType().GetProperty("Note")!.GetValue(item)!;
+        }
+        Check(staleLengthA.HasValue && Math.Abs(staleLengthA.Value - 0.020) < 1e-9 && stalePowerA == null
+            && staleVerdictA == "—" && staleNoteA.Contains("케이스 변경"),
+            "a stale circuit keeps its measured length but leaves power and verdict undetermined");
+        Check(((double[])areaType.GetProperty("RoutePieceLengths")!.GetValue(a)!)[0] == 20.0
+            && ((int[])areaType.GetProperty("NativePieceIds")!.GetValue(a)!)[0] == -4501,
+            "changing the wire case leaves committed geometry and native ids untouched");
+
+        presetBox.SelectedIndex = 0;
+        Invoke(window, "UpdateCircuitTable");
+        Check(specGrid.Items.Count == 3 && summary.Text.Contains("배분 3.50 kW"),
+            "returning to the applied wire case restores the computed review rows without regenerating");
+
         // 판정별 행 텍스트 색: NG는 빨강, OK는 초록. 검토 탭 표와 확대 보기가 같은 규칙을 쓴다.
         foreach ((DataGrid grid, string label) in new[] { (specGrid, "review"), (expandedGrid, "expanded") })
         {
