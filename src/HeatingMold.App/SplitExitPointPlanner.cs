@@ -501,6 +501,24 @@ internal static class SplitExitPointPlanner
     }
 
     /// <summary>
+    /// 이미 확정된 레인 행 하나에 대해, 요구 측면의 정확 경계점을 구한다. 자동 배정처럼 행을
+    /// 새로 스캔하지 않고, 호출자가 확정 경로에서 읽은 행·레인 끝 좌표를 그대로 넘긴다.
+    /// </summary>
+    internal static bool TryResolveLaneRowPoint(SplitRegionBoundary2D boundary, double radians,
+        double rowLocalY, bool lowSide, double targetLocalX, double rowMatchTolerance,
+        out ExitBoundaryPoint point, out string failure)
+    {
+        if (boundary == null)
+        {
+            point = default;
+            failure = "분할 영역 경계가 준비되지 않았습니다.";
+            return false;
+        }
+        return TryResolveBoundaryPoint(boundary, radians, rowLocalY, lowSide, targetLocalX,
+            rowMatchTolerance, out point, out failure);
+    }
+
+    /// <summary>
     /// Serpentine.ScanlineIntervals와 같은 반개구간([y0,y1)) 판정으로 수평선 교차를 짝지어
     /// 발열구간 목록을 만든다. 생성기와 같은 행 판정을 쓰기 위해 규칙을 그대로 유지한다.
     /// </summary>

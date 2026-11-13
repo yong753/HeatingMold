@@ -163,9 +163,16 @@ public partial class MainWindow
 
         if (autoExits)
         {
-            // 면적 근사만으로 확정하지 않는다. 실제 선택-인출점 2D 생성기로 후보 절단을
-            // 평가해 경로 길이가 가장 균등한 분할을 고르고, 그때 만든 패턴을 그대로 쓴다.
-            // 전압 기준 개수로 배치를 만들 수 없으면, 같은 조건에서 한 개씩 늘려 최대 4개까지
+            if (area.Pattern == null || area.Pattern.RoutePieces == null
+                || area.Pattern.RoutePieces.Count == 0)
+            {
+                SetSplitStatus("분할할 수 없습니다 — 확정된 발열경로가 없어 기존 레인을 나눌 수 없습니다. "
+                    + "먼저 경로를 생성하세요.");
+                return;
+            }
+            // 면적 근사나 재생성으로 확정하지 않는다. 이미 확정된 발열레인을 시작/종료 인출
+            // 측면을 유지하는 연속 묶음으로 나누고, 그 조각을 그대로 자식 경로로 쓴다. 전압
+            // 기준 개수로 배치를 만들 수 없으면 같은 조건에서 한 개씩 늘려 최대 4개까지
             // 다시 찾는다. 전력·간격·허용 한도는 바꾸지 않는다.
             bool prepared = false;
             string balanceFailure = string.Empty;
