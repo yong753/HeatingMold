@@ -41,7 +41,11 @@
 #include <AppParCurves_MultiBSpCurve.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_TransitionMode.hxx>
 #include <BRepOffsetAPI_MakePipeShell.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeSphere.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
@@ -61,11 +65,11 @@ namespace step_export_geometry
     // product limits, not values that may be relaxed silently on failure.
     const Standard_Real PieceDeviationTolerance = 0.10;  // mm
     const Standard_Real PieceLengthTolerance = 1.0;      // mm
-    const Standard_Integer PiecePoleLimit = 32;
+    const Standard_Integer PiecePoleLimit = 512;
     const Standard_Integer PieceFitDegree = 6;
-    const Standard_Integer PieceFitSegments = 24;
+    const Standard_Integer PieceFitSegments = 96;
     const Standard_Real PieceFitTolerance = 0.05;
-    const Standard_Integer PieceFitIterations = 2;
+    const Standard_Integer PieceFitIterations = 6;
     const Standard_Real PieceStraightTolerance = 0.02;   // mm
     const Standard_Integer PieceCurveSamples = 2000;
 
@@ -99,7 +103,7 @@ namespace step_export_geometry
     struct NativeStepExportBuiltPiece
     {
         std::wstring name;
-        TopoDS_Edge centreline;
+        TopoDS_Shape centreline;
         TopoDS_Shape wire;
     };
 
@@ -446,12 +450,126 @@ namespace step_export_geometry
         return !wire.IsNull();
     }
 
-    // Builds the centreline edge and its swept wire solid.  The result must be
-    // exactly one valid closed solid; a compound fallback is deliberately not
+    // When the pipe shell fails on the B-spline centreline, use the exact committed
+    // sample polyline as the spine and try the available transition modes. The
+    // caller keeps the same single-SOLID/valid/volume checks.
+    inline bool BuildPolylineSweptSolidNative(const std::vector<gp_Pnt>& pts,
+                                              const TopoDS_Wire& profile,
+                                              TopoDS_Shape& wire)
+    {
+        if (pts.size() < 2) return false;
+        BRepBuilderAPI_MakeWire wireMaker;
+        for (size_t i = 1; i < pts.size(); ++i)
+        {
+            if (pts[i - 1].Distance(pts[i]) <= 1e-9) continue;
+            BRepBuilderAPI_MakeEdge edgeMaker(pts[i - 1], pts[i]);
+            if (!edgeMaker.IsDone()) return false;
+            wireMaker.Add(edgeMaker.Edge());
+        }
+        if (!wireMaker.IsDone()) return false;
+        const TopoDS_Wire spine = wireMaker.Wire();
+        const BRepBuilderAPI_TransitionMode modes[] = {
+            BRepBuilderAPI_Transformed, BRepBuilderAPI_RightCorner, BRepBuilderAPI_RoundCorner };
+        for (BRepBuilderAPI_TransitionMode mode : modes)
+        {
+            for (int frenet = 0; frenet <= 1; ++frenet)
+            {
+                try
+                {
+                    BRepOffsetAPI_MakePipeShell shell(spine);
+                    shell.SetMode(frenet != 0);
+                    shell.SetTransitionMode(mode);
+                    shell.SetTolerance(1e-4, 1e-4, 1e-2);
+                    shell.SetMaxDegree(8);
+                    shell.SetMaxSegments(32);
+                    shell.Add(profile, Standard_False, Standard_False);
+                    shell.Build();
+                    if (!shell.IsDone()) continue;
+                    shell.MakeSolid();
+                    const TopoDS_Shape candidate = shell.Shape();
+                    if (candidate.IsNull()) continue;
+                    int solids = 0;
+                    for (TopExp_Explorer explorer(candidate, TopAbs_SOLID); explorer.More(); explorer.Next())
+                        ++solids;
+                    if (solids != 1) continue;
+                    wire = candidate;
+                    return true;
+                }
+                catch (const Standard_Failure&) { }
+                catch (...) { }
+            }
+        }
+        return false;
+    }
+
+    // Approximate fallback for sharp bends/curvature where the pipe shell fails:
+    // one cylinder per sample segment plus a sphere at each interior vertex, fused
+    // into exactly one SOLID. The existing one-SOLID check still applies; there is
+    // no compound fallback.
+    inline bool BuildFusedSegmentSolidNative(const std::vector<gp_Pnt>& pts,
+                                             const Standard_Real radius,
+                                             TopoDS_Shape& wire)
+    {
+        if (pts.size() < 2 || !(radius > 0.0)) return false;
+        TopoDS_Shape fused;
+        for (size_t i = 1; i < pts.size(); ++i)
+        {
+            gp_Vec segment(pts[i - 1], pts[i]);
+            const Standard_Real length = segment.Magnitude();
+            if (!(length > 1e-9)) continue;
+            gp_Ax2 axis(pts[i - 1], gp_Dir(segment));
+            BRepPrimAPI_MakeCylinder cylinder(axis, radius, length);
+            if (!cylinder.IsDone()) return false;
+            const TopoDS_Shape piece = cylinder.Shape();
+            if (fused.IsNull()) { fused = piece; continue; }
+            BRepAlgoAPI_Fuse fuse(fused, piece);
+            fuse.Build();
+            if (!fuse.IsDone() || fuse.Shape().IsNull()) return false;
+            fused = fuse.Shape();
+        }
+        for (size_t i = 1; i + 1 < pts.size(); ++i)
+        {
+            BRepPrimAPI_MakeSphere sphere(pts[i], radius);
+            if (!sphere.IsDone()) return false;
+            BRepAlgoAPI_Fuse fuse(fused, sphere.Shape());
+            fuse.Build();
+            if (!fuse.IsDone() || fuse.Shape().IsNull()) return false;
+            fused = fuse.Shape();
+        }
+        if (fused.IsNull()) return false;
+        TopoDS_Shape solid;
+        int solids = 0;
+        for (TopExp_Explorer explorer(fused, TopAbs_SOLID); explorer.More(); explorer.Next())
+        {
+            solid = explorer.Current();
+            ++solids;
+            if (solids > 1) break;
+        }
+        if (solids != 1) return false;
+        wire = solid;
+        return true;
+    }
+
+    inline bool BuildProfileWireNative(const gp_Pnt& start, const gp_Dir& tangent,
+                                       const Standard_Real radius, TopoDS_Wire& profile)
+    {
+        if (!(radius > 0.0)) return false;
+        gp_Circ profileCircle(gp_Ax2(start, tangent), radius);
+        BRepBuilderAPI_MakeEdge profileEdge(profileCircle);
+        if (!profileEdge.IsDone()) return false;
+        BRepBuilderAPI_MakeWire profileWireMaker(profileEdge.Edge());
+        if (!profileWireMaker.IsDone()) return false;
+        profile = profileWireMaker.Wire();
+        return !profile.IsNull();
+    }
+
+    // Builds the centreline shape (one fitted edge, or an exact polyline wire when the
+    // fit would exceed the deviation limit) and its swept wire solid.  The result must
+    // be exactly one valid closed solid; a compound fallback is deliberately not
     // provided, because it would hide a failed sweep.
     inline bool BuildPieceAxisNative(const std::vector<double>& flat,
                                      const Standard_Real radius,
-                                     TopoDS_Edge& centreline,
+                                     TopoDS_Shape& centreline,
                                      TopoDS_Shape& wire,
                                      std::string& reason)
     {
@@ -467,65 +585,80 @@ namespace step_export_geometry
             reason = "points";
             return false;
         }
+        const gp_Vec firstSegment(pts[0], pts[1]);
+        if (firstSegment.SquareMagnitude() <= 1e-18)
+        {
+            reason = "edge";
+            return false;
+        }
+        TopoDS_Wire profile;
+        if (!BuildProfileWireNative(pts[0], gp_Dir(firstSegment), radius, profile))
+        {
+            reason = "sweep";
+            return false;
+        }
 
+        // Preferred output: one fitted centreline edge and one pipe-shell solid.
         Handle(Geom_Curve) curve;
         std::string curveReason;
-        if (!BuildPieceCurveNative(flat, curve, curveReason))
+        if (BuildPieceCurveNative(flat, curve, curveReason))
         {
-            reason = curveReason.empty() ? "fit" : curveReason;
-            return false;
+            BRepBuilderAPI_MakeEdge edgeMaker(curve);
+            if (edgeMaker.IsDone())
+            {
+                BRepBuilderAPI_MakeWire spineMaker(edgeMaker.Edge());
+                if (spineMaker.IsDone())
+                {
+                    TopoDS_Shape swept;
+                    if (MakeSweptSolidNative(spineMaker.Wire(), profile, Standard_False, swept) ||
+                        MakeSweptSolidNative(spineMaker.Wire(), profile, Standard_True, swept))
+                    {
+                        centreline = edgeMaker.Edge();
+                        wire = swept;
+                        if (CountSubShapes(wire, TopAbs_SOLID) != 1)
+                        {
+                            reason = "solid";
+                            return false;
+                        }
+                        if (!BRepCheck_Analyzer(wire, Standard_True, Standard_False, Standard_False).IsValid())
+                        {
+                            reason = "solid";
+                            return false;
+                        }
+                        if (!(SolidVolume(wire) > 0.0))
+                        {
+                            reason = "volume";
+                            return false;
+                        }
+                        return true;
+                    }
+                }
+            }
         }
 
-        BRepBuilderAPI_MakeEdge edgeMaker(curve);
-        if (!edgeMaker.IsDone())
+        // Fallback: exact sample polyline as the centreline component.  The wire
+        // solid may be a polyline pipe shell or a fused cylinder/sphere chain; both
+        // are one SOLID and are accepted by the same checks below.
+        BRepBuilderAPI_MakeWire polylineMaker;
+        for (size_t i = 1; i < pts.size(); ++i)
         {
-            reason = "edge";
-            return false;
+            if (pts[i - 1].Distance(pts[i]) <= 1e-9) continue;
+            BRepBuilderAPI_MakeEdge edgeMaker(pts[i - 1], pts[i]);
+            if (!edgeMaker.IsDone()) { reason = "edge"; return false; }
+            polylineMaker.Add(edgeMaker.Edge());
         }
-        centreline = edgeMaker.Edge();
-
-        BRepBuilderAPI_MakeWire wireMaker(centreline);
-        if (!wireMaker.IsDone())
-        {
-            reason = "edge";
-            return false;
-        }
-        const TopoDS_Wire spine = wireMaker.Wire();
-
-        // Profile: circle at the start point, perpendicular to the tangent.
-        const Standard_Real u0 = curve->FirstParameter();
-        gp_Pnt start;
-        gp_Vec tangent;
-        curve->D1(u0, start, tangent);
-        if (tangent.SquareMagnitude() <= 1e-18)
-        {
-            reason = "edge";
-            return false;
-        }
-        const gp_Dir tangentDir(tangent);
-        gp_Circ profileCircle(gp_Ax2(start, tangentDir), radius);
-        BRepBuilderAPI_MakeEdge profileEdge(profileCircle);
-        if (!profileEdge.IsDone())
-        {
-            reason = "sweep";
-            return false;
-        }
-        BRepBuilderAPI_MakeWire profileWireMaker(profileEdge.Edge());
-        if (!profileWireMaker.IsDone())
-        {
-            reason = "sweep";
-            return false;
-        }
+        if (!polylineMaker.IsDone()) { reason = "edge"; return false; }
+        const TopoDS_Wire polyline = polylineMaker.Wire();
 
         TopoDS_Shape swept;
-        if (!MakeSweptSolidNative(spine, profileWireMaker.Wire(), Standard_False, swept) &&
-            !MakeSweptSolidNative(spine, profileWireMaker.Wire(), Standard_True, swept))
+        if (!BuildPolylineSweptSolidNative(pts, profile, swept) &&
+            !BuildFusedSegmentSolidNative(pts, radius, swept))
         {
             reason = "sweep";
             return false;
         }
+        centreline = polyline;
         wire = swept;
-
         if (CountSubShapes(wire, TopAbs_SOLID) != 1)
         {
             reason = "solid";

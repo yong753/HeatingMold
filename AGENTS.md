@@ -692,3 +692,29 @@
 - **빌드 함정(재확인):** `dotnet test -p:OutDir=x64\WorkingSideBuild`가 관리 빌드 중 **오래된 `OccBridge.dll`을 WorkingSideBuild로 복사**해 16개 테스트가 `MissingMethodException: IntersectExitEdgeLine`으로 실패했다. 관리 빌드 후 `x64\Release\OccBridge.dll`을 `x64\WorkingSideBuild\`와 앱 `bin\x64\Release\net8.0-windows\`에 다시 복사한 뒤 `dotnet test <dll>`(빌드 없이)로 실행해야 한다.
 - **로드 DLL:** 새 `OccBridge.dll` 4,583,424 B `7E505E32C50127E7B5639806EB74087BFFEE54F50F86D66D60DD3C2D98980E20`(구 `3136A92B…0F7F` 4,572,160 B). App/UI 코드·프로젝트 schema·DXF/STEP 출력은 변경하지 않았다.
 - **미검증:** 실행 중 앱에서 실제 마우스로 인출점 클릭, 다른 CAD 모델, `e2e-full`/`e2e-split-four` 기대값 재측정, 실제 마우스 분할·저장/재열기.
+
+## 0.2mm 발열사 외곽 간격 생성의 B 3D 스테이징 실패 (사용자 보고·구현 2026-11-14)
+
+- **사용자 보고:** `C:\Users\yong753\Desktop\발열몰드 저장테스트\261116_Test.json`(schema 7, 기본 예제 `Mold_Cover_Trim.step`, 영역 A 59면·영역 B 29면)에서 외곽 간격 `0.2`mm로 생성할 때 `영역 B 경로 조각 181/4488 (HeatingRun) 3D 스테이징 실패 ... off-surface 3.003734`가 발생했다. 저장된 JSON에는 선택 인출점·패턴·경로가 없고 두 영역 모두 `spacingText="5"`였으므로, 실패 세션의 인출점·0.2mm 입력은 저장되지 않았다. 사용자 JSON/STEP은 수정하지 않았고 테스트 사본·산출물은 `C:\Users\yong753\AppData\Local\Temp\opencode\hm-02mm\`에만 두었다.
+- **재현:** 오프스크린 WPF 하네스에서 `MainWindow.LoadProject`로 사본을 열고 제품 함수 `TryResolveExitPoint` → `TryEvaluateSelectedExit3D` → `ApplyPickedExitPoint`로 인출점을 고른 뒤 `GenerateMultiFace`를 실행했다. 영역 B 시작 `(-630,-204.5086)`, 종료 `(630,-52.2136)`, Case1(Ø0.3/4Ω/m), FrameX, 0.2mm에서 **조각 379/614 HeatingRun**이 `off-surface 6.314979`로 재현됐다. 이는 사용자의 181/4488과 같은 예외 경로이며 조각 번호는 인출점 선택에 따라 달라진다.
+- **확정 원인(증거):** 실패 표본 137의 3D 점 `(-3984.548138,-953.205011,1939.574219)`은
+  - `BRepExtrema(vertex, g_faces[45])` 거리 **6.314979**,
+  - 원본 surface 투영 거리 **0.000000**,
+  - `BRepTopAdaptor_FClass2d(face 45, uv=(0.949609,0.906570), UseBnd=true)` = **IN**,
+  - 모델 전체 최근접 거리 **6.314979**, 면 45의 외곽선까지 거리 **6.314979**.
+  즉 `IntCurvesFace_ShapeIntersector`가 면 45의 **trim 바깥 untrimmed surface**를 교차점으로 반환했고, 그 점은 면의 surface 위·pcurve trim 안에 있으므로 `BRepExtrema`의 trimmed-face 거리만으로는 유효점을 바깥으로 오판한다. 같은 데이텀의 재조회도 같은 점을 돌려주며, Core 매핑에서 좌표/FaceId가 뒤섞인 증거는 없었다. `BRepExtrema`를 공차 확대나 최근접 면 스냅으로 덮지 않는다.
+- **수정(네이티브):** `src\OccBridge\WorkingSideNative.inc`에 `PointOnSupportFaceNative`를 추가했다. 빠른 경로는 기존 `BRepExtrema` 0.1mm이고, 실패했을 때만 `BRep_Tool::Surface(face)`에 `GeomAPI_ProjectPointOnSurf`로 모든 해를 투영해 `거리 <= 0.1mm`와 `BRepTopAdaptor_FClass2d::Perform(uv, true)` IN/ON을 함께 만족하는 해가 있으면 유효 표본으로 인정한다. 허용치를 늘리지 않고, 최근접 면으로 대체하지 않으며, compound/부분 결과를 쓰지 않는다. 스테이징 실패 문구에는 실패 표본 인덱스·face·faceDistance·surfaceDistance·trimState·xyz가 남는다. `src\OccBridge\OccBridgeApi.cpp`에 `BRepTopAdaptor_FClass2d.hxx`, `GeomAPI_ProjectPointOnSurf.hxx` include를 추가했다.
+- **STEP 출력 수정(같은 0.2mm 결과를 끝까지 내보내기 위해):**
+  - `src\OccBridge\StepExportAreaNative.inc`: 한 면을 여러 영역이 나눠 갖거나 제외영역이 면을 가로지르면 유효 외곽선 합집합이 원본 면을 덮지 않는 것이 정상이다. 원본 면적보다 **작은** 조각 합은 허용하고(면별 `face-clip` 로그), 원본보다 **큰** 조각(중복/프리즘 오류)과 조각이 하나도 없는 경우만 `area-face-area`/`area-nofaces`로 실패한다.
+  - `src\OccBridge\StepExportGeometryNative.inc`: 긴 곡선/꺾임 조각의 fit 한도를 `PiecePoleLimit 32→512`, `FitSegments 24→96`, `FitIterations 2→6`으로 늘렸다(편차 0.10mm·길이 1.0mm·순서 검사는 그대로). B-spline fit이 편차를 넘거나 pipe shell이 실패하면 확정 샘플 폴리라인을 중심선으로 쓰고, 폴리라인 pipe shell(전이 모드/프레임 조합) 또는 원기둥+구를 fuse한 **단일 SOLID**로 폴백한다. compound 폴백은 없다. `centreline`은 edge 또는 polyline wire를 받는다.
+  - `src\OccBridge\StepExportNative.inc`: 중심선 재읽기 검사를 `EDGE == 1 && VERTEX == 2`에서 `EDGE >= 1 && VERTEX >= 2`로 바꿨다(폴리라인 중심선 허용). SOLID 1개·valid·volume>0 검사는 그대로다.
+- **재현·검증(2026-11-14):**
+  - 네이티브 Release/x64 빌드 0 errors, 솔루션 Release/x64 빌드 0 errors.
+  - `tests\WorkingSide.Regression` **EXIT=0, 869 PASS, 그룹 실패 0**(기존 860 + 신규 `SupportFaceChecks` 7 + kinked STEP 2). `SupportFaceChecks`는 실제 기본 예제와 저장 프레임 `origin=(-3966.6891533290936,-843.1964433803546,1455.9999999778886)`, `axisX=(0,0,-1)`, `axisY=(0,1,0)`, `normal=(1,0,0)`에서 B 면 집합의 실패 데이텀 `u=-483.57421875, v=-110.00856769355369`을 스테이징해 성공을, 법선 방향 1mm 이동점을 거부를 확인한다.
+  - Core 테스트 **246 통과**, App 테스트 **207 통과**(`x64\Release\OccBridge.dll`을 App.Tests 출력에 복사한 뒤 `--no-build`; 복사하지 않으면 이전 DLL의 `MissingMethodException: IntersectExitEdgeLine`이 난다).
+  - 0.2mm 제품 경로(오프스크린, 같은 실행): 영역 A **302조각/151레인/150턴/1회로/200,183.084mm**, 영역 B **614조각/307레인/304턴/1회로/385,335.263mm**, 둘 다 `PatternDisplayed=true`. A는 하네스가 제품 `TryGenerateSelectedExitPattern`과 표면 질의로 고른 인출점 `(-630,68.1084)→(630,-7.1195)`(75.2mm 스윕)을 썼고, B는 `(-630,-204.5086)→(630,-52.2136)`(152.3mm 스윕)을 썼다. **사용자의 저장되지 않은 실제 인출점은 알 수 없으며**, 전체 스윕을 덮는 다른 인출점 조합은 여전히 `RequiredExtraLaneOutsideRegion` 또는 실제 표면 gap의 Miss로 실패할 수 있다. 이번 수정은 보고된 B의 false-hit 스테이징 실패를 고친 것이지 모든 0.2mm 인출점 조합을 보장하지 않는다.
+  - 프로젝트 저장: `hm02-saved.json` 20,353,858B(schema 7), 같은 실행 재로드 후 A/B 조각 수·길이 합 **완전 일치**(A 302/200,183.084, B 614/385,335.263).
+  - DXF: 8,122,916B, 재읽기 레이어 엔티티 `HEAT_WIRE=916`, `HEAT_AREA=2`, `ELECTRICAL_SPEC=38`, `HEAT_LENGTH_LABEL=1778`, `MOLD_OUTLINE=232`, `DIMENSION=2`.
+  - STEP: 432,298,474B, 네이티브 `VerifyStepDocumentNative` 재읽기 검증 통과(`ExportStepCore` Success). 0.2mm 간격의 916조각 때문에 파일이 매우 크다.
+  - 로드 DLL: `OccBridge.dll` 4,608,000B `4AF937507B7102066D0FAF49B49DA3F14BD8A783EF56911AFC9E8331D2C79B45`; WorkingSideBuild 앱 `1B7D7B235C9C9128E732CA066DE651FED22BA6CCC50CE30279974DBA130CDBC2`, Core `F151F4BC805747C5CD2A9FE6BC82428C86D2971EEBB60CCB70F2A8D500DB2203`; App 테스트 출력 앱 `A97F7FE86E07721E40C1EA5A8238D2CB2575B52C6689BD40C00A8B190E2A97E3`.
+- **남은 한계:** B의 4488조각 원본 세션은 인출점이 저장되지 않아 그대로 재현하지 못했다. 실행 중 앱의 실제 마우스 클릭·분할·화면 육안, 새 프로세스에서의 복원, 외부 CAD에서 432MB STEP 열기, 전체 스윕 인출점 조합의 성공은 미검증이다. `e2e-full`·`e2e-split-four`의 기존 기대값 불일치는 이번 변경과 무관하게 그대로다.

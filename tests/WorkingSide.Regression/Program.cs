@@ -205,6 +205,7 @@ static class Program
         RunGroup("ElectricalRefreshChecks", () => ElectricalRefreshChecks.Run(window));
         RunGroup("PatternStateChecks", () => PatternStateChecks.Run(window));
         RunGroup("GeometryRollbackChecks", () => GeometryRollbackChecks.Run(window, args[0]));
+        RunGroup("SupportFaceChecks", () => SupportFaceChecks.Run(args[0]));
         Check(typeof(Bridge).GetMethod("HlrProject")==null && typeof(Bridge).GetMethod("HlrEdges")!=null,
             "HLR smoke API removed while exporter HlrEdges remains");
         viewport.RectangleSelectionMode=true;
@@ -772,6 +773,27 @@ Check(Bridge.LoadStep(Path.Combine(args[0],"sphere.stp")),"load sphere with curv
                             "STEP piece export writes one solid per piece ("+pieceFailure+")");
                         Check(File.Exists(piecePath)&&new FileInfo(piecePath).Length>0,
                             "STEP piece export file is non-empty");
+                        // 긴 곡선/꺾임 조각: B-spline 근사가 0.1mm를 넘으면 폴리라인
+                        // 중심선과 폴리라인/퓨즈 솔리드로 폴백해 한 개의 SOLID를 쓴다.
+                        string kinkedPath=Path.Combine(Path.GetTempPath(),
+                            "heatingmold_step_kinked_"+Guid.NewGuid().ToString("N")+".step");
+                        try
+                        {
+                            var kinked=new List<double>();
+                            for(int i=0;i<=20;i++)
+                            {
+                                kinked.Add(i%2==0?0.0:9.5); kinked.Add(0.0); kinked.Add(i*39.0);
+                            }
+                            var kinkedArea=new StepExportArea("테스트 K","테스트 K",0,128,255,
+                                new[]{new StepExportPiece("테스트 K 레인 1",kinked.ToArray())});
+                            bool kinkedExported=Bridge.ExportStepWithRoutes(kinkedPath,"Mold_Cover_Trim",0.30,
+                                new[]{kinkedArea},out string kinkedFailure);
+                            Check(kinkedExported,
+                                "STEP piece export accepts a kinked polyline via one-solid fallback ("+kinkedFailure+")");
+                            Check(File.Exists(kinkedPath)&&new FileInfo(kinkedPath).Length>0,
+                                "STEP kinked piece file is non-empty");
+                        }
+                        finally { try { if(File.Exists(kinkedPath)) File.Delete(kinkedPath); } catch { } }
                     }
                     finally { try { if(File.Exists(piecePath)) File.Delete(piecePath); } catch { } }
                     // 발열영역 색상: 작업 프레임 2D 링으로 모델 사본 표면을 구획하고

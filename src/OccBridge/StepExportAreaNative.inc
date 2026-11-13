@@ -497,34 +497,33 @@ namespace step_export_geometry
                 return false;
             }
             const double areaTolerance = (std::max)(1.0, originalArea * 1.0e-4);
-            if (clipped)
-            {
-                // 제외영역으로 잘린 면: 조각이 원본 면적을 넘을 수는 없다.
-                // (조각이 없으면 위에서 이미 실패했고, 영역별 조각 유무는 아래에서 검사한다.)
-                if (pieceArea > originalArea + areaTolerance)
-                {
-                    LogStepAreaNative("face-excess " + std::to_string(id) +
-                                      " pieces=" + std::to_string(pieceCount) +
-                                      " pieceArea=" + std::to_string(pieceArea) +
-                                      " originalArea=" + std::to_string(originalArea));
-                    failure = "area-face-area:" + NativeStepAreaIndexToken(faceAreas[id].front()) +
-                              ":" + std::to_string(id);
-                    return false;
-                }
+            // When several areas share one face or an exclusion crosses the face,
+            // the union of the areas' effective outlines legitimately does not cover
+            // the whole original face. STEP paints only the pieces inside each
+            // area's effective region, so a smaller union is not an error. A piece
+            // larger than the original (overlap/prism error) or no piece at all is
+            // still rejected explicitly.
+            if (pieceArea < originalArea - areaTolerance)
                 LogStepAreaNative("face-clip " + std::to_string(id) +
                                   " pieces=" + std::to_string(pieceCount) +
                                   " pieceArea=" + std::to_string(pieceArea) +
                                   " originalArea=" + std::to_string(originalArea));
-            }
-            else if (std::abs(pieceArea - originalArea) > areaTolerance)
+            if (pieceArea > originalArea + areaTolerance)
             {
-                LogStepAreaNative("face-area " + std::to_string(id) + " pieces=" + std::to_string(pieceCount) +
+                LogStepAreaNative("face-excess " + std::to_string(id) +
+                                  " pieces=" + std::to_string(pieceCount) +
                                   " pieceArea=" + std::to_string(pieceArea) +
-                                  " originalArea=" + std::to_string(originalArea) +
-                                  " area=" + NativeStepAreaIndexToken(faceAreas[id].front()));
+                                  " originalArea=" + std::to_string(originalArea));
                 failure = "area-face-area:" + NativeStepAreaIndexToken(faceAreas[id].front()) +
                           ":" + std::to_string(id);
                 return false;
+            }
+            if (clipped)
+            {
+                LogStepAreaNative("face-boundary-clip " + std::to_string(id) +
+                                  " pieces=" + std::to_string(pieceCount) +
+                                  " pieceArea=" + std::to_string(pieceArea) +
+                                  " originalArea=" + std::to_string(originalArea));
             }
         }
         for (size_t a = 0; a < areaCount; ++a)

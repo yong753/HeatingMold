@@ -265,8 +265,8 @@ namespace step_export_geometry
                 failure = "verify-shape";
                 return false;
             }
-            if (CountOf(shape, TopAbs_EDGE) != 1 ||
-                CountOf(shape, TopAbs_VERTEX) != 2)
+            if (CountOf(shape, TopAbs_EDGE) < 1 ||
+                CountOf(shape, TopAbs_VERTEX) < 2)
             {
                 failure = "verify-centreline";
                 return false;

@@ -74,6 +74,8 @@
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepProj_Projection.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
+#include <BRepTopAdaptor_FClass2d.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <TopTools_HSequenceOfShape.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <Geom2dAdaptor_Curve.hxx>

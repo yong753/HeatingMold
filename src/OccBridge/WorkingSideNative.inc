@@ -608,8 +608,51 @@ WorkingStatusNative MapWorkingPointOntoFacesNative(long long id, long long revis
     } catch (const Standard_Failure&) { return WorkingStatusNative::GeometryFailure; }
 }
 
+// Decides whether a route sample lies on its assigned original face.
+// BRepExtrema's distance to a trimmed face can report a valid interior point as
+// outside when one 3D point has several UV preimages (self-intersecting or
+// periodic BSpline faces). The fast path is the existing 0.1 mm euclidean test;
+// only on failure it cross-checks the original surface projection plus the
+// pcurve trim. It never increases the tolerance and never falls back to a
+// nearest face.
+bool PointOnSupportFaceNative(const gp_Pnt& p, const TopoDS_Face& face, double tolerance,
+    double& faceDistance, double& surfaceDistance, int& trimState)
+{
+    faceDistance = -1.0;
+    surfaceDistance = -1.0;
+    trimState = -1;
+    BRepExtrema_DistShapeShape distance(BRepBuilderAPI_MakeVertex(p).Vertex(), face);
+    if (distance.IsDone()) {
+        faceDistance = distance.Value();
+        if (faceDistance <= tolerance) return true;
+    }
+    try {
+        const Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+        if (surface.IsNull()) return false;
+        GeomAPI_ProjectPointOnSurf projector(p, surface);
+        const int count = projector.NbPoints();
+        for (int i = 1; i <= count; ++i) {
+            const gp_Pnt projected = projector.Point(i);
+            const double d = p.Distance(projected);
+            if (!std::isfinite(d) || d > tolerance) continue;
+            double u = 0, v = 0;
+            projector.Parameters(i, u, v);
+            BRepTopAdaptor_FClass2d classifier(face, Precision::Confusion());
+            const TopAbs_State state = classifier.Perform(gp_Pnt2d(u, v), Standard_True);
+            trimState = static_cast<int>(state);
+            surfaceDistance = d;
+            if (state == TopAbs_IN || state == TopAbs_ON) return true;
+        }
+    } catch (const Standard_Failure&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+    return false;
+}
+
 // 매핑 실패 시 최후 수단: 대상 면 집합까지의 최근접 점으로 스냅한다. 면 위 점이 아니면
-// (모서리/꼭짓점 지원) faceId=-1로 두고 호출 측이 진단에만 사용한다.
+// Nearest point on the selected faces within tolerance; faceId=-1 means an edge/vertex support and is diagnostic only.
 bool SnapWorkingPointToFacesNative(const std::vector<double>& xyz, const std::vector<int>& faces,
     double tolerance, double* out, int& faceId)
 {
@@ -1116,10 +1159,20 @@ bool StageSurfaceMappedRoutePieceWithFacesNative(long long id, long long revisio
                 return WorkingStageFail("support-face " + std::to_string(face));
             const gp_Pnt p(xyz[i], xyz[i + 1], xyz[i + 2]);
             if (!points.empty() && points.back().Distance(p) <= Precision::Confusion()) continue;
-            BRepExtrema_DistShapeShape distance(BRepBuilderAPI_MakeVertex(p).Vertex(), g_faces[face]);
-            if (!distance.IsDone()) return WorkingStageFail("distance-failure");
-            if (distance.Value() > kSurfaceSupportTolerance)
-                return WorkingStageFail("off-surface " + std::to_string(distance.Value()));
+            double faceDistance = -1.0, surfaceDistance = -1.0;
+            int trimState = -1;
+            if (!PointOnSupportFaceNative(p, g_faces[face], kSurfaceSupportTolerance,
+                    faceDistance, surfaceDistance, trimState)) {
+                BRepExtrema_DistShapeShape toModel(BRepBuilderAPI_MakeVertex(p).Vertex(), g_shape);
+                double nearest = toModel.IsDone() ? toModel.Value() : -1.0;
+                return WorkingStageFail("off-surface " + std::to_string(faceDistance) +
+                    " at " + std::to_string(i / 3) + " face=" + std::to_string(face) +
+                    " nearest=" + std::to_string(nearest) +
+                    " surfDist=" + std::to_string(surfaceDistance) +
+                    " trimState=" + std::to_string(trimState) +
+                    " xyz=" + std::to_string(xyz[i]) + "," + std::to_string(xyz[i + 1]) + "," +
+                    std::to_string(xyz[i + 2]));
+            }
             points.push_back(p);
             faces.push_back(face);
         }
