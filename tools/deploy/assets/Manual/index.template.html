@@ -32,8 +32,6 @@
     <li><a href="#split">자동 분할</a></li>
     <li><a href="#project">프로젝트 저장과 복원</a></li>
     <li><a href="#export">DXF·STEP 내보내기</a></li>
-    <li><a href="#trouble">문제가 생겼을 때</a></li>
-    <li><a href="#limits">알려진 제한</a></li>
   </ol>
 </nav>
 
@@ -309,38 +307,7 @@
   <li>내보내기는 현재 검토 범위를 따릅니다. 전체 또는 현재 영역만 내보낼 수 있습니다.</li>
 </ul>
 
-<h2 id="trouble">14. 문제가 생겼을 때</h2>
-
-<table class="spec">
-  <tr><th>앱이 시작되지 않음</th><td><code>HeatingMold.Start.exe --check-only</code> 로 점검 결과를 확인합니다. 파일이 일부만 풀렸다면 다시 압축을 푸십시오.</td></tr>
-  <tr><th>3D 뷰가 비어 있음</th><td>그래픽 드라이버 또는 원격 접속 환경 문제일 수 있습니다. 드라이버를 갱신하고 로컬 화면에서 다시 시도하십시오.</td></tr>
-  <tr><th>경로가 생성되지 않음</th><td>마진·간격이 영역에 비해 너무 크거나, 인출점이 경계에 없거나, 제외영역 조건이 맞지 않을 수 있습니다. 상태 줄의 안내를 확인하십시오.</td></tr>
-  <tr><th>프로젝트가 열리지 않음</th><td>원본 STEP 파일이 같은 상대 위치에 있는지, 내용이 바뀌지 않았는지 확인하십시오.</td></tr>
-  <tr><th>내보내기가 거부됨</th><td>경로가 생성되지 않았거나 검증되지 않은 영역이 있으면 내보내지 않습니다. 영역 상태를 먼저 확인하십시오.</td></tr>
-</table>
-
-<div class="callout">
-  <span class="label">로그와 문의</span>
-  실행 기록은 <code>%LOCALAPPDATA%\HeatingMold\Logs\</code> 아래에 실행 시각별 폴더로 저장됩니다. <code>launcher.log</code>, <code>app.log</code>, <code>environment.json</code> 을 함께 보내 주시면 원인 파악에 도움이 됩니다. <code>HeatingMold.Start.exe --diagnostics</code> 로 폴더를 바로 열 수 있습니다.
-</div>
-
-<h2 id="limits">15. 알려진 제한</h2>
-
-<ul class="plain">
-  <li>DXF 는 평면도 한 장만 출력합니다. 여러 방향의 투상도를 함께 내보내지 않습니다.</li>
-  <li>STEP 의 발열경로는 중심선(선)입니다. 일부 CAD 는 선만 있는 형상을 가져오지 않으므로 경로가 보이지 않을 수 있습니다.</li>
-  <li>자동 분할은 한 번에 최대 4개 영역까지입니다.</li>
-  <li>경로 표면 검증은 1 mm 간격으로 조회합니다. 그보다 좁은 결함이 항상 검출된다고 보장하지 않습니다.</li>
-  <li>프로젝트 파일은 원본 STEP 을 포함하지 않습니다.</li>
-  <li>이 배포본은 테스트용입니다. 실제 생산에 사용하기 전에 담당자가 결과를 검토하십시오.</li>
-</ul>
-
 </main>
-
-<footer class="docfoot">
-  <p>{{TITLE}} · 패키지 버전 {{VERSION}}</p>
-  <p>이 문서의 화면은 실제 배포본 실행 화면입니다. 개인 환경이 드러나는 부분(파일 경로, PC 알림)은 가렸습니다. 그림의 수치는 예제 모델 기준이며 사용자 모델에서는 달라집니다.</p>
-</footer>
 
 </body>
 </html>
