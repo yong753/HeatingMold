@@ -95,8 +95,15 @@ static void NativeExitChecks()
         "overlapping projected edge and ray fails explicitly");
     ProjectedCurve collapsed;
     Handle(Geom_Curve) vertical=new Geom_Line(gp_Pnt(0,0,2),gp::DZ());
-    check(BuildProjectedCurve(vertical,0,10,gp::Origin(),gp::DX(),gp::DY(),gp::DZ(),collapsed)==Status::DegenerateProjection,
-        "normal-aligned edge is an explicit degenerate projection");
+    check(BuildProjectedCurve(vertical,0,10,gp::Origin(),gp::DX(),gp::DY(),gp::DZ(),collapsed)==Status::Hit &&
+        collapsed.collapsed && collapsed.hasBounds && collapsed.minU==collapsed.maxU && collapsed.minV==collapsed.maxV &&
+        NearestParameter(collapsed,0,10,gp_Pnt2d(0,2),5,t)==Status::DegenerateProjection,
+        "normal-aligned edge keeps identity and fails only a query that reaches it");
+    ProjectedCurve tinyArc;
+    Handle(Geom_Curve) oblique=new Geom_Circle(gp_Ax2(gp_Pnt(0,0,0),gp_Dir(1,0,1),gp::DY()),97);
+    check(BuildProjectedCurve(oblique,3.1852258,3.1852358,gp::Origin(),gp::DX(),gp::DY(),gp::DZ(),tinyArc)==Status::Hit &&
+        EvaluateParameter(tinyArc,3.1852258,3.1852358,3.1852308,point,tangent,datum)==Status::Hit,
+        "tiny oblique arc projects and evaluates at its original parameter");
     TColgp_Array1OfPnt poles(1,4);
     poles.SetValue(1,gp_Pnt(0,0,0)); poles.SetValue(2,gp_Pnt(20,20,10));
     poles.SetValue(3,gp_Pnt(-20,20,20)); poles.SetValue(4,gp_Pnt(0,0,30));

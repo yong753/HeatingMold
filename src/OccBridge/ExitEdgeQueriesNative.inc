@@ -74,6 +74,39 @@ ExitEdgeStatusNative FillExitHit(const HeatingMoldExitNative::ProjectedCurve& cu
     return hit.status;
 }
 
+// Broad phase over the conservative 2D bounds of the original curve segment.
+// An unknown bound never skips an edge; a point outside the bound cannot be a
+// nearest candidate for that tolerance, so a collapsed or unrelated edge stops
+// aborting the whole boundary query.
+bool ExitCurveMayReachPoint(const HeatingMoldExitNative::ProjectedCurve& curve,
+    double u, double v, double tolerance)
+{
+    if (!curve.hasBounds) return true;
+    return u >= curve.minU - tolerance && u <= curve.maxU + tolerance &&
+        v >= curve.minV - tolerance && v <= curve.maxV + tolerance;
+}
+
+bool ExitCurveMayHitLine(const HeatingMoldExitNative::ProjectedCurve& curve,
+    const gp_Pnt2d& origin, const gp_Vec2d& direction, double& firstS, double& lastS)
+{
+    firstS = -std::numeric_limits<double>::infinity();
+    lastS = std::numeric_limits<double>::infinity();
+    if (!curve.hasBounds) return true;
+    const double e = HeatingMoldExitNative::GeometryEpsilon;
+    auto slab = [&](double originCoord, double dir, double low, double high) -> bool {
+        if (std::fabs(dir) <= 1.0e-15) return originCoord >= low - e && originCoord <= high + e;
+        double s1 = (low - e - originCoord) / dir;
+        double s2 = (high + e - originCoord) / dir;
+        if (s1 > s2) std::swap(s1, s2);
+        firstS = std::max(firstS, s1);
+        lastS = std::min(lastS, s2);
+        return firstS <= lastS;
+    };
+    if (!slab(origin.X(), direction.X(), curve.minU, curve.maxU)) return false;
+    if (!slab(origin.Y(), direction.Y(), curve.minV, curve.maxV)) return false;
+    return firstS <= lastS;
+}
+
 ExitEdgeHitNative ProjectExitEdgeNative(long long id, long long revision, const NativeExitEdgeRef& reference,
     double u, double v, double tolerance, bool legacyFullRange = false)
 {
@@ -83,6 +116,10 @@ ExitEdgeHitNative ProjectExitEdgeNative(long long id, long long revision, const 
         HeatingMoldExitNative::ProjectedCurve* curve; const StoredExitEdge* stored; int support;
         hit.status = ResolveExitReference(id, revision, reference, curve, stored, support, legacyFullRange);
         if (hit.status != ExitEdgeStatusNative::Hit) return hit;
+        // A query that provably cannot reach this edge is a plain miss. A query
+        // that can reach a fully collapsed edge is the explicit degeneracy.
+        if (!ExitCurveMayReachPoint(*curve, u, v, tolerance)) { hit.status = ExitEdgeStatusNative::Miss; return hit; }
+        if (curve->collapsed) { hit.status = ExitEdgeStatusNative::DegenerateProjection; return hit; }
         double parameter = 0.0;
         hit.status = HeatingMoldExitNative::NearestParameter(*curve, reference.firstParameter, reference.lastParameter,
             gp_Pnt2d(u, v), tolerance, parameter);
@@ -112,6 +149,15 @@ ExitEdgeStatusNative IntersectExitEdgeRayNative(long long id, long long revision
         HeatingMoldExitNative::ProjectedCurve* curve; const StoredExitEdge* stored; int support;
         auto status = ResolveExitReference(id, revision, reference, curve, stored, support);
         if (status != ExitEdgeStatusNative::Hit) return status;
+        const double scale = std::max(std::fabs(du), std::fabs(dv));
+        if (scale == 0.0) return ExitEdgeStatusNative::InvalidInput;
+        gp_Vec2d direction(du / scale, dv / scale);
+        direction.Normalize();
+        double firstS = 0.0, lastS = 0.0;
+        if (!ExitCurveMayHitLine(*curve, gp_Pnt2d(u, v), direction, firstS, lastS) ||
+            lastS <= HeatingMoldExitNative::GeometryEpsilon)
+            return ExitEdgeStatusNative::Miss;
+        if (curve->collapsed) return ExitEdgeStatusNative::DegenerateProjection;
         std::vector<double> parameters;
         status = HeatingMoldExitNative::IntersectRay(*curve, reference.firstParameter, reference.lastParameter,
             gp_Pnt2d(u, v), du, dv, tolerance, parameters);
@@ -136,6 +182,15 @@ ExitEdgeStatusNative IntersectExitEdgeLineNative(long long id, long long revisio
         HeatingMoldExitNative::ProjectedCurve* curve; const StoredExitEdge* stored; int support;
         auto status = ResolveExitReference(id, revision, reference, curve, stored, support);
         if (status != ExitEdgeStatusNative::Hit) return status;
+        const gp_Vec2d lineDirection(gp_Pnt2d(ax, ay), gp_Pnt2d(bx, by));
+        if (!std::isfinite(lineDirection.Magnitude()) ||
+            lineDirection.Magnitude() <= HeatingMoldExitNative::GeometryEpsilon)
+            return ExitEdgeStatusNative::InvalidInput;
+        double firstS = 0.0, lastS = 0.0;
+        if (!ExitCurveMayHitLine(*curve, gp_Pnt2d(ax, ay), gp_Vec2d(gp_Dir2d(lineDirection)),
+            firstS, lastS))
+            return ExitEdgeStatusNative::Miss;
+        if (curve->collapsed) return ExitEdgeStatusNative::DegenerateProjection;
         std::vector<double> parameters;
         status = HeatingMoldExitNative::IntersectLine(*curve, reference.firstParameter, reference.lastParameter,
             gp_Pnt2d(ax, ay), gp_Pnt2d(bx, by), parameters);

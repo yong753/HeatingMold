@@ -2,6 +2,7 @@
 #include <BRep_Tool.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepGProp.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
 #include <GProp_GProps.hxx>
 #include <GeomAPI_ProjectPointOnCurve.hxx>
 #include <TopoDS.hxx>
