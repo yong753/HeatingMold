@@ -18,6 +18,7 @@
     <Content Include="..\..\resource\Mold_Cover_Trim.step">
       <Link>resource\Mold_Cover_Trim.step</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
   <ItemGroup>

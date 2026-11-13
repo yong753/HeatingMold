@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "comment": "매뉴얼 그림 정의. source 는 캡처 폴더 안의 원본 PNG 파일명, output 은 Manual/images 아래에 저장될 파일명. masks 는 원본 좌표(캡처 픽셀) 기준 사각형을 단색으로 가린다.",
+  "canvas": { "width": 1920, "height": 1020 },
+  "defaultMasks": [
+    {
+      "reason": "모델 파일의 절대 경로가 배포 PC 환경을 노출하므로 가린다.",
+      "x": 145, "y": 42, "width": 760, "height": 76, "color": "#FFFFFF"
+    },
+    {
+      "reason": "Windows 정품 인증 안내 문구는 앱 화면이 아니며 이 PC 에만 해당하므로 가린다.",
+      "x": 1482, "y": 928, "width": 430, "height": 74, "color": "#FFFFFF"
+    }
+  ],
+  "figures": [
+    {
+      "output": "03-initial.png",
+      "source": "01.png",
+      "caption": "예제 모델을 연 직후의 화면. 왼쪽이 3D 뷰포트, 오른쪽이 작업 패널이다."
+    },
+    {
+      "output": "04-select-faces.png",
+      "source": "02.png",
+      "caption": "뷰포트에서 발열면을 클릭해 3개 면을 선택한 상태. 오른쪽 목록에 선택한 면이 표시된다."
+    },
+    {
+      "output": "05-exit-start.png",
+      "source": "04.png",
+      "caption": "시작 인출점을 경계에서 직접 선택한 상태."
+    },
+    {
+      "output": "06-exit-end.png",
+      "source": "05.png",
+      "caption": "종료 인출점까지 선택을 마친 상태."
+    },
+    {
+      "output": "07-generate.png",
+      "source": "06.png",
+      "caption": "패턴 생성 결과. 발열경로가 영역 색으로 표시되고 상태 문구에 조각 수·길이·회로 수가 나온다."
+    },
+    {
+      "output": "08-generate-check.png",
+      "source": "07.png",
+      "caption": "생성 결과 구조 확인. 진행 방향, 인출점, 마진·간격 입력값이 함께 표시된다."
+    },
+    {
+      "output": "09-exclusion-add.png",
+      "source": "08.png",
+      "caption": "제외영역을 사각형으로 추가한 상태."
+    },
+    {
+      "output": "10-exclusion-regenerate.png",
+      "source": "10.png",
+      "caption": "제외영역을 반영해 다시 생성한 결과."
+    },
+    {
+      "output": "11-vertex-edit.png",
+      "source": "17.png",
+      "caption": "꼭지점을 발열 진행 방향으로 끌어 이동한 결과. 발열사 간격은 유지된다."
+    },
+    {
+      "output": "12-vertex-after.png",
+      "source": "18.png",
+      "caption": "꼭지점 편집을 확정한 뒤의 경로와 길이."
+    },
+    {
+      "output": "13-electrical.png",
+      "source": "23.png",
+      "caption": "전기 검토 탭. 회로별 사양표의 판정이 NG 이면 행 전체가 빨간색으로 표시된다."
+    },
+    {
+      "output": "14-split.png",
+      "source": "24.png",
+      "caption": "자동 분할 결과. 하나의 영역이 여러 독립 영역으로 나뉜다."
+    },
+    {
+      "output": "15-split-parts.png",
+      "source": "25.png",
+      "caption": "분할로 만들어진 영역 중 하나를 선택한 상태. 각 영역은 독립 영역으로 동작한다."
+    },
+    {
+      "output": "16-split-verdict.png",
+      "source": "28.png",
+      "caption": "분할 후 전기 판정. 영역별로 판정이 나뉠 수 있다."
+    },
+    {
+      "output": "17-save.png",
+      "source": "31.png",
+      "caption": "프로젝트 저장 결과. 프로젝트 파일은 원본 STEP 을 내장하지 않고 경로와 해시만 기록한다."
+    },
+    {
+      "output": "18-reload.png",
+      "source": "32.png",
+      "caption": "저장한 프로젝트를 다시 열어 저장 시점과 상태를 비교한 결과."
+    },
+    {
+      "output": "19-dxf.png",
+      "source": "29.png",
+      "caption": "DXF 내보내기 결과. 확정 작업평면 기준의 평면도와 전기 사양표가 들어간다."
+    },
+    {
+      "output": "20-step.png",
+      "source": "30.png",
+      "caption": "STEP 내보내기 결과. 모델, 발열사, 발열경로가 함께 들어간 3D 파일이다."
+    }
+  ]
+}

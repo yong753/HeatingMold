@@ -1,12 +1,16 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using HeatingMold.App.Deployment;
 
 namespace HeatingMold.App
 {
     /// <summary>
     /// OCCT prebuilt(third_party) 위치 탐색 + 프로세스 환경 구성.
     /// env.bat의 3rdparty PATH가 상대 경로라 CWD 의존(2.1 교훈) → 절대 경로로 직접 구성.
+    ///
+    /// 배포 패키지(deployment.json 존재)에서는 상위 폴더·개발 저장소를 탐색하지 않는다.
+    /// 실행 폴더에 평탄 배치된 DLL 과 occt-resources 만 사용한다.
     /// </summary>
     public static class OcctEnv
     {
@@ -15,6 +19,13 @@ namespace HeatingMold.App
 
         public static void Setup()
         {
+            RuntimeLayout.Initialize();
+            if (RuntimeLayout.IsPackaged)
+            {
+                SetupPackaged();
+                return;
+            }
+
             var di = new DirectoryInfo(AppContext.BaseDirectory);
             while (di != null && !File.Exists(Path.Combine(di.FullName, "third_party", "opencascade-7.9.3-vc14-64", "env.bat")))
                 di = di.Parent;
@@ -42,6 +53,24 @@ namespace HeatingMold.App
             catch (Exception) { }
         }
 
+        /// <summary>
+        /// 배포 패키지 모드. 네이티브 DLL 은 실행 폴더에 평탄 배치, OCCT 리소스는
+        /// occt-resources 폴더에 있다. 개발 저장소나 전역 설치를 조회하지 않는다.
+        /// </summary>
+        private static void SetupPackaged()
+        {
+            string baseDir = RuntimeLayout.BaseDirectory;
+
+            string old = Environment.GetEnvironmentVariable("PATH") ?? "";
+            Environment.SetEnvironmentVariable("PATH", baseDir + ";" + old, EnvironmentVariableTarget.Process);
+            Environment.SetEnvironmentVariable("CSF_OCCTResourcePath",
+                RuntimeLayout.OcctResourceDirectory, EnvironmentVariableTarget.Process);
+
+            RuntimeDiagnostics.Initialize();
+            RuntimeDiagnostics.SetOccLogEnvironment();
+            RuntimeDiagnostics.WriteLine("배포 모드로 시작합니다. 앱 폴더: " + baseDir);
+        }
+
         private static void CollectDllDirs(string dir, int depth, List<string> outDirs)
         {
             if (depth > 4) return;
@@ -61,6 +90,12 @@ namespace HeatingMold.App
         /// </summary>
         public static string FindMoldStp()
         {
+            if (RuntimeLayout.IsPackaged)
+            {
+                string packaged = RuntimeLayout.FindExampleModel();
+                if (!string.IsNullOrEmpty(packaged)) return packaged;
+            }
+
             string[] candidates = { "Mold_Cover_Trim.step" };
             foreach (string name in candidates)
             {

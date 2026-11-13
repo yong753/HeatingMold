@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
+using HeatingMold.App.Deployment;
 using HeatingMold.App.VisualTesting;
 
 namespace HeatingMold.App
@@ -48,8 +49,22 @@ namespace HeatingMold.App
             }
             catch (Exception ex)
             {
-                VisualTestReport.WriteStartupFailure(visualOptions?.RunDirectory,
-                    "시각 테스트 시작 실패: " + ex);
+                // 배포 패키지에서 실패하면 창이 없으면 사용자는 아무 안내도 못 받는다.
+                try { RuntimeDiagnostics.WriteStartupFailure("앱 시작", ex); } catch (Exception) { }
+
+                if (visualOptions != null && visualOptions.Enabled)
+                {
+                    VisualTestReport.WriteStartupFailure(visualOptions.RunDirectory,
+                        "시각 테스트 시작 실패: " + ex);
+                }
+                else
+                {
+                    MessageBox.Show(
+                        ex.Message + Environment.NewLine + Environment.NewLine +
+                        RuntimeDiagnostics.BuildLogHintText(),
+                        "HeatingMold 시작 실패", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+
                 Shutdown(2);
                 Environment.Exit(2);
                 return;

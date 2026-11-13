@@ -560,3 +560,35 @@
 - **함정(재발 방지):** `dotnet build tests\WorkingSide.Regression`은 `HeatingMold.App.dll`/`HeatingMold.Core.dll`을 갱신하지 않는다. App 코드를 고친 뒤에는 `x64\Release\OccBridge.dll` → `x64\WorkingSideBuild\`, 그리고 `HeatingMold.App.dll`/`HeatingMold.Core.dll`을 회귀 하네스 출력으로 **수동 복사**해야 한다. 복사하지 않으면 낡은 DLL이 돌아 진단 로그조차 나오지 않는다. `dotnet test`도 같은 이유로 `dotnet build` → 수동 복사 → `dotnet test --no-build` 순서가 필요하다.
 - **미검증:** 실제 마우스로 4분할 클릭, 화면 육안 판정, 새 프로세스에서의 복원, 외부 CAD에서 DXF/STEP 열기, 중첩 분할(한 자식을 다시 분할)에서의 정확 구간 판정, 비축정렬 절단선(제품은 축정렬만 만든다).
 
+## 배포 패키지 구성 (사용자 승인·구현 2026-11-13)
+
+- **사용자 요청:** "그럼 배포 구성시작해". Windows 10 64비트 사용자에게 ZIP 한 개로 전달하고, 런타임/VC 문제를 사용자 PC 설치 없이 해결하며, 실제 화면 스크린샷이 들어간 매뉴얼까지 포함하는 것이 범위다.
+- **도구 위치는 `tools\deploy\`** 다. `.gitignore`의 `[Rr]elease/` 규칙 때문에 `tools\release\` 는 git이 무시하므로 쓰지 않는다. 사용자가 직접 패키지를 다시 만드는 절차는 `tools\deploy\README.md` 에 정리되어 있다.
+- **VC 재배포 방식(계획 변경, 확정):** vc_redist.x64.exe 를 동봉해 관리자 권한으로 설치하는 대신, VS 재배포 폴더의 **CRT/OpenMP DLL 을 앱 폴더에 복사(app-local)** 한다. 관리자 권한·UAC·사전 설치가 모두 사라진다. 설치 파일은 패키지에 넣지 않는다.
+- **배포 형태:** self-contained win-x64, **multi-file**(단일 파일/trimming/AOT/ReadyToRun 금지), 오프라인. .NET 데스크톱 런타임과 VC 런타임이 모두 패키지 안에 있다.
+- **구조:** 루트에 `HeatingMold.Start.exe`(Win32 /MT, asInvoker, .NET·VC·OCCT 무의존), `처음_읽어주세요.txt`, `ReleaseNotes.txt`, `THIRD-PARTY-NOTICES.txt`, `build-info.json`, `manifest.sha256`, `Manual\`(index.html·manual.css·images 18장·PDF), `App\`(publish 전체 + OccBridge.dll + ijwhost.dll + 앱 DLL 36 + VC DLL 4 + `deployment.json` + `resource\Mold_Cover_Trim.step` + `occt-resources\` 11폴더), `Licenses\`.
+- **시작 도구 동작:** 아키텍처·Windows 버전 확인 → 패키지 파일 존재 → `manifest.sha256`(bcrypt SHA-256) 무결성 → `CreateProcessW`(작업 폴더 `App`) → 15초 뒤 정상 종료. 실패 코드 2/3/4/5/6. `--check-only`, `--diagnostics`, `--skip-verify`, `--quiet` 는 앱에 전달하지 않는다.
+- **로그:** `%LOCALAPPDATA%\HeatingMold\Logs\<yyyyMMdd-HHmmss>-<pid>\` 에 `app.log`, `environment.json`(packaged/baseDirectory/occtResources/OS/런타임/명령줄), `occ_viewer_log.txt`. 런처는 `Logs\launcher.log`. 로그 실패는 앱 실패로 이어지지 않는다.
+- **배포 모드 판정:** `App\deployment.json` 이 있으면 배포 모드로, 모든 경로를 `AppContext.BaseDirectory` 기준으로 해석한다. 개발 폴더/전역 OCCT 로 폴백하지 않으며, 설정이 깨졌으면 명시적으로 실패한다. 파일이 없으면 기존 개발 탐색을 그대로 쓴다.
+- **명령(검증됨):**
+  - 빌드 `powershell -ExecutionPolicy Bypass -File tools\deploy\Build-Package.ps1 [-Version x] [-SkipNativeBuild] [-NoZip] [-SkipVerify] [-ManualPath <index.html 있는 폴더>]`
+  - 검증 `powershell -ExecutionPolicy Bypass -File tools\deploy\Test-Package.ps1 [-PackagePath <zip|폴더>] [-RunLauncher]`
+  - 화면 캡처 `powershell -ExecutionPolicy Bypass -File tools\deploy\Capture-Manual.ps1 [-PackagePath <zip|폴더>] [-Scenario e2e-full] [-HoldSeconds 2.5]`
+  - 매뉴얼 `powershell -ExecutionPolicy Bypass -File tools\deploy\Build-Manual.ps1 [-NoPdf]`
+  - 배포본으로 시각테스트 `Run.ps1 -Scenario <name> -AppExe <pkg>\HeatingMold.Start.exe -ModelPath <pkg>\App\resource\Mold_Cover_Trim.step -RunDir <dir> -HoldSeconds 1 -TimeoutSeconds 600 -ExpectPackaged`
+- **산출물:** `artifacts\deploy\<Version>\<PackageName>\` + `.zip` + `.zip.sha256.txt` + `build-report.txt`. `build-info.json` 에 git commit/dirty, 브리지 SHA-256, DLL 수, VC 재배포 버전, 예제 해시, publish 파일 수가 들어간다.
+- **검증 2026-11-13:** 패키지 `HeatingMold-Test-20261113-0316-cb5cc60-dirty-win-x64`(manifest 538파일, 242.1 MB) ZIP SHA-256 `1284B4806D0B248FA2AEB26494C300AB3FD254DF34270768CD359B00785F279E`. `Test-Package.ps1` 539파일 / problemCount 0 / 런처 `--check-only` exit 0. 추출본 + 시작 도구 경유로 5개 시나리오 전부 통과: `e2e-full` 36/36, `e2e-multi-area` 54/54, `e2e-margin-spacing-exit` 59/59, `e2e-split-safety` 41/41, `e2e-split-four` 19/19 (합계 209단계, 실패 0, 모두 `packaged=true`, baseDirectory=패키지 `App\`). 매뉴얼 PDF 2,258,167 B / 내부 이미지 18개 / 페이지 18.
+- **의존성 폐포는 매 빌드마다 자동 계산한다**(`tools\deploy\generated\native-dependencies.json` 은 참고용). 실측: 앱 DLL 36개(OCCT 28 + tbb12·jemalloc·TKFillet·TKDE·TKCDF·TKVCAF·TKCAF·openvr_api·FreeImage·freetype·avcodec-57·avformat-57·swscale-4·avutil-55 포함), VC 런타임 4개(msvcp140, vcruntime140, vcruntime140_1, vcomp140 — FreeImage 가 OpenMP 를 import), publish 제공 1개(ijwhost.dll), 시스템 DLL 21개 제외. **AGENTS.md 가 기록한 8개 누락 함정이 모두 자동 발견된다.** 직접 링크 목록만 보고 파일을 정하면 안 된다.
+- **함정(재발 방지):**
+  - PS 5.1은 BOM 없는 .ps1 을 CP949로 읽는다. `tools\deploy\*.ps1` 은 **UTF-8 BOM** 으로 저장한다(JSON/HTML 은 BOM 없음).
+  - StrictMode 에서 `@(...) | Where-Object` 는 결과가 1개면 배열이 아니어서 `.Count` 접근이 실패한다. 파이프라인 전체를 `@()` 로 감싼다.
+  - PowerShell 함수 파라미터에 `[byte[]]` 형을 붙이고 큰 배열을 넘기면 호출마다 전체 복사가 일어난다(수 MB DLL 파싱이 27초). `Read-AsciiZ` 는 형 선언을 쓰지 않고 512바이트 슬라이스 + `IndexOf([char]0)` 로 처리한다. `File.ReadAllBytes` 반환은 `return ,(...)` 로 감싼다.
+  - exec/셸에서 자식 PowerShell 오류는 `#< CLIXML` 로 잘려 사라진다. 진단은 스크립트가 파일에 직접 쓰게 하고 그 파일을 읽는다.
+  - `Capture-Manual.ps1` 은 System.Drawing 로드 전에 `SetProcessDpiAwarenessContext(-4)`(per-monitor v2)를 호출해야 한다. 이 PC는 1920×1080 실제 해상도에 125% 배율이라, 없으면 1536×864 로 가상화되어 창 오른쪽·아래가 잘린다.
+  - `steps.jsonl`/`result.json` 은 UTF-8 이다. `[IO.File]::ReadAllLines/ReadAllText` 로 읽어야 한글 단계 이름이 깨지지 않는다.
+  - `*>` 리다이렉션은 UTF-16LE로 파일을 쓴다(UTF8 로 읽으면 깨진다).
+  - 시작 도구는 앱을 띄운 뒤 15초 뒤 정상 종료한다. 시각테스트 대기 로직은 이 종료를 실패로 보면 안 된다.
+- **매뉴얼 화면 가공(검증됨):** 매뉴얼 그림은 실제 배포본 실행 화면이며, ① 모델 절대경로(x145~905, y42~118) ② Windows 정품 인증 안내(x1482~1912, y928~1002) 두 영역만 흰색으로 가린다. 18장 전부에서 해당 영역이 순백임을 픽셀 검사로 확인했다. 수치·UI·경로 내용을 바꾸지 않는다. 화면 캡처용으로 `--visual-hide-bar` 옵션(`VisualTestOptions.HideBar`)을 추가해 노란 시각테스트 진행 바만 숨긴다(실행·판정 로직 불변).
+- **미검증:** 깨끗한 Windows 10 x64 PC(별도 장비/VM)에서의 실행, 관리자 권한 없는 표준 사용자 계정, 100%/150% DPI 화면, 한글·공백 계정 경로, 새 프로세스에서의 프로젝트 복원, 외부 CAD에서 DXF/STEP 열기, 백신/보안 정책 간섭.
+- **남은 배포 게이트:** .NET 8 지원은 2026-11-10 종료됐다. 외부 배포 전에 유지 승인 또는 지원 버전 전환 후 재검증이 필요하다. 제3자 라이선스(FFmpeg·FreeImage·FreeType·OpenVR·oneTBB) 원문과 CAD 모델 외부 전달 권한도 배포 담당자 확인 항목으로 `THIRD-PARTY-NOTICES.txt`·`ReleaseNotes.txt`에 남겨 두었다.
+

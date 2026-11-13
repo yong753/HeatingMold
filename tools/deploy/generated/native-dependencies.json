@@ -1,0 +1,975 @@
+{
+    "schemaVersion":  1,
+    "bridgeDll":  "x64/Release/OccBridge.dll",
+    "bridgeSha256":  "9C0094E58002D5086CC6C57FE62D0EBB05187A4F4D56328CA073C48DB4DEDE2F",
+    "bridgeSize":  4502528,
+    "vcRedistVersion":  "14.44.35112",
+    "nativeSearchRoots":  [
+                              "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin",
+                              "third_party/3rdparty-vc14-64/zlib-1.2.8-vc14-64/bin"
+                          ],
+    "appDlls":  [
+                    {
+                        "name":  "TKernel.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKernel.dll",
+                        "sha256":  "174F59E869425DFEE5F3549CE878142C007730BFF3F7AFF152EE3CC4CACF3429",
+                        "size":  1739776,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKMath.dll",
+                                           "TKG2d.dll",
+                                           "TKG3d.dll",
+                                           "TKGeomBase.dll",
+                                           "TKGeomAlgo.dll",
+                                           "TKBRep.dll",
+                                           "TKTopAlgo.dll",
+                                           "TKBool.dll",
+                                           "TKShHealing.dll",
+                                           "TKMesh.dll",
+                                           "TKPrim.dll",
+                                           "TKOffset.dll",
+                                           "TKBO.dll",
+                                           "TKDESTEP.dll",
+                                           "TKXSBase.dll",
+                                           "TKLCAF.dll",
+                                           "TKXCAF.dll",
+                                           "TKService.dll",
+                                           "TKV3d.dll",
+                                           "TKOpenGl.dll",
+                                           "TKHLR.dll",
+                                           "TKFillet.dll",
+                                           "TKDE.dll",
+                                           "TKCDF.dll",
+                                           "TKVCAF.dll",
+                                           "TKCAF.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKMath.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKMath.dll",
+                        "sha256":  "6672A4E3CAEC369F2881261C10977DBDC3D5C6F52D27545DCA514A79A866A128",
+                        "size":  1337344,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKG2d.dll",
+                                           "TKG3d.dll",
+                                           "TKGeomBase.dll",
+                                           "TKGeomAlgo.dll",
+                                           "TKBRep.dll",
+                                           "TKTopAlgo.dll",
+                                           "TKBool.dll",
+                                           "TKShHealing.dll",
+                                           "TKMesh.dll",
+                                           "TKPrim.dll",
+                                           "TKOffset.dll",
+                                           "TKBO.dll",
+                                           "TKDESTEP.dll",
+                                           "TKXSBase.dll",
+                                           "TKXCAF.dll",
+                                           "TKService.dll",
+                                           "TKV3d.dll",
+                                           "TKOpenGl.dll",
+                                           "TKHLR.dll",
+                                           "TKFillet.dll",
+                                           "TKVCAF.dll",
+                                           "TKCAF.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKG2d.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKG2d.dll",
+                        "sha256":  "52EDD56256D768B4E8B8671272D816322A5DE3A232C41DCBB2B0C9CAACC4E654",
+                        "size":  275456,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKG3d.dll",
+                                           "TKGeomBase.dll",
+                                           "TKGeomAlgo.dll",
+                                           "TKBRep.dll",
+                                           "TKTopAlgo.dll",
+                                           "TKBool.dll",
+                                           "TKShHealing.dll",
+                                           "TKMesh.dll",
+                                           "TKPrim.dll",
+                                           "TKOffset.dll",
+                                           "TKBO.dll",
+                                           "TKDESTEP.dll",
+                                           "TKXSBase.dll",
+                                           "TKV3d.dll",
+                                           "TKHLR.dll",
+                                           "TKFillet.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKG3d.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKG3d.dll",
+                        "sha256":  "04B622035E7506F2692794875EBE243A06ED5B873F4C220F01C2C1044D0E93E5",
+                        "size":  876032,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKGeomBase.dll",
+                                           "TKGeomAlgo.dll",
+                                           "TKBRep.dll",
+                                           "TKTopAlgo.dll",
+                                           "TKBool.dll",
+                                           "TKShHealing.dll",
+                                           "TKMesh.dll",
+                                           "TKPrim.dll",
+                                           "TKOffset.dll",
+                                           "TKBO.dll",
+                                           "TKDESTEP.dll",
+                                           "TKXSBase.dll",
+                                           "TKXCAF.dll",
+                                           "TKV3d.dll",
+                                           "TKHLR.dll",
+                                           "TKFillet.dll",
+                                           "TKVCAF.dll",
+                                           "TKCAF.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKGeomBase.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKGeomBase.dll",
+                        "sha256":  "C5D86C4FAF26DCEDA57CBF6E58BD2C08AFDF81F0D2A11FDBB67B58145141976B",
+                        "size":  3905024,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKGeomAlgo.dll",
+                                           "TKBRep.dll",
+                                           "TKTopAlgo.dll",
+                                           "TKBool.dll",
+                                           "TKShHealing.dll",
+                                           "TKMesh.dll",
+                                           "TKPrim.dll",
+                                           "TKOffset.dll",
+                                           "TKBO.dll",
+                                           "TKDESTEP.dll",
+                                           "TKV3d.dll",
+                                           "TKHLR.dll",
+                                           "TKFillet.dll",
+                                           "TKVCAF.dll",
+                                           "TKCAF.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKGeomAlgo.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKGeomAlgo.dll",
+                        "sha256":  "282C384E426E5CB8150B4FD8FA3360734F0A8AE812B584F40C5B226AC22F6782",
+                        "size":  3877376,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKTopAlgo.dll",
+                                           "TKBool.dll",
+                                           "TKShHealing.dll",
+                                           "TKOffset.dll",
+                                           "TKBO.dll",
+                                           "TKV3d.dll",
+                                           "TKHLR.dll",
+                                           "TKFillet.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKBRep.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKBRep.dll",
+                        "sha256":  "9D195F5E4ED65A6562B84D27DC58FA7D2F519F6F44D58CAC194FED6832107706",
+                        "size":  903168,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKGeomAlgo.dll",
+                                           "TKTopAlgo.dll",
+                                           "TKBool.dll",
+                                           "TKShHealing.dll",
+                                           "TKMesh.dll",
+                                           "TKPrim.dll",
+                                           "TKOffset.dll",
+                                           "TKBO.dll",
+                                           "TKDESTEP.dll",
+                                           "TKXSBase.dll",
+                                           "TKXCAF.dll",
+                                           "TKV3d.dll",
+                                           "TKHLR.dll",
+                                           "TKFillet.dll",
+                                           "TKVCAF.dll",
+                                           "TKCAF.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKTopAlgo.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKTopAlgo.dll",
+                        "sha256":  "8C88BED0194A1436AC0C86710E8BD0C6EAC77F107BFBB728066DC020DBCC7CA6",
+                        "size":  2288128,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKBool.dll",
+                                           "TKShHealing.dll",
+                                           "TKMesh.dll",
+                                           "TKPrim.dll",
+                                           "TKOffset.dll",
+                                           "TKBO.dll",
+                                           "TKDESTEP.dll",
+                                           "TKXSBase.dll",
+                                           "TKXCAF.dll",
+                                           "TKV3d.dll",
+                                           "TKHLR.dll",
+                                           "TKFillet.dll",
+                                           "TKVCAF.dll",
+                                           "TKCAF.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKBool.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKBool.dll",
+                        "sha256":  "669E4F57D0B058D32322C87A99D61E25B3585CACF05BBF3A0CBFAD8165072CF5",
+                        "size":  3585536,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKOffset.dll",
+                                           "TKFillet.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKShHealing.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKShHealing.dll",
+                        "sha256":  "F8633BEB7E7ED363B8F885D2D600CAA59C603984514F7AF9AAA87F1E306014B5",
+                        "size":  2491392,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKBool.dll",
+                                           "TKMesh.dll",
+                                           "TKOffset.dll",
+                                           "TKBO.dll",
+                                           "TKDESTEP.dll",
+                                           "TKXSBase.dll",
+                                           "TKFillet.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKMesh.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKMesh.dll",
+                        "sha256":  "9B43CC049895ABC8DC4C909519BE074E5FD7D635F02D763392D91D87BA187404",
+                        "size":  596992,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKV3d.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKPrim.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKPrim.dll",
+                        "sha256":  "2FAF096655662052A6EFE36A1EA31C1380D6FB7C9EACEFA30C8B751C4DC8B818",
+                        "size":  292864,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKBool.dll",
+                                           "TKOffset.dll",
+                                           "TKBO.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKOffset.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKOffset.dll",
+                        "sha256":  "3A9766DCDB68802E5D43FBFFA4987BEBC0151961C77EE34E4034D9D5E7A8D151",
+                        "size":  1826816,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKBO.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKBO.dll",
+                        "sha256":  "E5BCE511AE88C854B3133533BEA8B9B357BD2D3E3B78C2C1171E68E26E4297C1",
+                        "size":  1917440,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKBool.dll",
+                                           "TKOffset.dll",
+                                           "TKFillet.dll",
+                                           "TKCAF.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKDESTEP.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKDESTEP.dll",
+                        "sha256":  "0D8CCF8F50AECDFA247F38D8BD160D482E66FA159D803767BCE8F17A0DBA388A",
+                        "size":  5886976,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKXSBase.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKXSBase.dll",
+                        "sha256":  "081F4C5B4818776E7F312C56D667D57E3F4A935AE64743B958D4B917A48EB475",
+                        "size":  1720832,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKDESTEP.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKLCAF.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKLCAF.dll",
+                        "sha256":  "BEDA774906D2971F01B25D8751B9A324E161459744DB08511C9EDDD0D7DC2A5A",
+                        "size":  681472,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKDESTEP.dll",
+                                           "TKXCAF.dll",
+                                           "TKVCAF.dll",
+                                           "TKCAF.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKXCAF.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKXCAF.dll",
+                        "sha256":  "A9DB6463747AD0A513DC4B2B9554E0075659651D356CA3930DFFC92D62B17731",
+                        "size":  828928,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKDESTEP.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKService.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKService.dll",
+                        "sha256":  "61727250170B6C30C49F9B3E2660F2371E58C901AD00A18A456EFAA3C515AB75",
+                        "size":  1059840,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKXCAF.dll",
+                                           "TKV3d.dll",
+                                           "TKOpenGl.dll",
+                                           "TKVCAF.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKV3d.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKV3d.dll",
+                        "sha256":  "405ACB936DDC8C68FB62CB75226B5DA5501869FF7BF488FDEDE115D3E99DE0A7",
+                        "size":  2460160,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKXCAF.dll",
+                                           "TKVCAF.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKOpenGl.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKOpenGl.dll",
+                        "sha256":  "C243A205CBB325743B5D7883B13BF395CE396CAF321CB3820907D246E12328FC",
+                        "size":  1324544,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKHLR.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKHLR.dll",
+                        "sha256":  "0A653F081CBDF2FF1E79D81276EC22D32389C10656424C8E8A78B5A23704A073",
+                        "size":  910336,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "OccBridge.dll",
+                                           "TKV3d.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "tbb12.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/tbb12.dll",
+                        "sha256":  "887888A0C2FFE7F64718D4EEA2A10CE41C68DEC1A954DB3A62646ADEEE66C0AD",
+                        "size":  322048,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "TKernel.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "jemalloc.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/jemalloc.dll",
+                        "sha256":  "EA0CFCF6A12BB3863961074547C958FD978AA3F800244CC4FE2847B127C4DF5E",
+                        "size":  498176,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "TKernel.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKFillet.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKFillet.dll",
+                        "sha256":  "05CEB5FED13EED7D9FCD86F165FB817482F5261654ABB90542E0DCFFA06E2F5D",
+                        "size":  2108928,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "TKOffset.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKDE.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKDE.dll",
+                        "sha256":  "E5F27D07F34076541723436217A48D93BC05BACD28BD66DB66F100BBA5C89A40",
+                        "size":  139776,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "TKDESTEP.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKCDF.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKCDF.dll",
+                        "sha256":  "824D5E270B25E9C12BA409EFC1C0E14A0DEAAF4435A89358EE2B9BCAFD5A5B12",
+                        "size":  280576,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "TKLCAF.dll",
+                                           "TKXCAF.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKVCAF.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKVCAF.dll",
+                        "sha256":  "FE53F48D56DD65242B3B372B2575228140447B7DF2489E888C7D3FAA481785C6",
+                        "size":  187904,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "TKXCAF.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "TKCAF.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/TKCAF.dll",
+                        "sha256":  "73CCE7D44692103A710EFD333DDB22194808F10B72DCF7EEB03D60F11C050FAB",
+                        "size":  516096,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "TKXCAF.dll",
+                                           "TKVCAF.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "openvr_api.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/openvr_api.dll",
+                        "sha256":  "71DB78E77E577DB6D0666C25437695D42CEAFB9C7F8DA94FBE765525B8E2F5F2",
+                        "size":  819664,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "TKService.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "FreeImage.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/FreeImage.dll",
+                        "sha256":  "4594BD0538F7F6B05148B00996FF36DDFEDEF8D66910E931503DCFEBF8EFE1DB",
+                        "size":  6942208,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "TKService.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "freetype.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/freetype.dll",
+                        "sha256":  "637621E4AE51B496B8A86F9B053050D5AF2BA999EA0680BBFE3D5DF91F976C75",
+                        "size":  684032,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "TKService.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "avcodec-57.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/avcodec-57.dll",
+                        "sha256":  "4D7A6A2CFF37C782CE1A3C74FA83EBBEBCC43DFC774E3F497A406C84C1458C7E",
+                        "size":  13399040,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "TKService.dll",
+                                           "avformat-57.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "avformat-57.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/avformat-57.dll",
+                        "sha256":  "297D3207DD0E6325DAB7A080472A4FD2F743CFC53861615B4DC96B91227CD3AF",
+                        "size":  3361280,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "TKService.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "swscale-4.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/swscale-4.dll",
+                        "sha256":  "67BCFFB3CCDAEBF2BBD3149542D92DD9430ABFDFF1D7B79B3A529AF712926412",
+                        "size":  1164288,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "TKService.dll"
+                                       ]
+                    },
+                    {
+                        "name":  "avutil-55.dll",
+                        "sourceRelative":  "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin/avutil-55.dll",
+                        "sha256":  "BE7C03FF47618916D16AF446E2F7C00E48F2FF8934C6ACE4C0D0E3D804732E8E",
+                        "size":  1245184,
+                        "machine":  "AMD64",
+                        "importedBy":  [
+                                           "TKService.dll",
+                                           "avcodec-57.dll",
+                                           "avformat-57.dll",
+                                           "swscale-4.dll"
+                                       ]
+                    }
+                ],
+    "vcRuntimeDlls":  [
+                          {
+                              "name":  "msvcp140.dll",
+                              "component":  "Microsoft.VC143.CRT",
+                              "redistVersion":  "14.44.35112",
+                              "sha256":  "0F885B509A685D2BBFA652FED26B5FB31D88FBDAB0A978C641D1C7B8AA460AA9",
+                              "size":  557728,
+                              "importedBy":  [
+                                                 "OccBridge.dll",
+                                                 "TKernel.dll",
+                                                 "TKMath.dll",
+                                                 "TKG2d.dll",
+                                                 "TKG3d.dll",
+                                                 "TKGeomBase.dll",
+                                                 "TKGeomAlgo.dll",
+                                                 "TKBRep.dll",
+                                                 "TKTopAlgo.dll",
+                                                 "TKBool.dll",
+                                                 "TKShHealing.dll",
+                                                 "TKMesh.dll",
+                                                 "TKOffset.dll",
+                                                 "TKBO.dll",
+                                                 "TKDESTEP.dll",
+                                                 "TKXSBase.dll",
+                                                 "TKLCAF.dll",
+                                                 "TKXCAF.dll",
+                                                 "TKService.dll",
+                                                 "TKV3d.dll",
+                                                 "TKOpenGl.dll",
+                                                 "TKHLR.dll",
+                                                 "tbb12.dll",
+                                                 "TKFillet.dll",
+                                                 "TKDE.dll",
+                                                 "TKCDF.dll",
+                                                 "TKVCAF.dll",
+                                                 "TKCAF.dll"
+                                             ]
+                          },
+                          {
+                              "name":  "vcomp140.dll",
+                              "component":  "Microsoft.VC143.OpenMP",
+                              "redistVersion":  "14.44.35112",
+                              "sha256":  "55ABA23CDCD6484FBB06F4155B8CA75ADFCE7A881F10AFD0C49457165E677164",
+                              "size":  193152,
+                              "importedBy":  [
+                                                 "FreeImage.dll"
+                                             ]
+                          },
+                          {
+                              "name":  "vcruntime140.dll",
+                              "component":  "Microsoft.VC143.CRT",
+                              "redistVersion":  "14.44.35112",
+                              "sha256":  "D5E4D9A3E835FA679450145D6A7D94E36573A509317111904D9B3712C30D9066",
+                              "size":  124544,
+                              "importedBy":  [
+                                                 "OccBridge.dll",
+                                                 "TKernel.dll",
+                                                 "TKMath.dll",
+                                                 "TKG2d.dll",
+                                                 "TKG3d.dll",
+                                                 "TKGeomBase.dll",
+                                                 "TKGeomAlgo.dll",
+                                                 "TKBRep.dll",
+                                                 "TKTopAlgo.dll",
+                                                 "TKBool.dll",
+                                                 "TKShHealing.dll",
+                                                 "TKMesh.dll",
+                                                 "TKPrim.dll",
+                                                 "TKOffset.dll",
+                                                 "TKBO.dll",
+                                                 "TKDESTEP.dll",
+                                                 "TKXSBase.dll",
+                                                 "TKLCAF.dll",
+                                                 "TKXCAF.dll",
+                                                 "TKService.dll",
+                                                 "TKV3d.dll",
+                                                 "TKOpenGl.dll",
+                                                 "TKHLR.dll",
+                                                 "tbb12.dll",
+                                                 "jemalloc.dll",
+                                                 "TKFillet.dll",
+                                                 "TKDE.dll",
+                                                 "TKCDF.dll",
+                                                 "TKVCAF.dll",
+                                                 "TKCAF.dll",
+                                                 "freetype.dll"
+                                             ]
+                          },
+                          {
+                              "name":  "vcruntime140_1.dll",
+                              "component":  "Microsoft.VC143.CRT",
+                              "redistVersion":  "14.44.35112",
+                              "sha256":  "1F2D41C4AA5DB0BC33EBF7B66D72943A817D7CE6CBE880502A9403823633093F",
+                              "size":  49792,
+                              "importedBy":  [
+                                                 "TKernel.dll",
+                                                 "TKMath.dll",
+                                                 "TKG2d.dll",
+                                                 "TKG3d.dll",
+                                                 "TKGeomBase.dll",
+                                                 "TKGeomAlgo.dll",
+                                                 "TKBRep.dll",
+                                                 "TKTopAlgo.dll",
+                                                 "TKBool.dll",
+                                                 "TKShHealing.dll",
+                                                 "TKMesh.dll",
+                                                 "TKPrim.dll",
+                                                 "TKOffset.dll",
+                                                 "TKBO.dll",
+                                                 "TKDESTEP.dll",
+                                                 "TKXSBase.dll",
+                                                 "TKLCAF.dll",
+                                                 "TKXCAF.dll",
+                                                 "TKService.dll",
+                                                 "TKV3d.dll",
+                                                 "TKOpenGl.dll",
+                                                 "TKHLR.dll",
+                                                 "tbb12.dll",
+                                                 "TKFillet.dll",
+                                                 "TKDE.dll",
+                                                 "TKCDF.dll",
+                                                 "TKVCAF.dll",
+                                                 "TKCAF.dll"
+                                             ]
+                          }
+                      ],
+    "publishProvided":  [
+                            {
+                                "name":  "ijwhost.dll",
+                                "providedBy":  "dotnet-publish",
+                                "importedBy":  [
+                                                   "OccBridge.dll"
+                                               ]
+                            }
+                        ],
+    "systemDlls":  [
+                       {
+                           "name":  "KERNEL32.dll",
+                           "importedBy":  [
+                                              "OccBridge.dll",
+                                              "TKernel.dll",
+                                              "TKMath.dll",
+                                              "TKG2d.dll",
+                                              "TKG3d.dll",
+                                              "TKGeomBase.dll",
+                                              "TKGeomAlgo.dll",
+                                              "TKBRep.dll",
+                                              "TKTopAlgo.dll",
+                                              "TKBool.dll",
+                                              "TKShHealing.dll",
+                                              "TKMesh.dll",
+                                              "TKPrim.dll",
+                                              "TKOffset.dll",
+                                              "TKBO.dll",
+                                              "TKDESTEP.dll",
+                                              "TKXSBase.dll",
+                                              "TKLCAF.dll",
+                                              "TKXCAF.dll",
+                                              "TKService.dll",
+                                              "TKV3d.dll",
+                                              "TKOpenGl.dll",
+                                              "TKHLR.dll",
+                                              "tbb12.dll",
+                                              "jemalloc.dll",
+                                              "TKFillet.dll",
+                                              "TKDE.dll",
+                                              "TKCDF.dll",
+                                              "TKVCAF.dll",
+                                              "TKCAF.dll",
+                                              "openvr_api.dll",
+                                              "FreeImage.dll",
+                                              "freetype.dll",
+                                              "avcodec-57.dll",
+                                              "avformat-57.dll",
+                                              "swscale-4.dll",
+                                              "avutil-55.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "api-ms-win-crt-math-l1-1-0.dll",
+                           "importedBy":  [
+                                              "OccBridge.dll",
+                                              "TKernel.dll",
+                                              "TKMath.dll",
+                                              "TKG2d.dll",
+                                              "TKG3d.dll",
+                                              "TKGeomBase.dll",
+                                              "TKGeomAlgo.dll",
+                                              "TKBRep.dll",
+                                              "TKTopAlgo.dll",
+                                              "TKBool.dll",
+                                              "TKShHealing.dll",
+                                              "TKMesh.dll",
+                                              "TKPrim.dll",
+                                              "TKOffset.dll",
+                                              "TKBO.dll",
+                                              "TKDESTEP.dll",
+                                              "TKXSBase.dll",
+                                              "TKXCAF.dll",
+                                              "TKService.dll",
+                                              "TKV3d.dll",
+                                              "TKOpenGl.dll",
+                                              "TKHLR.dll",
+                                              "TKFillet.dll",
+                                              "TKVCAF.dll",
+                                              "TKCAF.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "api-ms-win-crt-string-l1-1-0.dll",
+                           "importedBy":  [
+                                              "OccBridge.dll",
+                                              "TKernel.dll",
+                                              "TKMath.dll",
+                                              "TKGeomBase.dll",
+                                              "TKBRep.dll",
+                                              "TKDESTEP.dll",
+                                              "TKXSBase.dll",
+                                              "TKService.dll",
+                                              "TKOpenGl.dll",
+                                              "tbb12.dll",
+                                              "jemalloc.dll",
+                                              "TKCDF.dll",
+                                              "freetype.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "api-ms-win-crt-stdio-l1-1-0.dll",
+                           "importedBy":  [
+                                              "OccBridge.dll",
+                                              "TKernel.dll",
+                                              "TKGeomAlgo.dll",
+                                              "TKTopAlgo.dll",
+                                              "TKBool.dll",
+                                              "TKBO.dll",
+                                              "TKDESTEP.dll",
+                                              "TKXSBase.dll",
+                                              "TKService.dll",
+                                              "TKV3d.dll",
+                                              "TKOpenGl.dll",
+                                              "TKHLR.dll",
+                                              "tbb12.dll",
+                                              "jemalloc.dll",
+                                              "TKCDF.dll",
+                                              "TKVCAF.dll",
+                                              "freetype.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "api-ms-win-crt-runtime-l1-1-0.dll",
+                           "importedBy":  [
+                                              "OccBridge.dll",
+                                              "TKernel.dll",
+                                              "TKMath.dll",
+                                              "TKG2d.dll",
+                                              "TKG3d.dll",
+                                              "TKGeomBase.dll",
+                                              "TKGeomAlgo.dll",
+                                              "TKBRep.dll",
+                                              "TKTopAlgo.dll",
+                                              "TKBool.dll",
+                                              "TKShHealing.dll",
+                                              "TKMesh.dll",
+                                              "TKPrim.dll",
+                                              "TKOffset.dll",
+                                              "TKBO.dll",
+                                              "TKDESTEP.dll",
+                                              "TKXSBase.dll",
+                                              "TKLCAF.dll",
+                                              "TKXCAF.dll",
+                                              "TKService.dll",
+                                              "TKV3d.dll",
+                                              "TKOpenGl.dll",
+                                              "TKHLR.dll",
+                                              "tbb12.dll",
+                                              "jemalloc.dll",
+                                              "TKFillet.dll",
+                                              "TKDE.dll",
+                                              "TKCDF.dll",
+                                              "TKVCAF.dll",
+                                              "TKCAF.dll",
+                                              "freetype.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "api-ms-win-crt-heap-l1-1-0.dll",
+                           "importedBy":  [
+                                              "OccBridge.dll",
+                                              "TKernel.dll",
+                                              "TKMath.dll",
+                                              "TKG2d.dll",
+                                              "TKG3d.dll",
+                                              "TKGeomBase.dll",
+                                              "TKGeomAlgo.dll",
+                                              "TKBRep.dll",
+                                              "TKTopAlgo.dll",
+                                              "TKBool.dll",
+                                              "TKShHealing.dll",
+                                              "TKMesh.dll",
+                                              "TKPrim.dll",
+                                              "TKOffset.dll",
+                                              "TKBO.dll",
+                                              "TKDESTEP.dll",
+                                              "TKXSBase.dll",
+                                              "TKLCAF.dll",
+                                              "TKXCAF.dll",
+                                              "TKService.dll",
+                                              "TKV3d.dll",
+                                              "TKOpenGl.dll",
+                                              "TKHLR.dll",
+                                              "tbb12.dll",
+                                              "TKFillet.dll",
+                                              "TKDE.dll",
+                                              "TKCDF.dll",
+                                              "TKVCAF.dll",
+                                              "TKCAF.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "api-ms-win-crt-filesystem-l1-1-0.dll",
+                           "importedBy":  [
+                                              "OccBridge.dll",
+                                              "TKernel.dll",
+                                              "TKShHealing.dll",
+                                              "TKXSBase.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "ADVAPI32.dll",
+                           "importedBy":  [
+                                              "TKernel.dll",
+                                              "TKService.dll",
+                                              "avutil-55.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "USER32.dll",
+                           "importedBy":  [
+                                              "TKernel.dll",
+                                              "TKService.dll",
+                                              "TKOpenGl.dll",
+                                              "avutil-55.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "WSOCK32.dll",
+                           "importedBy":  [
+                                              "TKernel.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "api-ms-win-crt-environment-l1-1-0.dll",
+                           "importedBy":  [
+                                              "TKernel.dll",
+                                              "tbb12.dll",
+                                              "jemalloc.dll",
+                                              "freetype.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "api-ms-win-crt-convert-l1-1-0.dll",
+                           "importedBy":  [
+                                              "TKernel.dll",
+                                              "TKBRep.dll",
+                                              "TKBool.dll",
+                                              "TKDESTEP.dll",
+                                              "TKXSBase.dll",
+                                              "TKOpenGl.dll",
+                                              "TKCDF.dll",
+                                              "freetype.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "api-ms-win-crt-locale-l1-1-0.dll",
+                           "importedBy":  [
+                                              "TKernel.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "api-ms-win-crt-time-l1-1-0.dll",
+                           "importedBy":  [
+                                              "TKernel.dll",
+                                              "TKDESTEP.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "api-ms-win-crt-utility-l1-1-0.dll",
+                           "importedBy":  [
+                                              "TKBool.dll",
+                                              "freetype.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "WINMM.dll",
+                           "importedBy":  [
+                                              "TKService.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "OPENGL32.dll",
+                           "importedBy":  [
+                                              "TKOpenGl.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "GDI32.dll",
+                           "importedBy":  [
+                                              "TKOpenGl.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "SHELL32.dll",
+                           "importedBy":  [
+                                              "openvr_api.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "WS2_32.dll",
+                           "importedBy":  [
+                                              "FreeImage.dll",
+                                              "avformat-57.dll"
+                                          ]
+                       },
+                       {
+                           "name":  "Secur32.dll",
+                           "importedBy":  [
+                                              "avformat-57.dll"
+                                          ]
+                       }
+                   ],
+    "generatedUtc":  "2026-11-12T17:44:08Z"
+}

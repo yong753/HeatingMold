@@ -43,3 +43,6 @@ tools/step-cleanup/diagnostics/dbg.txt
 
 # step-trim 빌드 산출물 (소스 .cpp/.ps1/.md만 추적)
 tools/step-trim/bin/
+
+# 테스트 실행 산출물 (dotnet test 결과)
+TestResults/

@@ -17,6 +17,9 @@ internal sealed class VisualTestOptions
     public string RunDirectory { get; private set; } = "";
     public double HoldSeconds { get; private set; } = 1;
     public bool StepMode { get; private set; }
+
+    /// <summary>매뉴얼 화면 캡처용. 진행 표시줄을 화면에 표시하지 않는다. 실행/판정 로직은 그대로다.</summary>
+    public bool HideBar { get; private set; }
     public string RepositoryRoot { get; private set; } = "";
     public string Error { get; private set; }
 
@@ -63,6 +66,11 @@ internal sealed class VisualTestOptions
                 {
                     RequireOnce(seen, arg);
                     options.StepMode = true;
+                }
+                else if (string.Equals(arg, "--visual-hide-bar", StringComparison.OrdinalIgnoreCase))
+                {
+                    RequireOnce(seen, arg);
+                    options.HideBar = true;
                 }
             }
 

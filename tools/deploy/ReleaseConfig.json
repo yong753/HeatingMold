@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "productName": "HeatingMold",
+  "packagePrefix": "HeatingMold-Test",
+  "solutionFile": "HeatingMold.Mvp.sln",
+  "appProject": "src/HeatingMold.App/HeatingMold.App.csproj",
+  "appAssemblyName": "HeatingMold.App",
+  "bridgeDll": "x64/Release/OccBridge.dll",
+  "targetFramework": "net8.0-windows",
+  "runtimeIdentifier": "win-x64",
+  "platform": "x64",
+  "outputRoot": "artifacts/deploy",
+
+  "occt": {
+    "root": "third_party/opencascade-7.9.3-vc14-64",
+    "binaryDir": "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin",
+    "resourceSourceDir": "third_party/opencascade-7.9.3-vc14-64/src",
+    "runtimeResourceFolders": [
+      "BOPAlgo",
+      "Shaders",
+      "SHMessage",
+      "StdResource",
+      "Textures",
+      "TObj",
+      "UnitsAPI",
+      "XmlOcafResource",
+      "XRResources",
+      "XSMessage",
+      "XSTEPResource"
+    ],
+    "licenseFiles": [
+      "third_party/opencascade-7.9.3-vc14-64/LICENSE_LGPL_21.txt",
+      "third_party/opencascade-7.9.3-vc14-64/OCCT_LGPL_EXCEPTION.txt"
+    ]
+  },
+
+  "nativeSearchRoots": [
+    "third_party/opencascade-7.9.3-vc14-64/win64/vc14/bin",
+    "third_party/3rdparty-vc14-64/zlib-1.2.8-vc14-64/bin"
+  ],
+
+  "vcRuntime": {
+    "redistSubdir": "VC/Redist/MSVC",
+    "crtRelative": "x64/Microsoft.VC143.CRT",
+    "openMpRelative": "x64/Microsoft.VC143.OpenMP",
+    "releaseFileNamePattern": "^(msvcp140(_1|_2|_atomic_wait|_codecvt_ids)?|vcruntime140(_1|_threads)?|concrt140|vcomp140)\\.dll$"
+  },
+
+  "publishProvidedNames": [
+    "ijwhost.dll"
+  ],
+
+  "exampleModel": {
+    "source": "resource/Mold_Cover_Trim.step",
+    "packageRelativePath": "resource/Mold_Cover_Trim.step",
+    "sha256": "8CB03405817606D1917FEF55B46A60011FFB5E93075EECDEF5A8651D4359FCED",
+    "size": 1581412
+  },
+
+  "visualTestScenarios": [
+    "e2e-full",
+    "e2e-multi-area",
+    "e2e-margin-spacing-exit",
+    "e2e-split-safety",
+    "e2e-split-four"
+  ],
+
+  "excludedFromPackage": [
+    "*.pdb",
+    "*.lib",
+    "*.exp",
+    "*.obj",
+    "*.ilk",
+    "*.iobj",
+    "*.ipdb",
+    "*.nupkg",
+    "*.mdb",
+    "*.dbg",
+    "createdump.exe",
+    "*.xml"
+  ],
+
+  "policy": {
+    "singleFile": false,
+    "trimming": false,
+    "aot": false,
+    "readyToRun": false
+  }
+}
