@@ -42,6 +42,9 @@ void ClearLiveModelForRestore()
     g_calcSewnFaceMap.Clear();
     g_calcSewnValid = false;
     g_calcSewnDiagnostic.clear();
+    g_calcSewnModifiedFaces = 0;
+    g_calcSewnModifiedEdges = 0;
+    g_calcSewnRequested = false;
     g_autoAxes[0] = gp::DX();
     g_autoAxes[1] = gp::DY();
     g_autoAxes[2] = gp::DZ();

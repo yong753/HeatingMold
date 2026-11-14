@@ -287,6 +287,13 @@ public:
         System::String^ kind, array<double>^ xyzFlat, array<int>^ supportFaceIds);
     /// <summary>마지막 경로 조각 스테이징 실패 원인(성공 시 빈 문자열).</summary>
     static System::String^ GetWorkingStageDiagnostic();
+    /// <summary>시험 전용 1mm 계산용 재봉 사본이 표면 조회에 실제로 쓰이는지.
+    /// 기본값은 false(원본 g_shape/g_faces). 환경변수 값이 정확히 ASCII '1' 한 글자일 때만 true이며
+    /// 미설정/빈 값/"0"/"true"/기타 문자열은 모두 false다. 이 값은 모델을 (재)로드할 때만 읽으므로
+    /// 이미 활성화된 작업 컨텍스트의 조회 대상을 바꾸지 않는다.</summary>
+    static bool IsCalcSewnSurfaceQueryActive();
+    /// <summary>현재 표면 조회 상태 진단(요청값·실제 활성 소스·면수·재봉 수정량). 판정 근거로 쓰지 않는다.</summary>
+    static System::String^ GetCalcSewnSurfaceQueryDiagnostic();
     static RoutePieceResult^ StageProjectedWorkingPolyline(long long id, long long revision, int stageId,
         System::String^ kind, array<double>^ xyzFlat, array<int>^ faceIds, double dx, double dy, double dz);
     /// <summary>3D polylines of the CAD edges shared by the exit face and the heating faces (empty when not adjacent).</summary>

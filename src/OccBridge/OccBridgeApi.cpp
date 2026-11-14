@@ -251,6 +251,12 @@ namespace
     bool g_calcSewnValid = false;
     std::string g_calcSewnDiagnostic;
     double g_calcSewnTolerance = 1.0;
+    // Diagnostics only: what the last opt-in re-sew actually changed.
+    int g_calcSewnModifiedFaces = 0;
+    int g_calcSewnModifiedEdges = 0;
+    // Snapshot of the opt-in value at the last model load. The environment is not re-read for
+    // diagnostics, so changing it does not desync the reported mode from the active source.
+    bool g_calcSewnRequested = false;
     gp_Dir g_autoAxes[3] = { gp::DX(), gp::DY(), gp::DZ() };
     long long g_modelRevision = 0;
     // 형상/삼각분할 세대. 작업면 생성처럼 모델 revision은 그대로인데 mesh만 다시
@@ -273,6 +279,9 @@ namespace
     void InvalidateWorkingContexts();
     // 계산용 재봉 사본 재구성 (WorkingSideNative.inc 에서 정의).
     void RebuildCalcSewnCopyNative();
+    // 시험 전용 재봉 사본이 실제 표면 조회에 쓰이는지 (WorkingSideNative.inc 에서 정의).
+    bool IsCalcSewnQueryActiveNative();
+    std::string CalcSewnQueryDiagnosticNative();
     // 사각형 선택 가시성 캐시/프리뷰 (FaceIdSelectionNative.inc 에서 정의)
     void ReleaseFaceIdCacheNative();
     void AbortRectanglePreviewNative();
@@ -3732,6 +3741,14 @@ RoutePieceResult^ Bridge::StageSurfaceMappedRoutePieceWithFaces(long long id,lon
 String^ Bridge::GetWorkingStageDiagnostic()
 {
     return gcnew String(GetWorkingStageDiagnosticNative());
+}
+bool Bridge::IsCalcSewnSurfaceQueryActive()
+{
+    return IsCalcSewnQueryActiveNative();
+}
+String^ Bridge::GetCalcSewnSurfaceQueryDiagnostic()
+{
+    return gcnew String(CalcSewnQueryDiagnosticNative().c_str());
 }
 RoutePieceResult^ Bridge::StageProjectedWorkingPolyline(long long id,long long revision,int stageId,String^ kind,array<double>^ flat,array<int>^ faceIds,double dx,double dy,double dz)
 {

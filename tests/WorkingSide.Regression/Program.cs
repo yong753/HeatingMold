@@ -206,6 +206,7 @@ static class Program
         RunGroup("PatternStateChecks", () => PatternStateChecks.Run(window));
         RunGroup("GeometryRollbackChecks", () => GeometryRollbackChecks.Run(window, args[0]));
         RunGroup("SupportFaceChecks", () => SupportFaceChecks.Run(args[0]));
+        RunGroup("SurfaceQueryModeChecks", () => SurfaceQueryModeChecks.Run(args[0]));
         Check(typeof(Bridge).GetMethod("HlrProject")==null && typeof(Bridge).GetMethod("HlrEdges")!=null,
             "HLR smoke API removed while exporter HlrEdges remains");
         viewport.RectangleSelectionMode=true;

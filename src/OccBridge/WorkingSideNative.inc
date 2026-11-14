@@ -366,6 +366,39 @@ std::string NormalizeWorkingFaceIds(const std::vector<int>& faces, std::vector<i
     return WorkingFaceKey(normalized);
 }
 
+// Calculation-only sewn copy (1 mm) is an explicit opt-in test facility. The product
+// default query path must be the original g_shape/g_faces. The switch is exactly the single
+// ASCII character '1'; every other value (unset, empty, "0", "true", garbage, too long) is
+// false. The environment is read only when a model is (re)loaded, so changing it does not
+// retarget an already active working context.
+bool CalcSewnQueryEnabledNative()
+{
+    char value[8];
+    const DWORD length = GetEnvironmentVariableA("HEATINGMOLD_USE_CALC_SEWN_COPY", value, static_cast<DWORD>(sizeof(value)));
+    if (length != 1) return false;
+    return value[0] == '1';
+}
+
+// requested: the opt-in value for this rebuild. active: the actual query source after the
+// rebuild (sewing can fail and fall back to the original). Never report a requested mode as
+// the active one.
+void LogCalcSewnStateNative(bool requested, double tolerance, size_t faceCount, size_t totalFaces,
+    int modifiedFaces, int modifiedEdges, const std::string& reason)
+{
+    char logPath[MAX_PATH];
+    const DWORD logLength = GetEnvironmentVariableA("HEATINGMOLD_OCC_LOG", logPath, MAX_PATH);
+    if (logLength == 0 || logLength >= MAX_PATH) return;
+    std::ofstream log(logPath, std::ios::app);
+    if (!log) return;
+    log << "calc-sewn: requested=" << (requested ? "1" : "0")
+        << " active=" << (g_calcSewnValid ? "sewn" : "original")
+        << " tolerance=" << tolerance
+        << " faces=" << faceCount << "/" << totalFaces
+        << " modifiedFaces=" << modifiedFaces
+        << " modifiedEdgeOccurrences=" << modifiedEdges
+        << " reason=" << reason << "\n";
+}
+
 // 원본 면들을 1mm 공차로 재봉한 계산용 사본을 만든다. 표시·경계 추출·저장·STEP 출력은
 // 원본 g_shape/g_faces를 그대로 쓰고, 표면 매핑 raycast만 이 사본을 쓴다.
 // g_calcSewnFaces[i]는 항상 g_faces[i]에서 파생된 면이므로 FaceId 계약이 유지된다.
@@ -377,8 +410,21 @@ void RebuildCalcSewnCopyNative()
     g_calcSewnFaceMap.Clear();
     g_calcSewnValid = false;
     g_calcSewnDiagnostic.clear();
+    g_calcSewnModifiedFaces = 0;
+    g_calcSewnModifiedEdges = 0;
+    const bool requested = CalcSewnQueryEnabledNative();
+    // Snapshot: the diagnostic must report the value this model load actually used, not the
+    // current environment. Changing the environment alone never retargets a loaded model.
+    g_calcSewnRequested = requested;
+    if (!requested) {
+        // Opt-in test facility only. Never allow the sewn copy to become the default.
+        g_calcSewnDiagnostic = "disabled-opt-in";
+        LogCalcSewnStateNative(false, g_calcSewnTolerance, g_faces.size(), g_faces.size(), 0, 0, g_calcSewnDiagnostic);
+        return;
+    }
     if (g_faces.empty()) {
         g_calcSewnDiagnostic = "no-faces";
+        LogCalcSewnStateNative(true, g_calcSewnTolerance, 0, 0, 0, 0, g_calcSewnDiagnostic);
         return;
     }
 
@@ -445,17 +491,34 @@ void RebuildCalcSewnCopyNative()
         g_calcSewnDiagnostic = "ok";
     }
 
-    char logPath[MAX_PATH];
-    const DWORD logLength = GetEnvironmentVariableA("HEATINGMOLD_OCC_LOG", logPath, MAX_PATH);
-    if (logLength == 0 || logLength >= MAX_PATH) return;
-    std::ofstream log(logPath, std::ios::app);
-    if (!log) return;
-    log << "calc-sewn: " << (g_calcSewnValid ? "active" : "inactive")
-        << " tolerance=" << g_calcSewnTolerance
-        << " faces=" << g_calcSewnFaces.size() << "/" << g_faces.size()
-        << " modifiedFaces=" << modifiedFaces
-        << " modifiedEdgeOccurrences=" << modifiedEdges
-        << " reason=" << g_calcSewnDiagnostic << "\n";
+    LogCalcSewnStateNative(requested, g_calcSewnTolerance,
+        g_calcSewnValid ? g_calcSewnFaces.size() : g_faces.size(), g_faces.size(),
+        modifiedFaces, modifiedEdges, g_calcSewnDiagnostic);
+    g_calcSewnModifiedFaces = modifiedFaces;
+    g_calcSewnModifiedEdges = modifiedEdges;
+}
+
+// True only when the opt-in sewn copy is valid and therefore used by the surface raycasts.
+bool IsCalcSewnQueryActiveNative()
+{
+    return g_calcSewnValid;
+}
+
+// Diagnostic text for the current surface-query mode. Built on demand from the state snapshot
+// taken when the model was loaded; never a decision input and never re-reads the environment.
+std::string CalcSewnQueryDiagnosticNative()
+{
+    // 'requested' is the opt-in value of this model load; 'active' is the surface source that
+    // the raycasts actually use (sewing can fail and fall back to the original).
+    std::string text = std::string("requested=") + (g_calcSewnRequested ? "1" : "0")
+        + " active=" + (g_calcSewnValid ? "sewn" : "original")
+        + " tolerance=" + std::to_string(g_calcSewnTolerance)
+        + " faces=" + std::to_string(g_calcSewnValid ? g_calcSewnFaces.size() : g_faces.size())
+        + "/" + std::to_string(g_faces.size())
+        + " modifiedFaces=" + std::to_string(g_calcSewnModifiedFaces)
+        + " modifiedEdgeOccurrences=" + std::to_string(g_calcSewnModifiedEdges)
+        + " reason=" + (g_calcSewnDiagnostic.empty() ? std::string("unknown") : g_calcSewnDiagnostic);
+    return text;
 }
 
 // raycast 대상 면 목록. 계산용 재봉 사본이 유효하면 사본을, 아니면 원본을 쓴다.
