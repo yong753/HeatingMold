@@ -361,4 +361,45 @@ public class SelectedExitTests
         Assert.False(result.Succeeded);
         Assert.Equal(AnchoredFailureReason.NoLanes, result.Failure);
     }
+
+    [Fact]
+    public void ExclusionBooleanSnapDoesNotRejectStartPointOnOriginalOutline()
+    {
+        // 외곽선 위의 시작점은 격자(0.01 mm)에 맞지 않는 좌표다. 제외영역 Boolean 차감은
+        // 이 끝을 68.20으로 반올림하므로, 차감 결과를 레인 구간으로 쓰면 시작점이
+        // 실제로는 경계 위인데도 안쪽으로 오판된다. 차감 전 외곽선 좌표를 보존해야 한다.
+        const double originalEnd = 68.197;
+        var outer = Rect(0, -20, originalEnd, 40);
+        var exclusions = new[] { (MinX: 20d, MinY: -10d, MaxX: 40d, MaxY: 10d) };
+
+        var result = Serpentine.GenerateComponentsWithSelectedExits(
+            outer, exclusions, new PatternParams { Spacing = 10 },
+            PatternDirection.FrameX, Exit(originalEnd, 0), Exit(originalEnd, 30));
+
+        Assert.True(result.Succeeded, result.Failure?.ToString());
+        SerpentineResult pattern = result.Pattern!;
+        SerpentineRoutePiece first = pattern.RoutePieces[0];
+        Assert.Equal(SerpentineRoutePieceKind.HeatingRun, first.Kind);
+        Assert.Equal(originalEnd, first.Points[0].X, 12);
+        Assert.Equal(0.0, first.Points[0].Y, 12);
+    }
+
+    [Theory]
+    [InlineData(0.002)]
+    [InlineData(0.01)]
+    [InlineData(0.02)]
+    public void StartPointInsideTheLaneEndIsStillRejected(double insideMm)
+    {
+        // 외곽선 좌표를 보존해도 실제로 레인 끝 안쪽에 놓인 시작점은 계속 거부해야 한다.
+        const double originalEnd = 68.197;
+        var outer = Rect(0, -20, originalEnd, 40);
+        var exclusions = new[] { (MinX: 20d, MinY: -10d, MaxX: 40d, MaxY: 10d) };
+
+        var result = Serpentine.GenerateComponentsWithSelectedExits(
+            outer, exclusions, new PatternParams { Spacing = 10 },
+            PatternDirection.FrameX, Exit(originalEnd - insideMm, 0), Exit(originalEnd, 30));
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(AnchoredFailureReason.AnchorNotAtLaneEnd, result.Failure);
+    }
 }

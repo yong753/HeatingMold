@@ -718,8 +718,7 @@ public static class Serpentine
         List<Vec2> localOuter = Rotate(outer, -rad);
         List<(double MinX, double MinY, double MaxX, double MaxY)> rotatedExclusions =
             RotateExclusions(exclusionList, -rad);
-        List<List<Vec2>> region = RegionOps.BuildGenerationRegion(
-            localOuter, rotatedExclusions, out List<List<Vec2>> cadRegion);
+        List<List<Vec2>> region = RegionOps.BuildGenerationRegion(localOuter, rotatedExclusions);
         if (region.Count == 0) return AnchoredResult.Fail(AnchoredFailureReason.NoLanes);
 
         Vec2 startLocal = savedStart.Point.Rotate(-rad);
@@ -743,8 +742,9 @@ public static class Serpentine
             // 제외영역을 피하고, 레인·분할 구간을 잇는 연결선은 제외영역을 관통할 수
             // 있으므로 모든 구간을 한 번씩 방문하는 전역 순서 탐색이 필요하지 않다.
             // 원래 CAD 경계(오목/홀) 때문에 갈린 구간만 기존 경계 추종 연결을 유지한다.
-            // cadRegion은 위의 영역 생성에서 같은 마진 오프셋 결과를 그대로 받는다.
-            if (!TryBuildExcludedSequentialPieces(region, cadRegion, rotatedExclusions, p,
+            // 레인 구간은 Boolean 차감 결과가 아니라 차감 전 외곽선에서 제외 사각형만
+            // 1D로 빼서 만든다. 그래야 선택 인출점 좌표가 격자 반올림에 흔들리지 않는다.
+            if (!TryBuildExcludedSequentialPieces(localOuter, rotatedExclusions, p,
                     startLocal, endLocal, stepSign,
                     out List<SerpentineRoutePiece> pieces, out AnchoredFailureReason routeFailure))
                 return AnchoredResult.Fail(routeFailure);
@@ -766,8 +766,7 @@ public static class Serpentine
     /// 발열구간이 없으면 실패한다. 레인 사이 연결선과 소프트웨어 제외영역이 만든 같은 레인
     /// 틈은 직선이며, 그 직선이 마진 확장 제외영역을 관통하는 것은 허용한다. 발열선만 제외영역을 피한다.</summary>
     private static bool TryBuildExcludedSequentialPieces(
-        IReadOnlyList<IReadOnlyList<Vec2>> region,
-        IReadOnlyList<IReadOnlyList<Vec2>> cadRegion,
+        IReadOnlyList<Vec2> localOuter,
         IReadOnlyList<(double MinX, double MinY, double MaxX, double MaxY)> exclusions,
         PatternParams p,
         Vec2 startLocal,
@@ -778,11 +777,26 @@ public static class Serpentine
     {
         pieces = new();
         failure = AnchoredFailureReason.InvalidInput;
-        if (region.Count == 0 || !p.Pitch.IsValid) return false;
+        if (localOuter == null || localOuter.Count < 3 || !p.Pitch.IsValid) return false;
 
-        double minY = region.Min(r => r.Min(v => v.Y));
-        double maxY = region.Max(r => r.Max(v => v.Y));
+        // 행 범위는 차감 전 외곽선이 정한다. Boolean 차감 결과의 격자 반올림된 경계를
+        // 레인 행의 수치 근거로 쓰지 않는다.
+        double minY = double.PositiveInfinity;
+        double maxY = double.NegativeInfinity;
+        foreach (Vec2 vertex in localOuter)
+        {
+            if (vertex.Y < minY) minY = vertex.Y;
+            if (vertex.Y > maxY) maxY = vertex.Y;
+        }
+        if (!double.IsFinite(minY) || !double.IsFinite(maxY) || !(maxY > minY))
+        {
+            failure = AnchoredFailureReason.NoLanes;
+            return false;
+        }
         double limitY = stepSign > 0 ? Math.Min(endLocal.Y, maxY) : Math.Max(endLocal.Y, minY);
+
+        // 경계 추종 연결선은 원래 외곽선을 그대로 따라간다(차감 결과의 근사 링이 아니다).
+        var boundaryRings = new List<IReadOnlyList<Vec2>>(1) { localOuter };
 
         // 시작점에서 종료점 방향으로만 레인을 전개한다. 간격이 유한하고 0보다 크므로
         // 별도의 레인 개수 상한 없이 실제 영역 범위에서 자연히 종료된다.
@@ -793,8 +807,8 @@ public static class Serpentine
             if (stepSign > 0 ? y > limitY + 1e-9 : y < limitY - 1e-9) break;
             if (y < minY - 1e-9 || y > maxY + 1e-9) break;
             lanes.Add(new LaneScan(y,
-                ScanlineIntervals(region, y),
-                ScanlineIntervals(cadRegion, y)));
+                LaneIntervalScan2D.Scan(localOuter, exclusions, y, true,
+                    LaneIntervalMinimumLength).Fragments));
             double next = y + stepSign * p.CenterPitch;
             if (next == y) { failure = AnchoredFailureReason.NoLanes; return false; }
             y = next;
@@ -803,7 +817,7 @@ public static class Serpentine
 
         int firstPopulated = -1;
         for (int i = 0; i < lanes.Count; i++)
-            if (lanes[i].Intervals.Count > 0) { firstPopulated = i; break; }
+            if (lanes[i].Fragments.Count > 0) { firstPopulated = i; break; }
         if (firstPopulated < 0) { failure = AnchoredFailureReason.NoLanes; return false; }
 
         bool ltr = true;
@@ -814,11 +828,11 @@ public static class Serpentine
             int chosen = -1;
             bool chosenLow = true;
             double chosenDistance = double.PositiveInfinity;
-            for (int i = 0; i < first.Intervals.Count; i++)
+            for (int i = 0; i < first.Fragments.Count; i++)
             {
-                (double x0, double x1) = first.Intervals[i];
-                double low = Math.Abs(startLocal.X - x0);
-                double high = Math.Abs(startLocal.X - x1);
+                LaneIntervalFragment fragment = first.Fragments[i];
+                double low = Math.Abs(startLocal.X - fragment.StartMm);
+                double high = Math.Abs(startLocal.X - fragment.EndMm);
                 double distance = Math.Min(low, high);
                 if (distance + 1e-7 < chosenDistance)
                 {
@@ -828,16 +842,19 @@ public static class Serpentine
                 }
             }
             if (chosen < 0) { failure = AnchoredFailureReason.AnchorNotAtLaneEnd; return false; }
-            (double cx0, double cx1) = first.Intervals[chosen];
+            LaneIntervalFragment chosenFragment = first.Fragments[chosen];
+            double cx0 = chosenFragment.StartMm;
+            double cx1 = chosenFragment.EndMm;
             double outside = chosenLow ? cx0 - startLocal.X : startLocal.X - cx1;
-            if (outside < -1e-6) { failure = AnchoredFailureReason.AnchorNotAtLaneEnd; return false; }
-            if (first.Intervals.Count > 1)
+            if (outside < -AnchorLaneEndTolerance)
+            { failure = AnchoredFailureReason.AnchorNotAtLaneEnd; return false; }
+            if (first.Fragments.Count > 1)
             {
                 double extreme = chosenLow
-                    ? first.Intervals.Min(i => i.X0)
-                    : first.Intervals.Max(i => i.X1);
+                    ? first.Fragments.Min(f => f.StartMm)
+                    : first.Fragments.Max(f => f.EndMm);
                 double anchorEnd = chosenLow ? cx0 : cx1;
-                if (Math.Abs(extreme - anchorEnd) > 1e-9)
+                if (Math.Abs(extreme - anchorEnd) > LaneIntervalExtremeTolerance)
                 { failure = AnchoredFailureReason.AnchorNotAtLaneEnd; return false; }
             }
             ltr = chosenLow;
@@ -847,14 +864,14 @@ public static class Serpentine
             // 시작점이 마진 밴드 안이라 시작 레인에 발열구간이 없다. 가짜 레인을 만들지 않고
             // 시작점에서 첫 허용 발열구간까지를 연결선 하나로 잇는다.
             LaneScan first = lanes[firstPopulated];
-            double leftEntry = first.Intervals.Min(i => i.X0);
-            double rightEntry = first.Intervals.Max(i => i.X1);
+            double leftEntry = first.Fragments.Min(f => f.StartMm);
+            double rightEntry = first.Fragments.Max(f => f.EndMm);
             ltr = Math.Abs(startLocal.X - leftEntry) <= Math.Abs(startLocal.X - rightEntry);
         }
 
         var built = new List<SerpentineRoutePiece>();
         Vec2? previousEnd = null;
-        int previousCad = -1;
+        int previousParentInterval = -1;
         int traversed = 0;
         bool firstLane = true;
         Vec2? lastLaneEntry = null;
@@ -863,16 +880,16 @@ public static class Serpentine
         void EmitLane(LaneScan lane, bool laneLtr)
         {
             lastLaneY = lane.Y;
-            // 스캔라인 구간은 이미 X0 증가 순서이며 서로 겹치지 않는다. 왼쪽→오른쪽은
+            // 조각은 이미 lane 좌표 증가 순서이며 서로 겹치지 않는다. 왼쪽→오른쪽은
             // 그대로, 오른쪽→왼쪽은 역순으로 읽으면 기존 정렬 결과와 같다.
             bool firstOnLane = true;
-            for (int intervalIndex = 0; intervalIndex < lane.Intervals.Count; intervalIndex++)
+            for (int fragmentIndex = 0; fragmentIndex < lane.Fragments.Count; fragmentIndex++)
             {
-                (double x0, double x1) = lane.Intervals[laneLtr ? intervalIndex : lane.Intervals.Count - 1 - intervalIndex];
-                Vec2 a = laneLtr ? new Vec2(x0, lane.Y) : new Vec2(x1, lane.Y);
-                Vec2 b = laneLtr ? new Vec2(x1, lane.Y) : new Vec2(x0, lane.Y);
+                LaneIntervalFragment fragment = lane.Fragments[laneLtr ? fragmentIndex : lane.Fragments.Count - 1 - fragmentIndex];
+                Vec2 a = laneLtr ? new Vec2(fragment.StartMm, lane.Y) : new Vec2(fragment.EndMm, lane.Y);
+                Vec2 b = laneLtr ? new Vec2(fragment.EndMm, lane.Y) : new Vec2(fragment.StartMm, lane.Y);
                 if (firstOnLane) lastLaneEntry = a;
-                int cad = FindContainingInterval(lane.CadIntervals, x0, x1);
+                int parentInterval = fragment.ParentIntervalIndex;
 
                 if (previousEnd.HasValue)
                 {
@@ -882,16 +899,16 @@ public static class Serpentine
                         built.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.TurnConnector,
                             traversed, new[] { previousEnd.Value, a }));
                     }
-                    else if (cad >= 0 && cad == previousCad)
+                    else if (parentInterval == previousParentInterval)
                     {
-                        // 소프트웨어 제외영역이 같은 레인을 갈라놓은 틈: 직선 연결선.
+                        // 같은 원래 행 구간이 제외영역 때문에 갈린 틈: 직선 연결선.
                         built.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.FixedConnector,
                             traversed, new[] { previousEnd.Value, a }));
                     }
                     else
                     {
                         // 원래 CAD 경계(오목/홀) 때문에 갈린 구간: 기존 경계 추종 연결 유지.
-                        List<Vec2> connector = RouteAlongBoundary(cadRegion, previousEnd.Value, a);
+                        List<Vec2> connector = RouteAlongBoundary(boundaryRings, previousEnd.Value, a);
                         built.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.FixedConnector,
                             traversed, new[] { previousEnd.Value }.Concat(connector).Append(a).ToList()));
                     }
@@ -900,7 +917,7 @@ public static class Serpentine
                 built.Add(new SerpentineRoutePiece(SerpentineRoutePieceKind.HeatingRun,
                     traversed, new[] { a, b }));
                 previousEnd = b;
-                previousCad = cad;
+                previousParentInterval = parentInterval;
                 firstOnLane = false;
             }
 
@@ -911,7 +928,7 @@ public static class Serpentine
         for (int laneIndex = firstPopulated; laneIndex < lanes.Count; laneIndex++)
         {
             LaneScan lane = lanes[laneIndex];
-            if (lane.Intervals.Count == 0) continue;
+            if (lane.Fragments.Count == 0) continue;
 
             // 중간 레인과 마지막 레인 모두 이전 끝점에서 가까운 쪽으로 진입한다.
             // 종료점에 맞추기 위해 마지막 레인만 방향을 뒤집지 않는다.
@@ -932,9 +949,9 @@ public static class Serpentine
             double extraY = lastLaneY + stepSign * p.CenterPitch;
             if (extraY == lastLaneY) { failure = AnchoredFailureReason.NoLanes; return false; }
             LaneScan extra = new(extraY,
-                ScanlineIntervals(region, extraY),
-                ScanlineIntervals(cadRegion, extraY));
-            if (extra.Intervals.Count == 0)
+                LaneIntervalScan2D.Scan(localOuter, exclusions, extraY, true,
+                    LaneIntervalMinimumLength).Fragments);
+            if (extra.Fragments.Count == 0)
             {
                 failure = AnchoredFailureReason.RequiredExtraLaneOutsideRegion;
                 return false;
@@ -972,23 +989,14 @@ public static class Serpentine
 
     private sealed record LaneScan(
         double Y,
-        List<(double X0, double X1)> Intervals,
-        List<(double X0, double X1)> CadIntervals);
+        IReadOnlyList<LaneIntervalFragment> Fragments);
 
     /// <summary>다음 레인의 두 진입 끝 중 이전 끝점에 가까운 쪽을 고른다. 동률이면 왼쪽→오른쪽.</summary>
     private static bool ChooseEntryLow(LaneScan lane, Vec2 from)
     {
-        double left = Math.Abs(from.X - lane.Intervals.Min(i => i.X0));
-        double right = Math.Abs(from.X - lane.Intervals.Max(i => i.X1));
+        double left = Math.Abs(from.X - lane.Fragments.Min(f => f.StartMm));
+        double right = Math.Abs(from.X - lane.Fragments.Max(f => f.EndMm));
         return left <= right;
-    }
-
-    private static int FindContainingInterval(
-        IReadOnlyList<(double X0, double X1)> intervals, double x0, double x1)
-    {
-        for (int i = 0; i < intervals.Count; i++)
-            if (x0 >= intervals[i].X0 - 1e-7 && x1 <= intervals[i].X1 + 1e-7) return i;
-        return -1;
     }
 
     /// <summary>선분이 마진만큼 확장된 제외 사각형과 교차하는지. 발열선이 아니라
@@ -1145,6 +1153,16 @@ public static class Serpentine
 
     private const double ChainTolerance = 0.05;
     private const double AnchorMatchTolerance = 1e-4;
+
+    /// <summary>행 구간 조각을 버리는 최소 길이. 기존 스캔라인과 같은 값이다.</summary>
+    private const double LaneIntervalMinimumLength = 1e-9;
+
+    /// <summary>선택 시작점이 첫 레인 끝에서 이만큼까지만 안쪽인 것을 허용한다(수치 epsilon).
+    /// 외곽선 원본 좌표를 쓰므로 실제 안쪽 점은 이 값으로 통과하지 않는다.</summary>
+    private const double AnchorLaneEndTolerance = 1e-6;
+
+    /// <summary>여러 구간 중 선택한 끝이 그 측면의 전체 극단인지 비교하는 수치 epsilon.</summary>
+    private const double LaneIntervalExtremeTolerance = 1e-9;
 
     /// <summary>경로 끝점이 인출면 경계에 닿는 것으로 인정하는 최대 거리.
     /// 사행 경로는 마진만큼 안쪽으로 인셋되므로 그 거리까지 허용하고, 경계 위로 투영해 앵커로 쓴다.</summary>

@@ -640,7 +640,7 @@ public partial class MainWindow
         AnchoredFailureReason.AnchorNotOnExitChain =>
             "선택한 시작/종료점이 인출면 위에 있지 않습니다 — 후보 목록에서 다시 선택하세요",
         AnchoredFailureReason.AnchorNotAtLaneEnd =>
-            "시작 인출점이 마진 안쪽 사행 구간의 진행축 끝에 있지 않습니다 — 영역 외곽선에서 레인 방향 끝점을 선택하세요",
+            "시작 인출점이 첫 발열레인의 진행 방향 끝에 있지 않습니다 — 영역 외곽선에서 레인 방향 끝점을 선택하세요",
         AnchoredFailureReason.RegionSplit =>
             "적용영역이 분리되어 하나의 사행 경로로 연결할 수 없습니다",
         AnchoredFailureReason.NoLanes =>
