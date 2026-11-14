@@ -85,22 +85,20 @@ if ($Step) { $argumentParts += '--visual-step' }
 $argumentLine = ($argumentParts | ForEach-Object { Quote-Argument $_ }) -join ' '
 
 $startedAt = Get-Date
-$process = Start-Process -FilePath $exe -ArgumentList $argumentLine -WorkingDirectory $workingDirectory -PassThru
 $resultPath = Join-Path $RunDir 'result.json'
-$deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-$isLauncher = [IO.Path]::GetFileName($exe) -ieq 'HeatingMold.Start.exe'
-while ((Get-Date) -lt $deadline -and -not (Test-Path $resultPath)) {
-    if ($process.HasExited) {
-        # 시작 도구는 앱을 띄운 뒤 바로 정상 종료하므로, 그 경우에는 앱 결과를 계속 기다린다.
-        if (-not $isLauncher) { break }
-        if ($process.ExitCode -ne 0) { break }
-    }
-    Start-Sleep -Milliseconds 300
-}
 
-if (-not (Test-Path $resultPath)) {
-    Write-Host "No result.json yet. The app may still be running (PID $($process.Id))."
+# 검증 프로세스 트리를 추적하며 실행한다. 예상하지 않은 모달 대화상자/조기 종료/timeout 이면
+# 그 트리만 정리하고 즉시 실패한다(대화상자를 자동으로 닫거나 승인하지 않는다).
+. (Join-Path $root 'tools/validation/GuardedProcess.ps1')
+$guard = Invoke-GuardedProcess -ExePath $exe -Arguments $argumentLine `
+    -WorkingDirectory $workingDirectory -ResultPath $resultPath `
+    -RunDirectory $RunDir -TimeoutSeconds $TimeoutSeconds
+if (-not $guard.Success) {
+    Write-Host "Validation guard stopped the run: $($guard.Reason) — $($guard.Message)"
+    if ($guard.DialogTitle) { Write-Host "Unexpected dialog: $($guard.DialogTitle) [$($guard.DialogClass)]" }
+    if ($guard.LastStep) { Write-Host "Last step: $($guard.LastStep)" }
     Write-Host "Run directory: $RunDir"
+    if ($guard.ReportPath) { Write-Host "Guard report: $($guard.ReportPath)" }
     exit 3
 }
 
@@ -114,7 +112,7 @@ foreach ($record in $result.Steps) {
 }
 if ($result.Error) { Write-Host "Error: $($result.Error)" }
 if ($result.DxfPath) { Write-Host "DXF: $($result.DxfPath)" }
-Write-Host "The app window stays open for visual review (PID $($process.Id))."
+Write-Host "The app window stays open for visual review (PID $($guard.RootProcessId))."
 
 $packagedCheckFailed = $false
 if ($ExpectPackaged) {

@@ -47,6 +47,17 @@
 확인이 끝나면 창을 닫습니다. 잘못된 옵션이나 시나리오 경로면 앱 창을 띄우지 않고
 종료 코드 2와 `result.json`(실패 사유)을 남깁니다.
 
+## 모달 대화상자와 실행 가드
+
+`Run.ps1`은 검증 프로세스 트리를 `tools\validation\GuardedProcess.ps1` 가드로
+실행합니다. 예상하지 않은 오류/경고/파일 대화상자가 뜨면 그 트리만 정리하고 즉시
+실패하며, 대화상자 버튼을 자동으로 누르지 않습니다. 이때 실행 폴더의
+`validation-guard.json`/`validation-guard.txt`에 제목·클래스·프로세스 경로·UIA 본문·
+마지막 단계를 남기고 `Run.ps1`은 종료 코드 3으로 끝납니다. 화면에 남은 창을 확인해
+조치한 뒤 다시 실행하세요. 성공 시 앱 창은 이전과 같이 육안 확인을 위해 열린 상태로
+남습니다. 자세한 규칙과 한계는 [docs/ValidationGuard.md](../../docs/ValidationGuard.md)를
+참고하세요. 가드 host가 강제 종료되면 추적 중인 앱도 함께 종료됩니다(kill-on-close).
+
 ## 화면 조작
 
 테스트 중에는 사이드바와 3D 뷰포트 입력이 잠깁니다. 상단 진행 바의 버튼만 동작합니다.
@@ -80,6 +91,7 @@
 - `run.json`: 실행 시각, 시나리오, 모델 해시
 - `steps.jsonl`: 단계별 시작/종료/소요/상태/데이터
 - `result.json`: 최종 상태, 마지막 완료 단계, 오류, DXF 경로
+- `validation-guard.json` / `validation-guard.txt`: 가드가 남기는 실패 진단(모달/조기 종료/timeout)
 - `result.dxf`: 실제 저장된 도면
 - `occ_viewer_log.txt`: 네이티브 뷰어 로그
 
