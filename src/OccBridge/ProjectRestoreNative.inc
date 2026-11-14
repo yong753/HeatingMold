@@ -36,6 +36,12 @@ void ClearLiveModelForRestore()
     g_faceTopologySignatures.clear();
     g_faceMap.Clear();
     g_edgeFaceMap.Clear();
+    // 계산용 재봉 사본도 원본과 수명을 같이한다.
+    g_calcSewnShape.Nullify();
+    g_calcSewnFaces.clear();
+    g_calcSewnFaceMap.Clear();
+    g_calcSewnValid = false;
+    g_calcSewnDiagnostic.clear();
     g_autoAxes[0] = gp::DX();
     g_autoAxes[1] = gp::DY();
     g_autoAxes[2] = gp::DZ();
@@ -125,6 +131,7 @@ bool CommitProjectRestoreCandidateNative(int candidateId)
     g_faceMap = candidate->faceMap;
     g_edgeFaceMap = candidate->edgeFaceMap;
     g_faceTopologySignatures = candidate->faceSignatures;
+    RebuildCalcSewnCopyNative();   // 복원된 원본에서 계산용 재봉 사본을 다시 만든다
 
     MeshShapeNative(1.0);
     if (!g_ctx.IsNull())

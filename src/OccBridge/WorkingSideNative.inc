@@ -366,15 +366,130 @@ std::string NormalizeWorkingFaceIds(const std::vector<int>& faces, std::vector<i
     return WorkingFaceKey(normalized);
 }
 
+// 원본 면들을 1mm 공차로 재봉한 계산용 사본을 만든다. 표시·경계 추출·저장·STEP 출력은
+// 원본 g_shape/g_faces를 그대로 쓰고, 표면 매핑 raycast만 이 사본을 쓴다.
+// g_calcSewnFaces[i]는 항상 g_faces[i]에서 파생된 면이므로 FaceId 계약이 유지된다.
+// 재봉 자체가 실패하거나 면 identity가 깨지면 비활성 상태로 두고 원본으로 폴백한다.
+void RebuildCalcSewnCopyNative()
+{
+    g_calcSewnShape.Nullify();
+    g_calcSewnFaces.clear();
+    g_calcSewnFaceMap.Clear();
+    g_calcSewnValid = false;
+    g_calcSewnDiagnostic.clear();
+    if (g_faces.empty()) {
+        g_calcSewnDiagnostic = "no-faces";
+        return;
+    }
+
+    std::string reason;
+    int modifiedFaces = 0;
+    int modifiedEdges = 0;
+    try {
+        BRepBuilderAPI_Sewing sewing(g_calcSewnTolerance, Standard_True, Standard_False, Standard_True, Standard_True);
+        for (size_t i = 0; i < g_faces.size(); ++i) {
+            if (g_faces[i].IsNull()) {
+                reason = "null-face";
+                break;
+            }
+            sewing.Add(g_faces[i]);
+        }
+        if (reason.empty()) {
+            sewing.Perform();
+            // BRepBuilderAPI_Sewing에는 IsDone이 없다. 결과 형상이 비어 있으면 실패로 본다.
+            if (sewing.SewedShape().IsNull()) reason = "sew-empty";
+        }
+        if (reason.empty()) {
+            for (size_t i = 0; i < g_faces.size(); ++i) {
+                TopoDS_Face face = g_faces[i];
+                if (sewing.IsModified(g_faces[i])) {
+                    ++modifiedFaces;
+                    const TopoDS_Shape modified = sewing.Modified(g_faces[i]);
+                    if (!modified.IsNull() && modified.ShapeType() == TopAbs_FACE) face = TopoDS::Face(modified);
+                }
+                // 이미 공유된 edge를 재봉이 다시 만들지 않으면 pcurve/trim 균열은 그대로 남는다.
+                // 실제로 어떤 요소가 수정됐는지 세어 두면 그 경우를 구분할 수 있다.
+                for (TopExp_Explorer edges(g_faces[i], TopAbs_EDGE); edges.More(); edges.Next()) {
+                    if (sewing.IsModified(edges.Current())) ++modifiedEdges;
+                }
+                g_calcSewnFaces.push_back(face);
+            }
+            if (g_calcSewnFaces.size() != g_faces.size()) reason = "face-count";
+        }
+        if (reason.empty()) {
+            BRep_Builder builder;
+            TopoDS_Compound compound;
+            builder.MakeCompound(compound);
+            for (size_t i = 0; i < g_calcSewnFaces.size(); ++i) {
+                builder.Add(compound, g_calcSewnFaces[i]);
+                g_calcSewnFaceMap.Add(g_calcSewnFaces[i]);
+            }
+            // 개별 면 identity가 서로 합쳐지면 g_faces와의 1:1 대응이 깨진다.
+            if (g_calcSewnFaceMap.Extent() != static_cast<int>(g_calcSewnFaces.size())) reason = "face-identity";
+            else if (compound.IsNull()) reason = "compound";
+            else g_calcSewnShape = compound;
+        }
+    } catch (const std::exception& error) {
+        reason = std::string("exception:") + error.what();
+    } catch (...) {
+        reason = "exception";
+    }
+
+    if (!reason.empty()) {
+        g_calcSewnShape.Nullify();
+        g_calcSewnFaces.clear();
+        g_calcSewnFaceMap.Clear();
+        g_calcSewnDiagnostic = reason;
+    } else {
+        g_calcSewnValid = true;
+        g_calcSewnDiagnostic = "ok";
+    }
+
+    char logPath[MAX_PATH];
+    const DWORD logLength = GetEnvironmentVariableA("HEATINGMOLD_OCC_LOG", logPath, MAX_PATH);
+    if (logLength == 0 || logLength >= MAX_PATH) return;
+    std::ofstream log(logPath, std::ios::app);
+    if (!log) return;
+    log << "calc-sewn: " << (g_calcSewnValid ? "active" : "inactive")
+        << " tolerance=" << g_calcSewnTolerance
+        << " faces=" << g_calcSewnFaces.size() << "/" << g_faces.size()
+        << " modifiedFaces=" << modifiedFaces
+        << " modifiedEdgeOccurrences=" << modifiedEdges
+        << " reason=" << g_calcSewnDiagnostic << "\n";
+}
+
+// raycast 대상 면 목록. 계산용 재봉 사본이 유효하면 사본을, 아니면 원본을 쓴다.
+const std::vector<TopoDS_Face>& RaycastFacesNative()
+{
+    return g_calcSewnValid ? g_calcSewnFaces : g_faces;
+}
+
+const TopoDS_Shape& RaycastShapeNative()
+{
+    return g_calcSewnValid ? g_calcSewnShape : g_shape;
+}
+
+// 교차 결과의 면을 g_faces 순서의 FaceId로 되돌린다. 사본이 유효하면 사본 map을 먼저
+// 쓰고, 없으면 원본 map으로 폴백한다. 둘 다 실패하면 -1.
+int RaycastFaceIdNative(const TopoDS_Shape& face)
+{
+    if (g_calcSewnValid) {
+        const int sewn = g_calcSewnFaceMap.FindIndex(face) - 1;
+        if (sewn >= 0) return sewn;
+    }
+    return g_faceMap.FindIndex(face) - 1;
+}
+
 bool BuildWorkingFaceTargetShape(const std::vector<int>& normalized, TopoDS_Shape& target)
 {
     if (normalized.empty()) return false;
+    const std::vector<TopoDS_Face>& faces = RaycastFacesNative();
     BRep_Builder builder;
     TopoDS_Compound compound;
     builder.MakeCompound(compound);
     for (int faceId : normalized) {
-        if (faceId < 0 || faceId >= static_cast<int>(g_faces.size())) return false;
-        builder.Add(compound, g_faces[faceId]);
+        if (faceId < 0 || faceId >= static_cast<int>(faces.size())) return false;
+        builder.Add(compound, faces[faceId]);
     }
     target = compound;
     return !target.IsNull();
@@ -419,7 +534,7 @@ long long CreateWorkingNativeCore(const gp_Dir& xDir, const gp_Dir& yDir, const 
                 gp_Vec(ctx->y) * ((b[2]+b[3])/2) + gp_Vec(ctx->n) * (b[5]+margin));
         }
         ctx->intersector = std::make_unique<IntCurvesFace_ShapeIntersector>();
-        ctx->intersector->Load(g_shape, Precision::Confusion());
+        ctx->intersector->Load(RaycastShapeNative(), Precision::Confusion());
         // Rebuild once per preview, never per hover. Absolute deflection, explicit angular control.
         // 모델 revision은 그대로인데 삼각분할만 다시 만들어지므로, 진행 중인 사각형
         // 프리뷰를 먼저 기준 선택으로 되돌리고 선택 캐시를 무효화한다.
@@ -528,7 +643,7 @@ WorkingStatusNative QueryWorkingNative(long long id, long long revision, double 
         if (!std::isfinite(p.X()) || !std::isfinite(p.Y()) || !std::isfinite(p.Z()))
             return WorkingStatusNative::GeometryFailure;
         out[0]=p.X(); out[1]=p.Y(); out[2]=p.Z();
-        faceId = g_faceMap.FindIndex(hits.Face(first))-1;
+        faceId = RaycastFaceIdNative(hits.Face(first));
         if (faceId<0) return WorkingStatusNative::GeometryFailure;
         BRepAdaptor_Surface surface(hits.Face(first));
         gp_Vec normal;
@@ -586,7 +701,7 @@ WorkingStatusNative MapWorkingPointOntoFacesNative(long long id, long long revis
         if (!std::isfinite(p.X()) || !std::isfinite(p.Y()) || !std::isfinite(p.Z()))
             return WorkingStatusNative::GeometryFailure;
         const TopoDS_Face hitFace = hits->Face(best);
-        const int hitId = g_faceMap.FindIndex(hitFace) - 1;
+        const int hitId = RaycastFaceIdNative(hitFace);
         if (hitId < 0) return WorkingStatusNative::GeometryFailure;
         if (std::find(normalized.begin(), normalized.end(), hitId) == normalized.end())
             return WorkingStatusNative::GeometryFailure;
@@ -673,7 +788,7 @@ bool SnapWorkingPointToFacesNative(const std::vector<double>& xyz, const std::ve
         if (distance.SupportTypeShape2(1) == TopAbs_FACE) {
             const TopoDS_Shape support = distance.SupportOnShape2(1);
             if (!support.IsNull()) {
-                const int id = g_faceMap.FindIndex(support) - 1;
+                const int id = RaycastFaceIdNative(support);
                 if (id >= 0 && std::find(normalized.begin(), normalized.end(), id) != normalized.end())
                     faceId = id;
             }

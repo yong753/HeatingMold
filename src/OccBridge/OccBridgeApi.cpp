@@ -241,6 +241,16 @@ namespace
     // Edge의 인접 Face 목록. Edge topology signature에 인접 Face signature를 넣어
     // 같은 형상이 겹쳐 있는 경우에도 원본 Edge를 구분하기 위해 사용한다.
     TopTools_IndexedDataMapOfShapeListOfShape g_edgeFaceMap;
+    // 계산용 재봉 사본. 원본 g_shape/g_faces는 표시·경계 추출·저장·STEP 출력의 권위로
+    // 그대로 보존하고, 표면 매핑 raycast만 1mm 재봉 사본을 사용한다. g_calcSewnFaces는
+    // g_faces와 같은 순서를 유지하므로 FaceId 되매핑 계약이 그대로 성립한다.
+    // 재봉에 실패하면 비활성 상태로 두고 모든 조회가 원본으로 폴백한다.
+    TopoDS_Shape g_calcSewnShape;
+    std::vector<TopoDS_Face> g_calcSewnFaces;
+    TopTools_IndexedMapOfShape g_calcSewnFaceMap;
+    bool g_calcSewnValid = false;
+    std::string g_calcSewnDiagnostic;
+    double g_calcSewnTolerance = 1.0;
     gp_Dir g_autoAxes[3] = { gp::DX(), gp::DY(), gp::DZ() };
     long long g_modelRevision = 0;
     // 형상/삼각분할 세대. 작업면 생성처럼 모델 revision은 그대로인데 mesh만 다시
@@ -261,6 +271,8 @@ namespace
         return result;
     }
     void InvalidateWorkingContexts();
+    // 계산용 재봉 사본 재구성 (WorkingSideNative.inc 에서 정의).
+    void RebuildCalcSewnCopyNative();
     // 사각형 선택 가시성 캐시/프리뷰 (FaceIdSelectionNative.inc 에서 정의)
     void ReleaseFaceIdCacheNative();
     void AbortRectanglePreviewNative();
@@ -923,6 +935,7 @@ namespace
         ComputeAutoAxes(reader.StepModel());
         AlignShapeToWorldAxes();
         RebuildFaceCache();
+        RebuildCalcSewnCopyNative();   // 표면 매핑 전용 1mm 재봉 사본 (원본 보존)
         MeshShapeNative(1.0);   // W2 — shaded 표시용 삼각분할 (선형 편향 1mm)
 
         // 뷰어가 이미 초기화된 경우 즉시 표시 (S1 항목 1)
