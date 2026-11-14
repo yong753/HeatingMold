@@ -1145,13 +1145,15 @@ namespace HeatingMold.App
                     : string.Empty;
                 StatusText.Text = string.Format(
                     "{0} 영역 — {1}개 경로 · 길이 {2:F1}mm · 회로 {3}개",
-                    area.Name, projectedCount, total, circuits) + counts + LaneNote(area.Pattern);
+                    area.Name, projectedCount, total, circuits) + counts + LaneNote(area.Pattern)
+                    + ApproximationNote();
             }
             else
             {
                 StatusText.Text = string.Format(
                     "{0} 영역 제외경로 — {1}개 경로 · 길이 {2:F1}mm · 연결선 {3}개 · 깊이 0",
-                    area.Name, projectedCount, total, connectors) + LaneNote(area.Pattern);
+                    area.Name, projectedCount, total, connectors) + LaneNote(area.Pattern)
+                    + ApproximationNote();
             }
             UpdateActionStates();
         }

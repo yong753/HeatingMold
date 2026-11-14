@@ -180,6 +180,8 @@ public partial class MainWindow
         {
             publications = candidates.ToArray();
             _validatedSamplesUsed.Clear();
+            // 근사 집계는 이번 준비 동안에만 모으고, 네이티브 커밋 성공 뒤에만 게시한다.
+            _routeApproximation.Begin();
             if (areas.Count != areas.Distinct().Count())
                 throw new InvalidOperationException("작업영역 목록에 중복 영역이 있습니다");
             foreach (var entry in publications)
@@ -285,6 +287,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
+            _routeApproximation.AbandonOnFailure();
             try
             {
                 Bridge.DiscardWorkingRouteGeometry(side.Id.Value, side.Revision.Value,
@@ -295,6 +298,7 @@ public partial class MainWindow
         }
 
         // 이 구간에는 계산/할당/표시 호출을 두지 않는다. 모든 게시 값은 커밋 전에 준비되었다.
+        _routeApproximation.PublishOnCommit();
         for (int i = 0; i < publications.Length; i++)
             PublishAreaRouteCandidate(publications[i].Key, publications[i].Value);
         _nextStageId = nextStageId;
@@ -735,11 +739,17 @@ public partial class MainWindow
     private ValidatedRouteSampleKeyPrefix BuildValidatedRouteSampleKeyPrefix(WorkingArea area,
         WorkingSideDefinition side, CommittedRouteContext context)
     {
-        var key = new StringBuilder("strict-v3|")
+        var key = new StringBuilder("strict-v4|")
             .Append(RouteSurfaceValidationPolicy.Version).Append('|')
             .Append("gap=").Append(RouteSurfaceValidationPolicy.GapSpacing.ToString("R", CultureInfo.InvariantCulture))
             .Append("|chord=").Append(RouteSurfaceValidationPolicy.ChordError.ToString("R", CultureInfo.InvariantCulture))
             .Append("|max-probes=").Append(RouteSurfaceValidationPolicy.MaxProbes.ToString(CultureInfo.InvariantCulture))
+            // 표본 사전에는 strict 표본만 들어간다. 근사 정책이 바뀌면 이전 보증의 표본이
+            // 재사용되지 않도록 정책 값도 키에 포함한다.
+            .Append("|approx=").Append(RouteApproximationPolicy.Version)
+            .Append(",adv=").Append(RouteApproximationPolicy.MaxBridgeAdvanceMm.ToString("R", CultureInfo.InvariantCulture))
+            .Append(",gap3d=").Append(RouteApproximationPolicy.MaxBridge3DGapMm.ToString("R", CultureInfo.InvariantCulture))
+            .Append(",probe=").Append(RouteApproximationPolicy.ProbeSpacingMm.ToString("R", CultureInfo.InvariantCulture))
             .Append("|support=").Append(GeometryTolerancePolicy.DistanceTolerance.ToString("R", CultureInfo.InvariantCulture))
             .Append("|datum=").Append(GeometryTolerancePolicy.DistanceTolerance.ToString("R", CultureInfo.InvariantCulture))
             .Append("|selected-global|")

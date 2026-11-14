@@ -527,30 +527,29 @@ public partial class MainWindow
         if (!cached)
         {
             _lastSurfaceMissDetail = string.Empty;
-            var hit = BuildSurfaceMapDelegate(area, side, context: mappingContext);
-            if (!SurfacePathMapper.TryMapRouteStrict(piece.Points, hit, vertexOverrides,
-                    out List<SurfaceMappedSample> mapped, out string failure,
-                    gapSpacing: RouteSurfaceValidationPolicy.GapSpacing))
+            if (!TryPreparePieceSamples(area, side, mappingContext, piece, piece.Points,
+                    vertexOverrides, out List<SurfaceMappedSample> prepared,
+                    out RouteSampleSource source, out SurfaceApproximationReport approximation,
+                    out string failure, out string detail))
             {
-                // 평면 턴 외곽 돌출 예외(사용자 확정 2026-11-14). 원래 kind가
-                // TurnConnector일 때만, 두 끝점이 같은 원본 평면 위의 실제 3D 점이고
-                // 원본 CAD 외곽까지의 돌출이 전 구간 5 mm 이하임이 증명될 때만 승인한다.
-                // strict 표본이 아니므로 검증 표본 캐시에는 넣지 않는다.
-                if (!TryBuildPlanarExteriorTurnSamples(area, side, mappingContext, piece,
-                        out List<SurfaceMappedSample> turnSamples, out string turnDetail))
-                    throw new InvalidOperationException(
-                        "영역 " + area.Name + " 경로 조각 " + (index + 1) + "/" + count + " (" + piece.Kind + ") 매핑 실패 — "
-                        + failure + " · 2D " + DescribePiecePoints(piece)
-                        + (_lastSurfaceMissDetail.Length > 0 ? " · 실패 지점 " + _lastSurfaceMissDetail : string.Empty)
-                        + " · 평면 턴 예외: " + turnDetail + " [" + FaceTypesText(area) + "]");
-                samples = turnSamples;
+                throw new InvalidOperationException(
+                    "영역 " + area.Name + " 경로 조각 " + (index + 1) + "/" + count + " (" + piece.Kind + ") 매핑 실패 — "
+                    + failure + " · 2D " + DescribePiecePoints(piece)
+                    + (_lastSurfaceMissDetail.Length > 0 ? " · 실패 지점 " + _lastSurfaceMissDetail : string.Empty)
+                    + " · " + detail
+                    + " [" + FaceTypesText(area) + "]");
             }
-            else
+            samples = prepared;
+            if (!RouteSampleCachePolicy.CanCache(source))
             {
-                samples = mapped.ToArray();
+                // 근사/턴 예외 표본은 strict 표본 캐시에 넣지 않는다(보증 수준이 다르다).
+                if (source == RouteSampleSource.Approximation)
+                    _routeApproximation.Staging?.Add(approximation);
+            }
+            else if (key != null && validatedSamples != null)
+            {
                 // 성공 전에는 후보 사전만 쓴다. 실패한 편집/생성이 확정 캐시를 바꾸지 않는다.
-                if (key != null && validatedSamples != null)
-                    validatedSamples[key] = (SurfaceMappedSample[])samples;
+                validatedSamples[key] = samples.ToArray();
             }
         }
 
@@ -571,6 +570,101 @@ public partial class MainWindow
                 + FaceTypesText(area) + " | " + Bridge.GetWorkingStageDiagnostic() + "]");
         return shown;
     }
+
+    /// <summary>조각 하나의 3D 표본 준비 규칙(생성/수동 편집 공통).
+    /// <list type="number">
+    /// <item>strict 성공 → 그 표본을 그대로 쓴다(정상 fast path).</item>
+    /// <item>strict 실패 → 평면 턴 외곽 예외가 원래 성립하면 그 2점 결과를 그대로 쓴다.</item>
+    /// <item>나머지 단순 Miss(선택 면/전역 표면 Miss + 경계 NoIntersection) → 제한 근사 연결.</item>
+    /// </list>
+    /// 근사·턴 예외 표본은 strict 표본 캐시에 넣지 않는다.
+    /// </summary>
+    /// <param name="points">표시 좌표(인출점 보정 적용 후일 수 있다).</param>
+    private bool TryPreparePieceSamples(WorkingArea area, WorkingSideDefinition side,
+        CommittedRouteContext context, SerpentineRoutePiece piece, IReadOnlyList<Vec2> points,
+        IReadOnlyDictionary<int, SurfaceMappedSample> vertexOverrides,
+        out List<SurfaceMappedSample> samples, out RouteSampleSource source,
+        out SurfaceApproximationReport approximation, out string failure, out string detail)
+    {
+        samples = null;
+        source = RouteSampleSource.Strict;
+        approximation = SurfaceApproximationReport.None;
+        detail = string.Empty;
+        Func<Vec2, SurfaceQueryResult> query = BuildSurfaceQueryDelegate(area, side, context);
+        // strict 시도 중 관측한 typed 결과(Miss/Failure)를 값으로 기록한다. 문자열 검사 없이
+        // "단순 Miss 실패"와 "하드 실패"를 구분해 재시도 가부를 정한다.
+        var recorder = new SurfaceProbeRecorder(query);
+        // 같은 2D 좌표를 반복하는 필수점(인출점)의 3D 깊이/지지 면 identity는 strict fast
+        // path에서도 생략하지 않는다. 다르거나 유효하지 않으면 명시적으로 거부한다.
+        if (!SurfacePathApproximation.TryValidateDuplicateRequiredPoints(points, vertexOverrides, out failure))
+        {
+            detail = "필수점 identity 검사 실패 — " + failure;
+            return false;
+        }
+        if (SurfacePathMapper.TryMapRouteStrict(points, recorder.HitProbe, vertexOverrides,
+                out List<SurfaceMappedSample> mapped, out failure,
+                gapSpacing: RouteSurfaceValidationPolicy.GapSpacing))
+        {
+            samples = mapped;
+            return true;
+        }
+
+        // 하드 오류(커널/stale/비유한)가 관측되었거나 단순 Miss가 전혀 없었으면(입력/override/
+        // 정제/예산·깊이 한도 실패) 평면 턴 예외도 근사도 시도하지 않는다. 재조회로 실패를
+        // 지우는 경로를 만들지 않기 위해서다.
+        if (!recorder.AllowsApproximationRetry)
+        {
+            detail = "평면 턴 예외·근사 재시도 불가 — " + recorder.Describe();
+            return false;
+        }
+
+        // 1) 평면 턴 외곽 돌출 예외(사용자 확정 2026-11-14). 원래 kind가 TurnConnector일 때만,
+        // 두 끝점이 같은 원본 평면 위의 실제 3D 점이고 원본 CAD 외곽까지의 돌출이 전 구간
+        // 5 mm 이하임이 증명될 때만 승인한다. 새 근사보다 먼저 판정해 기존에 성립하던
+        // 2점 턴 결과(점 개수·길이)를 그대로 보존한다. 인출점 보정으로 표시 좌표가 달라진
+        // 조각은 원본 2점 판정과 섞지 않도록 이 예외를 적용하지 않는다.
+        string turnDetail = "해당 없음";
+        if (ReferenceEquals(points, piece.Points) &&
+            TryBuildPlanarExteriorTurnSamples(area, side, context, piece,
+                out List<SurfaceMappedSample> turnSamples, out turnDetail))
+        {
+            samples = turnSamples;
+            source = RouteSampleSource.PlanarTurn;
+            detail = "평면 턴 예외: " + turnDetail;
+            return true;
+        }
+        if (!ReferenceEquals(points, piece.Points))
+            turnDetail = "인출점 보정 좌표라 원본 2점 턴 판정 대상이 아닙니다";
+
+        // 2) 나머지 단순 Miss에만 제한 근사. 2D 진행/3D 거리 10 mm 한도, 누락 개수 무제한,
+        // 꼭짓점(원본 조각 끝점·꺾임점·인출점) 생략 없음. strict는 위에서 이미 실행했으므로
+        // 같은 조회를 반복하지 않는다.
+        if (SurfacePathApproximation.TryMapRouteAfterStrictFailure(points, recorder, vertexOverrides,
+                out List<SurfaceMappedSample> approximated,
+                out SurfaceApproximationReport report, out string approximationFailure))
+        {
+            samples = approximated;
+            source = RouteSampleSource.Approximation;
+            approximation = report;
+            detail = "근사 연결 " + report.BridgeCount + "곳 · 총 " + report.TotalAdvanceMm.ToString("0.###")
+                + " mm · 최대 " + report.MaxAdvanceMm.ToString("0.###") + " mm / 한도 "
+                + RouteApproximationPolicy.MaxBridgeAdvanceMm.ToString("0.###") + " mm";
+            return true;
+        }
+        detail = "평면 턴 예외: " + turnDetail + " · 근사 연결: " + approximationFailure;
+        return false;
+    }
+
+    /// <summary>근사 집계의 준비/게시 상태. 커밋 성공 뒤에만 게시한다.</summary>
+    private readonly RouteApproximationPublication _routeApproximation = new();
+
+    /// <summary>마지막 성공 커밋의 근사 집계(진단용). 확정 경로 전체 근사 개수가 아니다.</summary>
+    internal RouteApproximationStats RouteApproximationCommitted => _routeApproximation.Committed;
+
+    /// <summary>완료 상태 문구에 덧붙일 근사 요약. 근사가 없으면 빈 문자열이다.</summary>
+    private string ApproximationNote() => _routeApproximation.Note();
+
+    internal void ResetRouteApproximationStats() => _routeApproximation.Reset();
 
     /// <summary>
     /// 평면 턴 외곽 돌출 예외 표본을 만든다. 두 끝점의 실제 3D 점과 지지 면만 넘기며,
@@ -706,6 +800,7 @@ public partial class MainWindow
     private void ClearAllAreas(bool clearNative)
     {
         InvalidateSpacingReview();
+        ResetRouteApproximationStats();
         try { Bridge.ClearSpacingMarkers(); } catch (Exception) { }
         ExitExclusionSketch();
         ResetCircuitEditingUi();

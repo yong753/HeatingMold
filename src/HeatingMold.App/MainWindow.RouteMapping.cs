@@ -15,46 +15,110 @@ public partial class MainWindow
         WorkingArea area, WorkingSideDefinition side,
         CommittedRouteContext context = null)
     {
+        Func<Vec2, SurfaceQueryResult> query = BuildSurfaceQueryDelegate(area, side, context);
+        return uv =>
+        {
+            SurfaceQueryResult result = query(uv);
+            return result.IsHit ? result.Sample : null;
+        };
+    }
+
+    /// <summary>
+    /// 위 규칙의 typed 판정. Miss(표면 없음)와 Failure(거부)를 구분해 제한 근사 정책이
+    /// 문자열/마지막 오류 공유 없이 판정할 수 있게 한다.
+    /// </summary>
+    /// <remarks>
+    /// 과거 nullable 규칙과 같은 순서·좌표를 보존한다: 선택 면 → 전역 표면 → 정확 경계 중
+    /// <b>유효한 Hit가 나오면 즉시 그 결과</b>를 쓴다. 앞 단계의 하드 상태(예: 선택 면 조회의
+    /// GeometryFailure)는 뒤 단계의 Hit를 막지 않는다. Hit가 전혀 없을 때만 하드 상태를
+    /// Failure로 판정하고, 순수 Miss(선택 면/전역 표면 Miss + 경계 NoIntersection)만 근사
+    /// 허용 Miss로 남긴다(<see cref="SurfaceProbePolicy"/>).
+    /// </remarks>
+    private Func<Vec2, SurfaceQueryResult> BuildSurfaceQueryDelegate(
+        WorkingArea area, WorkingSideDefinition side,
+        CommittedRouteContext context = null)
+    {
         context ??= CommittedRouteContext.Capture(area);
         int[] faces = context.FaceIds;
         long id = side.Id.Value, revision = side.Revision.Value;
         return uv =>
         {
-            var direct = Bridge.MapWorkingPointOntoFaces(id, revision, faces, uv.X, uv.Y);
-            if (direct != null && direct.Status == WorkingQueryStatus.Hit && direct.Point != null)
-                return new SurfaceMappedSample(uv,
-                    new Vec3(direct.Point[0], direct.Point[1], direct.Point[2]), direct.FaceId);
+            if (!double.IsFinite(uv.X) || !double.IsFinite(uv.Y))
+                return SurfaceQueryResult.FromFailure("작업평면 좌표가 유한하지 않습니다");
 
-            var global = Bridge.QueryWorkingSurface(id, revision, uv.X, uv.Y);
-            if (global != null &&
-                (global.Status == WorkingQueryStatus.Hit || global.Status == WorkingQueryStatus.Tangent) &&
-                global.Point != null)
-                return new SurfaceMappedSample(uv,
-                    new Vec3(global.Point[0], global.Point[1], global.Point[2]), global.FaceId);
+            SurfaceProbeOutcome selected = ProbeSelectedFace(uv, id, revision, faces);
+            if (selected.State == SurfaceCandidateState.Hit)
+                return SurfaceProbePolicy.Resolve(selected, SurfaceProbePolicy.NotRun, SurfaceProbePolicy.NotRun);
 
-            // 선택 영역의 정확한 경계 위 점은 네이티브 면 교차가 경계 시작점을 Miss로
-            // 돌려줄 수 있다. 이때만 원본 경계 provenance의 parameter로 3D를 평가한다.
-            // 내부의 표면 틈을 최근접 점으로 대체하는 경로가 아니다.
-            string onBoundaryText = context.Boundary == null ? "없음" : "없음";
-            if (context.Boundary != null)
-            {
-                ExitBoundaryResolution onBoundary = context.Boundary.Project(uv, ExitBoundaryConstraint.Tolerance);
-                if (onBoundary.Succeeded &&
-                    onBoundary.Point.Value.Point.DistanceTo(uv) <= ExitBoundaryConstraint.Tolerance &&
-                    TryEvaluateExitSample(side, context, onBoundary.Point, uv,
-                        out SurfaceMappedSample boundarySample, out string boundaryFailure))
-                    return boundarySample;
-                onBoundaryText = onBoundary.Succeeded
-                    ? "투영점 거리 " + onBoundary.Point.Value.Point.DistanceTo(uv).ToString("0.####") + "mm"
-                    : onBoundary.Failure.ToString();
-            }
-            _lastSurfaceMissDetail = "ctx=" + id + "/" + revision + " faces=" + faces.Length
-                + " uv=(" + uv.X.ToString("R") + "," + uv.Y.ToString("R") + ")"
-                + " 선택면=" + (direct?.Status.ToString() ?? "null")
-                + " 전역=" + (global?.Status.ToString() ?? "null")
-                + " 경계=" + onBoundaryText;
-            return null;
+            SurfaceProbeOutcome global = ProbeGlobalSurface(uv, id, revision);
+            if (global.State == SurfaceCandidateState.Hit)
+                return SurfaceProbePolicy.Resolve(selected, global, SurfaceProbePolicy.NotRun);
+
+            SurfaceProbeOutcome boundary = ProbeExactBoundary(uv, side, context);
+            SurfaceQueryResult result = SurfaceProbePolicy.Resolve(selected, global, boundary);
+            if (result.Outcome == SurfaceQueryOutcome.Miss)
+                _lastSurfaceMissDetail = "ctx=" + id + "/" + revision + " faces=" + faces.Length
+                    + " uv=(" + uv.X.ToString("R") + "," + uv.Y.ToString("R") + ")"
+                    + " " + SurfaceProbePolicy.Describe("선택면", selected)
+                    + " " + SurfaceProbePolicy.Describe("전역", global)
+                    + " " + SurfaceProbePolicy.Describe("경계", boundary);
+            return result;
         };
+    }
+
+    private static SurfaceProbeOutcome ProbeSelectedFace(Vec2 uv, long id, long revision, int[] faces)
+    {
+        var direct = Bridge.MapWorkingPointOntoFaces(id, revision, faces, uv.X, uv.Y);
+        if (direct == null) return SurfaceProbeOutcome.Hard("조회 결과 없음");
+        if (direct.Status == WorkingQueryStatus.Miss) return SurfaceProbeOutcome.Miss("Miss");
+        if (direct.Status != WorkingQueryStatus.Hit)
+            return SurfaceProbeOutcome.Hard(direct.Status.ToString());
+        if (direct.Point == null || direct.Point.Length < 3)
+            return SurfaceProbeOutcome.Hard("Hit인데 3D 점이 없습니다");
+        // 여기서 값을 대체·보정하지 않는다. malformed Hit(비유한 좌표·지지 Face 없음·데이텀
+        // 불일치)는 공통 factory가 Hard로 분류하므로, 다음 후보(전역 표면 → 정확 경계)를 계속
+        // 시도하고 유효 후보가 하나도 없을 때만 Failure가 된다(단순 Miss/근사로 낮추지 않는다).
+        return SurfaceProbeOutcome.FromHit(new SurfaceMappedSample(uv,
+            new Vec3(direct.Point[0], direct.Point[1], direct.Point[2]), direct.FaceId), uv);
+    }
+
+    private static SurfaceProbeOutcome ProbeGlobalSurface(Vec2 uv, long id, long revision)
+    {
+        var global = Bridge.QueryWorkingSurface(id, revision, uv.X, uv.Y);
+        if (global == null) return SurfaceProbeOutcome.Hard("조회 결과 없음");
+        if (global.Status == WorkingQueryStatus.Miss) return SurfaceProbeOutcome.Miss("Miss");
+        if (global.Status != WorkingQueryStatus.Hit && global.Status != WorkingQueryStatus.Tangent)
+            return SurfaceProbeOutcome.Hard(global.Status.ToString());
+        if (global.Point == null || global.Point.Length < 3)
+            return SurfaceProbeOutcome.Hard("Hit인데 3D 점이 없습니다");
+        return SurfaceProbeOutcome.FromHit(new SurfaceMappedSample(uv,
+            new Vec3(global.Point[0], global.Point[1], global.Point[2]), global.FaceId), uv);
+    }
+
+    /// <summary>
+    /// 선택 영역의 정확한 경계 위 점은 네이티브 면 교차가 경계 시작점을 Miss로 돌려줄 수 있다.
+    /// 이때만 원본 경계 provenance의 parameter로 3D를 평가한다. 내부의 표면 틈을 최근접 점으로
+    /// 대체하는 경로가 아니다. 경계 NoIntersection만 Miss로 보고, 모호/오래된/기하 오류는
+    /// 하드 실패로 남긴다.
+    /// </summary>
+    private static SurfaceProbeOutcome ProbeExactBoundary(Vec2 uv, WorkingSideDefinition side,
+        CommittedRouteContext context)
+    {
+        if (context.Boundary == null) return SurfaceProbeOutcome.Miss("경계 없음");
+        ExitBoundaryResolution onBoundary = context.Boundary.Project(uv, ExitBoundaryConstraint.Tolerance);
+        if (onBoundary.Succeeded)
+        {
+            double distance = onBoundary.Point.Value.Point.DistanceTo(uv);
+            if (distance > ExitBoundaryConstraint.Tolerance)
+                return SurfaceProbeOutcome.Miss("투영점 거리 " + distance.ToString("0.####") + "mm");
+            return TryEvaluateExitSample(side, context, onBoundary.Point, uv,
+                    out SurfaceMappedSample boundarySample, out string boundaryFailure)
+                ? SurfaceProbeOutcome.FromHit(boundarySample, uv)
+                : SurfaceProbeOutcome.Hard(boundaryFailure);
+        }
+        return onBoundary.Failure == ExitBoundaryFailureReason.NoIntersection
+            ? SurfaceProbeOutcome.Miss(nameof(ExitBoundaryFailureReason.NoIntersection))
+            : SurfaceProbeOutcome.Hard(onBoundary.Failure?.ToString() ?? "알 수 없는 경계 실패");
     }
 
     /// <summary>마지막 표면 매핑 실패 지점의 진단 문자열. 오류 메시지에만 쓰고 판정에는 쓰지 않는다.</summary>

@@ -513,7 +513,6 @@ public partial class MainWindow
             candidate = route.ToResult();
         }
 
-        var hit = BuildSurfaceMapDelegate(area, side, context: context);
         ValidatedRouteSampleKeyPrefix sampleKeyPrefix = BuildValidatedRouteSampleKeyPrefix(area, side, context);
         foreach (int pieceIndex in group.Occurrences.Select(o => o.Piece).Distinct())
         {
@@ -521,14 +520,21 @@ public partial class MainWindow
             if (piece.Points.Count < 2) continue;
             if (!PrepareDisplayedEditPiece(area, side, context, group, pieceIndex, piece.Points, anchorSample,
                     out IReadOnlyList<Vec2> displayPoints, out var overrides, out failure)) return false;
-            bool ok = SurfacePathMapper.TryMapRouteStrict(displayPoints, hit, overrides, out var samples,
-                out string mapFailure, RouteSurfaceValidationPolicy.GapSpacing);
-            if (!ok) { failure = "모델 표면 매핑 실패 — " + mapFailure; return false; }
+            // 생성과 같은 표본 준비 규칙: strict 성공 → 평면 턴 예외 → 제한 근사 연결.
+            // 근사/턴 예외 표본은 스테이징 캐시로 넘기지 않는다.
+            if (!TryPreparePieceSamples(area, side, context, piece, displayPoints, overrides,
+                    out List<SurfaceMappedSample> samples, out RouteSampleSource sampleSource,
+                    out _, out string mapFailure, out string sampleDetail))
+            {
+                failure = "모델 표면 매핑 실패 — " + mapFailure + " · " + sampleDetail;
+                return false;
+            }
             mappedPieces[pieceIndex] = samples;
             // 스테이징과 같은 좌표/override/정책일 때만 적중하는 키로 보관한다.
             // 인출점 보정으로 표시 좌표가 달라진 조각은 키가 달라져 재사용되지 않는다.
-            preparedSamples[sampleKeyPrefix.Build(piece.Kind, piece.LaneIndex, displayPoints, overrides)] =
-                samples.ToArray();
+            if (RouteSampleCachePolicy.CanCache(sampleSource))
+                preparedSamples[sampleKeyPrefix.Build(piece.Kind, piece.LaneIndex, displayPoints, overrides)] =
+                    samples.ToArray();
         }
         return true;
     }
@@ -657,7 +663,7 @@ public partial class MainWindow
             _vertexGroups = BuildVertexGroups(area);
             UpdateCircuitTable();
             StatusText.Text = string.Format("{0} 영역 · 경로 꼭지점 수정 — 길이 {1:F1}mm",
-                area.Name, GetCircuitLengths(area).Sum(c => c.HeatingLengthMm));
+                area.Name, GetCircuitLengths(area).Sum(c => c.HeatingLengthMm)) + ApproximationNote();
             UpdateActionStates();
         }
         catch (Exception ex) { ErrorReporter.ShowWarning("편집은 확정되었으나 화면 갱신에 실패했습니다", ex); }

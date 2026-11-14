@@ -258,10 +258,18 @@ public static class SurfacePathMapper
             if (gapSpacing <= 0) return true;
             double length = a.DistanceTo(b);
             if (length <= gapSpacing) return true;
-            int steps = (int)Math.Ceiling(length / gapSpacing);
-            for (int step = 1; step < steps; step++)
+            // 정수 캐스팅 전에 단계 수의 유한성·범위·남은 표본 예산을 확인한다. 넘치는
+            // 격자는 표본 검사를 조용히 생략(=성공)하지 않고 명시적으로 실패한다.
+            double steps = Math.Ceiling(length / gapSpacing);
+            if (!double.IsFinite(steps) || steps > int.MaxValue - 1 || steps - 1 > maxProbes - probes)
             {
-                Vec2 uv = a + (b - a) * (step / (double)steps);
+                error = $"Surface mapping gap probes require {steps} steps and exceed the {maxProbes}-probe limit.";
+                return false;
+            }
+            int count = (int)steps;
+            for (int step = 1; step < count; step++)
+            {
+                Vec2 uv = a + (b - a) * (step / (double)count);
                 if (!Probe(uv, out _)) return false;
             }
             return true;
