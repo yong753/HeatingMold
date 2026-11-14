@@ -481,6 +481,21 @@ public partial class MainWindow
     private string FaceTypesText(WorkingArea area) =>
         string.Join(", ", SortedFaceIds(area).Select(id => "Face " + id + "=" + Bridge.GetFaceType(id)));
 
+    /// <summary>실패한 조각의 2D 좌표를 오류 메시지용으로 요약한다. 판정에는 쓰지 않는다.</summary>
+    private static string DescribePiecePoints(SerpentineRoutePiece piece)
+    {
+        int shown = Math.Min(piece.Points.Count, 4);
+        var text = new System.Text.StringBuilder();
+        for (int i = 0; i < shown; i++)
+        {
+            if (i > 0) text.Append(" → ");
+            text.Append('(').Append(piece.Points[i].X.ToString("0.####")).Append(',')
+                .Append(piece.Points[i].Y.ToString("0.####")).Append(')');
+        }
+        if (piece.Points.Count > shown) text.Append(" … +").Append(piece.Points.Count - shown);
+        return text.ToString();
+    }
+
     /// <summary>
     /// 곡면 영역의 조각 하나를 데이텀 점 단위로 매핑해 3D 폴리라인으로 스테이징한다.
     /// 2D 프레임 → 3D 평면 되돌리기와 BRepProj 재투영을 모두 쓰지 않는다.
@@ -511,17 +526,32 @@ public partial class MainWindow
         IReadOnlyList<SurfaceMappedSample> samples = cachedSamples;
         if (!cached)
         {
+            _lastSurfaceMissDetail = string.Empty;
             var hit = BuildSurfaceMapDelegate(area, side, context: mappingContext);
             if (!SurfacePathMapper.TryMapRouteStrict(piece.Points, hit, vertexOverrides,
                     out List<SurfaceMappedSample> mapped, out string failure,
                     gapSpacing: RouteSurfaceValidationPolicy.GapSpacing))
-                throw new InvalidOperationException(
-                    "영역 " + area.Name + " 경로 조각 " + (index + 1) + "/" + count + " (" + piece.Kind + ") 매핑 실패 — "
-                    + failure + " [" + FaceTypesText(area) + "]");
-            samples = mapped.ToArray();
-            // 성공 전에는 후보 사전만 쓴다. 실패한 편집/생성이 확정 캐시를 바꾸지 않는다.
-            if (key != null && validatedSamples != null)
-                validatedSamples[key] = (SurfaceMappedSample[])samples;
+            {
+                // 평면 턴 외곽 돌출 예외(사용자 확정 2026-11-14). 원래 kind가
+                // TurnConnector일 때만, 두 끝점이 같은 원본 평면 위의 실제 3D 점이고
+                // 원본 CAD 외곽까지의 돌출이 전 구간 5 mm 이하임이 증명될 때만 승인한다.
+                // strict 표본이 아니므로 검증 표본 캐시에는 넣지 않는다.
+                if (!TryBuildPlanarExteriorTurnSamples(area, side, mappingContext, piece,
+                        out List<SurfaceMappedSample> turnSamples, out string turnDetail))
+                    throw new InvalidOperationException(
+                        "영역 " + area.Name + " 경로 조각 " + (index + 1) + "/" + count + " (" + piece.Kind + ") 매핑 실패 — "
+                        + failure + " · 2D " + DescribePiecePoints(piece)
+                        + (_lastSurfaceMissDetail.Length > 0 ? " · 실패 지점 " + _lastSurfaceMissDetail : string.Empty)
+                        + " · 평면 턴 예외: " + turnDetail + " [" + FaceTypesText(area) + "]");
+                samples = turnSamples;
+            }
+            else
+            {
+                samples = mapped.ToArray();
+                // 성공 전에는 후보 사전만 쓴다. 실패한 편집/생성이 확정 캐시를 바꾸지 않는다.
+                if (key != null && validatedSamples != null)
+                    validatedSamples[key] = (SurfaceMappedSample[])samples;
+            }
         }
 
         var xyz = new double[samples.Count * 3];
@@ -540,6 +570,52 @@ public partial class MainWindow
                 "영역 " + area.Name + " 경로 조각 " + (index + 1) + "/" + count + " (" + piece.Kind + ") 3D 스테이징 실패 ["
                 + FaceTypesText(area) + " | " + Bridge.GetWorkingStageDiagnostic() + "]");
         return shown;
+    }
+
+    /// <summary>
+    /// 평면 턴 외곽 돌출 예외 표본을 만든다. 두 끝점의 실제 3D 점과 지지 면만 넘기며,
+    /// 승인 근거(정책·원본 경계·전 구간 상계)는 이 호출 시점에 다시 계산한다.
+    /// </summary>
+    private bool TryBuildPlanarExteriorTurnSamples(WorkingArea area, WorkingSideDefinition side,
+        CommittedRouteContext context, SerpentineRoutePiece piece,
+        out List<SurfaceMappedSample> samples, out string detail)
+    {
+        samples = null;
+        if (!PlanarExteriorTurnSupport.TryBuild(area, side, context, piece,
+                out PlanarExteriorTurnSupport.Evidence evidence,
+                out PlanarExteriorTurnStatus status, out string reason))
+        {
+            detail = status + ": " + reason;
+            return false;
+        }
+
+        samples = new List<SurfaceMappedSample>(2)
+        {
+            new(evidence.Start, evidence.Start3D, evidence.StartFaceId),
+            new(evidence.End, evidence.End3D, evidence.EndFaceId),
+        };
+        ++_planarTurnExceptionCount;
+        if (evidence.CertifiedUpperBoundMm > _planarTurnMaxProtrusionMm)
+            _planarTurnMaxProtrusionMm = evidence.CertifiedUpperBoundMm;
+        detail = "허용 · 전 구간 상계 " + evidence.CertifiedUpperBoundMm.ToString("0.####") + " mm / 한도 "
+            + PlanarExteriorTurnPolicy.MaxExteriorProtrusionMm.ToString("0.###") + " mm · 표본 "
+            + evidence.ProbeCount + "회 · 원본 경계 " + evidence.BoundaryEdgeCount + "개";
+        return true;
+    }
+
+    private int _planarTurnExceptionCount;
+    private double _planarTurnMaxProtrusionMm;
+
+    /// <summary>마지막 생성/편집에서 평면 턴 예외로 승인한 조각 수(진단용).</summary>
+    internal int RoutePlanarTurnExceptionCount => _planarTurnExceptionCount;
+
+    /// <summary>마지막 생성/편집에서 승인한 평면 턴의 최대 전 구간 상계(mm, 진단용).</summary>
+    internal double RoutePlanarTurnMaxProtrusionMm => _planarTurnMaxProtrusionMm;
+
+    internal void ResetPlanarTurnExceptionStats()
+    {
+        _planarTurnExceptionCount = 0;
+        _planarTurnMaxProtrusionMm = 0;
     }
 
     /// <summary>네이티브가 색/선종류를 고르는 데 쓰는 kind 문자열. 제외 모드의 턴·고정 연결선은

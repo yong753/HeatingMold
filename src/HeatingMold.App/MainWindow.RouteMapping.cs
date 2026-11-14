@@ -35,18 +35,30 @@ public partial class MainWindow
             // 선택 영역의 정확한 경계 위 점은 네이티브 면 교차가 경계 시작점을 Miss로
             // 돌려줄 수 있다. 이때만 원본 경계 provenance의 parameter로 3D를 평가한다.
             // 내부의 표면 틈을 최근접 점으로 대체하는 경로가 아니다.
+            string onBoundaryText = context.Boundary == null ? "없음" : "없음";
             if (context.Boundary != null)
             {
                 ExitBoundaryResolution onBoundary = context.Boundary.Project(uv, ExitBoundaryConstraint.Tolerance);
                 if (onBoundary.Succeeded &&
                     onBoundary.Point.Value.Point.DistanceTo(uv) <= ExitBoundaryConstraint.Tolerance &&
                     TryEvaluateExitSample(side, context, onBoundary.Point, uv,
-                        out SurfaceMappedSample boundarySample, out _))
+                        out SurfaceMappedSample boundarySample, out string boundaryFailure))
                     return boundarySample;
+                onBoundaryText = onBoundary.Succeeded
+                    ? "투영점 거리 " + onBoundary.Point.Value.Point.DistanceTo(uv).ToString("0.####") + "mm"
+                    : onBoundary.Failure.ToString();
             }
+            _lastSurfaceMissDetail = "ctx=" + id + "/" + revision + " faces=" + faces.Length
+                + " uv=(" + uv.X.ToString("R") + "," + uv.Y.ToString("R") + ")"
+                + " 선택면=" + (direct?.Status.ToString() ?? "null")
+                + " 전역=" + (global?.Status.ToString() ?? "null")
+                + " 경계=" + onBoundaryText;
             return null;
         };
     }
+
+    /// <summary>마지막 표면 매핑 실패 지점의 진단 문자열. 오류 메시지에만 쓰고 판정에는 쓰지 않는다.</summary>
+    private string _lastSurfaceMissDetail = string.Empty;
 
     /// <summary>인출점 이동 확정/미리보기에서 해당 꼭지점만 대체할 표본을 만든다.</summary>
     private SurfaceMappedSample? BuildExitVertexOverride(

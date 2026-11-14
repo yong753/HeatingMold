@@ -615,6 +615,19 @@ public partial class MainWindow
                 }
 
                 string kind = ResolveChainKind(chain, area, i);
+                if (points.Count == 2 && kind == nameof(SerpentineRoutePieceKind.TurnConnector) &&
+                    area.Frame != null &&
+                    !PlanarExteriorTurnSupport.TryCheckRestoredTurn(
+                        area, context.Id, context.Revision,
+                        area.FaceIdSet.OrderBy(faceId => faceId).ToArray(),
+                        area.Frame.Project(new Vec3(points[0].X, points[0].Y, points[0].Z)),
+                        area.Frame.Project(new Vec3(points[1].X, points[1].Y, points[1].Z)),
+                        out string turnDetail))
+                {
+                    throw new InvalidOperationException(
+                        "작업영역 " + area.Name + "의 턴 연결선이 평면 외곽 예외로 성립하지 않습니다 — " +
+                        turnDetail);
+                }
                 int stageId = nextStageId--;
                 if (stageId >= 0) throw new InvalidOperationException("스테이징 ID 공간이 소진되었습니다.");
                 RoutePieceResult staged = Bridge.StageSurfaceMappedRoutePieceWithFaces(
