@@ -4,6 +4,8 @@
 - 상태: **보관용 / 현재 미사용** — 당장 적용하지 않음. 착수 시점에 최신 브랜치 상태로 재확인 필요.
 - 기준 브랜치: `feature/phase1-curved-surface-routing` (로컬 `master`는 폐기, 향후 기준으로 사용하지 않음)
 - 문서 성격: 작업 배분·충돌 방지 계획서. 실제 기능 구현·검증 결과 문서가 아님.
+- 문서 정리(2026-11-15): 이 계획이 참조하던 **완료된 곡면 라우팅/working-side 체크포인트 문서는
+  삭제**되었고, 현황은 `docs/CurrentStatus.md`로 통합되었다. 이 계획의 미사용·미승인 상태는 그대로다.
 
 ---
 
@@ -28,7 +30,7 @@
 
 | 구분 | **Agent A — 곡면 경로 견고화 (P1)** | **Agent B — 전기 계산·사양표·DXF (P2)** |
 |---|---|---|
-| 소유 파일 | `src/HeatingMold.App/MainWindow.Areas.cs` (WIP 인계 후), `src/HeatingMold.Core/Geometry/SurfacePathMapper.cs`, `tests/Phase1Curved.Repro/Program.cs` (WIP 인계 후), `tests/HeatingMold.Core.Tests/SurfacePathMapperTests.cs`, `docs/Phase1.CurvedSurfaceRouting.md` | 신규 `src/HeatingMold.Core/Electrical/…` (계산·판정·면적, 순수 C#), 신규 `tests/HeatingMold.Electrical.Tests/`, `src/HeatingMold.Export/DxfExporter.cs`, 신규 `tests/HeatingMold.Export.Tests/` |
+| 소유 파일 | `src/HeatingMold.App/MainWindow.Areas.cs` (WIP 인계 후), `src/HeatingMold.Core/Geometry/SurfacePathMapper.cs`, `tests/Phase1Curved.Repro/Program.cs` (WIP 인계 후), `tests/HeatingMold.Core.Tests/SurfacePathMapperTests.cs`, `docs/Phase1.CurvedSurfaceRouting.md` — 이 중 `tests/Phase1Curved.Repro`와 `docs/Phase1.CurvedSurfaceRouting.md`는 **이후 삭제된 역사 파일/프로젝트이며 현재 자료가 아니다** | 신규 `src/HeatingMold.Core/Electrical/…` (계산·판정·면적, 순수 C#), 신규 `tests/HeatingMold.Electrical.Tests/`, `src/HeatingMold.Export/DxfExporter.cs`, 신규 `tests/HeatingMold.Export.Tests/` |
 | 작업 내용 | seam gap 처리 검증·완성(비단조 제3 면 출현, 전/후면, 갭 fail-closed), 닫힌 곡면·축평행 게이트 실검증, 리드 sag 보정 | FR-3.2 계산 코어(R=r×L, I=V/R, P=V²/R, 허용범위 판정), FR-3.3 면적 산출, 전기 사양표 DTO, DXF에 경로·사양표 반영, 재읽기 회귀 |
 | 완료 기준 | 재현 케이스에서 측정 수치 문서화, 미검증 항목은 "미검증"으로 명시(폴백·게이트를 통과로 주장하지 않음), 평면 영역의 기존 BRepProj 경로 무변경 | 단위 테스트로 계산식·판정 경계 검증, DXF 레이어/폴리라인/치수/TEXT 재읽기 회귀, UI 미연결 상태 명시 |
 
@@ -60,8 +62,10 @@
 
 ## 7. 참고 문서
 
-- `docs/Phase1.CurvedSurfaceRouting.md` — 현재 곡면 라우팅 구현·검증 기록(기준 커밋 f4a5444)
+- `docs/CurrentStatus.md` — 현재 구현·정책·검증·남은 확인의 단일 현황. (아래 곡면 라우팅/체크포인트
+  문서는 이 계획이 미사용 상태로 보관되는 동안 2026-11-15 문서 정리에서 완료 기록으로 삭제되었고,
+  그 내용은 이 현황 문서로 통합되었다. 이 계획 자체의 승인 여부·범위는 바뀌지 않았다.)
 - `docs/PHASE 1 기능 구현 명세서.txt` — 기능 요구 FR-1.1 ~ FR-4.3
 - `docs/PHASE 2 협의 필요사항.txt` — PHASE 2 범위 및 합의 필요 항목
-- `docs/WorkingSide.Checkpoint.md` — 단일 문서/UI 스레드 소유 및 전원 설정 게이트
-- `tests/PowerLead.Regression/README.md` — 전원 리드 관련 현재 체크포인트
+- `docs/CurrentStatus.md` §9 — working-side 단일 스레드 소유·세션 계약(구 `WorkingSide.Checkpoint.md`) 요약
+- `tests/PowerLead.Regression/README.md` — 당시 전원 리드 체크포인트(기능/프로젝트는 이후 삭제됨; 현재 자료 아님)

@@ -1,5 +1,18 @@
 ﻿# HeatingMold project instructions
 
+## 현재 상태와 문서 정리 규칙
+
+- **현재 상태는 `docs/CurrentStatus.md`가 단일 현황이다.** 구현·정책·확인된 검증·실 검증 대기·
+  남은 순서를 그 문서에서 확인한다. 이 AGENTS는 계약·이력의 정본으로 유지한다.
+- 2026-11-15 문서 정리에서 완료된 실행계획/체크포인트/진단기록 8개를 저장소 밖 백업 후
+  삭제했다. 그 문서들을 가리키던 **활성 참조는 `docs/CurrentStatus.md`로 바꿨다.**
+  과거 기록을 역사적으로 언급하는 문장은 삭제 당시 사실 그대로 남아 있을 수 있다.
+- 보존: `docs/ValidationGuard.md`, `docs/VertexEditing.md`, `docs/VisualTest.Scenarios.md`
+  (사용법·스키마), `docs/FixedDirectionProjection.Plan.md`(미구현 계획 + 사용자 직접 수정 상태,
+  **수정 금지**), `AI_PARALLEL_DEVELOPMENT_PLAN.md`(미사용 계획), 요구사항 원본 txt/pdf/메일.
+- **자동 suite 통과(특히 실패 표본을 근사로 통과시키는 경우)를 사용자 실 CAD 해결로 치환하지
+  않는다.** 실 검증 대기 항목은 `docs/CurrentStatus.md` §1·§7·§11에 있다.
+
 ## 응답 언어 (사용자 확정)
 
 - 사용자에게 제공하는 설명, 구현계획, 작업 결과는 한국어로 작성한다.
@@ -456,6 +469,7 @@
 - 검증 2026-11-12 (worktree `route-perf`, HEAD `4b6c929` + 이 변경): 네이티브와 솔루션 Release/x64 빌드 0 errors, Core 테스트 271 통과, App 테스트 195 통과, `tests\WorkingSide.Regression` 전 그룹 통과(vertex edit 29건 — 신규: 픽스처 확정 회로 구성, 후보 표본 재사용 발동). 재사용 계측은 처음에 병합 블록이 대기 사전을 먼저 비워 항상 0으로 보였고, 해제를 finally 한 곳으로 옮겨 실제 발동을 확인했다.
 - `docs\VertexEditing.md`도 현재 구현에 맞췄다: Undo/Redo 설명 제거, `_pendingStageSamples`/`_vertexBaselineSamples`(존재하지 않는 캐시) 설명을 위 재사용 규칙으로 교체, 0.1mm 표현을 정책 값으로 교체.
 - 미검증: 실행 중 앱에서 실제 마우스 드래그의 체감 속도, 지정 프로젝트(`바탕화면\발열몰드 저장테스트\Mold_Solids.json`)의 생성·편집 시간 실측과 개선 배율(시간 계측을 실행하지 않았다. 1mm 변경은 보강 조회 횟수를 약 1/10로 줄이는 부분 최적화일 뿐 전체 10배를 의미하지 않는다), 저장/재열기, 곡면·좁은 영역·sliver 모델에서 1mm 간격의 검출 결과, 커밋 후 표시 경고 동작.
+- **2026-11-15 최신 구분:** 발열경로 정밀도 요구가 "대략적으로 보이면 됨"으로 정정되었고, 그 뒤 사용자 승인으로 표면 미검출 짧은 구간의 **제한 근사 연결**(2D 진행/3D 거리 ≤ 10 mm, 누락 개수 무제한)이 구현되었다. 이 절의 1mm/strict 규칙은 strict API 계약으로 그대로 유지되며, 제품 스테이징은 strict 실패 뒤에만 근사를 적용한다. 아래 "발열경로 제한 근사 연결 구현" 항목과 `docs/CurrentStatus.md`(§2·§3)를 참고한다.
 
 ## STEP 발열영역 색상 (사용자 요구 2026-11-12, 구현 2026-11-12)
 
@@ -509,7 +523,7 @@
   - 외부 전원 접속선 기능 전체: XAML 전원 연결 구역과 `PowerSetupButton`/`PowerCancelButton`/`PowerMigrationHint`, `MainWindow.xaml.cs`의 `PendingLead`/`_pendingLeads`/`_leadLengths`/`_powerEditingLocked`/`CancelPowerSetup`/`SetPowerEditingLock`/`PowerPrompt`/`PowerSetup_Click`/`PowerCancel_Click`/`OnPowerLocation*`/`UpdatePowerLocation`, `OccViewport.PowerLocationMode`/이벤트/100ms preview 타이머, 네이티브 `g_powerLeads`/`ProjectPowerLead`/`ClearPowerLead*`/`ProjectPowerLeadNative`. `WorkingRouteMigrationComplete` 상수와 `_insertionDepth` 필드도 삭제했다. 삽입 깊이 입력 상자와 "깊이 0만 지원" 가드는 일반 생성 경로에 남아 있다.
   - 구형 프로젝트 지원: `ProjectElectricalMigration.cs`와 그 테스트, `TargetPowerText`, `AppliedVoltageText`, `ExitBoundaryKind`/`RegionExitBoundaryKind`/`RegionCadBoundaryKind`, `BoundaryKind`/`RegionBoundaryKind`. `ProjectRestoreNative`의 `importPolicyVersion <= 1` 주축 정렬 분기와 `BeginProjectRestoreCandidate`의 정책 인자를 제거했고, 로드는 정책 2만 받는다.
   - 구형 인가전압 계산: `ElectricalCalculator.Compute`, `PowerSupplySpec`, `ElectricalSpecTableBuilder.Build`(AppliedVoltage), `ElectricalCircuitInput`, `ElectricalCalculationMode`, `ElectricalSpecTable.Supply`/`Mode`/`IsTargetPowerMode`, `ElectricalResult.TargetPowerMode`. Core/DXF 테스트는 `ComputeFromTargetPower`/`BuildFromTargetPower`로 이관했다.
-  - `tests\Phase1Curved.Repro` 전체와 `docs\Phase1.CurvedSurfaceRouting.md`의 실행 안내. `tests\RegionBoundary.Repro`는 현재 원본 edge parameter/방향 검증이므로 유지했다.
+  - `tests\Phase1Curved.Repro` 전체와 `docs\Phase1.CurvedSurfaceRouting.md`의 실행 안내. `tests\RegionBoundary.Repro`는 현재 원본 edge parameter/방향 검증이므로 유지했다. (곡면 라우팅 **기록 문서**도 2026-11-15 문서 정리에서 삭제했다. 재현 **프로젝트** 삭제는 위의 이전(2026-11-12 legacy-cleanup) 정리 이력이다. 현재 구현·한계는 `docs/CurrentStatus.md` §9를 본다.)
   - `AreaSplitter.HardLengthBalanceLimit`/`DescribeImbalance`. 자동 인출점이 없는 경로도 가장 좋은 유효 절단을 확정하고, 유효한 밴드가 없을 때만 실패한다.
 - **중복 2D 산술:** `PlanarMath2D`(App)로 `DistanceToSegment`/`Lerp`/`Dot`/`Cross`/`IsFinite`를 통합했다. `EffectiveRegionBoundary2D`, `SplitRegionBoundary2D`, `SplitRegionContainmentBoundary`가 이 공통 구현을 쓰며, CAD/artificial 바인딩·허용치 정책은 각 호출부가 그대로 소유한다.
 - **시각테스트 의존 제거(2026-11-12):** 다른 세션의 v2 대표 시나리오가 완료되어 `VisualScenario` v1, `pickExit`/`cancelExitPick`, 구형 인출면/앵커 후보(`ComputeCandidates`, `GenerateAnchored*`, `ApplyExitCandidate`, `ApplyAnchorCandidate`, `TrySelectAnchorCandidate`, `SelectedAnchorCandidate`, `AnchorCandidateList`)와 관련 프로젝트 필드를 모두 제거했다. 3차 정리 항목을 참고한다.
@@ -602,7 +616,7 @@
 - 2단계 검증: App 테스트 184 통과. 외곽 5 mm에서 Case1(Ø0.30) 레인 중심거리 5.30 mm, Case2(Ø0.15) 5.15 mm, 동일 입력 재평가 좌표 동일. 실제 모델 2분할은 B-1 4,276.956 mm / B-2 4,465.184 mm, 적용 외곽 19.35 mm·직경 0.15 mm로 저장·재로드 후에도 동일했다. WorkingSide 전 그룹 통과(split boundary 28, fixture 312, working-side 187 등).
 - 3단계 결정(사용자 확정): 자동 인출점의 목표 레인 끝은 자식 외곽 극값이 아니라 그 행의 실제 스캔라인 발열 구간 끝이다. 시작 행은 생성기가 허용하는 첫 구간, 종료 행은 마지막 구간의 해당 측면 끝을 쓴다.
 - 3단계는 같은 날 구현 완료됐다(아래 `## RemainingWork 3단계 정확 행 교차`). 정확 교차 중복 판정은 provenance+선택 parameter, 접선·겹침은 다른 교차가 있어도 즉시 실패, 후보는 측면 유지→목표 구간 끝 최근접→동률 provenance 모호성 실패 순서로 고쳤다.
-- 단계별 검증 정책(사용자 확정 2026-11-13, `docs\RemainingWork.Steps.md` §0.5·§0.6에 기록): 1~6단계의 "통과"는 그 단계의 필수 테스트·통과 기준과 변경 영향 범위 회귀의 충족을 뜻하며, 시각테스트 5개 전체 통과를 뜻하지 않는다. 5개 각 2회 통과는 7·8단계 기준이다. 계약 변경으로 낡은 기대값은 7단계에서 재측정하고, 원인 미확인 실패는 다음 단계로 넘기지 않는다. "로직이 바뀌었다"는 설명만으로 실패를 면제하지 않는다.
+- 단계별 검증 정책(사용자 확정 2026-11-13, 원래 `docs\RemainingWork.Steps.md` §0.5·§0.6에 기록했으나 그 단계 기록은 2026-11-15 문서 정리에서 삭제됨 — 현재는 이 문장과 `docs/CurrentStatus.md`가 정본): 1~6단계의 "통과"는 그 단계의 필수 테스트·통과 기준과 변경 영향 범위 회귀의 충족을 뜻하며, 시각테스트 5개 전체 통과를 뜻하지 않는다. 5개 각 2회 통과는 7·8단계 기준이다. 계약 변경으로 낡은 기대값은 7단계에서 재측정하고, 원인 미확인 실패는 다음 단계로 넘기지 않는다. "로직이 바뀌었다"는 설명만으로 실패를 면제하지 않는다.
 - 미완료/갱신 예정: `e2e-split-safety`의 B-1 기대 4,280.265 mm는 피치 수정 후 실제 4,276.956 mm가 되어 현재 실패한다. 7단계에서 실측값으로 재확정하며 제품 회귀로 되돌리지 않는다.
 
 
@@ -732,3 +746,206 @@
 - **3D 종단은 아직 실패한다(별개 결함, 새로 노출됨).** 같은 프로젝트·같은 인출점으로 간격 2 mm에서 `Generate_Click`을 실행하면 2D는 통과하지만 `영역 A 조각 104/1088 (TurnConnector) 3D 스테이징 실패 — The path leaves the selected surface domain.`로 거부된다. 원래 2D에서 막혀 3D에 도달하지 못했으므로 이전에는 보이지 않던 실패다. TurnConnector 끝점은 차감 전 외곽선 극값이라 이번 변경으로 달라지지 않으므로 회귀가 아니라 기존 한계로 판단하지만, **증명하지는 않았다**. 0.2 mm(5,000조각) 3D 스테이징은 관찰 시간 안에 끝나지 않아 미검증이다.
 - **미구현(계획 대비):** 첫 행을 원본 CAD edge/parameter의 **정확 행 교차**로 재구성하는 단계는 구현하지 않았다. 따라서 첫 행 권위는 Boolean 차감 결과가 아니라 **원본 표본 외곽선**이며, 직선 경계에서는 정확하지만 곡선 경계에서는 표본 chord 수준이다. 시작점 자체는 `ExitBoundaryConstraint.EvaluateSaved`로 원본 CAD parameter에 대해 계속 검증한다.
 - **미검증:** 실제 마우스 클릭, 화면 육안, 새 프로세스 복원, 저장/재열기, DXF/STEP 출력, 분할 영역의 제외 재생성, 다른 제외 배치·곡면 영역.
+
+## 검증 실행 가드 (Validation Guard) — 구현·자동검증 2026-11-15
+
+- **사용자 요구(원문 요지):** "서브에이전트가 검증할 때 프로그램을 연 다음 … 오류가 날 경우 메시지박스가 뜬 다음에 닫힐 때까지 기다리거나 timeout 될 때까지 기다리고 있어. … 이거 어떻게 개선할 수 없어?" + "지금은 내가 직접 닫고있거든". 부모 답: 예상치 못한 모달을 감지하면 오류 기록 후 **해당 검증용 프로세스만** 즉시 실패 종료, 자동 확인 클릭/오류 무시 성공 금지, 일반 제품 사용 영향 없음.
+- **구현 위치(제품 App/네이티브 코드 변경 없음):** `tools\validation\GuardedProcessHost.cs`(실제 감시·판정·수집, `Add-Type` 컴파일), `tools\validation\GuardedProcess.ps1`(`Invoke-GuardedProcess` 함수), `tools\validation\Invoke-GuardedProcess.ps1`(CLI). 문서 `docs\ValidationGuard.md`, `tools\validation\README.md`, 회귀 `tests\ValidationGuard\`.
+- **프로세스 소유 범위:** root를 `CREATE_SUSPENDED`로 만들고 private job object에 assign한 뒤 resume한다. 자식은 job에 자동 포함된다. 창 소속 확인에는 PID를 쓰지만, **종료 범위는 job으로만 제한하며 프로세스 이름으로 전체 종료하지 않는다.** 감시 중에는 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`를 켜서 가드 host가 외부 timeout/Ctrl+C/강제 종료되면 추적 트리도 함께 정리되게 한다. 성공 시에는 **성공 보고서(JSON/TXT) 게시를 kill-on-close가 켜진 상태에서 먼저 끝내고**, 플래그가 여전히 켜져 있는지 재조회한 뒤 **마지막 단계로** 해제·재조회하고 handle을 닫는다. 따라서 보고서 I/O 도중 host가 죽어도 고아 앱이 남지 않는다. detach 실패는 `job-detach` 실패로 처리하고 kill-on-close 재설정을 시도한 뒤 트리를 정리한다. 정리 확인은 **job query가 실제로 빈 목록을 반환했을 때만** 인정하며, `OpenProcess` 실패(access denied/unknown)를 종료로 간주하지 않는다. `trackedProcessIds`(초기 추적 증거)와 `remainingProcessIds`(정리 후 남음/미확인), `cleanupStatus`를 구분해 기록하고 미확인 시 "정리 완료"로 단정하지 않는다.
+- **모달 감지 규칙(200~300ms, 기본 250ms):** 추적 트리 소속 + visible top-level 창 중 ① 표준 `#32770` ② owner가 비활성화된 owned 창 ③ 제목에 `HeatingMold` + `오류`/`경고`/`시작 실패`. 정상 앱 주 창(제목 `HeatingMold`, owner 없음), owner가 활성인 owned 도구 창, IME/툴팁/메뉴/그림자 유틸리티 클래스는 제외한다. 파일/승인 대화상자도 noninteractive 검증에서는 unexpected로 실패하며 **버튼을 자동으로 누르지 않는다.**
+- **본문 수집(전체 상한 하나):** UIA `ValuePattern`/`TextPattern`과 Win32 자식 컨트롤 텍스트 폴백을 **하나의 STA worker**에서 수행하고, 감시 스레드는 전체 수집 시간을 기본 1000ms(`-TextCaptureLimitMs`)만 기다린다. Win32 폴백은 자식마다 남은 시간만큼만 `SendMessageTimeout`을 쓰고 자식 수/텍스트 수에 상한이 있으며, `GetWindowTextLength` 같은 동기 메시지로 무제한 대기하지 않는다. 상한을 넘으면 수집을 중단하고 창 제목만 남긴다. 보고서 본문은 8000자에서 자르고 `bodyLength`에 원래 길이를 남긴다. WPF readonly TextBox는 실제로 UIA에서 전체 본문이 읽혔다.
+- **실패 판정:** `unexpected-dialog`(모달), `timeout`(전체 대기 초과 후 트리 정리), `root-nonzero-exit`(결과 없이 비정상 종료), `early-exit`(결과 없이 정상 종료), `result-exists`(이전 결과 파일 재사용 거부, 시작 전), `job-create`/`job-assign`/`job-limit`/`job-query`/`job-detach`, `launch*`, `invalid-*`, `report-write-failed`. 결과 파일과 모달이 동시에 감지되면 모달 오류를 우선한다. 보고서 쓰기에 실패하면 이미 쓴 JSON을 `status=failed`/`reason=report-write-failed`로 보정하고 검증 트리를 정리하며, 성공으로 처리하지 않는다.
+- **성공의 의미:** 가드 성공은 성공 보고서 게시 완료(또는 결과 없는 프로세스의 exit 0)만 뜻한다. 시나리오 자체의 성공 판정은 `result.json`의 `Status`를 읽는 호출자가 한다. 이 문구를 콘솔/문서에 유지한다.
+- **산출물:** 실행 폴더의 `validation-guard.json` / `validation-guard.txt`(UTF-8, JSON은 BOM 없음)에 제목·클래스·PID·프로세스 경로·owner 제목/비활성·본문/출처/길이/오류·명령줄·시작 시각·`steps.jsonl` 마지막 줄·`trackedProcessIds`·`remainingProcessIds`·`cleanupStatus`·로그를 남긴다. 각 파일은 임시 파일 후 `File.Replace`(기존)/`File.Move`(신규)로 교체하며 **JSON/TXT 두 파일은 하나의 transaction이 아니다.**
+- **`Run.ps1` 연결:** `tests\HeatingMold.VisualTest\Run.ps1`의 `Start-Process` + 300ms polling loop를 이 가드 호출로 교체했다. 기존 계약(시나리오 필수, 빌드/`-NoBuild`, `-AppExe` 패키지 exe, `-ExpectPackaged`, 성공 시 요약 출력과 앱 창 유지)은 그대로다. 가드 실패는 사유/대화상자/마지막 단계/보고서 경로를 출력하고 기존 "결과 없음"과 같은 종료 코드 **3**으로 끝난다. `HeatingMold.Start.exe`가 정상 종료해도 자식 앱은 같은 job에서 계속 감시한다.
+- **PATH 실행 파일:** `-ExePath`에 경로 구분자가 없는 이름(`dotnet`, `cmd`)을 주면 PATH에서 `.exe`만 해석한다. PATH에서 찾은 항목이 `.exe`가 아니면 해석 단계에서 거부한다.
+- **소급 적용 없음(중요):** 새 가드는 자기가 새로 시작한 프로세스 트리만 감시·종료한다. 이미 실행 중이던 앱/다른 검증 프로세스/이미 떠 있는 모달은 감지하지 않으며 종료하지도 않는다. 그런 창은 프로세스 경로·생성 시각·부모 실행 스크립트 같은 소유 근거를 확인한 뒤 별도로 처리해야 한다.
+- **임시 오프스크린 하네스 지침:** `MainWindow`를 직접 만드는 하네스는 ① 이 가드로 실행하거나 ② `MainWindow` 생성 **전에** `ErrorReporter.SuppressDialogs = true`를 설정하고 제품 함수가 반환한 오류/경고를 직접 검사해 실패로 처리해야 한다. 현재 제품 구현에서 `SuppressDialogs`는 `MainWindow.StartVisualTestIfConfigured`(창이 뜬 뒤)에서야 켜지고 `OnVisualTestFinished`에서 이전 값으로 복원되므로, 그 전/후의 예외는 모달이 될 수 있다(2026-11-15 코드 확인).
+- **검증 2026-11-15(자동, 제품/네이티브 빌드 없음):** `tests\ValidationGuard\Run-GuardTests.ps1` **112 PASS / 0 FAIL**. 부모가 승인된 Temp 하위의 새 실행 폴더에서 다시 실행해 EXIT 0과 로그 전체를 직접 확인했다. 포함: 표준 MessageBox `#32770`+Win32 본문, WPF reporter(owner disabled+UIA 본문+한국어 상세), owner 없는 WPF 오류 창, launcher exit 0 후 자식 모달+`trackedProcessIds`/`cleanupStatus=confirmed`, 성공 시 창 유지+`cleanupStatus=not-required`+**보고서 게시 로그가 detach 로그보다 먼저**, timeout 정리·무관 프로세스 보존·빈 job query 확인, owned 도구 창 오탐 없음, 결과 없는 exit 3/exit 0, 이전 결과 거부, 결과+모달 동시(모달 우선), 20,000자 본문 절단, 빈 본문 폴백, 1ms 수집 상한, **300개 Edit 자식 + 메시지 루프 없는 창에서 수집 상한(300ms) 적용 후 감시가 진행되어 10초 이내 실패·정리**(300ms 내 전체 종료를 뜻하지 않음), **`validation-guard.txt`를 디렉터리로 만들어 보고서 쓰기 실패 시 JSON failed 보정·트리 정리·detach 로그 없음**, **PATH 이름 `cmd` 해석**, **가드 host를 별도 프로세스로 띄워 그 프로세스만 강제 종료했을 때 추적 child 종료(kill-on-close)·무관 프로세스 유지**. `Run.ps1` 연결도 stub 앱으로 성공 요약/창 유지, 모달 시 nonzero+보고서 `unexpected-dialog`를 확인했다.
+- **실제 App 7단계 스모크 검증(부모 확인, 2026-11-15):** 제품/네이티브를 빌드하지 않고 기존 App 출력(exe/App.dll/Core.dll/OccBridge.dll)을 승인된 Temp 하위 staged 폴더로 복사했으며 복사 전/후/staged SHA-256이 모두 같았다(제품 코드 무수정). 원본 `e2e-multi-area`의 첫 6개 actions와 기대값을 그대로 임시 복사한 시나리오(암묵 `loadModel` 포함 7 steps)를 `Run.ps1 -NoBuild -AppExe <staged exe> -ModelPath <repo>\resource\Mold_Cover_Trim.step -HoldSeconds 0.1 -TimeoutSeconds 180`으로 실행했다. OCCT/App.Tests 런타임 PATH와 `CSF_OCCTResourcePath`를 명시하고 sewn 환경 변수는 해제했다. 결과는 **EXIT 0, Status/Automation=Completed, 7/7 OK, VisualReview=NotRecorded**, 가드 보고서는 **succeeded / result-written / cleanupStatus=not-required / reportWriteFailed=false**였고 결과 게시 후 실제 앱 main 창이 살아 있었으며 로드된 3개 모듈이 모두 staged 경로였다. staged SHA-256: App `D0F8E301B4AC0C69BF2F86E1A5F1F92E23F2FB4DBDB75A7BC6C92C9E7F6AF5E8`, Core `7439E7210A904F7112474FBD2E0BA75CCC0CD020F749B36A2CE83AAA0049F656`, OccBridge `1EB93388F79D1EF2F3CE505F2D041B07812762A76CDDD396FBDF6BF488D9EE28`. 7단계 기준 결과는 A 60조각/29턴/1회로/18,440.993 mm이다. 테스트 후에는 정확한 경로·생성 시각·process handle 소유를 확인한 **그 스모크 프로세스만** Kill/Wait로 정리했고 사용자 앱은 건드리지 않았다.
+- **미검증:** 실제 제품 오류 모달이 발생하는 경로, 전체 54단계 시나리오/5개 시나리오 전체 실행, **보고서 게시 도중 host 강제 종료**를 직접 재현한 테스트(순서/불변식 로그와 kill-host 테스트로만 확인), `job-detach`/`job-query` 실패를 강제로 만든 재현, 실제 서드파티 UIA provider가 완전히 멈추는 경우(합성 무응답 창으로만 확인), 실제 파일 열기/저장 대화상자, 실제 마우스/화면 육안 판정, 자식이 `CREATE_BREAKAWAY_FROM_JOB`로 job을 떠나는 경우. synthetic 112개 체크와 실제 App 7단계 스모크는 구분해서 해석한다.
+
+## 고정 방향 투영 계획 0~1단계 gate (이번 라운드 수행 범위·2026-11-15)
+
+- **실제 수행 범위:** 이번 라운드는 `docs/FixedDirectionProjection.Plan.md`의 **0단계와 1단계 gate만** 수행했다. 2단계(실패 조각 국소 연속 투영 시제품)와 3단계 이후(준비 packet·캐시·저장·출력·편집·분할)는 **미착수**다. 계획 문서는 수정하지 않았고, **당시 결과 기록은 `docs/FixedDirectionProjection.Gate.md`였으며 그 문서는 2026-11-15 문서 정리에서 삭제**되었다(핵심 결과·한계는 `docs/CurrentStatus.md` §5로 통합). 계획 문서 자체는 미구현 상태로 보존하며, 삭제된 gate 문서를 살아 있는 자료로 안내하지 않는다.
+- **사용자 승인 범위와 역할 구분:** 원사용자 승인은 계획 전체의 **조건부 실행**이며, 선행 gate 조건을 충족하는 경우 **7단계의 실제 영역 전체 검증까지** 포함한다. 8단계 후속 제품화는 별도 승인이다. 부모가 이번 라운드에서 Flash에게 위임한 범위(0~1단계)는 사용자 전체 승인 범위와 별개다. **0~1단계만 승인된 것이 아니다.**
+- **gate 불충족의 의미:** gate 불충족 시 2단계 이후 **구현** 중단은 유지하지만, 이는 미해결 문제 조사 전체의 종료나 해결 완료를 뜻하지 않는다. 2026-11-15 사용자 정정에 따라 **기존 원본/공차 불변 조건 안에서 원인 추적을 계속**하며, 근거 없는 gate 우회/자동 메우기는 금지한다.
+- **gate 판정:** 이번 진단에서 유효한 원본 면 교차(trim IN/ON)를 확보하지 못했다 → 계획의 선행 1단계 gate 조건 불충족 → 2단계 미착수. "실제 제조상 틈", "CAD 모델 invalid", "조회 solver 결함 아님" 같은 배타적 단정은 하지 않는다.
+- **제품 기본 표면 조회는 원본 `g_shape`/`g_faces`다.** 계산용 1 mm 재봉 사본은 **시험 전용 opt-in**이며, 환경변수 `HEATINGMOLD_USE_CALC_SEWN_COPY` 값이 **정확히 ASCII `1` 한 글자**일 때만 켜진다(미설정/빈 값/`0`/`true`/`false`/`off`/`2`/`11`/공백 포함/버퍼보다 긴 값은 모두 false). 이 값은 **모델을 (재)로드할 때만** 읽으므로, 이미 활성화된 작업 컨텍스트의 조회 대상을 바꾸지 않는다.
+- **진단은 로드 시점 스냅샷이다.** `Bridge.GetCalcSewnSurfaceQueryDiagnostic()`은 `requested=<0|1> active=<sewn|original> faces=<n>/<m> modifiedFaces=… modifiedEdgeOccurrences=… reason=…`를 로드 시점 값으로 보고한다(환경변수만 바꿔도 `requested`/`active`가 어긋나지 않는다). 재봉 실패로 원본에 폴백하면 `active=original`이고 면 수는 실제 원본 수(80/80)를 보고한다. 이 문자열은 표시·시험 assert용이며 **제품 분기 근거가 아니다**(판정은 `IsCalcSewnSurfaceQueryActive()` 같은 상태값과 typed 결과로 한다).
+- **문서 1단계 대상 실패 재현(측정):** 기본 예제(`resource\Mold_Cover_Trim.step`, 원본 sha256 `8CB03405…FCED`, 실행 후 불변) + 저장 프레임으로 0.2 mm 생성 시 2,500레인 / 5,000조각이고, zero-based 536(1-based 537) `HeatingRun` lane 268 조각의 적응 표본 uv `(-489.81391714892175, -32.960668248954725)`에서 선택 면 조회와 전역 조회가 모두 Miss, 정확 경계 폴백은 NoIntersection이다. `gapSpacing` 0과 1 mm 모두 같은 표본에서 실패하며 0.1 mm 등분 1,105표본에서는 이상이 없다. 실패 시 영역 B는 472조각/`80189.26162223217` mm로 보존되고 A는 게시되지 않는다(부분 성공 없음).
+- **원본 모델 직접 조사(측정):** 제품과 같은 `IntCurvesFace_ShapeIntersector`로 선택 59면·전체 80면 모두 hit 0. `GeomAPI_IntCS`(원본 untrimmed surface, 원본 location 적용) 그룹별 집계는 **선택 59면과 전체 80면을 분리**해 계산했다: 선택 59면 faces 59 / nullSurface 0 / done 59 / notDone 0 / 광선 내 점 24 / 광선 밖 6 / IN 0 / ON 0 / OUT 24 / UNKNOWN 0 / overlapped 0, 전체 80면 faces 80 / nullSurface 0 / done 80 / notDone 0 / 광선 내 점 33 / 광선 밖 7 / IN 0 / ON 0 / OUT 33 / UNKNOWN 0 / overlapped 0. face 57과 face 58은 각각 `IsDone=1`, `NbPoints=0`, `NbSegments=0`이다. 선택 그룹 통계를 "원본 모델 모든 면"으로 일반화하지 않는다.
+- **해석 한계(중요):** 실패 광선은 위상적으로 **같은 edge를 공유**하는 두 BSpline patch(face 57/58) 사이로 지나간다. 그 edge의 기록 tolerance는 `0.0002640079095307815` mm, vertex tolerance는 `0.0098711376547345152` / `0.0024373442180428313` mm이고, 두 면 pcurve를 같은 매개변수에서 3D로 평가한 **2,000 등분 표본** 차이는 max `0.00026400519175864238`, mean `0.00012996879147971838` mm다(표본 측정값이며 certified maximum이 아니다). OCCT 7.9.3 `BRepCheck_Analyzer.hxx` 143~146행의 유효성 계약은 edge 3D 곡선과 각 면 pcurve 편차가 edge tolerance 이하이면 되므로, **이 표본 차이만으로 CAD 모델 invalid나 물리적 구멍을 확정할 수 없다.** `GeomAPI_IntCS::IsDone`은 계산 완료만 뜻하고 광선 구간 전체의 비피복을 증명하지 않는다. 공유 edge tolerance를 근거로 tolerance 이내를 연결하는 정책은 **채택하지 않았다**(계획 §2·§7의 공차 기반 메우기 금지 유지).
+- **재봉 사본 모드의 `GeometryFailure`:** 재봉은 9개 면(17, 33, 34, 45, 46, 57, 61, 62, 70)을 새 TShape로 교체하고(`modifiedFaces=9`, `modifiedEdgeOccurrences=0`), 그 compound에서는 위 실패 대역 6개 지점에서 `IntCurvesFace_ShapeIntersector::Perform`이 메시지 없는 `Standard_Failure`를 던진다. 제품의 `catch (Standard_Failure&)`가 이를 `GeometryFailure`로 변환한다. 따라서 계획 문서에 기록된 `GeometryFailure` 6개는 원본 모델 상태가 아니라 재봉 사본에서 생긴 커널 예외이며, **원본 모드에서는 같은 6점이 정상 Hit(face 57)**이다. 실패 uv 자체는 두 모드 모두 Miss로 동일하다.
+- **2 mm 대조(측정):** 같은 인출점에서 외곽 간격만 2.0 mm로 실행하면 2D 1,088조각/544레인, 3D 확정 1,088조각 / `227149.59715059225` mm / 1회로 / 543턴, 평면 턴 예외 1건(인증 상계 `0.17371753663556924` mm)으로 성공하고 영역 B(472조각)는 보존된다. 0.2 mm는 위 실패로 A가 게시되지 않고 B만 보존된다 — **0.2 mm 전체가 해결되었다는 기록이 아니다.**
+- **추가한 회귀:** `tests\WorkingSide.Regression\SurfaceQueryModeChecks.cs`(70검사). opt-in 값 11종의 true/false, 원본 모드 실패 uv의 선택/전역 Miss, u±0.001의 Hit 58/57, 밴드 6점의 원본 Hit와 재봉 모드 GeometryFailure, 대조 v=-32.952의 Hit 61, 두 모드의 같은 datum 3D점·지지면 동일, `IsWorkingPointVisible` 동일(같은 intersector 공유), **환경변수만 바꾼 상태에서 active·진단 스냅샷·조회 결과가 불변**이고 재로드에서만 전환됨을 확인한다.
+- **검증(2026-11-15, 수정 후·새 DLL):** Core 테스트 269 통과, App 테스트 207 통과, `tests\WorkingSide.Regression` EXIT=0·그룹 실패 0 — sidebar 31, area highlight 30, direct exit 19, vertex edit 32, split boundary 28, remaining fixture 340, electrical 3, pattern state 48, geometry rollback 63, support-face 7, surface-query 70, project load 20, project load exclusion 51, working-side 189. 네이티브는 `/p:OutDir=<repo>\x64\Release\` 절대 경로로 빌드하고, 관리 빌드 뒤 새 `OccBridge.dll`을 테스트·회귀 실행 폴더로 다시 복사한 다음 실행했다. 네이티브 바이너리는 같은 소스 `/t:Rebuild`에서도 PE 타임스탬프 때문에 해시가 달라지므로, DLL 해시는 **해당 실행이 실제로 로드한 산출물 식별자**로만 쓴다.
+- **부모 독립 재실행(2026-11-15, 제품·네이티브 빌드 없음):** 부모가 최종 `tests\WorkingSide.Regression\bin\Release\net8.0-windows\WorkingSide.Regression.exe`를 인자 `x64\WorkingSideRegression`으로, 새 ValidationGuard를 통해 직접 실행했다(OCCT·App.Tests 런타임 PATH와 `CSF_OCCTResourcePath` 명시, 재봉 opt-in 환경변수 미설정). 가드 상태는 `succeeded` / `reason=completed` / `rootExitCode=0` / `rootExited=true` / `reportWriteFailed=false`이고 대화상자는 없었다. 전체 EXIT 0, 그룹 실패 0, FAIL 행 0, 신규 surface-query 70건 모두 PASS.
+  - 실행 파일·App·Core·native 등 5개 파일의 SHA-256이 실행 전/후 동일했고, 로드된 bridge는 저장소 `x64\Release\OccBridge.dll`과 같은 해시다. `COREHOST_TRACE`로 App/Core/native가 회귀 exe 옆 경로에서 해석됨을 확인했다(종료 후 모듈 열거 방식이 아니다). 해시: App `7AB6BE234EFE75505526A97E691861B23EF357FCE5152552B5959BD06F4CBA3E`(615,936 B), Core `0604D3E9606B7011AB861C4582948B3624E0A1233A1ADE089F7C8117CDB90910`(232,448 B), OccBridge `680E85996E4F42C878D73FC422AC362BF324051334F4E77BF3689C37466B5326`(4,618,752 B). 이 값들은 **실행 산출물 식별자**이며 소스 지문이 아니다.
+  - **계수 차이(미해결·범위 밖):** 회귀 로그의 PASS 행은 911개인데 각 그룹이 선언한 검사 수의 합은 931이다. 931 PASS로 단정하지 않으며 두 수를 같은 총계로 취급하지 않는다. 원인은 확인하지 않았고 테스트 카운터도 수정하지 않았다. surface-query 70건은 별도로 직접 확인했다.
+- **검증 구분:** Core 269 / App 207은 이 작업 세션이 실행하고 부모가 로그로 확인한 값이며, 위 부모 재실행은 WorkingSide 회귀에만 해당한다.
+- **미실행·미검증:** 2단계 이후 구현 전체, 실제 마우스 조작·화면 육안 판정, 재봉 격리에 따른 성능 영향, 이 모델 이외의 새 모델에서의 동일 현상 유무, 재봉 모드 `Perform` 예외의 OCCT 내부 원인. 위 항목은 확인 전까지 해결된 것으로 기록하지 않는다.
+
+## 발열경로 제한 근사 연결 구현 (사용자 승인·구현 2026-11-15)
+
+> 이 항목은 이전 "계획 요청(미구현)" 기록을 대체한다. 계획 보고 후 사용자가 **구현을 승인**했고,
+> 아래 내용은 **실제 구현·자동 검증** 결과다. 상세 계약은 `docs/CurrentStatus.md`(§2·§3·§6·§8)에
+> 단일 현황으로 정리되어 있다(이전 `docs/BoundedSampleSkip.md`는 2026-11-15 문서 정리에서 삭제).
+
+- **사용자 확정 정책(최신):** 정밀 표면 일치가 아니라 **대략적인 경로면 된다**. 표면을 찾지 못한
+  짧은 내부 표본을 생략하고 앞뒤 실제 정상점으로 직선 연결한다. 한도는 **앞뒤 정상점 사이 원래
+  2D 경로 진행 길이와 3D 직선거리 모두 ≤ 10.0 mm**, **누락 개수 제한 없음**, 누락 구간은
+  **각각 독립 판정**한다. 인출점·원본 조각 끝점·원래 꺾임점은 절대 생략하지 않는다.
+  큰 구간·깊이 점프·커널 오류·오래된 컨텍스트·비유한 값은 거부한다.
+  이전의 "전체 표면 피복/공유 edge 증명/전면 투영 교체"는 이번 구현의 선행 조건이 **아니다**.
+- **구현(Core):** `RouteApproximationPolicy`(`route-approx-v1`, `MaxBridgeAdvanceMm=10`,
+  `MaxBridge3DGapMm=10`, `ProbeSpacingMm=1`)과 `SurfacePathApproximation`
+  (`TryMapRoute`: strict fast path + 근사 / `TryMapRouteAfterStrictFailure`: strict를 이미 실행한
+  호출자용)를 추가했다. typed `SurfaceQueryResult`(`Miss`/`Hit`/`Failure`)로만 분기하며
+  문자열 부분 검사·공유 lastError를 쓰지 않는다. strict API
+  (`SurfacePathMapper.TryMapRouteStrict`)의 실패 동작은 변경하지 않았다.
+- **알고리즘:** strict와 같은 정제 격자(중점→사분점)와 같은 1 mm 보강 표본 격자를 실제로 다시
+  조회한다(우연히 Miss를 못 본 것으로 통과시키지 않기 위함). Miss 구간은 경계를 1 mm 간격으로
+  실제 조회해 마지막/첫 Hit를 찾고, 그 두 Hit로 10 mm 두 한도를 검사한 뒤 중간 3D 점을 만들지
+  않는다. 승인 표본은 모두 실제 Hit(또는 정확 endpoint override)이며 점별 supportFace는 네이티브
+  스테이징 검사를 그대로 통과한다. 일반 성공 구간의 chord 0.05 mm 검사는 유지된다.
+- **적용 위치·순서:** 생성은 `MainWindow.Areas.cs`의 `TryPreparePieceSamples`가
+  **strict → 평면 턴 외곽 예외 → 제한 근사** 순서로 판정한다. 기존에 성립하던 2점 턴이 근사
+  때문에 여러 점/새 길이로 바뀌지 않게 하기 위해 근사를 턴 예외 뒤에 둔다. 수동 편집
+  (`MainWindow.VertexEdit.cs`의 `TryBuildVertexCandidate`)도 같은 helper를 쓴다. 2D 드래그
+  미리보기는 변경하지 않았다.
+- **캐시:** 근사·턴 예외 표본은 strict 표본 사전에 넣지 않는다(`RouteSampleCachePolicy.CanCache`가
+  `Strict`만 허용). 검증 키 접두부를 `strict-v4`로 올리고 `RouteApproximationPolicy` 값
+  (버전/10 mm/조회 간격)을 포함했으며 retain 키도 같은 접두부를 쓰므로 이전 보증 표본과 섞이지
+  않는다. 로드/저장 경로는 그대로다(schema 7, 저장된 실제 xyz+점별 supportFace 복원, 재투영 없음).
+- **독립 리뷰 수정 6건(구현 완료, 같은 날):**
+  - HIGH 성공 우선순위 보존: 후보 판정을 `SurfaceProbePolicy`(App, 순수 함수)로 분리했다.
+    선택 면의 하드 상태가 전역 표면/정확 경계의 Hit를 막지 않고, **유효한 Hit가 나오면 그 점으로
+    즉시 성공**한다(과거 nullable 규칙과 같은 순서·좌표). Hit가 전혀 없을 때만 하드 상태를
+    Failure로 판정하고, 순수 Miss(선택 면/전역 표면 Miss + 경계 `NoIntersection`)만 근사 허용이다.
+    결과 객체 null·Hit인데 3D 점 없음·Tangent인데 점 없음 같은 불명확한 비-Miss는 단순 Miss로
+    취급하지 않는다.
+  - HIGH strict 하드 오류 재시도 금지: `SurfaceProbeRecorder`(Core)가 strict 시도 중 관측한
+    typed Miss/Failure를 값으로 기록하고, `AllowsApproximationRetry = !SawFailure && SawMiss`일
+    때만 평면 턴 예외·근사를 시도한다. 커널/stale/비유한/입력·override/정제/예산·깊이 한도 실패는
+    재조회로 지워지지 않는다(일시적 Failure→Hit delegate도 재시도되지 않는다).
+    `TryMapRouteAfterStrictFailure`는 recorder를 인자로 받아 이 전제를 구조적으로 강제한다.
+  - HIGH 같은 2D 좌표 반복 시 필수점 생략 금지: `TryValidateDuplicateRequiredPoints`(Core)가
+    연속 동일 좌표에서 뒤쪽 필수점(인출점 override)의 유한성·지지 Face·앞 점과의 3D/지지 면
+    동일성을 검사한다. 두 점이 같으면 정상 중복(strict와 같은 결과)으로 진행하고, 다르거나
+    유효하지 않으면 명시적으로 거부한다. strict fast path 앞에서도 적용하며 Walker 안에서도 재검사한다.
+  - MEDIUM 표본 격자 정수 오버플로: `ceil(length/gapSpacing)`을 int로 캐스팅하기 전에 유한성·
+    int 범위·남은 표본 예산을 검사한다(근사 Walker와 strict `ProbeLeafGaps` 모두). 넘치는
+    격자는 표본 검사를 생략한 성공이 아니라 명시적 실패다(정상 조회 순서·좌표는 불변).
+  - fast path 동일성 테스트를 `BitConverter.DoubleToInt64Bits` 비교로 강화했다(±0 비트 차이 검출,
+    override 표본 포함).
+  - MEDIUM 적응 표본이 모두 Miss인 구간의 오탐 거부: 초기 적응 표본(25/50/75%)이 모두 Miss이면
+    `HandleMisses`가 그 사이를 조회하지 않고 하나의 연속 누락으로 합쳐, 실제로는 2 mm 안팎인
+    서로 떨어진 누락 3곳(예: 25/50/75 위치)을 약 52 mm 연결로 오판해 정상 경로를 거부했다.
+    이제 그 경우 정책 1 mm 간격으로 구간 전체를 **실제 조회**해 Hit/Miss 구조를 파악하고,
+    이미 관측한 적응 표본과 진행 파라미터 순서로 합쳐(`MergeProbes`, 같은 위치는 Miss 우선)
+    **누락 구간마다 독립 판정**한다. 누락 개수 상한은 추가하지 않았고 표본 예산·10 mm 두 한도·
+    필수점 규칙은 그대로다. 하나의 넓은 실제 누락은 계속 거부되고, 조회 중 Failure는 즉시
+    전체 거부다. 가로/세로·정/역방향 4조합 회귀와 넓은 누락 거부 회귀를 추가했다.
+  - MEDIUM malformed Hit 후보 판정 일관성: 공통 factory `SurfaceProbeOutcome.FromHit`가
+    데이텀/3D 유한성 + `FaceId >= 0`(+ 요청점 overload는 데이텀 잔차 ≤ 0.1 mm)을 검사해
+    malformed native Hit를 **Hard**로 분류한다. 그래서 선택 면이 malformed면 전역 표면,
+    전역 표면이 malformed면 정확 경계의 **유효 Hit**로 계속 진행하고(기존 성공 우선순위·좌표는
+    bitwise 그대로), 유효 후보가 하나도 없을 때만 Failure가 된다(단순 Miss/근사 허용으로
+    낮추지 않는다). 이전에는 비유한 좌표·`FaceId<0`만 즉시 Hit로 반환되어 뒤의 유효 후보를
+    막았고, `Point 없음`(Hard) 처리와 계약이 달랐다. 선택/전역/경계 세 단계가 같은 factory를
+    쓰므로 검증 권위가 하나다. Core의 "final Failure는 재조회하지 않는다" 계약은 변경하지 않았다.
+- **통계:** `RouteApproximationPublication`이 트랜잭션 시작 시 `Begin`, 네이티브 커밋 성공 직후
+  `PublishOnCommit`, 준비 실패 시 `AbandonOnFailure`를 호출한다. 완료 상태에는
+  `이번 준비 근사 연결 N곳 · 총 X mm · 최대 Y mm`만 표시하고, 근사가 없으면 아무것도 붙이지
+  않는다. **이 수는 이번 준비에서 실제로 실행한 근사만 센다** — retain/캐시 적중 조각은 다시
+  매핑하지 않으므로 포함되지 않으며, schema 7에 근사 메타데이터를 저장하지 않으므로 로드 직후의
+  0을 "영역 전체 근사 없음"으로 해석하지 않는다. 새 설정 UI는 추가하지 않았다(10 mm 고정 상수).
+- **길이/전기/라벨/DXF/STEP:** 모두 확정 native chain과 실측 길이를 그대로 쓰므로 변경 없음.
+- **검증 A (2026-11-15, 4건 수정 시점의 공유 출력 — 이미 배포/검증 담당이 사용 중):** Core **311**,
+  App **222**, `tests\WorkingSide.Regression` **EXIT 0, 911 PASS, FAIL 0**. 로드 DLL:
+  App `3916E531…E9CA`(623,616 B), Core `D09A7E1A…1649`(255,488 B), OccBridge `680E8599…5326`.
+  이 출력은 `tests\HeatingMold.App.Tests\bin\x64\Release\net8.0-windows\`, `x64\WorkingSideBuild\`,
+  `tests\WorkingSide.Regression\bin\Release\net8.0-windows\`에 있으며 5차 수정에서 **덮어쓰지 않았다**.
+- **검증 B (2026-11-15, 5차 수정 후, 완전 격리 OutDir — 최신 소스 상태):** Core **316 통과**
+  (신규 적응-표본-전부-Miss 분할 4조합 + 넓은 누락 거부 1), App **222 통과**,
+  `WorkingSide.Regression` **EXIT 0, 911 PASS, FAIL 0, 그룹 실패 0**. 공유 출력은 건드리지 않고
+  `<Temp>\opencode\hm-approx\iso\{core,app,ws}`에만 빌드·실행했다. 로드 DLL:
+  App `214193C6…ADFEC`(623,616 B), Core `5B6C6BF8…F8F0`(256,000 B, App 빌드 경로),
+  Core `97A80F94…33BD`(256,512 B, Core.Tests AnyCPU 빌드 경로), OccBridge `680E8599…5326`.
+  `tests\HeatingMold.Core.Tests\bin\Release\net8.0\HeatingMold.Core.dll`은 5차 수정 **이전**
+  중간 빌드(`79D70784…6164`)이므로 그 기본 출력으로 Core suite를 돌리면 최신 수정이 아니다
+  (격리 OutDir로 실행해야 한다).
+- **검증 B의 포함 항목:** Core `SurfacePathApproximationTests` 38 — fast path `DoubleToInt64Bits`
+  동일성(override 포함), 고립/연속 Miss, 다중 구간 독립 판정, 적응 표본 전부 Miss의 4조합 분할,
+  넓은 누락 거부, 개수 무제한, 2D 초과 거부, 3D 점프 거부, 정확 10 mm 허용/초과 거부,
+  꼭지점·인출점 override 보존, kernel Failure/비유한/지원 Face 없음/데이텀 잔차/표본 한도/
+  override 범위 거부, 일시적 Failure→Hit·비유한 표본→Hit·깊이/예산 실패 재시도 금지,
+  동일 좌표 필수점 identity(다른 깊이·무효 support 거부, 같은 깊이 보존), 거대 격자 사전
+  거부(strict/근사), 조회 순서≠경로 순서, 같은 XY 재방문, strict API 거부 유지.
+  App `RouteApproximationPublicationTests` 7 + `SurfaceProbePolicyTests` 8(선택 면 하드+전역 Hit
+  성공 보존, Miss+하드+경계 Hit 성공, 세 단계 우선순위, 하드만 있으면 Failure, 불명확 비-Miss는
+  Miss 아님, 경계 모호는 하드, 순수 Miss만 근사 허용, 커밋 전 미게시 등).
+  `WorkingSide.Regression` 그룹: sidebar 31, area highlight 30, direct exit 19, vertex edit 32,
+  split boundary 28, remaining fixture 340, electrical 3, pattern state 48, geometry rollback 63,
+  support-face 7, surface-query 70, project load 20, project-load exclusion 51, working-side 189.
+- **검증 C (2026-11-15, 부모가 격리 출력을 빌드 없이 직접 재실행):** 위 B와 같은 격리 산출물을
+  `tools\validation\Invoke-GuardedProcess.ps1`로 가드 실행해 확인했다. 결과: Core
+  `iso\core\HeatingMold.Core.Tests.dll` **TRX 316/316 통과**, App
+  `iso\app\HeatingMold.App.Tests.dll` **TRX 222/222 통과**, `iso\ws\WorkingSide.Regression.exe`를
+  인자 `<repo>\x64\WorkingSideRegression`로 실행해 **EXIT 0, PASS 행 911, FAIL 행 0,
+  `CHECK-GROUP FAILED` 0**. 가드 보고 3건 모두 `status=succeeded`, `reason=completed`,
+  `rootExitCode=0`, `rootExited=true`, `reportWriteFailed=false`, `dialog=null`,
+  `cleanupStatus=not-required`. 실행 전/후 SHA-256 동일(Core 2개·App 4개·WS 5개):
+  `iso\ws\` App `214193C6…ADFEC`(623,616 B), Core `5B6C6BF8…F8F0`(256,000 B), native
+  `680E8599…5326`(4,618,752 B), `iso\core\` Core `97A80F94…33BD`(256,512 B).
+  `COREHOST_TRACE`로 App/Core/OccBridge 세 어셈블리가 모두 `iso\ws\` 옆 DLL로 해석됨을 확인해,
+  구 DLL이 아니라 새 코드가 실제로 로드됐음이 증명됐다. 증거 파일 이름:
+  `core-final`, `app-final`, `ws-final` 폴더의 각 `core.log`/`app.log`/`regression.log`,
+  `results\*.trx`, `validation-guard.json`, `before-sha256.json`/`after-sha256.json`,
+  `ws-final\host-trace.log`.
+  **선언된 그룹 검사 수 합 931과 PASS 행 911의 차이는 이 변경 이전부터 있던 미해결 사항이며,
+  "931 PASS"로 표기하지 않는다.**
+- **검증 D (2026-11-15, 리뷰 6차 수정 후, 새 격리 OutDir `iso6`):** Core **로직 미변경**이라
+  Core 테스트는 재실행하지 않았다(Core DLL 해시 `5B6C6BF8…F8F0`이 B와 동일함으로 확인).
+  이후 `RouteApproximationPolicy.ProbeSpacingMm`의 XML 주석 1곳만 정정했고 **재빌드하지 않았다**
+  (상수·IL·동작 동일, 기존 Core 바이너리는 그대로). App 테스트
+  **241 통과/0 실패**(222 + 이번 신규 factory/fallback 19), `WorkingSide.Regression`
+  **EXIT 0, 911 PASS, FAIL 0, `CHECK-GROUP FAILED` 0**(그룹 구성은 B와 동일).
+  로드 DLL(절대 경로는 보고 참조): `iso6\app|ws\HeatingMold.App.dll` `427E502D…6008`(624,128 B),
+  Core `5B6C6BF8…F8F0`(256,000 B), native `680E8599…5326`(4,618,752 B).
+  공유 출력(App bin·test bin·`x64\WorkingSideBuild`)과 이전 격리 `iso\{app,core,ws}`는
+  SHA-256이 그대로임을 확인했다(App `3916E531…`, Core `D09A7E1A…` / `214193C6…`, `97A80F94…`).
+  실사용 CAD 0.2 mm 종단 성공 여부는 여전히 **미측정**이다.
+- **검증 E (2026-11-15, 부모가 `iso6` 최종 출력을 빌드 없이 가드 재실행):** 위 D와 같은 격리
+  산출물을 `tools\validation\Invoke-GuardedProcess.ps1`로 다시 실행해 확인했다. App
+  `iso6\app\HeatingMold.App.Tests.dll` **TRX 241/241 통과**(failed·error·timeout·notExecuted 0),
+  `iso6\ws\WorkingSide.Regression.exe` **EXIT 0, PASS 행 911, FAIL 행 0, `CHECK-GROUP FAILED` 0**.
+  가드 보고 2건 모두 `status=succeeded`, `reason=completed`, `rootExitCode=0`, `rootExited=true`,
+  `reportWriteFailed=false`, `cleanupStatus=not-required`, `dialog=null`, `remainingProcessIds` 빈 배열.
+  실행 전/후 SHA-256 동일(App.Tests·App·Core·native 4개, WS exe·harness dll·App·Core·native 5개).
+  `COREHOST_TRACE`로 App/Core/OccBridge 세 어셈블리가 모두 `iso6\ws` exe 옆 경로에서 해석됨을 확인.
+  로드 DLL: App `427E502D…6008`(624,128 B), Core `5B6C6BF8…F8F0`(256,000 B),
+  native `680E8599…5326`(4,618,752 B). Core 로직 미변경이므로 Core 316 TRX는 기존 기록을 유지하고
+  이번 재실행은 App·WS만 해당한다. 증거 폴더와 상대 파일: `app-six-20261115-024139`의 `app.log`,
+  `results\app.trx`, `validation-guard.json`, `before-sha256.json`/`after-sha256.json`;
+  `ws-six-20261115-024139`의 `regression.log`, `validation-guard.json`,
+  `before-sha256.json`/`after-sha256.json`, `host-trace.log`. WS 종료 시 `wglMakeCurrent` 경고는
+  기존 정리 메시지이며 검사 실패가 아니다.
+  부모 확인: `git diff --check` EXIT 0, 사용자 Plan `92EB7308…63AB2`, STEP `8CB03405…FCED`,
+  JSON `A7B814F7…C70C9`, native `680E8599…5326` 불변.
+  **최종 App 공유 bin 배치(`3916E531…`)는 아직 하지 않았으며 격리 최종본(`427E502D…`)과 구분한다.**
+  선언 그룹 합 931과 PASS 행 911의 차이는 기존 범위 밖 미해결 사항이며 "931 PASS"로 쓰지 않는다.
+- **성능 주의(정적 확인, 배율 미측정):** 근사 연결은 **Miss 구간 허용 정책**이며 표본 밀도나
+  전체 성능을 최적화한 것이 아니다. strict fast path의 원래 1 mm 보강 조회와 조각별 native
+  점별 지지면 검증은 근사 도입 후에도 그대로 실행된다. 생성 시간에는 커밋 후 길이 라벨 재배치가
+  `Generate_Click`의 동기 호출에 포함되어 있고, 라벨 엔진은 라벨마다 전체 route 구간에서 자기
+  조각을 제외한 목록을 새로 만들어 배치된 라벨·전체 선분과의 겹침을 검색한다(정적 확인).
+  실제 병목 귀속과 개선 배율은 **측정하지 않았다**. 조각 수·작업이 다른 두 실행(예: 저장
+  472조각 복원/보존 vs 0.2 mm 5,000조각 신규 생성)을 생성 속도 비교로 해석하지 않는다.
+- **함정 재확인:** `tests\WorkingSide.Regression`은 `x64\WorkingSideBuild\`의 DLL을 참조한다.
+  App/Core를 새로 빌드한 뒤 그 폴더로 복사하지 않으면 **구 DLL로 실행되어 변경이 검증되지 않는다**
+  (이번에 구 DLL로 한 번 통과한 뒤 새 DLL에서 `(SurfaceMappedSample[])` 캐스트 실패가 드러났다).
+- **미검증:** 실제 마우스 조작·화면 육안 판정, 새 프로세스에서의 프로젝트 복원, 외부 CAD에서
+  DXF/STEP 열기, 사용자 실제 CAD(0.2 mm·대형 모델) 종단 성능과 조각 수, 근사 연결 내부의 실제
+  표면 오차, 1 mm보다 좁은 결함 검출. 근사 연결은 표면 피복을 증명하지 않는다.
